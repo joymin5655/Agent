@@ -1,0 +1,339 @@
+{
+  "version": "2.0.0",
+  "description": "AirLens 에이전트 레지스트리 — 3부서 web agents (Generated from AGENT_REGISTRY.md SOT).",
+  "expertPrimingVersion": "2026-04-20",
+  "primingPrinciple": "MoE 잠재공간 활성화 — 실제 전문가 이름 + 전문 용어로 모델 내부 전문 영역 모듈 활성화",
+  "agents": [
+    {
+      "id": "db-architect",
+      "name": "DB 아키텍트",
+      "department": "engineering",
+      "model": "sonnet",
+      "level": 3,
+      "tools": [
+        "Read",
+        "Write",
+        "Edit",
+        "Glob",
+        "Grep",
+        "Bash"
+      ],
+      "description": "Supabase PostgreSQL 스키마 설계 + RLS 정책 + 마이그레이션 + 쿼리 최적화"
+    },
+    {
+      "id": "fe-architect",
+      "name": "프론트엔드 아키텍트",
+      "department": "frontend",
+      "model": "opus",
+      "level": 3,
+      "tools": [
+        "Read",
+        "Glob",
+        "Grep",
+        "Bash"
+      ],
+      "description": "React 19 + Three.js + Tailwind 아키텍처 설계, AppShell/라우팅/상태관리 패턴 결정",
+      "referenceRepos": [
+        "react-bits",
+        "cambecc-earth"
+      ]
+    },
+    {
+      "id": "ml-researcher",
+      "name": "ML 연구원",
+      "department": "engineering",
+      "model": "opus",
+      "level": 3,
+      "tools": [
+        "Read",
+        "Write",
+        "Edit",
+        "Glob",
+        "Grep",
+        "Bash"
+      ],
+      "description": "AirLens 6대 ML 엔진(AOD, SDID, PINN, DQSS, GNN, CameraAI) 고도화 + 실험 설계 (engineering manager)",
+      "referenceRepos": [
+        "autoresearch"
+      ]
+    },
+    {
+      "id": "supervisor",
+      "name": "수퍼바이저",
+      "department": "operations",
+      "model": "opus",
+      "level": 4,
+      "tools": [
+        "Read",
+        "Glob",
+        "Grep",
+        "Bash",
+        "Agent"
+      ],
+      "description": "2-Tier 라우팅 + 부서 디스패치 + PGE 품질 게이트 조율",
+      "referenceRepos": [
+        "oh-my-claudecode",
+        "hermes-agent"
+      ]
+    },
+    {
+      "id": "wiki-curator",
+      "name": "위키 큐레이터",
+      "department": "operations",
+      "model": "sonnet",
+      "level": 2,
+      "tools": [
+        "Read",
+        "Write",
+        "Edit",
+        "Glob",
+        "Grep"
+      ],
+      "description": "Obsidian LLM Wiki 큐레이터, 소스 통합, 위키 페이지 관리, index/log 갱신"
+    },
+    {
+      "id": "aq-data-analyst",
+      "name": "대기질 데이터 분석가",
+      "department": "engineering",
+      "model": "sonnet",
+      "level": 2,
+      "tools": [
+        "Read",
+        "Write",
+        "Edit",
+        "Glob",
+        "Grep",
+        "Bash"
+      ],
+      "description": "PM2.5/PM10 분석, IDW/크리깅 보간, AQI 변환, 월경성 오염 분석"
+    },
+    {
+      "id": "component-builder",
+      "name": "컴포넌트 빌더",
+      "department": "frontend",
+      "model": "sonnet",
+      "level": 2,
+      "tools": [
+        "Read",
+        "Write",
+        "Edit",
+        "Glob",
+        "Grep",
+        "Bash"
+      ],
+      "description": "Tailwind 4 + Aurora 디자인 시스템으로 반응형/접근성 컴포넌트 구현",
+      "referenceRepos": [
+        "react-bits"
+      ]
+    },
+    {
+      "id": "cost-analyst",
+      "name": "비용 분석가",
+      "department": "operations",
+      "model": "haiku",
+      "level": 1,
+      "tools": [
+        "Read",
+        "Glob",
+        "Grep",
+        "Bash"
+      ],
+      "description": "토큰 사용량 + API 비용 + 번들 사이즈 감사 + 리소스 최적화 제안"
+    },
+    {
+      "id": "data-engineer",
+      "name": "데이터 엔지니어",
+      "department": "engineering",
+      "model": "sonnet",
+      "level": 2,
+      "tools": [
+        "Read",
+        "Write",
+        "Edit",
+        "Glob",
+        "Grep",
+        "Bash"
+      ],
+      "description": "AOD/Open-Meteo/AirKorea/ERA5 ETL 파이프라인 + 피처 엔지니어링"
+    },
+    {
+      "id": "deploy-manager",
+      "name": "배포 관리자",
+      "department": "operations",
+      "model": "haiku",
+      "level": 1,
+      "tools": [
+        "Read",
+        "Glob",
+        "Grep",
+        "Bash"
+      ],
+      "description": "Cloudflare Pages + GitHub Actions CI/CD + 배포 체크리스트"
+    },
+    {
+      "id": "doc-writer",
+      "name": "문서 작성자",
+      "department": "operations",
+      "model": "haiku",
+      "level": 1,
+      "tools": [
+        "Read",
+        "Write",
+        "Edit",
+        "Glob",
+        "Grep"
+      ],
+      "description": "CLAUDE.md / API 문서 / CHANGELOG / README 관리"
+    },
+    {
+      "id": "edge-fn-dev",
+      "name": "Edge Function 개발자",
+      "department": "engineering",
+      "model": "sonnet",
+      "level": 2,
+      "tools": [
+        "Read",
+        "Write",
+        "Edit",
+        "Glob",
+        "Grep",
+        "Bash"
+      ],
+      "description": "Supabase Edge Function (Deno) 개발, REST API + JWT + CORS + Polar 웹훅"
+    },
+    {
+      "id": "globe-specialist",
+      "name": "Globe/3D 전문가",
+      "department": "frontend",
+      "model": "sonnet",
+      "level": 2,
+      "tools": [
+        "Read",
+        "Write",
+        "Edit",
+        "Glob",
+        "Grep",
+        "Bash"
+      ],
+      "description": "Three.js + d3-geo + Canvas 2D Globe 엔진, HUD 오버레이, 레이어 시스템 관리",
+      "referenceRepos": [
+        "cambecc-earth"
+      ]
+    },
+    {
+      "id": "i18n-specialist",
+      "name": "다국어 전문가",
+      "department": "frontend",
+      "model": "haiku",
+      "level": 1,
+      "tools": [
+        "Read",
+        "Glob",
+        "Grep"
+      ],
+      "description": "i18next 번역 키 관리, 하드코딩 텍스트 탐지, 6개 언어 일관성 보장"
+    },
+    {
+      "id": "ui-ux-director",
+      "name": "UI/UX 디렉터",
+      "department": "frontend",
+      "model": "opus",
+      "level": 3,
+      "tools": [
+        "Read",
+        "Glob",
+        "Grep"
+      ],
+      "description": "AirLens 가드레일 안에서 감정 목표 + 정보 위계 + 시각적 은유 + 구현 브리프 설계"
+    },
+    {
+      "id": "a11y-auditor",
+      "name": "접근성 감사관",
+      "department": "frontend",
+      "model": "haiku",
+      "level": 1,
+      "tools": [
+        "Read",
+        "Glob",
+        "Grep"
+      ],
+      "description": "WCAG 2.2 AA 키보드/스크린리더/색상대비/ARIA/타겟 크기 감사"
+    },
+    {
+      "id": "performance-reviewer",
+      "name": "성능 리뷰어",
+      "department": "engineering",
+      "model": "sonnet",
+      "level": 2,
+      "tools": [
+        "Read",
+        "Glob",
+        "Grep"
+      ],
+      "description": "N+1 쿼리 / 불필요한 리렌더 / 번들 사이즈 / Core Web Vitals 검토",
+      "existing": true
+    },
+    {
+      "id": "security-reviewer",
+      "name": "보안 리뷰어",
+      "department": "engineering",
+      "model": "opus",
+      "level": 3,
+      "tools": [
+        "Read",
+        "Glob",
+        "Grep",
+        "Bash"
+      ],
+      "description": "SAST + DAST, SQL injection, XSS, 시크릿 노출, RLS 우회, HMAC 검증",
+      "existing": true
+    },
+    {
+      "id": "style-reviewer",
+      "name": "스타일 리뷰어",
+      "department": "frontend",
+      "model": "haiku",
+      "level": 1,
+      "tools": [
+        "Read",
+        "Glob",
+        "Grep"
+      ],
+      "description": "명명 규칙 / 함수 길이 / 중복 / AirLens 코딩 규칙(types.ts, APP_CONFIG, i18n) 검증",
+      "existing": true
+    },
+    {
+      "id": "test-engineer",
+      "name": "테스트 엔지니어",
+      "department": "engineering",
+      "model": "sonnet",
+      "level": 2,
+      "tools": [
+        "Read",
+        "Write",
+        "Edit",
+        "Glob",
+        "Grep",
+        "Bash"
+      ],
+      "description": "Vitest 단위/통합, Playwright E2E, pytest ML, 80%+ 커버리지 보증",
+      "referenceRepos": [
+        "codex"
+      ]
+    },
+    {
+      "id": "ux-reviewer",
+      "name": "UX 리뷰어",
+      "department": "frontend",
+      "model": "sonnet",
+      "level": 2,
+      "tools": [
+        "Read",
+        "Glob",
+        "Grep"
+      ],
+      "description": "닐슨 10 휴리스틱 + WCAG 2.2 + CRO + Glass-Box 투명성 기반 UX 진단",
+      "existing": true
+    }
+  ]
+}
