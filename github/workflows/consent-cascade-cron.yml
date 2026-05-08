@@ -1,0 +1,71 @@
+name: consent-cascade-cron
+
+# F8 Privacy/Consent UI — daily cron that invokes the consent-cascade-worker
+# Edge Function in mode=cron to apply 30-day-grace-expired OFF cascades:
+#   * personal off  → app-encrypted-backups deletion
+#   * training off  → weather_emotion_samples DELETE + photo/capture downgrades
+#   * research off  → meta signals + consent_updated_at stamp
+#   * public off    → entity_embeddings visibility downgrade
+#
+# Edge Function path: apps/web/supabase/functions/consent-cascade-worker/index.ts
+# Auth: shared-secret header `x-ingest-key` matched against INGEST_API_KEY.
+# Co-existence: backup-prune-cron handles Pro→Free downgrade grace via
+#   profiles.plan_changed_at — this workflow handles consent-flip grace via
+#   profiles.consent_updated_at. The two paths are intentionally disjoint.
+
+on:
+  schedule:
+    # 03:00 UTC daily (12:00 KST) — runs after backup-prune (02:30 UTC) so
+    # the two cascades don't race over the same Storage objects.
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'If "true", invoke ?dry_run=1 (no DELETE/UPDATE/Storage.remove)'
+        required: false
+        default: 'false'
+      batch_size:
+        description: 'Max users to process this run (1-100)'
+        required: false
+        default: '50'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: consent-cascade-cron
+  cancel-in-progress: false
+
+jobs:
+  cascade:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Invoke consent-cascade-worker Edge Function
+        env:
+          SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          INGEST_API_KEY: ${{ secrets.INGEST_API_KEY }}
+          DRY_RUN: ${{ github.event.inputs.dry_run }}
+          BATCH_SIZE: ${{ github.event.inputs.batch_size }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SUPABASE_URL:-}" ] || [ -z "${INGEST_API_KEY:-}" ]; then
+            echo "::error::SUPABASE_URL or INGEST_API_KEY missing"
+            exit 1
+          fi
+          QS=""
+          if [ "${DRY_RUN:-false}" = "true" ]; then
+            QS="?dry_run=1"
+          fi
+          BATCH="${BATCH_SIZE:-50}"
+          BODY=$(printf '{"mode":"cron","batch_size":%s}' "${BATCH}")
+          HTTP_CODE=$(curl -sS -o /tmp/cascade.json -w '%{http_code}' \
+            -X POST "${SUPABASE_URL}/functions/v1/consent-cascade-worker${QS}" \
+            -H "x-ingest-key: ${INGEST_API_KEY}" \
+            -H 'Content-Type: application/json' \
+            -d "${BODY}")
+          echo "HTTP ${HTTP_CODE}"
+          cat /tmp/cascade.json
+          if [ "${HTTP_CODE}" != "200" ] && [ "${HTTP_CODE}" != "204" ]; then
+            exit 1
+          fi

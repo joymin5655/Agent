@@ -1,0 +1,90 @@
+name: i18n Auto-fill
+
+# PR이 src/locales/en/** 를 변경하면 ja/zh/es/fr 누락 키를 en 폴백으로
+# 채운 patch artifact를 생성한다. ko는 수동 관리 (한국어 1차).
+#
+# 동작 흐름:
+#   1. PR 브랜치 checkout (read-only, credentials 미저장)
+#   2. npm ci
+#   3. npm run i18n:fill (기존 scripts/i18n-fill-fallback.mjs 재사용)
+#      - en을 source-of-truth로 ja/zh/es/zh/fr 누락 키만 채움. 기존 번역 보존
+#   4. npm run i18n:sync (public/locales/ 미러링)
+#   5. 변경 있으면 i18n-auto-fill.patch artifact 업로드
+#   6. 변경 없으면 정상 종료
+#
+# 보안 원칙: pull_request에서 PR 코드를 실행하는 job은 secrets/write token을
+# 절대 받지 않는다. 자동 commit/push가 필요하면 trusted base checkout을 쓰는
+# 별도 privileged job으로 분리하고 path allowlist를 검증한다.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'apps/web/src/locales/en/**'
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: apps/web
+
+jobs:
+  fill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout PR branch read-only
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run i18n:fill (en → ja/zh/es/fr)
+        run: npm run i18n:fill
+
+      - name: Sync public/locales (i18next-http-backend 캐시)
+        run: npm run i18n:sync
+
+      - name: Detect changes
+        id: diff
+        run: |
+          if git diff --quiet src/locales/ public/locales/; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::All non-en locales already at parity. No changes."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            FILES=$(git diff --name-only src/locales/ public/locales/ | wc -l)
+            git diff -- src/locales/ public/locales/ > /tmp/i18n-auto-fill.patch
+            echo "::notice::Auto-fill produced changes in ${FILES} file(s)"
+          fi
+
+      - name: Upload patch artifact
+        if: steps.diff.outputs.changed == 'true'
+        uses: actions/upload-artifact@de65e23aa2b7e23d713bb51fbfcb6d502f8667d8  # v4.4.3
+        with:
+          name: i18n-auto-fill-patch
+          path: /tmp/i18n-auto-fill.patch
+          retention-days: 7
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## i18n Auto-fill" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ steps.diff.outputs.changed }}" = "true" ]; then
+            echo "Auto-filled missing keys in ja/zh/es/fr and uploaded \`i18n-auto-fill-patch\`." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "All non-en locales already at parity." >> "$GITHUB_STEP_SUMMARY"
+          fi

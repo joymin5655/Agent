@@ -1,0 +1,76 @@
+# gitleaks config — AirLens monorepo
+# Layer 1 (local pre-commit) + Layer 2 (CI) 공용
+# Docs: https://github.com/gitleaks/gitleaks#configuration
+
+[extend]
+# 100+ 기본 룰셋 활용 (AWS / GCP / Stripe / Slack / OpenAI / Anthropic / Supabase / GitHub PAT 등)
+useDefault = true
+
+# ──────────────────────────────────────────────────────────────────────
+# Allowlist — AirLens 컨텍스트에서 false-positive 가 명백한 패턴/경로 제외
+# ──────────────────────────────────────────────────────────────────────
+[allowlist]
+description = "AirLens project allowlist"
+
+# 1. Placeholder 문자열 ─ .env.example / 문서에서 합법적으로 사용
+regexes = [
+  '''your[_-]?\w+[_-]?(key|token|secret|id|url|dsn|password)''',
+  '''여기에[_]?\w+[_]?입력''',
+  '''your-?(anon|service|project)-?(key|id)?''',
+  '''placeholder''',
+  '''sk-(proj-)?(your|placeholder|example|test|xxx)''',
+  '''appl_placeholder''',
+  '''goog_placeholder''',
+  '''id0000000000''',
+  '''여기에_강력한_비밀번호_입력''',
+  # Supabase anon key 는 클라이언트에 노출 가능(public) — VITE_SUPABASE_ANON_KEY 만 허용
+  '''VITE_SUPABASE_ANON_KEY\s*=\s*eyJ''',
+  '''EXPO_PUBLIC_SUPABASE_ANON_KEY\s*=\s*eyJ''',
+  # i18n key string literals (UPPERCASE_PREFIX.UPPERCASE_KEY 형식) — 시크릿 아님
+  # GLOSSARY.DEF_PM25 / ROI.PANEL_TITLE / TRANSPARENCY.STAGE_RAW 같은 i18n 키
+  # suffix list 명시 (catch-all 회피 — 진짜 secret이 LANDING.AAAA 형식으로 누출되면 차단 유지)
+  '''(GLOSSARY|ROI|TRANSPARENCY|SOURCES|COORDINATES|CAMERA|HUB|TODAY|REPORT|GLOSSARY_TOOLTIPS|POPULAR_CITIES|ACTION|ANOMALY|FORECAST|LANDING|HEALTH|MOOD|DYNAMIC_THEME|PRIVACY|TERMS|POLICY)\.(DEF|TERM|LAY|CAT|META|EYEBROW|HERO|RECOMMEND|BUCKET|PANEL|METRIC|CONFIDENCE|METHODOLOGY|UPGRADE|STAGE|COMPARE|RELIABILITY|TAB|UPDATE|WEIGHT|MODE|LAT|LNG|VALIDATION|BREADCRUMB|CACHED|ACADEMIC|SEOUL|TOKYO|BEIJING|LOS|FRIENDLY|TITLE|SUMMARY|ROW|EXPORT|DS|TEST|QUOTE|NAME|ROLE)_?[A-Z0-9_]*''',
+]
+
+# 2. 경로 ─ placeholder / 캐시 / 외부 데이터 / 위키
+paths = [
+  '''.*\.env\.example$''',
+  '''.*\.env\.sample$''',
+  '''.*\.env\.template$''',
+  '''secrets/.*\.env\.example$''',
+  # i18n 자동 생성물 (false-positive 가능성)
+  '''apps/web/scripts/i18n-.*\.mjs$''',
+  '''apps/web/public/locales/.*\.json$''',
+  # ML 데이터 / 아티팩트 (이진 파일 / parquet / npy)
+  '''models/data/.*''',
+  '''models/artifacts/.*''',
+  '''platform-data/.*''',
+  # Obsidian 위키 (gitignored 이지만 안전벨트)
+  '''Obsidian-airlens/.*''',
+  # 외부 스킬셋 / 벤더 디렉터리
+  '''Skills/.*''',
+  '''.*/node_modules/.*''',
+  '''.*/\.venv/.*''',
+  '''.*\.lockb?$''',
+  '''package-lock\.json$''',
+  # 플랜 / 메모리 / 로그 (gitignored)
+  '''memory/.*''',
+  '''logs/.*''',
+  # Stitch MCP 디자인 참조 (Screen IDs는 내부 식별자, API key 아님)
+  '''.*\.stitch-reference/.*''',
+  # secrets/ 디렉터리 (gitignored. working tree scan 시 false-positive 회피)
+  '''secrets/.*''',
+]
+
+# 3. Commits ─ 과거 알려진 false-positive (필요 시 추가)
+commits = []
+
+# ──────────────────────────────────────────────────────────────────────
+# Custom rules — AirLens 도메인 특화 (현재 비어 있음, 필요 시 추가)
+# ──────────────────────────────────────────────────────────────────────
+# 예시: Polar API 토큰 패턴 (실제 패턴 확정 후 활성화)
+# [[rules]]
+# id = "airlens-polar-token"
+# description = "Polar API token"
+# regex = '''polar_(at|pat|live)_[a-zA-Z0-9_-]{32,}'''
+# tags = ["polar", "payment"]

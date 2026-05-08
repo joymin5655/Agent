@@ -1,0 +1,204 @@
+name: Multi-Model PR Review
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  codex-review:
+    name: Codex Review
+    if: >
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.author_association == 'OWNER'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6.4.0
+        with:
+          node-version: 22
+
+      - name: Install Codex CLI
+        run: npm install -g @openai/codex
+
+      - name: Run Codex Review (Architecture & Logic Specialist)
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "OPENAI_API_KEY not set — skipping Codex review" > /tmp/codex-review.txt
+            exit 0
+          fi
+          CONTEXT=$(cat apps/web/scripts/review-context.md 2>/dev/null || echo "")
+          codex review \
+            "You are an architecture and logic reviewer for AirLens (air quality monitoring platform).
+          Focus ONLY on these areas — do NOT review security (another model handles that):
+
+          1. LOGIC ERRORS: Race conditions, off-by-one, null/undefined paths, async/await misuse
+          2. TYPE SAFETY: TypeScript type holes, unsafe casts, missing generics
+          3. ARCHITECTURE: Component coupling, state management anti-patterns, prop drilling
+          4. REACT PATTERNS: useEffect dependency arrays, stale closures, unnecessary re-renders
+          5. API CONTRACT: Supabase query correctness, Edge Function request/response shape mismatches
+
+          Project rules:
+          $CONTEXT
+
+          Output format: [P1] file:line — description  OR  [P2] file:line — description
+          Do NOT read .claude/ or .github/ directories." \
+            --base origin/${{ github.base_ref }} \
+            -c 'model_reasoning_effort="high"' \
+            > /tmp/codex-review.txt 2>&1 || echo "Codex review failed or timed out" >> /tmp/codex-review.txt
+
+      - name: Upload Codex Review
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: codex-review
+          path: /tmp/codex-review.txt
+          retention-days: 7
+
+  gemini-review:
+    name: Gemini Review
+    if: >
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.author_association == 'OWNER'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Run Gemini Review via API (Security & Coverage Specialist)
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          if [ -z "$GEMINI_API_KEY" ]; then
+            echo "GEMINI_API_KEY not set — skipping Gemini review" > /tmp/gemini-review.txt
+            exit 0
+          fi
+
+          DIFF=$(git diff origin/${{ github.base_ref }}...HEAD | head -15000)
+          DIFF_LINES=$(echo "$DIFF" | wc -l)
+          CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | head -100)
+          CONTEXT=$(cat apps/web/scripts/review-context.md 2>/dev/null || echo "")
+
+          PROMPT="You are a security-focused code reviewer for AirLens (air quality monitoring platform on Supabase + Cloudflare Pages).
+          Focus ONLY on these areas — do NOT review architecture/logic (another model handles that):
+
+          1. SECURITY VULNERABILITIES:
+             - SQL injection via Supabase .rpc() or raw queries
+             - XSS via dangerouslySetInnerHTML, innerHTML, or unsanitized user input
+             - Hardcoded secrets, API keys, tokens in source code
+             - SERVICE_ROLE_KEY exposure to client-side (CRITICAL — server-only)
+             - VITE_ prefixed env vars must never contain secrets (bundled into client)
+             - Missing requireAuth() in Edge Functions
+             - Webhook signature (HMAC-SHA256) bypass
+
+          2. PERFORMANCE ISSUES:
+             - N+1 queries (Supabase .select() in loops)
+             - Missing .dispose() on Three.js geometries/materials/textures (VRAM leak)
+             - Large bundle imports (should use dynamic import)
+             - Synchronous I/O blocking main thread
+
+          3. ERROR HANDLING:
+             - Uncaught promise rejections
+             - Missing try-catch around API calls
+             - Silent error swallowing (empty catch blocks)
+
+          4. DATA SAFETY:
+             - RLS policy gaps (Supabase tables without row-level security)
+             - Sensitive data in console.log or error messages
+             - CORS misconfiguration in Edge Functions
+
+          Project rules:
+          $CONTEXT
+
+          Output format: [P1] file:line — description  OR  [P2] file:line — description
+          P1 = must fix before merge. P2 = should fix.
+          If no issues: output only NO FINDINGS
+
+          Changed files:
+          $CHANGED_FILES
+
+          DIFF ($DIFF_LINES lines):
+          $DIFF"
+
+          ESCAPED_PROMPT=$(echo "$PROMPT" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))")
+
+          curl -s "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$GEMINI_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{\"contents\":[{\"parts\":[{\"text\":$ESCAPED_PROMPT}]}]}" \
+            | python3 -c "
+          import sys, json
+          try:
+              data = json.load(sys.stdin)
+              text = data['candidates'][0]['content']['parts'][0]['text']
+              print(text)
+          except Exception as e:
+              print(f'Gemini API error: {e}')
+          " > /tmp/gemini-review.txt 2>&1
+
+      - name: Upload Gemini Review
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: gemini-review
+          path: /tmp/gemini-review.txt
+          retention-days: 7
+
+  orchestrate:
+    name: Orchestrate & Comment
+    if: >
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.author_association == 'OWNER'
+    needs: [codex-review, gemini-review]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          # This job has pull-requests:write. Run only trusted base-branch code.
+          ref: ${{ github.base_ref }}
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6.4.0
+        with:
+          node-version: 22
+
+      - name: Download Codex Review
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: codex-review
+          path: /tmp/reviews/codex
+
+      - name: Download Gemini Review
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: gemini-review
+          path: /tmp/reviews/gemini
+
+      - name: Generate Summary & Post Comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: node apps/web/scripts/review-orchestrate.cjs "$PR_NUMBER"
