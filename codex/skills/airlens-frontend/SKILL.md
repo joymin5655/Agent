@@ -1,6 +1,6 @@
 ---
 name: airlens-frontend
-description: Use when designing, building, or reviewing AirLens frontend code: React 19/Vite/Tailwind 4 architecture, Aurora UI components, Globe/Canvas rendering, accessibility, i18n, UX, and style compliance.
+description: "Use when designing, building, or reviewing AirLens frontend code: React 19/Vite/Tailwind 4 architecture, Aurora UI components, Globe/Canvas rendering, accessibility, i18n, UX, and style compliance."
 ---
 
 # AirLens Frontend

@@ -1,0 +1,31 @@
+name: DB Auto-Archive (70% capacity trigger)
+
+on:
+  schedule:
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+
+jobs:
+  check-and-archive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      DB_LIMIT_MB: '500'
+      ARCHIVE_THRESHOLD: '0.7'
+      RETENTION_DAYS: '30'
+
+    steps:
+      - name: Checkout scripts
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          sparse-checkout: scripts
+
+      - name: Install HF Hub
+        run: pip install huggingface_hub
+
+      - name: Run archive export
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: python3 scripts/infra/db-archive-export.py

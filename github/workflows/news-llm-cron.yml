@@ -1,0 +1,50 @@
+name: News LLM Enrichment (6h)
+
+# news-aggregator 이후 30분 뒤에 실행 — RSS 수집된 article에 LLM 요약/카테고리/slug 부여.
+# 한 번에 최대 25개 처리. Anthropic Haiku → news_articles UPDATE.
+
+on:
+  schedule:
+    - cron: '45 0,6,12,18 * * *'  # 매 6시간 (news-aggregator 30분 후)
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: 'Max articles to process per run (1-50)'
+        required: false
+        default: '25'
+
+jobs:
+  enrich-news:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Trigger news-llm Edge Function
+        env:
+          SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          INGEST_API_KEY: ${{ secrets.INGEST_API_KEY }}
+          LIMIT: ${{ github.event.inputs.limit || '25' }}
+        run: |
+          response=$(curl -s -w "\n%{http_code}" \
+            -X POST "${SUPABASE_URL}/functions/v1/news-llm?limit=${LIMIT}" \
+            -H "Authorization: Bearer ${INGEST_API_KEY}" \
+            -H "Content-Type: application/json")
+
+          http_code=$(echo "$response" | tail -1)
+          body=$(echo "$response" | sed '$d')
+
+          echo "HTTP Status: $http_code"
+          echo "$body" | jq . 2>/dev/null || echo "$body"
+
+          if [ "$http_code" -ne 200 ]; then
+            echo "::error::News LLM returned HTTP $http_code"
+            exit 1
+          fi
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## News LLM Enrichment Result" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Triggered at: $(date -u '+%Y-%m-%d %H:%M UTC')" >> $GITHUB_STEP_SUMMARY
+          echo "Limit: ${LIMIT}" >> $GITHUB_STEP_SUMMARY

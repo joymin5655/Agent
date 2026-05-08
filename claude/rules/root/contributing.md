@@ -10,7 +10,7 @@
 
 ## Before Committing
 
-1. `npm run build` passes (AirLens-web)
+1. `npm run build` passes (apps/web)
 2. `npm run lint` passes
 3. No `console.log` in production code
 4. i18n keys added for all 6 languages (en/ko/ja/zh/es/fr)

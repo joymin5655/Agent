@@ -1,0 +1,33 @@
+name: Embed Worker Cron
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+    inputs:
+      batch_size:
+        description: 'Embedding jobs to claim per invocation'
+        required: false
+        default: '25'
+
+jobs:
+  drain-embedding-jobs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Call embed-worker
+        env:
+          SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          INGEST_API_KEY: ${{ secrets.INGEST_API_KEY }}
+          BATCH_SIZE: ${{ github.event.inputs.batch_size || '25' }}
+        run: |
+          case "${BATCH_SIZE}" in
+            ''|*[!0-9]*) BATCH_SIZE=25 ;;
+          esac
+          curl --fail-with-body --show-error --silent \
+            --request POST \
+            "${SUPABASE_URL}/functions/v1/embed-worker" \
+            --header "Authorization: Bearer ${INGEST_API_KEY}" \
+            --header "Content-Type: application/json" \
+            --data "{\"batch_size\":${BATCH_SIZE},\"recover_stale\":true}"

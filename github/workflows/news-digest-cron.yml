@@ -1,0 +1,41 @@
+name: News Digest (weekly)
+
+# Sends the AirLens weekly news digest to active subscribers via the
+# news-digest Edge Function. Saturday 09:00 UTC = Saturday morning in
+# US Pacific / KST evening — readable both sides of the dateline.
+
+on:
+  schedule:
+    - cron: '0 9 * * 6'  # 매주 토 09:00 UTC
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: 'Max subscribers to process this run (default 500)'
+        required: false
+        default: '500'
+        type: string
+
+defaults:
+  run:
+    working-directory: apps/web
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Trigger news-digest Edge Function
+        env:
+          SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          INGEST_API_KEY: ${{ secrets.INGEST_API_KEY }}
+          LIMIT: ${{ inputs.limit || '500' }}
+        run: |
+          curl --fail --silent --show-error \
+            -X POST "$SUPABASE_URL/functions/v1/news-digest?limit=$LIMIT" \
+            -H "Authorization: Bearer $INGEST_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{}'
