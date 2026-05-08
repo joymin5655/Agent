@@ -167,11 +167,11 @@ Analyze the provided code (diff or file list) for security vulnerabilities. Use 
 
 ```bash
 # 사용자 A의 JWT로 사용자 B의 captures 조회 시도
-# USER_A_JWT: 로컬 인증으로 획득한 토큰
+# placeholder-user-a-jwt: 로컬 인증으로 획득한 테스트 토큰
 # USER_B_ID: 다른 사용자의 UUID
 curl -s -o /dev/null -w "%{http_code}" \
   "http://localhost:54321/rest/v1/captures?user_id=eq.USER_B_ID&select=*" \
-  -H "Authorization: Bearer USER_A_JWT" \
+  -H "Authorization: Bearer placeholder-user-a-jwt" \
   -H "apikey: ANON_KEY" --max-time 3
 # 예상: 200이지만 빈 배열 [] (RLS가 필터링) 또는 403
 # 위험: 200 + 다른 사용자 데이터 반환 → IDOR 취약점 (높은 심각도)
@@ -179,7 +179,7 @@ curl -s -o /dev/null -w "%{http_code}" \
 # 프로필 접근 시도
 curl -s -o /dev/null -w "%{http_code}" \
   "http://localhost:54321/rest/v1/profiles?id=eq.USER_B_ID&select=*" \
-  -H "Authorization: Bearer USER_A_JWT" \
+  -H "Authorization: Bearer placeholder-user-a-jwt" \
   -H "apikey: ANON_KEY" --max-time 3
 # 예상: 200 + 빈 배열 [] (RLS) 또는 403
 # 위험: 타인의 email/plan 정보 반환 → IDOR 취약점 (높은 심각도)
@@ -193,7 +193,7 @@ check-usage RPC에 조작된 action_type 값을 전송하여 비정상 입력이
 curl -s -w "
 %{http_code}" -X POST \
   "http://localhost:54321/functions/v1/check-usage" \
-  -H "Authorization: Bearer USER_JWT" \
+  -H "Authorization: Bearer placeholder-user-jwt" \
   -H "Content-Type: application/json" \
   -d '{"action_type": "admin_override_unlimited"}' --max-time 3
 # 예상: 400 (잘못된 action_type) 또는 무시 (기본 동작으로 처리)
@@ -203,7 +203,7 @@ curl -s -w "
 curl -s -w "
 %{http_code}" -X POST \
   "http://localhost:54321/functions/v1/check-usage" \
-  -H "Authorization: Bearer USER_JWT" \
+  -H "Authorization: Bearer placeholder-user-jwt" \
   -H "Content-Type: application/json" \
   -d '{"action_type": "predict''''; DROP TABLE usage_logs; --"}' --max-time 3
 # 예상: 400 또는 500 (파라미터 검증 실패)
@@ -252,7 +252,7 @@ curl -s -w "
 # 인증된 사용자가 다른 사용자의 프로필 UPDATE 시도
 curl -s -o /dev/null -w "%{http_code}" -X PATCH \
   "http://localhost:54321/rest/v1/profiles?id=eq.OTHER_USER_ID" \
-  -H "Authorization: Bearer USER_A_JWT" \
+  -H "Authorization: Bearer placeholder-user-a-jwt" \
   -H "apikey: ANON_KEY" \
   -H "Content-Type: application/json" \
   -d '{"plan": "researcher"}' --max-time 3

@@ -1,0 +1,40 @@
+name: News Aggregator (6h)
+
+on:
+  schedule:
+    - cron: '15 0,6,12,18 * * *'  # 매 6시간 (00:15, 06:15, 12:15, 18:15 UTC)
+  workflow_dispatch:                # 수동 실행 가능
+
+jobs:
+  collect-news:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Trigger news-aggregator Edge Function
+        env:
+          SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          INGEST_API_KEY: ${{ secrets.INGEST_API_KEY }}
+        run: |
+          response=$(curl -s -w "\n%{http_code}" \
+            -X POST "${SUPABASE_URL}/functions/v1/news-aggregator" \
+            -H "Authorization: Bearer ${INGEST_API_KEY}" \
+            -H "Content-Type: application/json")
+
+          http_code=$(echo "$response" | tail -1)
+          body=$(echo "$response" | sed '$d')
+
+          echo "HTTP Status: $http_code"
+          echo "$body" | jq . 2>/dev/null || echo "$body"
+
+          if [ "$http_code" -ne 200 ]; then
+            echo "::error::News aggregator returned HTTP $http_code"
+            exit 1
+          fi
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## News Aggregator Result" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Triggered at: $(date -u '+%Y-%m-%d %H:%M UTC')" >> $GITHUB_STEP_SUMMARY

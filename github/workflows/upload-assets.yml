@@ -1,0 +1,92 @@
+name: Upload Assets to R2
+
+on:
+  workflow_dispatch:
+    inputs:
+      asset_type:
+        description: 'Asset type to upload'
+        required: true
+        default: 'models'
+        type: choice
+        options:
+          - models
+          - textures
+          - all
+
+# Cancel in-progress runs for the same ref
+concurrency:
+  group: upload-assets-${{ github.ref }}
+  cancel-in-progress: true
+
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Install wrangler
+        run: npm install -g wrangler@3
+
+      - name: Upload models to R2
+        if: inputs.asset_type == 'models' || inputs.asset_type == 'all'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          echo "Uploading ONNX models to R2..."
+
+          for file in public/models/*.onnx; do
+            if [ -f "$file" ]; then
+              filename=$(basename "$file")
+              echo "  Uploading $filename ($(du -h "$file" | cut -f1))..."
+              wrangler r2 object put "airlens-assets/models/$filename" \
+                --file "$file" \
+                --content-type "application/octet-stream"
+            fi
+          done
+
+          echo "Models upload complete."
+
+      - name: Upload textures to R2
+        if: inputs.asset_type == 'textures' || inputs.asset_type == 'all'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          echo "Uploading textures to R2..."
+
+          for file in public/textures/*.{webp,ktx2,jpg,png}; do
+            if [ -f "$file" ]; then
+              filename=$(basename "$file")
+              # Determine content type
+              case "${file##*.}" in
+                webp) ct="image/webp" ;;
+                ktx2) ct="image/ktx2" ;;
+                jpg)  ct="image/jpeg" ;;
+                png)  ct="image/png" ;;
+                *)    ct="application/octet-stream" ;;
+              esac
+              echo "  Uploading $filename..."
+              wrangler r2 object put "airlens-assets/textures/$filename" \
+                --file "$file" \
+                --content-type "$ct"
+            fi
+          done
+
+          echo "Textures upload complete."
+
+      - name: Summary
+        run: |
+          echo "## R2 Asset Upload Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Bucket:** airlens-assets" >> $GITHUB_STEP_SUMMARY
+          echo "- **Type:** ${{ inputs.asset_type }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Setup Notes" >> $GITHUB_STEP_SUMMARY
+          echo "1. Create R2 bucket \`airlens-assets\` in Cloudflare Dashboard" >> $GITHUB_STEP_SUMMARY
+          echo "2. Enable public access or create custom domain" >> $GITHUB_STEP_SUMMARY
+          echo "3. Set \`VITE_ASSET_CDN_URL\` in GitHub Secrets to the R2 public URL" >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,112 @@
+name: Visual Regression
+
+# Phase 5 (2026-05-01): WEB_PRD §11 Open Decision #14 closed default —
+# tests/visual/ 디렉토리 baseline 검증.
+# - PR 라벨 [visual-update] 시: baseline 갱신 artifact 업로드
+# - PR 라벨 없음: baseline 비교만 (snapshot diff fail 시 PR check fail)
+# - 보안 원칙: pull_request에서 PR 코드를 실행하는 job은 read-only token만 사용한다.
+
+on:
+  pull_request:
+    paths:
+      - 'apps/web/src/**'
+      - 'apps/web/public/**'
+      - 'apps/web/tests/visual/**'
+      - 'apps/web/playwright.visual.config.ts'
+  workflow_dispatch:
+    inputs:
+      update_baseline:
+        description: 'Update baseline snapshots'
+        required: false
+        default: 'false'
+
+permissions:
+  contents: read
+
+jobs:
+  visual:
+    name: Visual baseline
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6.4.0
+        with:
+          node-version: 22
+          cache: 'npm'
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install dependencies
+        working-directory: apps/web
+        run: npm ci
+
+      - name: Install Playwright browsers
+        working-directory: apps/web
+        run: npx playwright install --with-deps chromium
+
+      - name: Determine update flag
+        id: flags
+        run: |
+          # Bootstrap: tests/visual/__snapshots__/ does not yet exist (first run).
+          # Fall back to update mode so PRs are not blocked on missing baselines.
+          if [[ ! -d apps/web/tests/visual/__snapshots__ ]]; then
+            echo "update=true" >> "$GITHUB_OUTPUT"
+            echo "reason=bootstrap" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ github.event.inputs.update_baseline }}" == "true" ]]; then
+            echo "update=true" >> "$GITHUB_OUTPUT"
+            echo "reason=manual" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ github.event_name }}" == "pull_request" ]] && [[ "${{ contains(github.event.pull_request.labels.*.name, 'visual-update') }}" == "true" ]]; then
+            echo "update=true" >> "$GITHUB_OUTPUT"
+            echo "reason=label-artifact" >> "$GITHUB_OUTPUT"
+          else
+            echo "update=false" >> "$GITHUB_OUTPUT"
+            echo "reason=compare" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run visual tests
+        working-directory: apps/web
+        env:
+          PLAYWRIGHT_VISUAL: '1'
+          VITE_SUPABASE_URL: 'https://placeholder.supabase.co'
+          VITE_SUPABASE_ANON_KEY: 'placeholder-anon-key'
+        run: |
+          if [[ "${{ steps.flags.outputs.update }}" == "true" ]]; then
+            npx playwright test --config=playwright.visual.config.ts --update-snapshots
+          else
+            npx playwright test --config=playwright.visual.config.ts
+          fi
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@de65e23aa2b7e23d713bb51fbfcb6d502f8667d8  # v4.4.3
+        with:
+          name: playwright-visual-report
+          path: |
+            apps/web/playwright-report
+            apps/web/test-results
+          retention-days: 14
+
+      - name: Upload baseline updates as artifact
+        if: steps.flags.outputs.update == 'true'
+        uses: actions/upload-artifact@de65e23aa2b7e23d713bb51fbfcb6d502f8667d8  # v4.4.3
+        with:
+          name: visual-baseline-updates
+          path: apps/web/tests/visual
+          retention-days: 14
+
+      - name: Explain baseline artifact
+        if: steps.flags.outputs.update == 'true'
+        run: |
+          if [[ -n "$(git status --porcelain apps/web/tests/visual)" ]]; then
+            echo "Baseline updates were generated and uploaded as the visual-baseline-updates artifact."
+          else
+            echo "Update mode ran but produced no baseline changes."
+          fi
