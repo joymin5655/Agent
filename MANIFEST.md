@@ -1,28 +1,38 @@
 # Agent Repository Manifest
 
-Last updated: 2026-04-30
+Last updated: 2026-05-08
 
 ## Included Asset Groups
 
-- Claude root registry: `.claude/agents/master-registry.{json,md}`
-- Web agents: `AirLens-web/.claude/agents/*`
-- Models agents: `AirLens-models/.claude/agents/*`
-- Claude rules and commands from root, web, and models scopes
-- AirLens Codex skills under `AirLens-web/.codex/skills/*`
-- Obsidian operations docs: `AGENT_HARNESS.md`, `AGENT_REGISTRY.md`, `master-registry.json`
-- Obsidian concepts docs for agent dispatch, runtime separation, collaboration, and harness architecture
+- Root Claude assets from AirLens `.claude/`: `claude/README.md`, `claude/agents/root/*`, `claude/rules/root/**`, and `claude/settings/root/settings.json`.
+- Existing scoped Claude mirrors: `claude/agents/web/*`, `claude/agents/models/*`, `claude/rules/web/*`, `claude/rules/models/*`, and `claude/commands/**`.
+- AirLens Codex skills: 13 directories under `codex/skills/`, including `airlens-design-director/references/layout-composition-doctrine.md`.
+- GitHub workflow mirror: all AirLens `.github/workflows/*.yml` files under `github/workflows/`; security-sensitive workflows use `codex/github-actions-pr-secret-hardening`.
+- Workflow context: `github/PULL_REQUEST_TEMPLATE.md`, `github/hooks/workmux-status/hooks.json`, and `gitleaks.toml`.
+- Hook runtime mirror: `scripts/hooks/**`, including routing fixtures and hook tests.
+- Multi-agent infra: `scripts/infra/agent-session.sh`, `codex-session.sh`, `gemini-session.sh`, `worktree-link-deps.sh`, `session_store.py`, `session-indexer.py`, `safe-stash.sh`, and `TIER-2-COORD-CONTRACT.md`.
+- CI maintenance guard: `scripts/maintenance/check-actions-pr-token-safety.py`.
+- Agent documentation: `docs/operations/**`, `docs/concepts/**`, and `docs/security-architecture/**`.
 
 ## Exclusion Policy
 
-- No secrets or credential inventories
-- No hook logs or session JSONL
-- No application source code unless it is part of an agent/rule/skill definition
-- No generated build outputs or dependency folders
+- No secret values, credential inventories, private keys, `.env*`, or `secrets/` directories.
+- No `.claude/locks/`, `.claude/logs/`, session JSONL, scheduled-task locks, cron output, or runtime state.
+- No dependency folders, build outputs, app source mirrors, generated public data, or external reference corpora.
+- No local launchd plists or machine-specific global config backup/restore scripts.
+- No Codex `.system/` skills, plugin caches, marketplace caches, or user-local runtime cache.
 
-## Verification Performed Before Import
+## Verification Checklist
 
 ```bash
-PYTHONPYCACHEPREFIX=/tmp python3 scripts/hooks/test_supervisor_routing.py
-PYTHONPYCACHEPREFIX=/tmp python3 scripts/sync_agent_registry.py --check
-node scripts/harness-audit.js repo --format text --root "$PWD"
+gitleaks detect --no-git --source . --config gitleaks.toml
+python3 scripts/maintenance/check-actions-pr-token-safety.py
+python3 scripts/hooks/test_supervisor_routing.py
+python3 scripts/hooks/test_hooks_dynamic_root.py
+python3 - <<'PY'
+import pathlib, yaml
+for path in sorted(pathlib.Path("github/workflows").glob("*.yml")):
+    yaml.safe_load(path.read_text())
+print("workflow yaml ok")
+PY
 ```

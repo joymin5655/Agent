@@ -1,0 +1,88 @@
+name: Storage and Cost Monitoring
+
+on:
+  schedule:
+    - cron: '0 6 * * *'  # 매일 06:00 UTC (KST 15:00)
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: apps/web
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install httpx
+
+      - name: Check storage usage
+        id: check
+        env:
+          SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: python scripts/check_storage_usage.py
+
+      - name: Summary
+        if: always()
+        run: |
+          if [ -f "monitoring_report.json" ]; then
+            echo "## Storage Monitoring Report" >> "$GITHUB_STEP_SUMMARY"
+            python3 -c "
+          import json
+          with open('monitoring_report.json') as f:
+              r = json.load(f)
+          print('| Metric | Current | Limit | Usage |')
+          print('|--------|---------|-------|-------|')
+          for m in r.get('metrics', []):
+              print(f'| {m[\"name\"]} | {m[\"current\"]} | {m[\"limit\"]} | {m[\"percent\"]}% |')
+          alerts = r.get('alerts', [])
+          if alerts:
+              print()
+              print('### Alerts')
+              for a in alerts:
+                  print(f'- **{a[\"metric\"]}**: {a[\"message\"]}')
+          " >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Auto-trigger DB maintenance on threshold breach
+        if: steps.check.outputs.alert_needed == 'true'
+        run: gh workflow run "DB Maintenance (Data Retention)" --repo joymin5655/AirLens
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Alert on threshold breach
+        if: steps.check.outputs.alert_needed == 'true'
+        uses: actions/github-script@d746ffe35508b1917358783b479e04febd2b8f71  # v9.0.0
+        with:
+          script: |
+            const fs = require('fs');
+            const report = JSON.parse(fs.readFileSync('apps/web/monitoring_report.json', 'utf8'));
+            const alerts = report.alerts || [];
+            const body = [
+              '## Storage Alert (auto-cleanup triggered)',
+              '',
+              ...alerts.map(a => `- **${a.metric}**: ${a.current} / ${a.limit} (${a.percent}%)`),
+              '',
+              'DB Maintenance workflow has been automatically triggered.',
+              '',
+              `Time: ${new Date().toISOString()}`
+            ].join('\n');
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `[Auto] Storage alert — cleanup triggered`,
+              body,
+              labels: ['monitoring', 'data-pipeline']
+            });

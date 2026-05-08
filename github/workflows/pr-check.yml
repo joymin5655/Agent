@@ -1,0 +1,186 @@
+name: PR Check
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'apps/web/**'
+      - 'apps/app/**'
+      - 'models/**'
+      - 'packages/**'
+      - 'scripts/**'
+      - '.github/workflows/**'
+
+permissions:
+  contents: read
+
+jobs:
+  lint-and-typecheck:
+    name: Lint & Type Check
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4  # pin to SHA when auditing supply chain
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4  # pin to SHA when auditing supply chain
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm run lint
+      - run: npm run i18n:check
+
+  build:
+    name: Build
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4  # pin to SHA when auditing supply chain
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4  # pin to SHA when auditing supply chain
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - run: npm ci
+      - run: npm run build
+        env:
+          VITE_SUPABASE_URL: https://placeholder.supabase.co
+          VITE_SUPABASE_ANON_KEY: placeholder-anon-key
+
+  test-coverage:
+    name: Test & Coverage
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - run: npm ci
+      - name: Install Playwright Chromium (for vitest browser project)
+        run: npx playwright install --with-deps chromium
+      - name: Run tests with coverage
+        run: npm run test:coverage
+        env:
+          VITE_SUPABASE_URL: https://placeholder.supabase.co
+          VITE_SUPABASE_ANON_KEY: placeholder-anon-key
+          VITE_POLAR_PRODUCT_ID_EXPLORER: placeholder
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-html
+          path: apps/web/coverage/
+          retention-days: 14
+
+  python-lint:
+    name: Python Lint
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: models
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install ruff
+      - run: ruff check .
+
+  fk-precheck:
+    name: FK type pre-flight (migrations)
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Detect changed migration files
+        id: changed
+        run: |
+          git fetch origin "${{ github.base_ref }}" --depth=1 || true
+          CHANGED=$(git diff --name-only "origin/${{ github.base_ref }}" HEAD \
+            -- 'apps/web/supabase/migrations/*.sql' | tr '\n' ' ')
+          echo "files=${CHANGED}" >> "$GITHUB_OUTPUT"
+          echo "Changed migrations: ${CHANGED:-<none>}"
+      - name: Run pytest unit suite
+        if: steps.changed.outputs.files != ''
+        run: |
+          python3 -m pip install pytest
+          python3 -m pytest scripts/agents/test_fk_type_precheck.py -v
+      - name: Run FK pre-flight on changed migrations
+        if: steps.changed.outputs.files != ''
+        run: |
+          python3 scripts/agents/fk_type_precheck.py \
+            --ci-mode \
+            --files "${{ steps.changed.outputs.files }}"
+
+  mobile-app-checks:
+    name: apps/app — tsc + eslint + jest + i18n + prebuild
+    # M1-E (sparkling-meerkat) — AirLens 4-step CI for the mobile app.
+    # Runs only when apps/app/**, packages/**, or this workflow itself changed.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/app
+    env:
+      EXPO_NO_TELEMETRY: '1'
+    steps:
+      - uses: actions/checkout@v4  # pin to SHA when auditing supply chain
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: i18n parity (no install needed)
+        run: node scripts/i18n-parity.mjs
+      - name: Install dependencies (workspace root)
+        working-directory: .
+        run: npm ci --legacy-peer-deps
+      - name: TypeScript
+        run: npx tsc --noEmit
+      - name: ESLint
+        # Hard-required + strict-warnings gate. PR #158 cleared the 28-error
+        # baseline; PR #159 made this step hard-required; the warnings-cleanup
+        # PR cleared the residual 8 warnings (array-type / import/first /
+        # no-unused-vars). `--max-warnings=0` blocks any new warning so the
+        # mobile-app surface stays clean.
+        run: npx eslint . --ext .ts,.tsx --max-warnings=0
+      - name: Jest (unit + component)
+        # `npx jest` resolves via root node_modules/.bin/jest which is the
+        # real jest binary after workspace root install. jest-expo is removed
+        # from devDeps (config does not use it; it caused require conflicts).
+        run: npx jest --ci --passWithNoTests
+      - name: Expo prebuild sanity
+        # 2026-05-01: hard-required after icon/splash/adaptive-icon PNG assets
+        # land via assets/_gen.py (PR ref). Hardens mobile-app-checks 4-step gate
+        # (tsc / eslint / jest / prebuild all strict).
+        run: npx expo prebuild --no-install --clean

@@ -1,0 +1,84 @@
+name: FIRMS Fire Hotspot Collection (6h)
+
+on:
+  schedule:
+    - cron: '15 */6 * * *'
+  workflow_dispatch:
+
+jobs:
+  collect-firms:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+
+    steps:
+      - name: Collect FIRMS fire data
+        env:
+          NASA_FIRMS_MAP_KEY: ${{ secrets.NASA_FIRMS_MAP_KEY }}
+        run: |
+          cat > collect_firms.py << 'SCRIPT'
+          import csv, io, json, os, sys, urllib.request
+          from datetime import datetime, timezone
+
+          MAP_KEY = os.environ.get("NASA_FIRMS_MAP_KEY", "")
+          if not MAP_KEY:
+              print("NASA_FIRMS_MAP_KEY not set", file=sys.stderr)
+              sys.exit(1)
+
+          SOURCE = "VIIRS_SNPP_NRT"
+          url = f"https://firms.modaps.eosdis.nasa.gov/api/area/csv/{MAP_KEY}/{SOURCE}/world/1"
+          print(f"Fetching FIRMS: {SOURCE}, area=world, days=1...")
+
+          try:
+              text = urllib.request.urlopen(url, timeout=60).read().decode("utf-8")
+          except Exception as e:
+              print(f"FIRMS API failed: {e}", file=sys.stderr)
+              sys.exit(1)
+
+          reader = csv.DictReader(io.StringIO(text))
+          fires = []
+          for row in reader:
+              try:
+                  lat = round(float(row.get("latitude", "")), 4)
+                  lon = round(float(row.get("longitude", "")), 4)
+              except (ValueError, TypeError):
+                  continue
+              frp_raw = row.get("frp", "")
+              bright_raw = row.get("bright_ti4") or row.get("brightness", "")
+              fires.append({
+                  "lat": lat, "lon": lon,
+                  "brightness": round(float(bright_raw), 2) if bright_raw else None,
+                  "frp": round(float(frp_raw), 2) if frp_raw else None,
+                  "date": row.get("acq_date"),
+                  "confidence": row.get("confidence"),
+              })
+
+          result = {
+              "refTime": datetime.now(timezone.utc).isoformat(),
+              "source": SOURCE, "area": "world", "dayRange": 1,
+              "count": len(fires), "fires": fires,
+          }
+          with open("active-fires.json", "w") as f:
+              json.dump(result, f, separators=(",", ":"))
+          print(f"Done: {len(fires)} fire hotspots")
+          SCRIPT
+          python3 collect_firms.py
+
+      - name: Upload to Supabase Storage
+        run: |
+          if [ -f active-fires.json ]; then
+            curl -s -X POST \
+              "${SUPABASE_URL}/storage/v1/object/wind-data/active-fires.json" \
+              -H "Authorization: Bearer ${SUPABASE_SERVICE_KEY}" \
+              -H "Content-Type: application/json" \
+              -H "x-upsert: true" \
+              --data-binary @active-fires.json \
+              -w "  active-fires: HTTP %{http_code}\n" -o /dev/null
+          fi
+
+      - name: Verify
+        run: |
+          curl -s -o /dev/null -w "  active-fires: HTTP %{http_code}\n" \
+            "${SUPABASE_URL}/storage/v1/object/public/wind-data/active-fires.json"

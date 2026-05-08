@@ -1,8 +1,22 @@
-# AirLens Agent Harness (Supervisor v6, 2026-04-29)
+# AirLens Agent Harness (Supervisor v6, 2026-05-08 Mirror)
 
 > **상태**: 운영 정본. Supervisor v6 기준의 control-plane, routing eval, bounded handoff, worktree orchestration 정책을 통합 관리한다.
 > **분리 근거**: 정본 9개 PRD/Architecture는 product-focused로 가볍게 유지하고, **개발 process tooling·에이전트 시스템은 이 문서에서 통합 정리**.
 > **자매**: `airlens-platform-architecture-2026-04-28.md` §15 (Harness Engineering 4기둥 — 정본은 framework만, 운영 상세는 여기), `airlens-platform-prd-2026-04-28.md` §1 AI Safety 정책 (정본은 원칙만, 구현은 여기).
+
+## 2026-05-08 Agent.git Mirror Scope
+
+`Agent.git` mirrors the executable harness surface for review and backup:
+
+- Root Claude policy and registry files under `claude/agents/root/**`, `claude/rules/root/**`, and `claude/settings/root/settings.json`.
+- Hook runtime scripts under `scripts/hooks/**`.
+- Multi-agent worktree/session helpers under `scripts/infra/**`.
+- Inactive GitHub Actions copies under `github/workflows/**`, with PR-token hardening from `codex/github-actions-pr-secret-hardening`.
+- Codex skill instructions under `codex/skills/**`.
+
+The mirror excludes runtime state and local configuration: `.claude/locks/**`, `.claude/logs/**`, `.claude/settings.local.json`, scheduled task locks, `.env*`, dependency folders, local launchd/cron output, generated app data, secret values, and user plugin/system caches.
+
+Main merges remain human-serialized. Agents push branches and open PRs only.
 
 ## Context
 
