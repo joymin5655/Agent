@@ -41,6 +41,26 @@ fi
 
 now_iso() { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
 
+# Walk the parent process chain to find the claude binary's PID. This gives a
+# stable identifier per-claude-session so register/heartbeat hooks invoked
+# under the same claude process converge on one lock entry. Returns 1 if no
+# claude ancestor found.
+claude_pid_walk() {
+  local pid="${PPID:-$$}"
+  local guard=0 comm ppid
+  while [[ "$pid" -gt 1 && "$guard" -lt 16 ]]; do
+    comm="$(ps -p "$pid" -o comm= 2>/dev/null | head -1)"
+    case "$comm" in
+      *claude*) echo "$pid"; return 0 ;;
+    esac
+    ppid="$(ps -p "$pid" -o ppid= 2>/dev/null | tr -d ' ')"
+    [[ -z "$ppid" || "$ppid" == "$pid" ]] && break
+    pid="$ppid"
+    guard=$((guard + 1))
+  done
+  return 1
+}
+
 iso_minus_minutes() {
   local mins="$1"
   date -u -v-"${mins}"M +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null \
@@ -303,36 +323,63 @@ cwd_session_meta() {
   return 1
 }
 
+# Set globals AGENT/SESSION_ID/WORKTREE for a main-tree session. Returns 0 if
+# cwd is the canonical repo root (visibility-only fallback for R1.1 read-only
+# shared-tree work). Otherwise 1. Stable session_id derived from the claude
+# binary PID so SessionStart/Heartbeat/Stop hooks converge on one entry.
+cwd_main_meta() {
+  local cwd; cwd="$(pwd -P)"
+  [[ "$cwd" == "$REPO_ROOT" ]] || return 1
+  AGENT="${AGENT:-claude}"
+  WORKTREE="$REPO_ROOT"
+  local cpid; cpid="$(claude_pid_walk 2>/dev/null || true)"
+  [[ -z "$cpid" ]] && cpid="$$"
+  SESSION_ID="${AGENT_SESSION_ID_ENV:-${AGENT}-main-${cpid}}"
+  SLUG="main"
+  return 0
+}
+
 cmd_register_cwd() {
-  if ! cwd_session_meta; then return 0; fi
+  local cwd_type="worktree"
+  if cwd_session_meta; then
+    cwd_type="worktree"
+  elif cwd_main_meta; then
+    cwd_type="main"
+  else
+    return 0
+  fi
   init_lock_file
   local existing
   existing=$(jq -r --arg sid "$SESSION_ID" '.sessions[]? | select(.session_id == $sid) | .session_id' "$LOCK_FILE" 2>/dev/null || true)
   local branch
   branch=$(git -C "$WORKTREE" branch --show-current 2>/dev/null || echo "${AGENT}/${SLUG}")
   local ts; ts="$(now_iso)"
+  local pid_val=0
+  if [[ "$cwd_type" == "main" ]]; then
+    pid_val="$(claude_pid_walk 2>/dev/null || echo 0)"
+  fi
   if [[ -n "$existing" ]]; then
     update_lock --arg sid "$SESSION_ID" --arg ts "$ts" \
       '.sessions |= map(if .session_id == $sid then .heartbeat_at = $ts else . end)'
   else
     local entry
     entry=$(jq -n \
-      --arg sid "$SESSION_ID" --arg ag "$AGENT" --argjson pid 0 \
+      --arg sid "$SESSION_ID" --arg ag "$AGENT" --argjson pid "$pid_val" \
       --arg wt "$WORKTREE" --arg br "$branch" --arg ts "$ts" \
-      --arg sm "${TASK_SUMMARY:-hook-managed}" \
-      '{session_id:$sid, agent:$ag, pid:$pid, worktree:$wt, branch:$br, started_at:$ts, heartbeat_at:$ts, task_summary:$sm}')
+      --arg ct "$cwd_type" --arg sm "${TASK_SUMMARY:-hook-managed}" \
+      '{session_id:$sid, agent:$ag, pid:$pid, worktree:$wt, branch:$br, started_at:$ts, heartbeat_at:$ts, cwd_type:$ct, task_summary:$sm}')
     update_lock --argjson e "$entry" '.sessions += [$e]'
   fi
 }
 
 cmd_heartbeat_cwd() {
-  if ! cwd_session_meta; then return 0; fi
+  if ! cwd_session_meta && ! cwd_main_meta; then return 0; fi
   update_lock --arg sid "$SESSION_ID" --arg ts "$(now_iso)" \
     '.sessions |= map(if .session_id == $sid then .heartbeat_at = $ts else . end)'
 }
 
 cmd_stop_cwd() {
-  if ! cwd_session_meta; then return 0; fi
+  if ! cwd_session_meta && ! cwd_main_meta; then return 0; fi
   update_lock --arg sid "$SESSION_ID" '.sessions |= map(select(.session_id != $sid))'
 }
 
@@ -419,7 +466,9 @@ USAGE
 # --- Tier 2 commands (delegate to session_store.py for typed schema + jsonl) ---
 
 # Resolve self session_id: prefer cwd-derived (claude-wt-<slug>); fall back to
-# AGENT_SESSION_ID env; else error. Lock file is the central one.
+# AGENT_SESSION_ID env; then cwd_main_meta (R11.1 main-tree visibility — same
+# id used by register-cwd so broadcast events bind to the registered entry);
+# else error. Lock file is the central one.
 resolve_self_session_id() {
   if cwd_session_meta 2>/dev/null; then
     echo "$SESSION_ID"
@@ -427,6 +476,10 @@ resolve_self_session_id() {
   fi
   if [[ -n "${AGENT_SESSION_ID:-}" ]]; then
     echo "$AGENT_SESSION_ID"
+    return 0
+  fi
+  if cwd_main_meta 2>/dev/null; then
+    echo "$SESSION_ID"
     return 0
   fi
   return 1

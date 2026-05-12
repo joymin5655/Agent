@@ -56,6 +56,28 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _omc_tmux_sessions() -> list[str]:
+    """Return tmux session names with the OMC team prefix (`omc-team-*`).
+    Used by dashboard to surface oh-my-claudecode tmux workers spawned via
+    `omc team N:claude|codex|gemini "task"`. Visibility-only — does not touch
+    OMC state. Silent fallback to [] when tmux missing or no server running.
+    Prefix source: Skills/oh-my-claudecode/bridge/team-bridge.cjs (TMUX_SESSION_PREFIX)."""
+    try:
+        out = subprocess.run(
+            ["tmux", "ls", "-F", "#{session_name}"],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            text=True, timeout=2,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return []
+    if out.returncode != 0:
+        return []
+    return [
+        name for name in (out.stdout or "").splitlines()
+        if name.startswith("omc-team-")
+    ]
+
+
 class SessionStore:
     """JSON + jsonl backend. Future SQLite/Postgres = swap this class only."""
 
@@ -217,13 +239,16 @@ class SessionStore:
         }
 
     def dashboard(self) -> dict[str, Any]:
-        """Active sessions + recent feed across all sessions (full JSON)."""
+        """Active sessions + recent feed across all sessions (full JSON).
+        omc_tmux_sessions surfaces oh-my-claudecode tmux workers (visibility
+        only; AirLens does not own those processes)."""
         return {
             "schema_version": SCHEMA_VERSION,
             "now": _now_iso(),
             "sessions": self.list_active(),
             "shared_resource_locks": self._read().get("shared_resource_locks", {}),
             "recent_events": self.tail_feed(n=20),
+            "omc_tmux_sessions": _omc_tmux_sessions(),
         }
 
     def dashboard_summary(self) -> str:
@@ -309,7 +334,19 @@ class SessionStore:
         else:
             l5 = "uptime: no active sessions"
 
-        return "\n".join([l1, l2, l3, l4, l5])
+        lines = [l1, l2, l3, l4, l5]
+
+        # Line 6 (optional) — OMC tmux workers (oh-my-claudecode `omc team`).
+        # Emitted only when at least one matching tmux session is present so
+        # the summary stays 5 lines for the common case (no OMC).
+        omc = _omc_tmux_sessions()
+        if omc:
+            shown = ", ".join(omc[:3])
+            if len(omc) > 3:
+                shown += f", +{len(omc) - 3} more"
+            lines.append(f"omc-tmux: {len(omc)} workers ({shown})")
+
+        return "\n".join(lines)
 
 
 # ---------- handoff event helper (Swarm Result(...) shape) ----------

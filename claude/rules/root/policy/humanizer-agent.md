@@ -14,7 +14,7 @@
 
 | Agent | 카테고리 | 도입 사유 |
 |---|---|---|
-| `copy-humanizer` | productivity (영어 카피) | notion-prd-sync 화이트리스트 4 PRD (Platform / Web / App / Models) + landing/News·Blog 페이지 영어 카피의 AI tell 패턴 검출/수정. 현재 자동 도구 부재 |
+| `copy-humanizer` | productivity (영어 카피 + 고급 교정) | notion-prd-sync 화이트리스트 4 PRD + landing/News·Blog 페이지 영어 카피의 AI tell 패턴 검출/수정. **추가 도입 (2026-05-08):** 6대 고급 프롬프트 기술(보이스 클로닝, 첫 줄 훅, 이탈 예측 등)을 통한 능동적 에디터 역할 추가. |
 
 ### 제외
 

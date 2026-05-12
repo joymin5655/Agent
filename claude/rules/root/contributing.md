@@ -6,7 +6,8 @@
 - Python: PEP 8, type hints, ruff for linting
 - All user-facing text uses i18n keys (`useTranslation()`) — no hardcoded strings
 - Constants in config files, not inline
-- Functions under 50 lines, files under 300 lines
+- Functions under 50 lines (soft guideline)
+- **300-line ceiling applies to CLAUDE.md / context docs ONLY** — code files split by complexity boundaries (responsibility, abstraction layer, domain), not line count. A 600-line component with one clear responsibility beats two 300-line components with leaky boundaries.
 
 ## Before Committing
 
