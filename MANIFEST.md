@@ -6,6 +6,8 @@ Last updated: 2026-05-12
 
 - **Global user Claude setup** (`~/.claude/`): `claude/global/CLAUDE.md`, `claude/global/karpathy.md`, `claude/global/RTK.md`, with `claude/global/README.md` documenting the 8-layer inheritance and Karpathy adoption pattern.
 - **Project root CLAUDE.md template** (`claude/templates/CLAUDE.md.airlens-root`): the AirLens root `CLAUDE.md` after 2026-05-12 A+ diet (125 lines), kept as a reference for cross-referencing Karpathy globals from a project root.
+- **Bootstrap script** (`setup.sh`): idempotent installer. `bash ~/agent/setup.sh` installs `~/.claude/` Karpathy globals; `--project` flag additionally scaffolds `CLAUDE.md`, `.claude/rules/`, `gitleaks.toml`, and `.gitignore` into the current project. Never overwrites existing files without `--force`.
+- **Claude slash command** (`claude/commands/project-init.md`): `/project-init` template that wraps `setup.sh` with `AskUserQuestion` scope confirmation and post-install verification. Copy to `~/.claude/commands/` to enable.
 - Root Claude assets from AirLens `.claude/`: `claude/README.md`, `claude/agents/root/*`, `claude/rules/root/**`, and `claude/settings/root/settings.json`.
 - Existing scoped Claude mirrors: `claude/agents/web/*`, `claude/agents/models/*`, `claude/rules/web/*`, `claude/rules/models/*`, and `claude/commands/**`.
 - AirLens Codex skills: 13 directories under `codex/skills/`, including `airlens-design-director/references/layout-composition-doctrine.md`.

@@ -6,11 +6,42 @@ This repository mirrors AirLens agent-only operational assets without copying ap
 
 ## Reuse In Other Projects
 
-The `claude/global/` directory is **project-agnostic** — drop it into `~/.claude/` on any machine to get the Karpathy 4-principle baseline (see `claude/global/README.md`).
+### Quick start (`setup.sh`)
 
-The `claude/templates/CLAUDE.md.airlens-root` is **AirLens-specific** but shows the pattern for a project-root `CLAUDE.md` that cross-references the global Karpathy file instead of restating principles. Fork and adapt paths for other projects.
+```bash
+# 1. clone the Agent repo once
+gh repo clone joymin5655/Agent ~/agent
 
-Rules under `claude/rules/root/**` reference AirLens-specific paths (`Obsidian-airlens/`, `apps/web/`, etc.); other projects should fork and substitute their own paths.
+# 2a. global only — install Karpathy ~/.claude/ setup
+bash ~/agent/setup.sh
+
+# 2b. global + project scaffold — also drop CLAUDE.md template, .claude/rules/,
+#     gitleaks.toml, and .gitignore additions into the CURRENT project root
+cd /path/to/new/project
+bash ~/agent/setup.sh --project
+```
+
+`setup.sh` is idempotent — existing files are skipped (use `--force` to overwrite). It never touches `.env*`, `secrets/`, or runtime state.
+
+### Claude-invocable slash command (`/project-init`)
+
+After installing the slash command (see `claude/commands/project-init.md`), any Claude Code session can run:
+
+```
+/project-init
+```
+
+Claude clones / updates `~/agent`, asks scope (global-only vs global+project), runs `setup.sh`, and surfaces AirLens-specific paths that need adaptation.
+
+### What's project-agnostic vs AirLens-specific
+
+| Asset | Portable | Notes |
+|---|---|---|
+| `claude/global/` | ✅ project-agnostic | Karpathy 4 principles + RTK reference. Drop into `~/.claude/`. |
+| `claude/templates/CLAUDE.md.airlens-root` | ⚠️ AirLens-specific | Use as **pattern reference** for the cross-reference style; edit paths for other projects. |
+| `claude/rules/root/**` | ⚠️ AirLens-specific | References `Obsidian-airlens/`, `apps/web/`, AirLens hooks. Fork and adapt. |
+| `scripts/infra/agent-session.sh` etc. | ✅ mostly portable | Multi-session worktree coordination is generic. |
+| `gitleaks.toml` | ✅ portable | Generic secret patterns + allowlist style. |
 
 Last updated: 2026-05-12
 
