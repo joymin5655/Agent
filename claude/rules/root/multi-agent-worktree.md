@@ -242,7 +242,17 @@ scripts/infra/worktree-link-deps.sh
 
 SessionStart hook (`scripts/hooks/agent-session-start.sh`) 가 자동으로 `agent-session.sh dashboard` 출력. AI 는 다른 active session 의 진행 상황 + 최근 work-feed event 를 인지 후 작업 시작.
 
-dashboard 출력 = JSON (sessions[] + shared_resource_locks{} + recent_events[20]). silent 실패 (Tier 2 파일 부재 시 hook 자체는 PASS).
+dashboard 출력 = JSON (sessions[] + shared_resource_locks{} + recent_events[20] + omc_tmux_sessions[]). silent 실패 (Tier 2 파일 부재 시 hook 자체는 PASS).
+
+### R11.1 — Main-tree session visibility (2026-05-07)
+
+R1 worktree 강제 룰은 *write 작업* 의 enforcement. 그러나 read-only shared-tree 모드 (R1.1) 또는 사용자 명시 override (R8) 로 메인 트리에서 띄운 claude 세션은 dashboard 가 인지해야 함 — 그렇지 않으면 같은 메인 트리에서 동시에 작업 중인 다른 claude 가 보이지 않는다 (사용자 발화 "다른 클로드 2개 작업 중인데 왜 모를까", 2026-05-07).
+
+**룰**: `agent-session.sh register-cwd` 가 cwd = REPO_ROOT 일 때 `cwd_type="main"` entry 를 active-sessions.json 에 등록한다. session_id 는 claude 바이너리 PID 기준 안정 (`<agent>-main-<claude-pid>`) — 같은 claude 세션의 SessionStart/Heartbeat/Stop 이 한 entry 에 수렴.
+
+**visibility ≠ enforcement**: 메인 트리 entry 는 dashboard 표시 + work-feed 추적용. R1 (worktree 강제 for write) 룰은 그대로 — Write/Edit hook 체인 (R7.1) 이 enforce 함. R1.1 휴리스틱 (read-only 만 shared-tree) 도 변경 없음.
+
+**OMC tmux 검출**: `Skills/oh-my-claudecode/` (Yeachan-Heo MIT v4.4.0+) 의 `omc team N:claude|codex|gemini` 가 spawn 한 tmux session (prefix `omc-team-*`) 도 dashboard 가 read-only 검출. 사용자 spawn → 별도 컨트롤, AirLens 는 *visibility 만*.
 
 ## R12. 의미 있는 결정 broadcast (SHOULD, Tier 2)
 
