@@ -1,0 +1,42 @@
+{
+  "$schema": "https://joymin5655.github.io/agent-harness/domains.schema.json",
+  "schema_version": "1.0.0",
+  "domains": {
+    "frontend": {
+      "description": "User interface, client state, accessibility, design systems, and browser performance.",
+      "keywords": ["frontend", "ui", "ux", "component", "design", "css", "tailwind", "react", "vue", "svelte", "accessibility", "a11y", "i18n", "route", "page"]
+    },
+    "backend": {
+      "description": "Application services, APIs, server runtimes, workers, queues, and integrations.",
+      "keywords": ["backend", "api", "endpoint", "service", "server", "worker", "queue", "webhook", "integration", "auth", "jwt", "cors"]
+    },
+    "database": {
+      "description": "Schema, migrations, queries, indexes, RLS, data consistency, and persistence.",
+      "keywords": ["database", "db", "postgres", "postgresql", "sql", "schema", "migration", "migrate", "rls", "index", "query", "table"]
+    },
+    "security": {
+      "description": "Secrets, authorization, injection risks, supply chain, and production safety.",
+      "keywords": ["security", "secret", "token", "credential", "xss", "csrf", "injection", "ssrf", "hmac", "permission", "vulnerability", "supply chain", "billing", "payment", "webhook"]
+    },
+    "testing": {
+      "description": "Unit, integration, browser, mobile, regression, and TDD workflows.",
+      "keywords": ["test", "testing", "tdd", "unit", "integration", "e2e", "playwright", "vitest", "jest", "pytest", "coverage", "regression"]
+    },
+    "docs": {
+      "description": "Documentation, changelogs, release notes, knowledge bases, and decision records.",
+      "keywords": ["docs", "documentation", "readme", "changelog", "adr", "runbook", "wiki", "knowledge base", "manual", "guide"]
+    },
+    "ops": {
+      "description": "CI/CD, deployment, observability, cost, reliability, and incident response.",
+      "keywords": ["deploy", "deployment", "ci", "cd", "github actions", "workflow", "release", "monitoring", "observability", "cost", "incident", "production"]
+    },
+    "ml": {
+      "description": "Machine learning pipelines, model evaluation, data science, and experiment tracking.",
+      "keywords": ["ml", "machine learning", "model", "training", "inference", "dataset", "feature engineering", "experiment", "evaluation", "embedding", "vector"]
+    },
+    "general": {
+      "description": "Fallback domain for simple or uncategorized work.",
+      "keywords": []
+    }
+  }
+}

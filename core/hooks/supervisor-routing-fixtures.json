@@ -1,0 +1,54 @@
+[
+  {
+    "prompt": "Explain how the API authentication flow works",
+    "expect": {
+      "intent": "QUERY",
+      "risk": "LOW",
+      "workflow": "query",
+      "domains_include": ["backend"],
+      "matched_agents_include": ["backend-specialist"]
+    }
+  },
+  {
+    "prompt": "Add a React settings page with i18n strings and Playwright coverage",
+    "expect": {
+      "intent": "MULTI_DEPT",
+      "risk": "HIGH",
+      "workflow": "multi-domain",
+      "domains_include": ["frontend", "testing"],
+      "matched_agents_include": ["frontend-specialist", "test-engineer"],
+      "required_checks_include": ["Plan recommended", "domain owner evidence"]
+    }
+  },
+  {
+    "prompt": "Implement a database migration with RLS policies for billing webhooks",
+    "expect": {
+      "intent": "MULTI_DEPT",
+      "risk": "HIGH",
+      "workflow": "multi-domain",
+      "domains_include": ["database", "security"],
+      "matched_agents_include": ["database-specialist", "security-reviewer"],
+      "required_checks_include": ["security or production-risk review", "specialist dispatch evidence before high-risk Write/Edit"]
+    }
+  },
+  {
+    "prompt": "Review the CI deploy workflow for production release risk",
+    "expect": {
+      "intent": "REVIEW/AUDIT",
+      "risk": "HIGH",
+      "workflow": "review",
+      "domains_include": ["ops"],
+      "matched_agents_include": ["ops-reviewer"]
+    }
+  },
+  {
+    "prompt": "Create an ML evaluation report and update the runbook docs",
+    "expect": {
+      "intent": "MULTI_DEPT",
+      "risk": "HIGH",
+      "workflow": "multi-domain",
+      "domains_include": ["ml", "docs"],
+      "matched_agents_include": ["ml-specialist", "docs-maintainer"]
+    }
+  }
+]

@@ -1,0 +1,100 @@
+{
+  "$schema": "https://joymin5655.github.io/agent-harness/agent-registry.schema.json",
+  "schema_version": "1.0.0",
+  "agents": [
+    {
+      "id": "supervisor",
+      "domain": "general",
+      "model": "opus",
+      "risk": "LOW",
+      "executable": true,
+      "path": ".claude/agents/supervisor.md",
+      "triggers": ["supervisor", "agent", "harness", "routing", "workflow", "multi-agent", "orchestration"]
+    },
+    {
+      "id": "frontend-specialist",
+      "domain": "frontend",
+      "model": "sonnet",
+      "risk": "MEDIUM",
+      "executable": true,
+      "path": ".claude/agents/frontend-specialist.md",
+      "triggers": ["frontend", "ui", "ux", "component", "react", "css", "design", "accessibility", "i18n"]
+    },
+    {
+      "id": "backend-specialist",
+      "domain": "backend",
+      "model": "sonnet",
+      "risk": "MEDIUM",
+      "executable": true,
+      "path": ".claude/agents/backend-specialist.md",
+      "triggers": ["backend", "api", "endpoint", "server", "service", "worker", "webhook", "auth"]
+    },
+    {
+      "id": "database-specialist",
+      "domain": "database",
+      "model": "sonnet",
+      "risk": "HIGH",
+      "executable": true,
+      "path": ".claude/agents/database-specialist.md",
+      "triggers": ["database", "db", "sql", "schema", "migration", "rls", "postgres", "query", "index"]
+    },
+    {
+      "id": "security-reviewer",
+      "domain": "security",
+      "model": "sonnet",
+      "risk": "HIGH",
+      "executable": true,
+      "path": ".claude/agents/security-reviewer.md",
+      "triggers": ["security", "secret", "token", "credential", "xss", "csrf", "injection", "ssrf", "hmac", "authz", "billing", "payment", "webhook"]
+    },
+    {
+      "id": "test-engineer",
+      "domain": "testing",
+      "model": "sonnet",
+      "risk": "MEDIUM",
+      "executable": true,
+      "path": ".claude/agents/test-engineer.md",
+      "triggers": ["test", "testing", "tdd", "coverage", "e2e", "playwright", "vitest", "jest", "pytest", "regression"]
+    },
+    {
+      "id": "docs-maintainer",
+      "domain": "docs",
+      "model": "haiku",
+      "risk": "LOW",
+      "executable": true,
+      "path": ".claude/agents/docs-maintainer.md",
+      "triggers": ["docs", "documentation", "readme", "changelog", "runbook", "wiki", "guide"]
+    },
+    {
+      "id": "ops-reviewer",
+      "domain": "ops",
+      "model": "sonnet",
+      "risk": "HIGH",
+      "executable": true,
+      "path": ".claude/agents/ops-reviewer.md",
+      "triggers": ["deploy", "deployment", "ci", "github actions", "release", "monitoring", "production", "cost"]
+    },
+    {
+      "id": "ml-specialist",
+      "domain": "ml",
+      "model": "sonnet",
+      "risk": "MEDIUM",
+      "executable": true,
+      "path": ".claude/agents/ml-specialist.md",
+      "triggers": ["ml", "machine learning", "model", "training", "dataset", "inference", "embedding", "vector"]
+    }
+  ],
+  "aliases": {
+    "design-system-architect": ["frontend-specialist"],
+    "ui-layout-reviewer": ["frontend-specialist"],
+    "code-reviewer": ["backend-specialist", "frontend-specialist"],
+    "database-reviewer": ["database-specialist"],
+    "typescript-reviewer": ["backend-specialist", "frontend-specialist"],
+    "security-auditor": ["security-reviewer"],
+    "performance-optimizer": ["ops-reviewer", "frontend-specialist"],
+    "tdd-guide": ["test-engineer"],
+    "doc-updater": ["docs-maintainer"],
+    "research-scientist": ["ml-specialist"]
+  },
+  "non_specialist_agents": ["Explore", "Plan", "general-purpose", "code-explorer"]
+}

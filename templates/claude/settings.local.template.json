@@ -1,0 +1,95 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "scripts/hooks/agent-session-start.sh"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "scripts/hooks/supervisor.py"
+          },
+          {
+            "type": "command",
+            "command": "scripts/hooks/agent-session-heartbeat.sh"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "scripts/hooks/pre-tool-guard.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "scripts/hooks/r4-mutex-check.sh"
+          },
+          {
+            "type": "command",
+            "command": "scripts/hooks/context-mode-guard.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "scripts/hooks/r4-file-mutex-check.sh"
+          },
+          {
+            "type": "command",
+            "command": "scripts/hooks/supervisor.py"
+          },
+          {
+            "type": "command",
+            "command": "scripts/hooks/tdd-guard.py"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Agent|Task|ExitPlanMode",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "scripts/hooks/plan-gate.py"
+          },
+          {
+            "type": "command",
+            "command": "scripts/hooks/supervisor.py"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "scripts/hooks/admin-merge-track.py"
+          }
+        ]
+      }
+    ]
+  }
+}

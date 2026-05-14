@@ -1,0 +1,66 @@
+{
+  "$schema": "https://joymin5655.github.io/agent-harness/risk-rules.schema.json",
+  "schema_version": "1.0.0",
+  "high_risk_keywords": [
+    "production",
+    "prod",
+    "deploy",
+    "migration",
+    "migrate",
+    "schema",
+    "rls",
+    "security",
+    "secret",
+    "token",
+    "credential",
+    "billing",
+    "payment",
+    "auth",
+    "webhook",
+    "hmac",
+    "delete",
+    "drop table",
+    "truncate",
+    "force push"
+  ],
+  "medium_risk_keywords": [
+    "refactor",
+    "integration",
+    "cache",
+    "performance",
+    "permissions",
+    "background job",
+    "queue",
+    "model",
+    "training"
+  ],
+  "strict_block_tools": ["Write", "Edit", "MultiEdit"],
+  "allowed_bypass_path_fragments": [
+    ".agent-harness/",
+    ".claude/",
+    "docs/",
+    "README.md",
+    "CHANGELOG.md",
+    "package.json",
+    "tsconfig",
+    "gitleaks.toml"
+  ],
+  "workflows": {
+    "query": {
+      "description": "Answer or inspect without write enforcement.",
+      "agents": ["supervisor"]
+    },
+    "feature-dev": {
+      "description": "Plan, implement, and verify a bounded feature.",
+      "agents": ["Plan", "{matched_agents}", "test-engineer"]
+    },
+    "multi-domain": {
+      "description": "Coordinate two or more domains with explicit evidence.",
+      "agents": ["Plan", "{matched_agents}", "security-reviewer", "test-engineer"]
+    },
+    "review": {
+      "description": "Audit changes, risks, or architecture.",
+      "agents": ["{matched_agents}", "security-reviewer"]
+    }
+  }
+}

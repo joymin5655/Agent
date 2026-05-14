@@ -8,6 +8,7 @@ node_modules/
 .claude/locks/
 .claude/settings.local.json
 .claude/state.local/
+.agent-harness/state/
 __pycache__/
 .pytest_cache/
 secrets/

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://joymin5655.github.io/agent-harness/config.schema.json",
+  "schema_version": "1.0.0",
+  "project_name": "agent-harness-project",
+  "knowledge_base_path": "docs/knowledge-base",
+  "mode": "advisory",
+  "strict": false,
+  "log_dir": ".claude/logs",
+  "state_dir": ".agent-harness/state",
+  "session_lock_file": ".claude/locks/active-sessions.json",
+  "supervisor": {
+    "max_prompt_len": 50000,
+    "require_plan_for_high_risk": true,
+    "require_specialist_evidence": true
+  }
+}

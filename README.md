@@ -1,111 +1,80 @@
-# Agent
+# Agent Harness Starter Kit
 
-AirLens agent/runtime mirror repository.
+Portable AI-agent operating harness extracted from production AirLens patterns and generalized for other projects.
 
-This repository mirrors AirLens agent-only operational assets without copying application source, runtime state, local settings, or secrets. It is meant for review, backup, and reuse of the Claude/Codex harness, not as a deployable AirLens checkout.
+It installs conservative rules, hook runtimes, multi-agent worktree coordination, Claude/Codex adapter assets, and configurable supervisor routing. AirLens-specific material is preserved under `examples/airlens/` and is not installed by default.
 
-## Reuse In Other Projects
-
-### Quick start (`setup.sh`)
+## Install
 
 ```bash
-# 1. clone the Agent repo once
-gh repo clone joymin5655/Agent ~/agent
-
-# 2a. global only — install Karpathy ~/.claude/ setup
-bash ~/agent/setup.sh
-
-# 2b. global + project scaffold — also drop CLAUDE.md template, .claude/rules/,
-#     gitleaks.toml, and .gitignore additions into the CURRENT project root
-cd /path/to/new/project
-bash ~/agent/setup.sh --project
+bash setup.sh --profile minimal
+bash setup.sh --profile claude --project
+bash setup.sh --profile multi-agent --project
+bash setup.sh --profile full --project --backup
+bash setup.sh --profile airlens-example --project
+bash setup.sh --dry-run --profile claude
 ```
 
-`setup.sh` is idempotent — existing files are skipped (use `--force` to overwrite). It never touches `.env*`, `secrets/`, or runtime state.
+Profiles:
 
-### Claude-invocable slash command (`/project-init`)
+| Profile | Installs |
+|---|---|
+| `minimal` | `.agent-harness/*.json`, core rules, `gitleaks.toml`, `.gitignore` safety entries, basic secret guards |
+| `claude` | minimal + Claude agents, `/project-init`, settings template, supervisor hooks |
+| `codex` | minimal + portable Codex skills |
+| `multi-agent` | minimal + worktree/session infra, heartbeat, mutex hooks |
+| `full` | Claude + Codex + multi-agent |
+| `airlens-example` | AirLens example assets only |
 
-After installing the slash command (see `claude/commands/project-init.md`), any Claude Code session can run:
+Options:
 
+```bash
+--dry-run --backup --force --no-hooks --no-global --target <dir>
 ```
-/project-init
+
+The installer never writes `.claude/settings.local.json`; it writes `.claude/settings.local.template.json` so each project can opt in locally.
+
+## Runtime Config
+
+Generated project files:
+
+```text
+.agent-harness/config.json
+.agent-harness/agent-registry.json
+.agent-harness/domains.json
+.agent-harness/risk-rules.json
 ```
 
-Claude clones / updates `~/agent`, asks scope (global-only vs global+project), runs `setup.sh`, and surfaces AirLens-specific paths that need adaptation.
+Supervisor defaults:
 
-### What's project-agnostic vs AirLens-specific
+| Field | Default |
+|---|---|
+| domains | `frontend`, `backend`, `database`, `security`, `testing`, `docs`, `ops`, `ml`, `general` |
+| risk | `LOW`, `MEDIUM`, `HIGH` |
+| mode | `advisory` |
+| strict | off |
 
-| Asset | Portable | Notes |
-|---|---|---|
-| `claude/global/` | ✅ project-agnostic | Karpathy 4 principles + RTK reference. Drop into `~/.claude/`. |
-| `claude/templates/CLAUDE.md.airlens-root` | ⚠️ AirLens-specific | Use as **pattern reference** for the cross-reference style; edit paths for other projects. |
-| `claude/rules/root/**` | ⚠️ AirLens-specific | References `Obsidian-airlens/`, `apps/web/`, AirLens hooks. Fork and adapt. |
-| `scripts/infra/agent-session.sh` etc. | ✅ mostly portable | Multi-session worktree coordination is generic. |
-| `gitleaks.toml` | ✅ portable | Generic secret patterns + allowlist style. |
-
-Last updated: 2026-05-12
+Strict mode can be enabled with `AGENT_HARNESS_STRICT=true` or by setting `.agent-harness/config.json` mode to `strict`.
 
 ## Layout
 
-| Path | Contents |
+| Path | Purpose |
 |---|---|
-| `claude/global/` | **User-scope `~/.claude/` setup** — Karpathy 4-principle CLAUDE.md, RTK proxy reference, and 8-layer inheritance doc. Adopted 2026-05-12. |
-| `claude/templates/CLAUDE.md.airlens-root` | AirLens root `CLAUDE.md` after 2026-05-12 A+ diet (125 lines) — reference for project-root CLAUDE.md that cross-references Karpathy globals instead of duplicating them. |
-| `claude/README.md` | AirLens `.claude/` tracking policy and onboarding note |
-| `claude/agents/root/` | Root `.claude/agents/*` registry and root-scoped agents |
-| `claude/agents/web/` | Existing AirLens web Claude agent definitions and routing registries |
-| `claude/agents/models/` | Existing AirLens models reference specialists and registry |
-| `claude/rules/root/` | Root `.claude/rules/*`, including policy docs such as worktree coordination and PR security |
-| `claude/rules/web/`, `claude/rules/models/` | Existing scoped rule mirrors |
-| `claude/settings/root/settings.json` | Team-shared root Claude settings only; no local overrides |
-| `claude/commands/` | Existing Claude command docs for harness, research, review, and ship workflows |
-| `codex/skills/` | 13 AirLens Codex skills plus required skill-local references |
-| `github/workflows/` | Inactive mirror of AirLens `.github/workflows/*.yml` |
-| `github/hooks/workmux-status/hooks.json` | Workmux status hook context, mirrored for operations reference |
-| `scripts/hooks/` | AirLens hook scripts, tests, and routing fixtures |
-| `scripts/infra/` | Multi-session worktree/session helper scripts |
-| `scripts/maintenance/` | CI maintenance guard scripts referenced by mirrored workflows |
-| `docs/operations/` | Agent harness and registry reference docs |
-| `docs/concepts/` | Agent runtime, dispatch, collaboration, and harness concept docs |
-
-## Excluded
-
-The mirror intentionally excludes `.claude/locks/`, `.claude/logs/`, `.claude/settings.local.json`, scheduled-task locks, `.env*`, dependency folders, generated build outputs, local launchd/cron output, private key material, token values, and user plugin/system caches.
-
-Workflow files keep `secrets.X` references as references only. No actual secret values should be present in this repository.
-
-## Source Refs
-
-The 2026-05-12 delta update was prepared from `AirLens-platform` `origin/main` (commits `2a12ebe6..c0ef22a7`) covering:
-
-- Root `CLAUDE.md` A+ diet (185 → 125 lines, Karpathy global absorption).
-- `.claude/rules/policy/same-name-skill-priority.md` (new): same-name skill priority matrix across hook / Matt Pocock / context-mode / superpowers / addyosmani / gstack sources.
-- `.claude/rules/policy/firecrawl-policy.md`: whitelist expansion to ~75 domains.
-- `.claude/agents/copy-humanizer.md`: v2 with 6 prompt actions (voice clone, hook, dropout).
-- `.claude/rules/multi-agent-worktree.md`, `OVERVIEW.md`, `contributing.md`: 300-line scope clarification and gitignore hygiene.
-- `scripts/infra/agent-session.sh`, `session_store.py`, `scripts/hooks/classify-prompt.py`: multi-session visibility and commit/PR automation policy (W0-W3).
-
-Global user setup (`claude/global/`) is sourced from `~/.claude/CLAUDE.md`, `~/.claude/karpathy.md`, and `~/.claude/RTK.md` as of 2026-05-12.
-
-The 2026-05-08 baseline update was prepared from clean AirLens refs:
-
-- `origin/main` for the baseline AirLens agent, hook, infra, and workflow mirror.
-- `origin/codex/github-actions-pr-secret-hardening` for PR-token and GitHub Actions security hardening artifacts.
-- `d92237f3` only for the historical `workmux-status` hook JSON, because that file is now ignored in the AirLens main tree but remains useful operational context.
-
-Codex skills are mirrored from the installed AirLens skill set under `/Users/joymin/.codex/skills`, excluding `.system/`.
+| `core/rules/` | Portable operating policies |
+| `core/hooks/` | Generic hook runtimes and tests |
+| `core/infra/` | Worktree/session/mutex helpers |
+| `core/config/` | Default `.agent-harness` config templates |
+| `adapters/claude/` | Claude agents, command, and settings templates |
+| `adapters/codex/` | Portable Codex skills |
+| `adapters/gemini/` | Gemini session wrapper |
+| `templates/` | Project templates |
+| `examples/airlens/` | AirLens-specific mirror and domain policies |
+| `docs/` | Starter-kit operations and policy design docs |
 
 ## Verification
 
-Recommended checks before publishing:
-
 ```bash
+python3 core/hooks/test_supervisor_routing.py
+python3 core/hooks/test_hooks_dynamic_root.py
 gitleaks detect --no-git --source . --config gitleaks.toml
-python3 scripts/maintenance/check-actions-pr-token-safety.py
-python3 - <<'PY'
-import pathlib, yaml
-for path in sorted(pathlib.Path("github/workflows").glob("*.yml")):
-    yaml.safe_load(path.read_text())
-print("workflow yaml ok")
-PY
 ```

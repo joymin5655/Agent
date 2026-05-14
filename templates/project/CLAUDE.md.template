@@ -1,0 +1,22 @@
+# CLAUDE.md
+
+This repository uses the Agent Harness starter kit.
+
+## Operating Rules
+
+- Work from the repository's existing patterns before introducing new abstractions.
+- Keep secrets out of source. Never print `.env*`, `secrets/`, private keys, or token values.
+- Use an isolated worktree for code changes when multiple agents may work concurrently.
+- For high-risk changes, record a short plan and route to the relevant specialist before writing code.
+- Treat `.agent-harness/*.json` as the local source of truth for routing, domains, risk, and hook mode.
+
+## Verification
+
+Use the project's native checks. At minimum, run the narrowest relevant test and note any skipped validation.
+
+## Local Harness Files
+
+- `.agent-harness/config.json`
+- `.agent-harness/agent-registry.json`
+- `.agent-harness/domains.json`
+- `.agent-harness/risk-rules.json`
