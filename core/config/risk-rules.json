@@ -1,5 +1,5 @@
 {
-  "$schema": "https://joymin5655.github.io/agent-harness/risk-rules.schema.json",
+  "$schema": "https://raw.githubusercontent.com/joymin5655/Agent/main/schemas/risk-rules.schema.json",
   "schema_version": "1.0.0",
   "high_risk_keywords": [
     "production",

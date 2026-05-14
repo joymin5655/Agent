@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/joymin5655/Agent/main/schemas/risk-rules.schema.json",
+  "title": "Agent Harness Risk Rules",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "high_risk_keywords",
+    "medium_risk_keywords",
+    "strict_block_tools",
+    "allowed_bypass_path_fragments",
+    "workflows"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "schema_version": {
+      "type": "string"
+    },
+    "high_risk_keywords": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "medium_risk_keywords": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "strict_block_tools": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "allowed_bypass_path_fragments": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "workflows": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "required": ["description", "agents"],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "agents": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

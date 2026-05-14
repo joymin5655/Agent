@@ -1,5 +1,5 @@
 {
-  "$schema": "https://joymin5655.github.io/agent-harness/domains.schema.json",
+  "$schema": "https://raw.githubusercontent.com/joymin5655/Agent/main/schemas/domains.schema.json",
   "schema_version": "1.0.0",
   "domains": {
     "frontend": {

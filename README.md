@@ -1,21 +1,37 @@
 # Agent Harness Starter Kit
 
-Portable AI-agent operating harness extracted from production AirLens patterns and generalized for other projects.
+Portable AgentOps starter kit extracted from AirLens production patterns and generalized for other projects.
 
-It installs conservative rules, hook runtimes, multi-agent worktree coordination, Claude/Codex adapter assets, and configurable supervisor routing. AirLens-specific material is preserved under `examples/airlens/` and is not installed by default.
+It installs project-local operating rules, JSON config, optional Claude/Codex adapter assets, hook runtimes, and multi-agent worktree coordination. By default it does not write `~/.claude`, does not create `.claude/settings.local.json`, and does not install AirLens-specific assets.
 
-## Install
+## 60-Second Install
+
+From the root of a git repository:
+
+```bash
+bash setup.sh --profile minimal
+```
+
+For Claude project hooks:
+
+```bash
+bash setup.sh --profile claude --project
+cp .claude/settings.local.template.json .claude/settings.local.json
+```
+
+The template copy is the opt-in switch for local hooks. Review it before enabling it, because local settings are machine-specific and intentionally gitignored.
+
+## Common Profiles
 
 ```bash
 bash setup.sh --profile minimal
 bash setup.sh --profile claude --project
 bash setup.sh --profile multi-agent --project
-bash setup.sh --profile full --project --backup
+bash setup.sh --profile full --project
+bash setup.sh --profile full --project --global
 bash setup.sh --profile airlens-example --project
-bash setup.sh --dry-run --profile claude
+bash setup.sh --dry-run --profile claude --project
 ```
-
-Profiles:
 
 | Profile | Installs |
 |---|---|
@@ -23,20 +39,24 @@ Profiles:
 | `claude` | minimal + Claude agents, `/project-init`, settings template, supervisor hooks |
 | `codex` | minimal + portable Codex skills |
 | `multi-agent` | minimal + worktree/session infra, heartbeat, mutex hooks |
-| `full` | Claude + Codex + multi-agent |
+| `full` | minimal + Claude + Codex + multi-agent assets |
 | `airlens-example` | AirLens example assets only |
 
-Options:
+Useful options:
 
 ```bash
---dry-run --backup --force --no-hooks --no-global --target <dir>
+--target <dir>   install into another git repository
+--dry-run        print actions without writing
+--no-hooks       skip hook runtime/template files
+--force          overwrite existing files
+--backup         with --force, keep *.bak.<timestamp> copies
+--global         also install Claude baseline files into ~/.claude
+--no-global      compatibility alias for the default project-only behavior
 ```
 
-The installer never writes `.claude/settings.local.json`; it writes `.claude/settings.local.template.json` so each project can opt in locally.
+## What It Writes
 
-## Runtime Config
-
-Generated project files:
+Project config:
 
 ```text
 .agent-harness/config.json
@@ -44,6 +64,16 @@ Generated project files:
 .agent-harness/domains.json
 .agent-harness/risk-rules.json
 ```
+
+Local hook template:
+
+```text
+.claude/settings.local.template.json
+```
+
+The installer never creates `.claude/settings.local.json`. Copy the template yourself when you want the hooks active in that local checkout.
+
+## Runtime Defaults
 
 Supervisor defaults:
 
@@ -64,17 +94,23 @@ Strict mode can be enabled with `AGENT_HARNESS_STRICT=true` or by setting `.agen
 | `core/hooks/` | Generic hook runtimes and tests |
 | `core/infra/` | Worktree/session/mutex helpers |
 | `core/config/` | Default `.agent-harness` config templates |
+| `schemas/` | JSON schemas for public config files |
 | `adapters/claude/` | Claude agents, command, and settings templates |
 | `adapters/codex/` | Portable Codex skills |
 | `adapters/gemini/` | Gemini session wrapper |
 | `templates/` | Project templates |
-| `examples/airlens/` | AirLens-specific mirror and domain policies |
+| `examples/airlens/` | AirLens-specific example assets |
 | `docs/` | Starter-kit operations and policy design docs |
+| `scripts/ci/` | Config and installer verification |
 
 ## Verification
 
 ```bash
+python3 scripts/ci/validate-configs.py
 python3 core/hooks/test_supervisor_routing.py
 python3 core/hooks/test_hooks_dynamic_root.py
+bash scripts/ci/installer-smoke.sh
 gitleaks detect --no-git --source . --config gitleaks.toml
 ```
+
+If `gitleaks` is not installed, CI reports an explicit skip instead of failing the job.

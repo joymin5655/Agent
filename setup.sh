@@ -5,20 +5,21 @@
 #   bash setup.sh --profile minimal
 #   bash setup.sh --profile claude --project
 #   bash setup.sh --profile multi-agent --project
-#   bash setup.sh --profile full --project --backup
+#   bash setup.sh --profile full --project
+#   bash setup.sh --profile full --project --global
 #   bash setup.sh --profile airlens-example --project
-#   bash setup.sh --dry-run --profile claude
+#   bash setup.sh --dry-run --profile claude --project
 
 set -euo pipefail
 
 AGENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROFILE="minimal"
-PROJECT_INIT=0
+PROJECT_INIT=1
 FORCE=0
 BACKUP=0
 DRY_RUN=0
 NO_HOOKS=0
-NO_GLOBAL=0
+GLOBAL=0
 TARGET_DIR="$(pwd)"
 
 usage() {
@@ -29,19 +30,21 @@ Examples:
   bash setup.sh --profile minimal
   bash setup.sh --profile claude --project
   bash setup.sh --profile multi-agent --project
-  bash setup.sh --profile full --project --backup
+  bash setup.sh --profile full --project
+  bash setup.sh --profile full --project --global
   bash setup.sh --profile airlens-example --project
-  bash setup.sh --dry-run --profile claude
+  bash setup.sh --dry-run --profile claude --project
 
 Options:
   --profile <name>   minimal | claude | codex | multi-agent | full | airlens-example
-  --project          install project-scoped files into the current directory
+  --project          install project-scoped files into the current directory (default)
   --target <dir>     install project-scoped files into a specific repository
+  --global           also install Claude baseline files into ~/.claude
   --dry-run          print actions without writing
   --backup           when used with --force, back up existing files before overwrite
   --force            overwrite existing files
   --no-hooks         skip hook runtime/template installation
-  --no-global        skip ~/.claude global files
+  --no-global        compatibility alias for the default project-only behavior
   -h, --help         show this help
 EOF
 }
@@ -60,11 +63,12 @@ while [[ $# -gt 0 ]]; do
       PROJECT_INIT=1
       shift 2
       ;;
+    --global) GLOBAL=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
     --backup) BACKUP=1; shift ;;
     --force) FORCE=1; shift ;;
     --no-hooks) NO_HOOKS=1; shift ;;
-    --no-global) NO_GLOBAL=1; shift ;;
+    --no-global) GLOBAL=0; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown arg: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -78,19 +82,6 @@ esac
 is_git_repo() {
   git -C "$1" rev-parse --is-inside-work-tree >/dev/null 2>&1
 }
-
-if [[ $PROJECT_INIT -eq 0 && "$PROFILE" != "claude" && $NO_GLOBAL -eq 1 ]]; then
-  echo "nothing to install: project disabled and --no-global set" >&2
-  exit 2
-fi
-
-if [[ $PROJECT_INIT -eq 0 && "$PROFILE" != "claude" ]]; then
-  # The starter kit is project-oriented. Keep the public `--profile minimal`
-  # interface useful by defaulting to the current git repo when possible.
-  if is_git_repo "$TARGET_DIR"; then
-    PROJECT_INIT=1
-  fi
-fi
 
 TARGET_DIR="$(cd "$TARGET_DIR" && pwd)"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -159,7 +150,7 @@ append_gitignore() {
 }
 
 install_global_claude() {
-  [[ $NO_GLOBAL -eq 0 ]] || return 0
+  [[ $GLOBAL -eq 1 ]] || return 0
   [[ -d "$AGENT_DIR/adapters/claude/global" ]] || return 0
   say "[global] ~/.claude baseline"
   copy_dir_contents "$AGENT_DIR/adapters/claude/global" "$HOME/.claude"
@@ -256,6 +247,7 @@ install_project() {
 say "Agent Harness setup"
 say "  profile: $PROFILE"
 say "  target:  $TARGET_DIR"
+say "  global:  $GLOBAL"
 say "  dry-run: $DRY_RUN"
 
 if [[ "$PROFILE" == "claude" || "$PROFILE" == "full" ]]; then
@@ -267,7 +259,13 @@ install_project
 say "done"
 if [[ $PROJECT_INIT -eq 1 ]]; then
   say "next:"
-  say "  - review .agent-harness/*.json"
-  say "  - copy .claude/settings.local.template.json to .claude/settings.local.json only when you want local hooks enabled"
-  say "  - run: gitleaks detect --no-git --source . --config gitleaks.toml"
+  if [[ "$PROFILE" == "airlens-example" ]]; then
+    say "  - review examples/airlens/README.md"
+  else
+    say "  - review .agent-harness/*.json"
+    if [[ "$PROFILE" == "claude" || "$PROFILE" == "full" ]]; then
+      say "  - copy .claude/settings.local.template.json to .claude/settings.local.json only when you want local hooks enabled"
+    fi
+    say "  - run: gitleaks detect --no-git --source . --config gitleaks.toml"
+  fi
 fi
