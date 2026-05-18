@@ -1,0 +1,125 @@
+# hook-config.yml — per-project customisation for the agent framework.
+#
+# Copy this file to your project root and edit. The framework's hooks
+# read it on every invocation, so changes take effect immediately.
+#
+# All fields are OPTIONAL — defaults are documented inline.
+
+# ---------------------------------------------------------------------------
+# Risk areas — the 5 areas that automation must never act on unilaterally.
+# See rules/policy/security-guards.md for the policy.
+# ---------------------------------------------------------------------------
+risk_areas:
+  data:
+    # Production data migrations. Regex applied to changed file paths.
+    pattern: '^.*/migrations/.*\.sql$'
+    decision: ask   # ask | deny  (default: ask)
+
+  secrets:
+    # Files / patterns that constitute secret leak. ALWAYS deny — no override.
+    paths:
+      - 'secrets/**'
+      - '.env'
+      - '.env.local'
+      - '.env.production'
+    # Keyword identifiers that trigger secret-content-scan.py.
+    keywords:
+      - SERVICE_ROLE_KEY
+      - API_TOKEN
+      - API_KEY
+      - STRIPE_SECRET_KEY
+      - POLAR_API_KEY
+      - PRIVATE_KEY
+    decision: deny
+
+  deploy:
+    # Function / worker / deploy bundles.
+    pattern: '^.*/functions/.*/index\.ts$'
+    decision: ask
+
+  payment:
+    # Billing / payment code.
+    pattern: '(billing/|stripe|polar|iap|revenue-cat)'
+    decision: ask
+
+  domain-output:
+    # Project-specific: uncertainty / quality / signed-prediction fields
+    # whose net removal should block. Empty = no check.
+    pattern: '(uncertainty|confidence_p\d+|grade_letter)'
+    decision: advisory   # advisory | ask | deny
+
+# ---------------------------------------------------------------------------
+# Resource mutex — see rules/multi-agent-worktree.md R4.
+# Maps Bash commands / MCP tools to a mutex name. Concurrent sessions block.
+# ---------------------------------------------------------------------------
+resources:
+  production-db:
+    triggers:
+      - 'supabase db push'
+      - 'supabase migration (up|apply)'
+      - 'mcp__supabase__apply_migration'
+    auto_expire_minutes: 60
+
+  edge-function-deploy:
+    triggers:
+      - 'supabase functions deploy'
+      - 'mcp__supabase__deploy_edge_function'
+    auto_expire_minutes: 30
+
+  production-deploy:
+    triggers:
+      - 'wrangler pages deploy'
+      - 'fly deploy'
+      - 'gh workflow run .*deploy.*'
+    auto_expire_minutes: 30
+
+# ---------------------------------------------------------------------------
+# Hardcoding policy — paths exempt from check-hardcoding.py / check-staged.py.
+# ---------------------------------------------------------------------------
+hardcoding:
+  exempt_globs:
+    - 'config.ts'
+    - 'config.js'
+    - 'types.ts'
+    - 'types.js'
+    - 'tailwind.config.*'
+    - 'vite.config.*'
+    - 'tsconfig*'
+    - '.test.*'
+    - '.spec.*'
+    - 'test/'
+    - '__tests__/'
+    - 'docs/'
+    - 'wiki/'
+
+  scan_extensions:
+    - .ts
+    - .tsx
+    - .js
+    - .jsx
+    - .py
+
+# ---------------------------------------------------------------------------
+# Session coordination
+# ---------------------------------------------------------------------------
+session:
+  heartbeat_interval_seconds: 300
+  stale_after_minutes: 30
+  worktree_prefix: '.worktrees'
+  lock_dir: '.agent/locks'
+  log_dir: '.agent/logs'
+
+# ---------------------------------------------------------------------------
+# Goal mode (supervisor-goal.sh)
+# ---------------------------------------------------------------------------
+goal_mode:
+  default_budget: null   # null = no budget; integer = token budget
+  graceful_wrap_wiki_dir: 'wiki/synthesis'
+  graceful_wrap_memory_dir: null   # set to enable optional memory stub
+
+# ---------------------------------------------------------------------------
+# Optional: project-specific hook script overrides
+# ---------------------------------------------------------------------------
+# hooks:
+#   pre_tool_guard: 'custom/my-pre-tool-guard.sh'
+#   secret_content_scan: 'custom/my-secret-scan.py'

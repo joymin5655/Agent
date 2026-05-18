@@ -1,23 +1,37 @@
 ## Summary
-<!-- What does this PR do? Keep it under 3 bullet points. -->
 
--
+<!-- 1-3 bullets — focus on the *why*, not the *what*. The diff describes the what. -->
 
-## Type
-- [ ] Bug fix
-- [ ] New feature
-- [ ] Refactoring
-- [ ] Documentation
-- [ ] CI/CD
-- [ ] Data pipeline
+- 
+- 
 
-## Checklist
-- [ ] `npm run build` passes
+## Test plan
+
+<!-- Bulleted checklist of how to verify. Include exact commands where useful. -->
+
+- [ ] `npm run test:run` (or project equivalent) passes
 - [ ] `npm run lint` passes
-- [ ] Tests added/updated if needed
-- [ ] No hardcoded secrets or API keys
-- [ ] CI workflow changes keep PR code read-only; no secrets/write tokens run with PR-controlled code
-- [ ] i18n keys used for user-facing text
+- [ ] `npm run build` passes
+- [ ] Manual verification: 
 
-## Screenshots
-<!-- If UI changes, add before/after screenshots. -->
+## Risk-area crossings
+
+<!-- Tick any that apply. For ticked items, explain the user-approval trail. -->
+
+- [ ] `data` — production data migration
+- [ ] `secrets` — credentials / env vars
+- [ ] `deploy` — function / worker bundle
+- [ ] `payment` — billing / payment code
+- [ ] `domain-output` — uncertainty / quality fields
+
+If any ticked: user approval reference (chat link / issue / verbal):
+
+## Related
+
+<!-- Link issues, prior PRs, design docs. -->
+
+- 
+
+---
+
+🤖 Generated / co-authored with an AI assistant — code reviewed by the listed author.

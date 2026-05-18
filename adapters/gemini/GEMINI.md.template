@@ -1,0 +1,55 @@
+# GEMINI.md — Gemini CLI project instructions
+
+This file is read by [Gemini CLI](https://github.com/google-gemini/gemini-cli)
+for every session in this repository. It complements (and is enforced by)
+the gate hooks installed via `adapters/gemini/gemini-shell-wrap.sh`.
+
+## Hard Rules
+
+1. **Never run shell commands that touch `secrets/`, `.env*` (excluding
+   `.env.example`), or production deploy/migration paths without an
+   explicit user request that names the exact target.**
+   The shell wrapper will block such calls and exit 100.
+
+2. **Risk areas (configurable per project — see `hook-config.yml`):**
+   - `data` — production data migrations
+   - `secrets` — credential files and env vars
+   - `deploy` — function/worker bundles being deployed
+   - `payment` — billing/payment integration code
+   - `domain-output` — project-specific uncertainty / quality fields
+
+   For any action in a risk area, surface a clarifying question to the user
+   before invoking the shell tool.
+
+3. **Use the framework's multi-session coordination protocol:**
+   - Worktree per concurrent task: `.worktrees/gemini-<task-slug>/`
+   - Register session: `bash core/infra/gemini-session.sh <task-slug>` on entry
+   - Heartbeat every 5 minutes (the session wrapper does this automatically)
+
+4. **Never bypass the pre-push hook (`--no-verify`).** If a push fails, fix
+   the underlying cause.
+
+## Soft Rules
+
+- Follow the project's `rules/contributing.md` for code style.
+- Test-first for new features (TDD).
+- One logical change per commit; one feature per PR.
+- Update `wiki/synthesis/` (or your project's chosen docs folder) when
+  finishing a multi-wave plan.
+
+## Where to look
+
+- Framework hooks (gates):        `core/hooks/`
+- Framework infra (session etc.): `core/infra/`
+- Project rules:                  `rules/`
+- Per-project customization:      `hook-config.yml`
+- Plans (your work-in-progress):  `~/.agent/plans/`
+
+## Reporting
+
+When you finish a wave / sub-task, summarise:
+- Files touched (use `git diff --stat`)
+- Risk areas crossed (and which ones the user explicitly approved)
+- Outstanding issues (anything you deferred and why)
+
+Avoid filler intros — go straight to action.
