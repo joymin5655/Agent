@@ -1,111 +1,216 @@
 # Agent
 
-AirLens agent/runtime mirror repository.
+**AI-agnostic agent framework**: rules, hooks, agents, skills, and automation that work identically across Claude Code, Codex CLI, and Gemini CLI — and on any project.
 
-This repository mirrors AirLens agent-only operational assets without copying application source, runtime state, local settings, or secrets. It is meant for review, backup, and reuse of the Claude/Codex harness, not as a deployable AirLens checkout.
+> Status: v0.1.0 (initial generic-only rewrite). License: **TBD**.
 
-## Reuse In Other Projects
+---
 
-### Quick start (`setup.sh`)
+## What this gives you
+
+When you adopt this framework in a project, you get:
+
+1. **Multi-session safety** — when you have multiple AI sessions running (Claude in one terminal, Codex in another, Gemini in a third), they don't collide. Locks on shared resources (production DBs, deploy commands, payment libraries) are coordinated through a single JSON lock file.
+2. **Secret hardening** — a 6-layer secret defense (`gitleaks` config + pre-commit + pre-push + Bash/MCP content scanners + project policy doc + CI workflow). Catches OpenAI/Anthropic/AWS/Stripe/Slack/Supabase + custom tokens in code, env files, MCP tool calls, and `git push` diffs.
+3. **Plan-first discipline** — hooks classify your prompt by tier (trivial / interactive / autonomous / conversational), gate destructive operations, and enforce a "think before coding" loop.
+4. **Test-Driven enforcement** — a `tdd-guard` hook blocks creating new production code unless a corresponding test file exists.
+5. **Policy enforcement** — generic `.claude/rules/` style policy docs covering contributing, public-repo safety, memory discipline, multi-agent worktree coordination, 5 project risk areas (configurable).
+6. **Worktree coordination** — `scripts/infra/agent-session.sh` for branch-per-task discipline with automatic stale-session GC and heartbeat tracking.
+7. **Commit + PR automation** — `auto-ship.sh` runs `gitleaks` + project-defined risk-area checks + CI watch + admin merge in one command. Aborts if any safeguard trips.
+8. **Cross-AI parity** — the same `core/hooks/*` script returns the same decision (`allow` / `deny` / `ask`) no matter which AI invokes it. Adapters translate native AI events to a canonical JSON protocol.
+
+---
+
+## Quick start
+
+### One-command install (all 3 AIs)
 
 ```bash
-# 1. clone the Agent repo once
 gh repo clone joymin5655/Agent ~/agent
-
-# 2a. global only — install Karpathy ~/.claude/ setup
 bash ~/agent/setup.sh
+```
 
-# 2b. global + project scaffold — also drop CLAUDE.md template, .claude/rules/,
-#     gitleaks.toml, and .gitignore additions into the CURRENT project root
-cd /path/to/new/project
+This installs adapter configs to:
+- `~/.claude/settings.json` (Claude Code hook registration)
+- `~/.codex/config.toml` (Codex CLI hook registration)
+- `~/.gemini/settings.json` (Gemini CLI hook registration)
+
+Existing configs are merged, not overwritten. Use `--force` to overwrite.
+
+### Selective install
+
+```bash
+bash ~/agent/setup.sh --claude       # Claude Code only
+bash ~/agent/setup.sh --codex        # Codex CLI only
+bash ~/agent/setup.sh --gemini       # Gemini CLI only
+bash ~/agent/setup.sh --hooks-only   # git-hooks only (no AI configs)
+```
+
+### Add to a project
+
+```bash
+cd /path/to/your/project
 bash ~/agent/setup.sh --project
 ```
 
-`setup.sh` is idempotent — existing files are skipped (use `--force` to overwrite). It never touches `.env*`, `secrets/`, or runtime state.
+Scaffolds into the project:
+- `CLAUDE.md` (if absent — generic template)
+- `AGENTS.md` (if absent — generic template)
+- `GEMINI.md` (if absent — generic template)
+- `gitleaks.toml` (if absent)
+- `.claude/rules/` (sanitized generic copies)
+- `hook-config.yml` (project-customizable risk areas)
+- `.gitignore` additions (runtime state)
+- `.git/hooks/{pre-commit, pre-push}` (gitleaks + scan-push-diff)
 
-### Claude-invocable slash command (`/project-init`)
+Idempotent — re-running skips existing files (use `--force` to overwrite).
 
-After installing the slash command (see `claude/commands/project-init.md`), any Claude Code session can run:
-
-```
-/project-init
-```
-
-Claude clones / updates `~/agent`, asks scope (global-only vs global+project), runs `setup.sh`, and surfaces AirLens-specific paths that need adaptation.
-
-### What's project-agnostic vs AirLens-specific
-
-| Asset | Portable | Notes |
-|---|---|---|
-| `claude/global/` | ✅ project-agnostic | Karpathy 4 principles + RTK reference. Drop into `~/.claude/`. |
-| `claude/templates/CLAUDE.md.airlens-root` | ⚠️ AirLens-specific | Use as **pattern reference** for the cross-reference style; edit paths for other projects. |
-| `claude/rules/root/**` | ⚠️ AirLens-specific | References `Obsidian-airlens/`, `apps/web/`, AirLens hooks. Fork and adapt. |
-| `scripts/infra/agent-session.sh` etc. | ✅ mostly portable | Multi-session worktree coordination is generic. |
-| `gitleaks.toml` | ✅ portable | Generic secret patterns + allowlist style. |
-
-Last updated: 2026-05-12
+---
 
 ## Layout
 
-| Path | Contents |
-|---|---|
-| `claude/global/` | **User-scope `~/.claude/` setup** — Karpathy 4-principle CLAUDE.md, RTK proxy reference, and 8-layer inheritance doc. Adopted 2026-05-12. |
-| `claude/templates/CLAUDE.md.airlens-root` | AirLens root `CLAUDE.md` after 2026-05-12 A+ diet (125 lines) — reference for project-root CLAUDE.md that cross-references Karpathy globals instead of duplicating them. |
-| `claude/README.md` | AirLens `.claude/` tracking policy and onboarding note |
-| `claude/agents/root/` | Root `.claude/agents/*` registry and root-scoped agents |
-| `claude/agents/web/` | Existing AirLens web Claude agent definitions and routing registries |
-| `claude/agents/models/` | Existing AirLens models reference specialists and registry |
-| `claude/rules/root/` | Root `.claude/rules/*`, including policy docs such as worktree coordination and PR security |
-| `claude/rules/web/`, `claude/rules/models/` | Existing scoped rule mirrors |
-| `claude/settings/root/settings.json` | Team-shared root Claude settings only; no local overrides |
-| `claude/commands/` | Existing Claude command docs for harness, research, review, and ship workflows |
-| `codex/skills/` | 13 AirLens Codex skills plus required skill-local references |
-| `github/workflows/` | Inactive mirror of AirLens `.github/workflows/*.yml` |
-| `github/hooks/workmux-status/hooks.json` | Workmux status hook context, mirrored for operations reference |
-| `scripts/hooks/` | AirLens hook scripts, tests, and routing fixtures |
-| `scripts/infra/` | Multi-session worktree/session helper scripts |
-| `scripts/maintenance/` | CI maintenance guard scripts referenced by mirrored workflows |
-| `docs/operations/` | Agent harness and registry reference docs |
-| `docs/concepts/` | Agent runtime, dispatch, collaboration, and harness concept docs |
+```
+Agent/
+├── README.md                    # this file
+├── AGENTS.md                    # agents.md spec, 3-AI guide
+├── CHANGELOG.md
+├── setup.sh                     # 4-mode installer
+├── gitleaks.toml                # base secret-scan config
+├── .gitignore
+│
+├── docs/                        # concept + protocol docs
+│   ├── architecture.md
+│   ├── ai-adapters.md
+│   ├── hook-protocol.md         # canonical stdin/stdout JSON
+│   ├── getting-started.md
+│   ├── customization.md
+│   └── concepts/
+│
+├── core/                        # AI-agnostic core (the truth)
+│   ├── hooks/                   # ~25 portable hooks
+│   ├── infra/                   # session coordination, auto-ship
+│   ├── git-hooks/               # pre-commit, pre-push
+│   └── tests/                   # hook + adapter tests
+│
+├── adapters/                    # 3 AI bridges
+│   ├── claude-code/
+│   ├── codex/
+│   └── gemini/
+│
+├── rules/                       # generic policy docs
+├── agents/                      # generic agent definitions (Claude format)
+├── skills/                      # generic SKILL.md files (Claude format)
+├── codex-skills/                # Codex-native skill format
+├── templates/                   # project scaffold templates
+│
+├── github/
+│   ├── workflows.template/      # secret-scan.yml, lint.yml
+│   └── PULL_REQUEST_TEMPLATE.md
+│
+└── legacy/
+    └── v0-mirror-2026-05-12/        # archived original mirror content
+```
 
-## Excluded
+---
 
-The mirror intentionally excludes `.claude/locks/`, `.claude/logs/`, `.claude/settings.local.json`, scheduled-task locks, `.env*`, dependency folders, generated build outputs, local launchd/cron output, private key material, token values, and user plugin/system caches.
+## Why "AI-agnostic"?
 
-Workflow files keep `secrets.X` references as references only. No actual secret values should be present in this repository.
+The core innovation: **one hook protocol, three adapters**.
 
-## Source Refs
+```
+                     [Your AI runtime]
+                            │
+                  Claude / Codex / Gemini
+                            │
+                    [native hook event]
+                            │
+                            ▼
+                    [adapter — translates]
+                            │
+                 canonical stdin JSON
+                            │
+                            ▼
+                   [core/hooks/<name>]
+                            │
+                 canonical stdout JSON
+                            │
+                            ▼
+                  [adapter — translates back]
+                            │
+                native decision (allow/deny/ask)
+                            │
+                            ▼
+                  [AI runtime enforces]
+```
 
-The 2026-05-12 delta update was prepared from `AirLens-platform` `origin/main` (commits `2a12ebe6..c0ef22a7`) covering:
+A `pre-tool-guard.sh` written once works for all 3 AIs. When you add a new AI runtime, you only write a new adapter — `core/hooks/*` doesn't change.
 
-- Root `CLAUDE.md` A+ diet (185 → 125 lines, Karpathy global absorption).
-- `.claude/rules/policy/same-name-skill-priority.md` (new): same-name skill priority matrix across hook / Matt Pocock / context-mode / superpowers / addyosmani / gstack sources.
-- `.claude/rules/policy/firecrawl-policy.md`: whitelist expansion to ~75 domains.
-- `.claude/agents/copy-humanizer.md`: v2 with 6 prompt actions (voice clone, hook, dropout).
-- `.claude/rules/multi-agent-worktree.md`, `OVERVIEW.md`, `contributing.md`: 300-line scope clarification and gitignore hygiene.
-- `scripts/infra/agent-session.sh`, `session_store.py`, `scripts/hooks/classify-prompt.py`: multi-session visibility and commit/PR automation policy (W0-W3).
+See [`docs/hook-protocol.md`](docs/hook-protocol.md) for the canonical event schema.
 
-Global user setup (`claude/global/`) is sourced from `~/.claude/CLAUDE.md`, `~/.claude/karpathy.md`, and `~/.claude/RTK.md` as of 2026-05-12.
+---
 
-The 2026-05-08 baseline update was prepared from clean AirLens refs:
+## What this is NOT
 
-- `origin/main` for the baseline AirLens agent, hook, infra, and workflow mirror.
-- `origin/codex/github-actions-pr-secret-hardening` for PR-token and GitHub Actions security hardening artifacts.
-- `d92237f3` only for the historical `workmux-status` hook JSON, because that file is now ignored in the AirLens main tree but remains useful operational context.
+- **Not a deployable application** — this is a framework you adopt into your own project.
+- **Not an AI runtime** — you bring your own (Claude Code, Codex, Gemini, etc.).
+- **Not a replacement for `.claude/`** — it generates and supplements `.claude/`, `.codex/`, `.gemini/` configs.
+- **Not opinionated about your code** — only about session coordination, secret hygiene, and policy enforcement. Your project's stack, language, and architecture are up to you.
 
-Codex skills are mirrored from the installed AirLens skill set under `/Users/joymin/.codex/skills`, excluding `.system/`.
+---
 
 ## Verification
 
-Recommended checks before publishing:
+After install:
 
 ```bash
+# 1) gitleaks runs clean
 gitleaks detect --no-git --source . --config gitleaks.toml
-python3 scripts/maintenance/check-actions-pr-token-safety.py
-python3 - <<'PY'
-import pathlib, yaml
-for path in sorted(pathlib.Path("github/workflows").glob("*.yml")):
-    yaml.safe_load(path.read_text())
-print("workflow yaml ok")
-PY
+
+# 2) hook protocol smoke test (each AI)
+bash core/tests/adapter-smoke/claude-code/run.sh
+bash core/tests/adapter-smoke/codex/run.sh
+bash core/tests/adapter-smoke/gemini/run.sh
+
+# 3) cross-AI parity (same event → same decision across all 3 AIs)
+bash core/tests/cross-ai-parity.sh
 ```
+
+---
+
+## Customization
+
+Each project gets a `hook-config.yml` that defines:
+
+```yaml
+risk_areas:
+  - id: production-data
+    description: "Production database migrations and schema changes"
+    paths: ["migrations/*.sql"]
+    commands: ["psql.*production", "alembic upgrade"]
+    decision: ask
+  - id: secrets
+    description: "Anything touching secrets/ or .env"
+    paths: ["secrets/*", ".env*"]
+    decision: deny
+  # ... add your own
+```
+
+The same `core/hooks/r4-mutex-check.sh` reads this and enforces it. No code changes per project.
+
+See [`docs/customization.md`](docs/customization.md) for the full schema.
+
+---
+
+## Migration from legacy
+
+If you were using the previous 2026-05-12 mirror version, see [`legacy/v0-mirror-2026-05-12/ARCHIVE-NOTE.md`](legacy/v0-mirror-2026-05-12/ARCHIVE-NOTE.md) for the migration map.
+
+---
+
+## Contributing
+
+See [`docs/getting-started.md`](docs/getting-started.md) and [`rules/contributing.md`](rules/contributing.md).
+
+## License
+
+**TBD**. See repo issues or contact the maintainer.

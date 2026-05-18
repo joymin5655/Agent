@@ -1,0 +1,71 @@
+{
+  "_comment": "Claude Code hook wire-up template. Copy to ~/.claude/settings.json (or merge into existing). Replace {{FRAMEWORK_ROOT}} with the absolute path to your Agent/ checkout (e.g., /Users/yourname/Agent).",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh agent-session-start.sh" },
+          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh session-init.py" }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh session-quality-gate.py" },
+          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh session-close.sh" }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "*",
+        "hooks": [
+          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh agent-session-heartbeat.sh" },
+          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh plan-gate.py" }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh pre-tool-guard.sh" }
+        ]
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh r4-mutex-check.sh" },
+          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh context-mode-guard.sh" }
+        ]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh check-hardcoding.py" },
+          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh secret-content-scan.py" },
+          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh r4-file-mutex-check.sh" },
+          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh tdd-guard.py" },
+          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh supervisor.py" }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh circuit-breaker.py" }
+        ]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh r4-file-mutex-register.sh" }
+        ]
+      }
+    ]
+  }
+}

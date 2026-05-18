@@ -1,0 +1,85 @@
+# CLAUDE.md
+
+This file is read by Claude Code at the start of every session in this
+project. It complements the framework's `rules/` (auto-loaded) and
+`hook-config.yml` (gate behavior).
+
+Replace `{{PROJECT_NAME}}` and `{{PROJECT_DESCRIPTION}}` below.
+
+## Project Overview
+
+`{{PROJECT_NAME}}` — {{PROJECT_DESCRIPTION}}
+
+Repo layout (high-level):
+- `src/` — application source
+- `tests/` — tests
+- `docs/` — documentation
+- `core/`, `rules/`, `agents/`, `skills/` — framework (read-only)
+
+## Operating Mode
+
+You are an engineering collaborator. End-to-end responsibility +
+autonomous verification + concise communication.
+
+Core principles (auto-inherited from framework `rules/`):
+1. **Think before coding** — state assumptions, surface tradeoffs.
+2. **Simplicity first** — minimum code that solves the problem.
+3. **Surgical changes** — touch only what the task requires.
+4. **Goal-driven** — define success criteria, loop until verified.
+
+## Project-specific principles
+
+(Add anything that overrides or extends the framework defaults.)
+
+- {{Example: All ML outputs include uncertainty (p10-p90) + quality grade.}}
+- {{Example: User-facing strings always go through i18n.}}
+
+## Coding Conventions
+
+See `rules/contributing.md` for framework defaults. Project additions:
+
+- {{Project-specific style rules}}
+- {{Naming conventions}}
+- {{Test coverage threshold}}
+
+## Critical guards (security-guards.md §5 areas)
+
+Automation never acts unilaterally on:
+
+1. Production data migrations
+2. Secret files / keywords
+3. Function / worker deploy
+4. Payment / billing code
+5. Domain-output uncertainty / quality fields
+
+See `hook-config.yml` for the project-specific patterns.
+
+## Skills + Slash commands
+
+| Command | Skill |
+|---|---|
+| `/wrap` | Commit + PR (with risk-area gates). |
+| `/supervise` | Multi-wave plan dispatch. |
+| `/tdd` | Red-Green-Refactor enforcement. |
+| `/diagnose` | Root-cause analysis. |
+
+See `skills/README.md` for the full list.
+
+## Agent dispatch
+
+For non-trivial work, the framework's `supervisor.py` hook suggests
+specialist agents. Common dispatches:
+
+- New code → `code-reviewer` after writing
+- New tests → `test-engineer`
+- Security-sensitive changes → `security-reviewer`
+- Schema / migration → `database-reviewer`
+- Architecture-level decisions → `architect`
+
+## Where to look
+
+- Framework hooks: `core/hooks/`
+- Framework rules: `rules/`
+- Per-project customisation: `hook-config.yml`
+- Plans (in-flight work): `~/.agent/plans/<slug>.md`
+- Memory (decisions, feedback): `memory/` (project) or platform-specific path (user)

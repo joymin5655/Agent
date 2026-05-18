@@ -1,0 +1,67 @@
+# AGENTS.md
+
+This file is read by [Codex CLI](https://github.com/openai/codex) at the
+start of every session in this project. Multi-AI projects may also read
+this from other agents that follow the [agents.md](https://agents.md/)
+spec.
+
+Replace `{{PROJECT_NAME}}` and `{{PROJECT_DESCRIPTION}}` below.
+
+## Project Overview
+
+`{{PROJECT_NAME}}` — {{PROJECT_DESCRIPTION}}
+
+## Hard Rules
+
+1. **Never run shell commands that touch `secrets/`, `.env*` (excluding
+   `.env.example`), or production deploy/migration paths without an
+   explicit user request that names the exact target.**
+   The framework's shell wrapper (`codex-shell-wrap.sh`) blocks such
+   calls with exit 100.
+
+2. **5 Risk areas** — see `rules/policy/security-guards.md`:
+   - `data` — production data migrations
+   - `secrets` — credentials and env vars
+   - `deploy` — function / worker deploy bundles
+   - `payment` — billing / payment integration
+   - `domain-output` — uncertainty / quality fields
+
+   For any action in a risk area, ask a clarifying question first.
+
+3. **Multi-session coordination**:
+   - Worktree per concurrent task: `.worktrees/codex-<task-slug>/`
+   - Register session: `bash core/infra/codex-session.sh <task-slug>` on entry
+   - Heartbeat every 5 minutes (the wrapper does this automatically)
+
+4. **Never bypass the pre-push hook** with `--no-verify` unless the user
+   has explicitly typed that flag.
+
+## Soft Rules
+
+- Code style: `rules/contributing.md`.
+- Test-first for new features.
+- One logical change per commit; one feature per PR.
+
+## Project-specific
+
+(Add anything that overrides framework defaults.)
+
+- {{Project conventions}}
+- {{Architecture notes}}
+- {{Stack-specific gotchas}}
+
+## Where to look
+
+- Framework hooks: `core/hooks/`
+- Framework rules: `rules/`
+- Per-project customisation: `hook-config.yml`
+- Plans (in-flight): `~/.agent/plans/<slug>.md`
+
+## Reporting
+
+When you finish a wave / sub-task, summarise:
+- Files touched (`git diff --stat`)
+- Risk areas crossed and which the user explicitly approved
+- Outstanding items deferred
+
+Avoid filler intros — go straight to action.

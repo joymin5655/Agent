@@ -1,16 +1,63 @@
+# =============================================================================
+# AI-agnostic agent framework — runtime + secrets exclusions
+# =============================================================================
+# Applies to anyone who clones this repo for development.
+# Project consumers get a separate `.gitignore` via `setup.sh --project`.
+
+# --- OS / IDE -----------------------------------------------------------------
 .DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# --- Build / dependency caches ------------------------------------------------
 node_modules/
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+dist/
+build/
+
+# --- Secrets / env ------------------------------------------------------------
 .env
 .env.*
-*.log
-*.jsonl
-.claude/logs/
-.claude/locks/
-.claude/settings.local.json
-.claude/state.local/
-__pycache__/
-.pytest_cache/
+!.env.example
+!.env.sample
+!.env.template
 secrets/
-Data/
-Obsidian-airlens/
+
+# --- Runtime state (AI session locks, logs, telemetry) ------------------------
+.agent/locks/
+.agent/logs/
+.agent/state/
+.claude/locks/
+.claude/logs/
+.claude/state.local/
+.claude/settings.local.json
+.claude/projects/
+.claude/sessions/
+.claude/telemetry/
+.codex/sessions/
+.codex/log/
+.codex/tmp/
+.gemini/history/
+.gemini/tmp/
+
+# --- Local working directories ------------------------------------------------
 .worktrees/
+.agents/
+*.lock
+*.jsonl
+*.log
+
+# --- Generated / temporary ----------------------------------------------------
+tmp/
+.tmp/
+coverage/
+*.tsbuildinfo

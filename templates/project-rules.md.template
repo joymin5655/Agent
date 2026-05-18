@@ -1,0 +1,48 @@
+# Project Rules
+
+Project-specific rules that supplement (and may override) the framework's
+`rules/` directory. Copy this template to `rules/project.md` in your
+project (or a subdirectory) and edit.
+
+The framework's `rules/OVERVIEW.md` auto-loads:
+- `rules/contributing.md`
+- `rules/public-repo.md`
+- `rules/memory-discipline.md`
+- `rules/multi-agent-worktree.md`
+- `rules/external-plugin-policy.md`
+- `rules/policy/security-guards.md`
+
+So you only need to write what *differs*.
+
+## Project-specific code style
+
+(Add anything that overrides `rules/contributing.md`.)
+
+- {{Example: All async functions return a Result<T, E> type, not throw.}}
+- {{Example: Database queries go through Repository pattern; no inline SQL.}}
+
+## Project-specific risk areas
+
+`hook-config.yml` is the runtime configuration. This section is the
+*rationale* — why each risk area is defined the way it is.
+
+- **data**: {{Why migrations need extra scrutiny in this project.}}
+- **secrets**: {{Which specific secret formats exist.}}
+- **deploy**: {{Which deploy bundles count.}}
+- **payment**: {{Which payment providers are integrated.}}
+- **domain-output**: {{What fields must never be silently removed.}}
+
+## Domain-specific principles
+
+(Add 1-3 principles that capture the essence of your domain.)
+
+- {{Principle 1}}
+- {{Principle 2}}
+- {{Principle 3}}
+
+## Where to read more
+
+- `docs/` — architecture, ADRs, design docs
+- `wiki/` — synthesised research notes
+- `hook-config.yml` — gate behavior config
+- `~/.agent/plans/` — in-flight work plans

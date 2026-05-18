@@ -1,0 +1,22 @@
+# Codex CLI configuration template.
+# Copy to ~/.codex/config.toml (or merge into existing).
+# Replace {{FRAMEWORK_ROOT}} with the absolute path to your Agent/ checkout.
+
+# Profile: route Codex's shell tool through the framework's gate hooks.
+# Requires codex-shell-wrap.sh on PATH (see adapters/codex/README.md).
+[tools.shell]
+command = "{{FRAMEWORK_ROOT}}/adapters/codex/codex-shell-wrap.sh"
+
+# Project context file (Codex reads AGENTS.md per-project; see template).
+# Codex also reads ~/.codex/AGENTS.md as a global instruction file.
+project_doc = "AGENTS.md"
+
+# Sandbox — Codex's permission model. Recommended for use alongside this
+# framework: trust prompts so the wrapper can BLOCK actions before they hit
+# the sandbox.
+[sandbox]
+mode = "workspace-write"
+allow_network = false
+
+# Skills directory (optional — set if using ~/.codex/skills layout).
+# skills_dir = "{{FRAMEWORK_ROOT}}/codex-skills"

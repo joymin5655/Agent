@@ -1,0 +1,50 @@
+# Lint workflow — runs project lint + framework sanitize-audit.
+# Copy to your project's .github/workflows/lint.yml.
+
+name: Lint
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          npm ci || true
+          pip install ruff || true
+
+      - name: Run project lint (best-effort)
+        run: |
+          if [ -f package.json ] && jq -e '.scripts.lint' package.json >/dev/null 2>&1; then
+            npm run lint
+          else
+            echo "No npm lint script; skipping."
+          fi
+          if compgen -G "*.py" >/dev/null || compgen -G "**/*.py" >/dev/null; then
+            ruff check . || true
+          fi
+
+      - name: Run framework sanitize-audit (if framework checked out)
+        run: |
+          if [ -f core/tests/sanitize-audit.sh ]; then
+            bash core/tests/sanitize-audit.sh
+          fi
