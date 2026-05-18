@@ -1,0 +1,216 @@
+# Agent
+
+**AI-agnostic agent framework**: rules, hooks, agents, skills, and automation that work identically across Claude Code, Codex CLI, and Gemini CLI — and on any project.
+
+> Status: v0.1.0 (initial generic-only rewrite). License: **TBD**.
+
+---
+
+## What this gives you
+
+When you adopt this framework in a project, you get:
+
+1. **Multi-session safety** — when you have multiple AI sessions running (Claude in one terminal, Codex in another, Gemini in a third), they don't collide. Locks on shared resources (production DBs, deploy commands, payment libraries) are coordinated through a single JSON lock file.
+2. **Secret hardening** — a 6-layer secret defense (`gitleaks` config + pre-commit + pre-push + Bash/MCP content scanners + project policy doc + CI workflow). Catches OpenAI/Anthropic/AWS/Stripe/Slack/Supabase + custom tokens in code, env files, MCP tool calls, and `git push` diffs.
+3. **Plan-first discipline** — hooks classify your prompt by tier (trivial / interactive / autonomous / conversational), gate destructive operations, and enforce a "think before coding" loop.
+4. **Test-Driven enforcement** — a `tdd-guard` hook blocks creating new production code unless a corresponding test file exists.
+5. **Policy enforcement** — generic `.claude/rules/` style policy docs covering contributing, public-repo safety, memory discipline, multi-agent worktree coordination, 5 project risk areas (configurable).
+6. **Worktree coordination** — `scripts/infra/agent-session.sh` for branch-per-task discipline with automatic stale-session GC and heartbeat tracking.
+7. **Commit + PR automation** — `auto-ship.sh` runs `gitleaks` + project-defined risk-area checks + CI watch + admin merge in one command. Aborts if any safeguard trips.
+8. **Cross-AI parity** — the same `core/hooks/*` script returns the same decision (`allow` / `deny` / `ask`) no matter which AI invokes it. Adapters translate native AI events to a canonical JSON protocol.
+
+---
+
+## Quick start
+
+### One-command install (all 3 AIs)
+
+```bash
+gh repo clone joymin5655/Agent ~/agent
+bash ~/agent/setup.sh
+```
+
+This installs adapter configs to:
+- `~/.claude/settings.json` (Claude Code hook registration)
+- `~/.codex/config.toml` (Codex CLI hook registration)
+- `~/.gemini/settings.json` (Gemini CLI hook registration)
+
+Existing configs are merged, not overwritten. Use `--force` to overwrite.
+
+### Selective install
+
+```bash
+bash ~/agent/setup.sh --claude       # Claude Code only
+bash ~/agent/setup.sh --codex        # Codex CLI only
+bash ~/agent/setup.sh --gemini       # Gemini CLI only
+bash ~/agent/setup.sh --hooks-only   # git-hooks only (no AI configs)
+```
+
+### Add to a project
+
+```bash
+cd /path/to/your/project
+bash ~/agent/setup.sh --project
+```
+
+Scaffolds into the project:
+- `CLAUDE.md` (if absent — generic template)
+- `AGENTS.md` (if absent — generic template)
+- `GEMINI.md` (if absent — generic template)
+- `gitleaks.toml` (if absent)
+- `.claude/rules/` (sanitized generic copies)
+- `hook-config.yml` (project-customizable risk areas)
+- `.gitignore` additions (runtime state)
+- `.git/hooks/{pre-commit, pre-push}` (gitleaks + scan-push-diff)
+
+Idempotent — re-running skips existing files (use `--force` to overwrite).
+
+---
+
+## Layout
+
+```
+Agent/
+├── README.md                    # this file
+├── AGENTS.md                    # agents.md spec, 3-AI guide
+├── CHANGELOG.md
+├── setup.sh                     # 4-mode installer
+├── gitleaks.toml                # base secret-scan config
+├── .gitignore
+│
+├── docs/                        # concept + protocol docs
+│   ├── architecture.md
+│   ├── ai-adapters.md
+│   ├── hook-protocol.md         # canonical stdin/stdout JSON
+│   ├── getting-started.md
+│   ├── customization.md
+│   └── concepts/
+│
+├── core/                        # AI-agnostic core (the truth)
+│   ├── hooks/                   # ~25 portable hooks
+│   ├── infra/                   # session coordination, auto-ship
+│   ├── git-hooks/               # pre-commit, pre-push
+│   └── tests/                   # hook + adapter tests
+│
+├── adapters/                    # 3 AI bridges
+│   ├── claude-code/
+│   ├── codex/
+│   └── gemini/
+│
+├── rules/                       # generic policy docs
+├── agents/                      # generic agent definitions (Claude format)
+├── skills/                      # generic SKILL.md files (Claude format)
+├── codex-skills/                # Codex-native skill format
+├── templates/                   # project scaffold templates
+│
+├── github/
+│   ├── workflows.template/      # secret-scan.yml, lint.yml
+│   └── PULL_REQUEST_TEMPLATE.md
+│
+└── legacy/
+    └── v0-mirror-2026-05-12/        # archived original mirror content
+```
+
+---
+
+## Why "AI-agnostic"?
+
+The core innovation: **one hook protocol, three adapters**.
+
+```
+                     [Your AI runtime]
+                            │
+                  Claude / Codex / Gemini
+                            │
+                    [native hook event]
+                            │
+                            ▼
+                    [adapter — translates]
+                            │
+                 canonical stdin JSON
+                            │
+                            ▼
+                   [core/hooks/<name>]
+                            │
+                 canonical stdout JSON
+                            │
+                            ▼
+                  [adapter — translates back]
+                            │
+                native decision (allow/deny/ask)
+                            │
+                            ▼
+                  [AI runtime enforces]
+```
+
+A `pre-tool-guard.sh` written once works for all 3 AIs. When you add a new AI runtime, you only write a new adapter — `core/hooks/*` doesn't change.
+
+See [`docs/hook-protocol.md`](docs/hook-protocol.md) for the canonical event schema.
+
+---
+
+## What this is NOT
+
+- **Not a deployable application** — this is a framework you adopt into your own project.
+- **Not an AI runtime** — you bring your own (Claude Code, Codex, Gemini, etc.).
+- **Not a replacement for `.claude/`** — it generates and supplements `.claude/`, `.codex/`, `.gemini/` configs.
+- **Not opinionated about your code** — only about session coordination, secret hygiene, and policy enforcement. Your project's stack, language, and architecture are up to you.
+
+---
+
+## Verification
+
+After install:
+
+```bash
+# 1) gitleaks runs clean
+gitleaks detect --no-git --source . --config gitleaks.toml
+
+# 2) hook protocol smoke test (each AI)
+bash core/tests/adapter-smoke/claude-code/run.sh
+bash core/tests/adapter-smoke/codex/run.sh
+bash core/tests/adapter-smoke/gemini/run.sh
+
+# 3) cross-AI parity (same event → same decision across all 3 AIs)
+bash core/tests/cross-ai-parity.sh
+```
+
+---
+
+## Customization
+
+Each project gets a `hook-config.yml` that defines:
+
+```yaml
+risk_areas:
+  - id: production-data
+    description: "Production database migrations and schema changes"
+    paths: ["migrations/*.sql"]
+    commands: ["psql.*production", "alembic upgrade"]
+    decision: ask
+  - id: secrets
+    description: "Anything touching secrets/ or .env"
+    paths: ["secrets/*", ".env*"]
+    decision: deny
+  # ... add your own
+```
+
+The same `core/hooks/r4-mutex-check.sh` reads this and enforces it. No code changes per project.
+
+See [`docs/customization.md`](docs/customization.md) for the full schema.
+
+---
+
+## Migration from legacy
+
+If you were using the previous 2026-05-12 mirror version, see [`legacy/v0-mirror-2026-05-12/ARCHIVE-NOTE.md`](legacy/v0-mirror-2026-05-12/ARCHIVE-NOTE.md) for the migration map.
+
+---
+
+## Contributing
+
+See [`docs/getting-started.md`](docs/getting-started.md) and [`rules/contributing.md`](rules/contributing.md).
+
+## License
+
+**TBD**. See repo issues or contact the maintainer.
