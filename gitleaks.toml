@@ -1,0 +1,67 @@
+# =============================================================================
+# gitleaks config — AI-agnostic agent framework
+# =============================================================================
+# Layer 1 (local pre-commit) + Layer 2 (CI) shared.
+# Docs: https://github.com/gitleaks/gitleaks#configuration
+#
+# This is the BASE ruleset. Each project should extend with its own allowlist
+# via `templates/gitleaks.toml.template` (copy + customize).
+
+[extend]
+# Use 100+ built-in rules (AWS / GCP / Stripe / Slack / OpenAI / Anthropic /
+# Supabase / GitHub PAT / etc.)
+useDefault = true
+
+# -----------------------------------------------------------------------------
+# Allowlist — base patterns that are always safe to ignore
+# -----------------------------------------------------------------------------
+[allowlist]
+description = "Base allowlist for placeholder strings and common config artifacts"
+
+# 1. Placeholder strings (env.example / docs / READMEs)
+regexes = [
+  '''your[_-]?\w+[_-]?(key|token|secret|id|url|dsn|password)''',
+  '''your-?(anon|service|project)-?(key|id)?''',
+  '''placeholder''',
+  '''sk-(proj-)?(your|placeholder|example|test|xxx)''',
+  '''dummy[_-]?(token|key|secret)''',
+  '''example[_-]?(token|key|secret)''',
+  '''<your[_-]?\w+>''',
+  '''\{\{[A-Z_]+\}\}''',
+]
+
+# 2. Paths — example envs, lockfiles, vendored deps, generated artifacts
+paths = [
+  '''.*\.env\.example$''',
+  '''.*\.env\.sample$''',
+  '''.*\.env\.template$''',
+  '''.*/\.gitleaks\.toml$''',
+  '''.*/gitleaks\.toml$''',
+  '''.*/node_modules/.*''',
+  '''.*/\.venv/.*''',
+  '''.*/venv/.*''',
+  '''.*\.lockb?$''',
+  '''.*\.lock$''',
+  '''package-lock\.json$''',
+  '''yarn\.lock$''',
+  '''pnpm-lock\.yaml$''',
+  '''Pipfile\.lock$''',
+  '''poetry\.lock$''',
+  '''uv\.lock$''',
+  '''.*/legacy/.*''',
+]
+
+commits = []
+
+# -----------------------------------------------------------------------------
+# Custom rules — extend with project-specific patterns
+# -----------------------------------------------------------------------------
+# Add your own [[rules]] blocks below to detect project-specific token formats.
+#
+# Example template:
+#
+# [[rules]]
+# id = "my-service-token"
+# description = "MyService API token format"
+# regex = '''myservice_(live|test)_[a-zA-Z0-9_-]{32,}'''
+# tags = ["myservice", "api"]
