@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# Git pre-commit hook — secret detection + style scan on staged diff.
+# Activated by running `setup.sh --hooks-only` or `setup.sh --project`
+# (which sets `core.hooksPath=core/git-hooks`).
+#
+# Bypass (NOT recommended): git commit --no-verify
+# CI Layer 2 (.github/workflows/secret-scan.yml) catches anything bypassed here.
+
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+RED=$'\033[0;31m'
+GREEN=$'\033[0;32m'
+YELLOW=$'\033[0;33m'
+NC=$'\033[0m'
+
+fail=0
+
+# 1) gitleaks — secret detection on staged diff
+if command -v gitleaks >/dev/null 2>&1; then
+  CONFIG_ARG=""
+  [ -f "$ROOT/gitleaks.toml" ] && CONFIG_ARG="--config=$ROOT/gitleaks.toml"
+  if ! gitleaks protect --staged --redact -v $CONFIG_ARG --no-banner; then
+    echo "${RED}✗ gitleaks found secrets in staged changes — commit blocked.${NC}" >&2
+    echo "  Bypass (emergency only): git commit --no-verify" >&2
+    echo "  False-positive? Add to gitleaks.toml [allowlist] and document in PR." >&2
+    fail=1
+  fi
+else
+  echo "${YELLOW}⚠ gitleaks not installed — skipping secret scan.${NC}" >&2
+  echo "  Install: brew install gitleaks  (or https://github.com/gitleaks/gitleaks/releases)" >&2
+  echo "  CI will still enforce in GitHub Actions." >&2
+fi
+
+# 2) Hardcoding / style scan on staged diff
+if command -v python3 >/dev/null 2>&1 && [ -f "$ROOT/core/git-hooks/check-staged.py" ]; then
+  if ! python3 "$ROOT/core/git-hooks/check-staged.py"; then
+    fail=1
+  fi
+else
+  echo "${YELLOW}⚠ python3 or check-staged.py missing — skipping hardcoding scan.${NC}" >&2
+fi
+
+if [ "$fail" -ne 0 ]; then
+  exit 1
+fi
+
+echo "${GREEN}✓ pre-commit checks passed${NC}" >&2
+exit 0
