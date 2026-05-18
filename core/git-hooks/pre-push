@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+# Git pre-push hook — Layer 6 of secret defense.
+#
+# Triggered by `git push`. Fast checks only (~5s budget):
+#   1. gitleaks on full push range (remote..local) — Layer 1 rerun
+#   2. scan-push-diff.py — bypass-pattern scan on push diff content
+#   3. Risk-area advisory (stderr only — never block)
+#
+# Activated by running `setup.sh --hooks-only` or `setup.sh --project`
+# (which sets `core.hooksPath=core/git-hooks`).
+#
+# Bypass (NOT recommended): git push --no-verify
+#
+# Exit codes (align with auto-ship.sh):
+#   0  = PASS
+#   1  = gitleaks fail (Layer 1)
+#   15 = secret diff fail (Layer 6)
+#
+# Risk-area paths customizable via env vars:
+#   AGENT_RISK_DATA_PATTERN     (default: ^.*/migrations/.*\.sql$)
+#   AGENT_RISK_DEPLOY_PATTERN   (default: ^.*/functions/.*/index\.ts$)
+
+set -euo pipefail
+
+if [ -t 2 ]; then
+  RED='\033[0;31m'
+  YELLOW='\033[0;33m'
+  GREEN='\033[0;32m'
+  BLUE='\033[0;34m'
+  NC='\033[0m'
+else
+  RED=''; YELLOW=''; GREEN=''; BLUE=''; NC=''
+fi
+
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+REMOTE="${1:-origin}"
+fail=0
+
+RISK_DATA_PATTERN="${AGENT_RISK_DATA_PATTERN:-^.*/migrations/.*\.sql$}"
+RISK_DEPLOY_PATTERN="${AGENT_RISK_DEPLOY_PATTERN:-^.*/functions/.*/index\.ts$}"
+
+# stdin (git pre-push):  <local_ref> <local_sha> <remote_ref> <remote_sha>  (one line per branch)
+DIFF_FILES=""
+DIFF_RANGE=""
+ZERO=0000000000000000000000000000000000000000
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ -z "${local_sha:-}" ] && continue
+  if [ "$local_sha" = "$ZERO" ]; then
+    continue  # branch delete
+  fi
+  if [ "$remote_sha" = "$ZERO" ]; then
+    range="origin/main..$local_sha"  # new branch — diff against main
+  else
+    range="$remote_sha..$local_sha"
+  fi
+  DIFF_RANGE="$range"
+  files="$(git diff --name-only "$range" 2>/dev/null || true)"
+  DIFF_FILES="${DIFF_FILES}${files}
+"
+done
+
+if [ -z "$DIFF_FILES" ]; then
+  echo "${GREEN}✓ pre-push: no diff to scan${NC}" >&2
+  exit 0
+fi
+
+# 1) gitleaks on push range
+if command -v gitleaks >/dev/null 2>&1 && [ -f "$ROOT/gitleaks.toml" ]; then
+  if ! gitleaks detect \
+      --source "$ROOT" \
+      --log-opts="$DIFF_RANGE" \
+      --redact -v \
+      --config="$ROOT/gitleaks.toml" \
+      --no-banner 2>&1 | tail -20 >&2; then
+    echo "${RED}✗ gitleaks found secrets in push range — push blocked.${NC}" >&2
+    echo "  Bypass (emergency only): git push --no-verify" >&2
+    fail=1
+  fi
+else
+  echo "${YELLOW}⚠ gitleaks or gitleaks.toml unavailable — skipping Layer 1 rescan (CI Layer 2 will catch).${NC}" >&2
+fi
+
+# 2) Secret diff content scan — Layer 6
+SCAN_PY="$ROOT/core/git-hooks/scan-push-diff.py"
+EXEMPT_GLOBS=(
+  ":!core/git-hooks/tests/*"
+  ":!core/git-hooks/scan-push-diff.py"
+  ":!core/hooks/secret-content-scan.py"
+  ":!core/hooks/tests/*"
+  ":!core/infra/auto-ship-guard-scan.py"
+  ":!gitleaks.toml"
+  ":!*.env.example"
+  ":!docs/*"
+  ":!wiki/*"
+  ":!rules/*"
+  ":!policy/*"
+  ":!*.test.*"
+  ":!*.spec.*"
+  ":!*.fixture.*"
+  ":!*/__tests__/*"
+  ":!*/tests/*"
+  ":!*/test/*"
+)
+if command -v python3 >/dev/null 2>&1 && [ -f "$SCAN_PY" ]; then
+  DIFF_CONTENT="$(git diff "$DIFF_RANGE" -- "${EXEMPT_GLOBS[@]}" 2>/dev/null | grep -E '^\+' | sed 's/^+//' || true)"
+  if [ -n "$DIFF_CONTENT" ]; then
+    if ! echo "$DIFF_CONTENT" | python3 "$SCAN_PY"; then
+      echo "${RED}✗ secret diff scan failed — push blocked.${NC}" >&2
+      fail=15
+    fi
+  fi
+else
+  echo "${YELLOW}⚠ python3 or scan-push-diff.py unavailable — skipping diff scan.${NC}" >&2
+fi
+
+# 3) Risk-area advisory (stderr only — never block)
+DATA_FILES=$(echo "$DIFF_FILES" | { grep -E "$RISK_DATA_PATTERN" || true; })
+DEPLOY_FILES=$(echo "$DIFF_FILES" | { grep -E "$RISK_DEPLOY_PATTERN" || true; })
+
+if [ -n "$DATA_FILES" ]; then
+  echo "${BLUE}[ADVISORY data] production data migration files in push:${NC}" >&2
+  echo "$DATA_FILES" | sed 's/^/  /' >&2
+  echo "  → Resource mutex 'ask' decision. Confirm before merge." >&2
+fi
+if [ -n "$DEPLOY_FILES" ]; then
+  echo "${BLUE}[ADVISORY deploy] function/worker deploy files in push:${NC}" >&2
+  echo "$DEPLOY_FILES" | sed 's/^/  /' >&2
+  echo "  → Resource mutex 'ask' decision. Confirm before deploy." >&2
+fi
+
+if [ "$fail" -eq 15 ]; then
+  exit 15
+fi
+if [ "$fail" -ne 0 ]; then
+  exit 1
+fi
+
+echo "${GREEN}✓ pre-push checks passed${NC}" >&2
+exit 0
