@@ -1,0 +1,20 @@
+{
+  "_comment": "Gemini CLI configuration template. Copy to ~/.gemini/settings.json (or merge into existing). Replace {{FRAMEWORK_ROOT}} with the absolute path to your Agent/ checkout.",
+  "tools": {
+    "shell": {
+      "command": "{{FRAMEWORK_ROOT}}/adapters/gemini/gemini-shell-wrap.sh"
+    }
+  },
+  "project_doc": "GEMINI.md",
+  "context": {
+    "include": [
+      "GEMINI.md",
+      "rules/**/*.md",
+      "hook-config.yml"
+    ]
+  },
+  "sandbox": {
+    "mode": "workspace",
+    "allowNetwork": false
+  }
+}
