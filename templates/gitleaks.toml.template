@@ -1,0 +1,54 @@
+# gitleaks.toml — project-level configuration template.
+#
+# Copy to <project-root>/gitleaks.toml and customise.
+# The framework's git-hooks (core/git-hooks/pre-commit and pre-push) read
+# this file at the project root.
+
+title = "Project gitleaks config"
+
+# Inherit the 100+ default secret patterns shipped with gitleaks.
+[extend]
+useDefault = true
+
+# ---------------------------------------------------------------------------
+# Allowlist — paths and patterns to ignore.
+# Document EACH allowlist entry in your PR description with a justification.
+# ---------------------------------------------------------------------------
+[allowlist]
+description = "Project-specific allowlist"
+
+# Path patterns (regex). Files matching these are skipped entirely.
+paths = [
+    '''\.env\.example$''',
+    '''\.env\.sample$''',
+    '''\.env\.template$''',
+    '''gitleaks\.toml$''',
+    '''/fixtures?/''',
+    '''/test/''',
+    '''/__tests__/''',
+    '''\.test\.''',
+    '''\.spec\.''',
+    '''/docs?/''',
+    '''/wiki/''',
+    # Add your project's allowed paths here:
+    # '''/path/to/your/fixture/dir''',
+]
+
+# Regex patterns. Matches anywhere in any file are ignored.
+regexes = [
+    # Common placeholder patterns
+    '''\b(REPLACE_ME|PLACEHOLDER|YOUR_KEY_HERE|xxxxx+)\b''',
+    '''\b[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\b''',  # UUIDs (rarely secrets)
+    # Add your project's known-safe patterns here:
+    # '''\bYOUR_PUBLIC_KEY_FORMAT''',
+]
+
+# ---------------------------------------------------------------------------
+# Custom rules (add project-specific secret patterns here)
+# ---------------------------------------------------------------------------
+# Example: catch internal token format that gitleaks defaults don't cover.
+# [[rules]]
+# id = "internal-token"
+# description = "Internal service token (xyz_AAAA-BBBB-CCCC format)"
+# regex = '''xyz_[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}'''
+# tags = ["secret", "internal"]
