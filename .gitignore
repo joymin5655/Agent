@@ -33,6 +33,9 @@ build/
 secrets/
 
 # --- Runtime state (AI session locks, logs, telemetry) ------------------------
+.agent/locks/
+.agent/logs/
+.agent/state/
 .claude/locks/
 .claude/logs/
 .claude/state.local/
