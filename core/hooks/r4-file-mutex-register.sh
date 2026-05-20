@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# R4.1 worktree commit register
-#
+# AirLens — R4.1 worktree commit register (gap fix, 2026-05-18).
 # Closes the visibility gap where worktree commits don't trigger PreToolUse Write/Edit hooks,
 # so files claimed via commit (not interactive edit) never reach active-sessions.json files[].
 #
@@ -10,9 +9,9 @@
 #                                        # (only when tool_input.command matches `git commit`)
 #
 # Best-effort: silent exit 0 on missing deps / non-worktree cwd / empty diff / unknown mode.
-# Wire into:
-#   SessionStart "*"  — after agent-session-start.sh
-#   PostToolUse  "Bash" — after post-merge-sync.sh
+# Wire in .claude/settings.local.json (see multi-agent-worktree.md §R7.1):
+#   SessionStart "*": position #4, after agent-session-start.sh
+#   PostToolUse  "Bash": position #3, after post-merge-sync.sh
 #
 # Test override:
 #   R4_REGISTER_SESSION_SH=<path>   # mock agent-session.sh for reproduce tests
@@ -32,9 +31,9 @@ REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
 # .git is a file (gitlink) in a worktree, a directory in the main tree.
 [[ -f "$REPO_ROOT/.git" ]] || exit 0
 
-# Resolve main tree to locate agent-session.sh
+# Resolve main tree to locate agent-session.sh (worktree scripts/ symlinks to main).
 MAIN_TREE="$(git worktree list 2>/dev/null | head -1 | awk '{print $1}')"
-SESSION_SH="${R4_REGISTER_SESSION_SH:-$MAIN_TREE/core/infra/agent-session.sh}"
+SESSION_SH="${R4_REGISTER_SESSION_SH:-$MAIN_TREE/scripts/infra/agent-session.sh}"
 [[ -x "$SESSION_SH" ]] || exit 0
 
 register_files() {
@@ -44,22 +43,10 @@ register_files() {
   done
 }
 
-# Detect the project's default branch (main / master / develop)
-default_branch() {
-  for b in main master develop; do
-    if git -C "$REPO_ROOT" rev-parse --verify "$b" >/dev/null 2>&1; then
-      echo "$b"
-      return 0
-    fi
-  done
-  echo "main"
-}
-
 case "$MODE" in
   baseline)
     # SessionStart — bulk register all worktree-vs-main diffs once
-    BASE="$(default_branch)"
-    git -C "$REPO_ROOT" diff "$BASE..HEAD" --name-only 2>/dev/null | register_files
+    git -C "$REPO_ROOT" diff main..HEAD --name-only 2>/dev/null | register_files
     ;;
   commit)
     # PostToolUse Bash — only fire after `git commit` patterns
@@ -67,8 +54,9 @@ case "$MODE" in
     [[ -z "$INPUT" ]] && exit 0
     CMD="$(echo "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null)"
     [[ -z "$CMD" ]] && exit 0
-    # Match `git commit ...` (excludes plumbing variants)
+    # Match `git commit ...` (excludes git commit-tree / commit-graph plumbing)
     echo "$CMD" | grep -qE '\bgit\b[^|;&]*\bcommit(\s|$)' || exit 0
+    # Register diff for the just-made commit (HEAD~..HEAD), with fallback for first commit
     if git -C "$REPO_ROOT" rev-parse HEAD~ >/dev/null 2>&1; then
       git -C "$REPO_ROOT" diff HEAD~..HEAD --name-only 2>/dev/null | register_files
     else
