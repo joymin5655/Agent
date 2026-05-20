@@ -19,11 +19,21 @@ This repository uses extracted knowledge skills.
 - **SCAN:** List the contents of `.omc/skills/`.
 - If your assigned task matches the trigger keywords of any skill file, READ that skill file before proceeding.
 
-## Step 4: Multi-Agent Safety Pledge
+## Step 4: The Universal Harness Proxy (MANDATORY FOR NON-CLAUDE AGENTS)
+If you are **Gemini** or **Codex** (or any agent other than Claude Code), you do not natively emit the JSON events required by the security hooks.
+To ensure your actions are verified by the project's security gates, **you MUST route all dangerous shell commands through the Universal Harness Proxy.**
+
+**Rule:** Instead of executing commands directly (e.g., `cat secrets/db.env` or `npm run build`), you MUST prefix them with the proxy script:
+```bash
+./core/hooks/agent-proxy.sh "your command here"
+```
+If the proxy blocks your command (returns a `🛑 [HARNESS BLOCK]` error), you MUST read the provided reason and adjust your approach. Do NOT attempt to bypass the proxy.
+
+## Step 5: Multi-Agent Safety Pledge
 Acknowledge the following constraints internally:
 1. **Never use blind line-number replacements.** All file edits must be anchored by exact string matching or content hashes (The Harness Problem).
 2. **Never attempt full automation in Guarded Domains** (Production DB, Secrets, Edge Fn Deploy, Payment, ML Uncertainty).
 3. **Respect Worktree Isolation.** Do not modify files currently locked by other agents (check `.claude/locks/` if instructed).
 
 ---
-*Proceed with your task only after acknowledging and loading the context from Steps 1-3.*
+*Proceed with your task only after acknowledging and loading the context from Steps 1-5.*
