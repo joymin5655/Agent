@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# PreToolUse hook — R4.1 file-level mutex
+# AirLens — PreToolUse R4.1 *file-level* mutex check (T1-A, 2026-05-07).
+# Mirrors r4-mutex-check.sh but for code files.
 #
-# Mirrors r4-mutex-check.sh but at the code-file granularity. When a Write/Edit/MultiEdit
-# targets a file already being edited by ANOTHER active session (recorded in
-# .agent/locks/active-sessions.json under sessions[*].files[]), return permissionDecision="ask"
-# so the user explicitly confirms the overlap.
+# Behavior: if the target file is already claimed by a DIFFERENT active session,
+# request permission with hookSpecificOutput.permissionDecision="ask" so the
+# user explicitly confirms the override.
+# We never deny — file-level coordination across multiple AIs would be too
+# friction-heavy if we hard-blocked.
 #
-# Never denies — file-level coordination across multiple AIs would be too friction-heavy
-# if we hard-blocked. The `ask` decision surfaces the overlap to the user.
+# Wire in .claude/settings.local.json PreToolUse with matcher "Write|Edit|MultiEdit",
+# AFTER gsd-cwd-guard.sh (so cwd-guard runs first to enforce worktree isolation).
 #
-# Wire into PreToolUse with matcher "Write|Edit|MultiEdit". See adapters/<ai>/settings.template.
-#
-# Self-touch: this hook ALSO records the current edit in active-sessions.json under
-# sessions[me].files[], so subsequent edits by other sessions can detect overlap.
+# Self-touch: this hook ALSO records the current Edit in active-sessions.json
+# under sessions[me].files[], so subsequent edits by other sessions can detect overlap.
 # That bookkeeping is best-effort (silent failure).
 
 set -e
@@ -25,11 +25,13 @@ fi
 
 TOOL_NAME=$(printf '%s' "$INPUT" | jq -r '.tool_name // .tool // ""')
 
+# Only check on Write|Edit|MultiEdit
 case "$TOOL_NAME" in
   Write|Edit|MultiEdit) ;;
   *) exit 0 ;;
 esac
 
+# Extract the target file path
 TARGET=$(printf '%s' "$INPUT" | jq -r '.tool_input.file_path // .tool_input.path // ""')
 
 if [[ -z "$TARGET" ]]; then
@@ -50,7 +52,7 @@ resolve_canonical_root() {
 }
 
 ROOT="$(resolve_canonical_root)"
-LOCK_FILE="$ROOT/.agent/locks/active-sessions.json"
+LOCK_FILE="$ROOT/.claude/locks/active-sessions.json"
 WORKTREES_DIR="$ROOT/.worktrees"
 
 # Normalize TARGET to repo-relative path
@@ -64,7 +66,7 @@ if [[ "$TARGET" == /* ]]; then
   elif [[ "$TARGET" == "$ROOT"/* ]]; then
     REL="${TARGET#$ROOT/}"
   else
-    # Outside repo (e.g., ~/.config/...) — skip mutex check
+    # Outside repo (e.g., ~/.claude/...) — skip mutex check.
     exit 0
   fi
 else
@@ -73,12 +75,12 @@ fi
 
 # Whitelist patterns that bypass mutex (fixtures, generated, lock files)
 case "$REL" in
-  *.fixture.json|*-test.json|*.snap|*.lock|*.min.js|*.min.css|*-generated.*|*/dist/*|*/build/*|*/.cache/*|*/node_modules/*|.agent/locks/*|.agent/logs/*|*/__pycache__/*)
+  *.fixture.json|*-test.json|*.snap|*.lock|*.min.js|*.min.css|*-generated.*|*/dist/*|*/build/*|*/.cache/*|*/node_modules/*|.claude/locks/*|.claude/logs/*|*/__pycache__/*)
     exit 0
     ;;
 esac
 
-# Compute calling session_id from env or cwd
+# Compute the calling session_id from env or cwd (mirrors r4-mutex-check.sh)
 SESSION_ID=""
 if [[ -n "${AGENT_SESSION_ID:-}" ]]; then
   SESSION_ID="$AGENT_SESSION_ID"
@@ -101,6 +103,7 @@ if [[ ! -f "$LOCK_FILE" ]]; then
   exit 0
 fi
 
+# Find any OTHER session that has this file in its files[] list
 OWNER=$(jq -r --arg p "$REL" --arg me "$SESSION_ID" '
   [.sessions[]? | select(.session_id != $me) | select((.files // [])[]?.path == $p) | .session_id] | first // empty
 ' "$LOCK_FILE" 2>/dev/null || echo "")
@@ -122,7 +125,7 @@ reason = (
     f"  owner_branch  = {owner_branch}\n"
     f"  last_edit     = {last_edit}\n"
     f"  current       = {current}\n"
-    f"Coordinate before overwriting. Confirm to proceed."
+    f"Coordinate before overwriting (PR #222 pattern). Confirm to proceed."
 )
 print(json.dumps({
     "hookSpecificOutput": {
@@ -136,6 +139,6 @@ PY
 fi
 
 # No conflict — record this edit in our session's files[] (best-effort)
-"$ROOT/core/infra/agent-session.sh" touch "$REL" >/dev/null 2>&1 || true
+"$ROOT/scripts/infra/agent-session.sh" touch "$REL" >/dev/null 2>&1 || true
 
 exit 0
