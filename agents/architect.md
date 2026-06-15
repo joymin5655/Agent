@@ -60,6 +60,17 @@ Stop conditions: …
 …
 ```
 
+## Example
+
+Good — split by responsibility, smallest viable diff, concrete stop:
+> Wave 1: add `RateLimiter` class + unit tests (new file, no call-site changes).
+> Wave 2: wire it into `api/middleware.ts` (one call site).
+> Stop: 429 returned under the load test.
+
+Bad — split by line count, speculative, no target state:
+> Wave 1: "refactor the API layer" (vague, touches 30 files, adds a generic
+> `PluginSystem` nobody asked for).
+
 ## What you don't do
 
 - Don't write the code.
