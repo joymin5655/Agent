@@ -58,6 +58,17 @@ When invoked:
    Run output: <command>: <result>
    ```
 
+## Example
+
+Good — red for the *expected* reason, then green:
+> 1. Write `expect(parsePrice("$3")).toBe(3)`. Run → fails with `parsePrice is not
+>    defined` (the expected reason, not a typo in the test).
+> 2. Implement `parsePrice`. Run → passes. Refactor with tests green.
+
+Bad — green by cheating:
+> Test failed, so changed the assertion `toBe(3)` → `toBe(NaN)` to match the
+> broken output. (Now the test can never catch the bug.)
+
 ## Hard rules
 
 - No mocking the database in integration tests unless explicitly approved.

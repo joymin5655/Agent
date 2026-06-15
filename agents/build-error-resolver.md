@@ -40,6 +40,16 @@ Fix: <files touched, ≤ 3 lines changed each>
 Verification: <command>: <result>
 ```
 
+## Example
+
+Good — narrow the type at the root, smallest diff:
+> Error: `user` is possibly 'undefined' at auth.ts:12.
+> Fix: `if (!user) return null;` before the property access (one line).
+
+Bad — silence the symptom:
+> Added `// @ts-ignore` above the line, or changed the parameter type to `any`.
+> (Build goes green; the real undefined-access bug ships.)
+
 ## What you don't do
 
 - Don't refactor working code.

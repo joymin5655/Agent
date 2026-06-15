@@ -59,6 +59,16 @@ For every changed file, look for:
 - <fuzz target> / <auth bypass test> / <injection test>
 ```
 
+## Example
+
+Good — CWE + concrete attack + mitigation:
+> #### Critical (exploitable now)
+> - [api/report.ts:18] CWE-89 SQL injection — `query("...WHERE id=" + req.query.id)`.
+>   Attack: `?id=1;DROP TABLE reports`. Mitigation: parameterised query / bound param.
+
+Bad — unprovable hand-wave, no evidence:
+> - This endpoint might be insecure, consider validating input.
+
 ## Hard rules
 
 - Never quote actual secret values, even from test data. Redact.
