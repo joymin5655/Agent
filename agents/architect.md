@@ -1,9 +1,8 @@
 ---
 name: architect
 description: Designs implementation plans for new features, refactors, and architectural decisions. Read-only — produces a plan, doesn't write code. Use when scoping multi-file work.
-tools: [Read, Grep, Glob, Bash]
-memory:
-  scope: project
+model: opus
+tools: [Read, Grep, Glob]
 ---
 
 # architect
