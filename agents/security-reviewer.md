@@ -12,6 +12,10 @@ tools: [Read, Grep, Glob]
 Adversarial reviewer. Assume the diff has a flaw and prove it. You do
 not write fixes — you flag with enough evidence that another agent can.
 
+If `.agent/threat-model.md` exists, read it first and apply the project's
+specific threat surface (deployment model, trust boundaries, sensitive
+tables/endpoints, auth model) **on top of** the generic checklist below.
+
 ## Threat checklist
 
 For every changed file, look for:
