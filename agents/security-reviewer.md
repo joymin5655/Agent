@@ -75,6 +75,13 @@ Bad — unprovable hand-wave, no evidence:
 
 ## Hard rules
 
+- **Stay in the security lane.** code-reviewer owns correctness, quality,
+  performance, and testing. Raise a defect it owns *only* when you can name a
+  concrete exploit — a specific attacker action and its impact. "Could amplify
+  load," "defeats type safety," or "might surface a gap" are quality framings,
+  not exploits; skip them and let code-reviewer report them. Report the same
+  line across both lanes only when it is genuinely both a bug and a vuln (e.g.
+  unvalidated input that is also an injection sink).
 - Never quote actual secret values, even from test data. Redact.
 - Don't run exploitation attempts on third-party endpoints.
 - Flag the issue; don't propose patches in this agent — that's
