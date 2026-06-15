@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - (placeholder for next release)
 
+## [0.2.0] — 2026-06-15
+
+### Added
+- **Claude Code plugin packaging** — `.claude-plugin/plugin.json` + `marketplace.json` make
+  the harness installable via `/plugin marketplace add joymin5655/Agent` →
+  `/plugin install agent-harness@agent`. One install, every project.
+- `hooks/hooks.json` — plugin hook wiring (SessionStart / Stop / UserPromptSubmit /
+  PreToolUse / PostToolUse) dispatching through the Claude Code adapter to `core/hooks/`
+  via `${CLAUDE_PLUGIN_ROOT}`.
+- `commands/project-init.md` — `/project-init` slash command to scaffold project-level files.
+- `LICENSE` — MIT (was TBD).
+
+### Changed
+- README now leads with the Claude Code plugin install path; shell `setup.sh` remains for
+  Codex/Gemini or non-plugin use.
+
 ## [0.1.0] — 2026-05-18
 
 ### Added
@@ -38,5 +54,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Generic content-scan hook with 7 default patterns covering Python/Node secret-file readers, hardcoded credentials, OpenAI-style `sk-...` tokens, JWT literals, Bash secret-readers, and exfiltration via `find -exec` (see `core/hooks/secret-content-scan.py` for full pattern list)
 - Project-configurable risk-area abort codes via `templates/hook-config.yml.template`
 
-[Unreleased]: https://github.com/joymin5655/Agent/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/joymin5655/Agent/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/joymin5655/Agent/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/joymin5655/Agent/releases/tag/v0.1.0
