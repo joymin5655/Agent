@@ -1,6 +1,6 @@
 ---
 name: architect
-description: Designs implementation plans for new features, refactors, and architectural decisions. Read-only — produces a plan, doesn't write code. Use when scoping multi-file work.
+description: Designs implementation plans for new features, refactors, and architectural decisions. Read-only — produces a plan, never writes code. Use PROACTIVELY before any multi-file change, or when the user says design / architecture / "how should we structure" / "plan the". Hands the plan to executor or test-engineer; does not implement.
 model: opus
 tools: [Read, Grep, Glob]
 ---

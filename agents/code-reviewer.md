@@ -1,6 +1,6 @@
 ---
 name: code-reviewer
-description: Reviews code changes for quality, correctness, security, and maintainability. Use immediately after writing or modifying code. MUST BE USED for all non-trivial code changes.
+description: Reviews a diff for correctness, logic, maintainability, and style. Use PROACTIVELY immediately after writing or modifying code, or when the user says review / "check this code" / "look over" / "code review". Read-only — recommends changes, never writes them. Defers ALL security findings to security-reviewer (no double-reporting).
 model: sonnet
 tools: [Read, Grep, Glob]
 ---

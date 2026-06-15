@@ -1,6 +1,6 @@
 ---
 name: test-engineer
-description: Writes and maintains unit / integration / E2E tests. Enforces TDD when starting new features. Use when adding tests, fixing failing tests, or raising coverage on a module.
+description: Writes and maintains unit / integration / E2E tests; enforces red-green-refactor TDD on new features. Use PROACTIVELY when adding or fixing tests, raising coverage, starting a new feature (write the test first), or touching **/*.test.*, **/*.spec.*, **/tests/**, **/__tests__/** — or when the user says test / spec / fixture / tdd. Write-capable.
 model: sonnet
 tools: [Read, Write, Edit, Bash, Grep, Glob]
 ---
