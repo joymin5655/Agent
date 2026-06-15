@@ -28,6 +28,9 @@ regexes = [
   '''example[_-]?(token|key|secret)''',
   '''<your[_-]?\w+>''',
   '''\{\{[A-Z_]+\}\}''',
+  # Shell placeholder variable names in docs/curl examples (e.g. $USER_A_JWT,
+  # USER_JWT) — these are variable NAMES, never real `eyJ...` JWT values.
+  '''\$?USER_[A-Z_]*(JWT|TOKEN)''',
 ]
 
 # 2. Paths — example envs, lockfiles, vendored deps, generated artifacts
