@@ -1,27 +1,41 @@
 # Contributing Rules
 
+Project-level coding conventions. Override per-project via your own
+`CLAUDE.md` / `AGENTS.md` / `GEMINI.md`.
+
 ## Code Style
 
-- TypeScript: strict mode, no `any`, explicit return types on exports
-- Python: PEP 8, type hints, ruff for linting
-- All user-facing text uses i18n keys (`useTranslation()`) — no hardcoded strings
-- Constants in config files, not inline
-- Functions under 50 lines (soft guideline)
-- **300-line ceiling applies to CLAUDE.md / context docs ONLY** — code files split by complexity boundaries (responsibility, abstraction layer, domain), not line count. A 600-line component with one clear responsibility beats two 300-line components with leaky boundaries.
+- **TypeScript**: strict mode, no `any`, explicit return types on exports.
+- **Python**: PEP 8, type hints, `ruff` for linting.
+- **All user-facing text** uses i18n keys — no hardcoded strings in UI.
+- **Constants** in config files, not inline.
+- **Functions** under 50 lines (soft guideline).
+- **300-line ceiling** applies to docs/markdown context files ONLY.
+  Code files split by complexity boundaries (responsibility, abstraction
+  layer, domain) — not line count. A 600-line component with one clear
+  responsibility beats two 300-line components with leaky boundaries.
 
 ## Before Committing
 
-1. `npm run build` passes (apps/web)
-2. `npm run lint` passes
-3. No `console.log` in production code
-4. i18n keys added for both languages (en/ko) — 2026-05-12 6→2 locale 정합 (`handoff_2026-05-12_prd-i18n-2locale-and-memory-discipline.md`)
-5. New types in dedicated type files (not inline)
-6. 신규/수정 코드는 AAA 패턴(Arrange-Act-Assert) 단위 테스트 동반
-7. 전체 스위트가 무거우면 **수정 파일 관련 테스트만** 먼저 실행 (예: `npm run test:run -- path/to/file.test.ts`, `pytest -k <module>`)
+1. Build passes (`npm run build` or project equivalent).
+2. Lint passes.
+3. No `console.log` in production code.
+4. i18n keys added for all locales.
+5. New types in dedicated type files (not inline).
+6. New/modified code has AAA-pattern unit tests.
+7. If full test suite is heavy, run **only the tests for changed files**
+   first (e.g., `npm run test:run -- path/to/file.test.ts`,
+   `pytest -k <module>`).
 
 ## PR Guidelines
 
-- Fill out the PR template completely
-- Include screenshots for UI changes
-- Link related issues
-- Keep PRs focused — one feature or fix per PR
+- Fill out the PR template completely.
+- Include screenshots for UI changes.
+- Link related issues.
+- Keep PRs focused — one feature or fix per PR.
+
+## Commits
+
+- Conventional commits: `feat:`, `fix:`, `refactor:`, `docs:`, `test:`,
+  `chore:`, `perf:`, `ci:`.
+- One logical change per commit.

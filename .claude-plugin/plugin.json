@@ -1,0 +1,24 @@
+{
+  "name": "agent-harness",
+  "description": "Portable AI agent harness — curated review/build/test agents, secret-hardening + worktree + plan-gate hooks, and supervise/tdd/diagnose/wrap skills. Install once, use in every project. AI-agnostic core (Claude Code / Codex / Gemini).",
+  "version": "0.2.0",
+  "author": {
+    "name": "joymin",
+    "url": "https://github.com/joymin5655"
+  },
+  "homepage": "https://github.com/joymin5655/Agent",
+  "repository": "https://github.com/joymin5655/Agent",
+  "license": "MIT",
+  "keywords": [
+    "agents",
+    "harness",
+    "code-review",
+    "security",
+    "hooks",
+    "tdd",
+    "worktree",
+    "supervisor",
+    "ai-agnostic",
+    "claude-code"
+  ]
+}

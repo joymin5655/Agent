@@ -1,13 +1,31 @@
 #!/usr/bin/env python3
 """
-PreToolUse hook: detect secret bypass patterns in Write/Edit/MultiEdit content.
+PreToolUse hook: detect secret bypass patterns in Write/Edit/MultiEdit and MCP tool content.
 
-Layer 3 보강 (`.claude/rules/policy/security-guards.md §2`). Bash `pre-tool-guard.sh`
-가 못 잡는 우회 경로 (Python `open('secrets/')`, Node `fs.readFileSync('.env*')`,
-하드코딩 secret key value, sk-/JWT 토큰 패턴) 를 작업-time 에 deny.
+This is Layer 3 of the framework's secret defense (see rules/security-guards.md).
+It catches bypass paths that pre-tool-guard.sh (Layer 3 Bash) cannot see:
+  - Python `open()` reading from secrets/ or .env*
+  - Node `fs.readFileSync()` reading from secrets/ or .env*
+  - Hardcoded credential value assignments
+  - OpenAI / Stripe `sk-...` token literals
+  - JWT token literals
+  - MCP tool calls with secrets in nested URL/query/content fields
 
-Reads tool_input from stdin (JSON).
-Exit 0 + empty stdout = allow; Exit 0 + permissionDecision="deny" = block.
+Hook protocol:
+  - Reads canonical event JSON from stdin (see docs/hook-protocol.md)
+  - Writes decision JSON to stdout (deny) OR empty stdout (allow)
+  - Exits 0 (decision in stdout) on match, or 0 (silent allow) on pass-through
+
+The 7 patterns below are generic and apply to all projects. To add project-specific
+secret token formats, extend via `hook-config.yml`:
+
+  secret_patterns:
+    - id: my-service-token
+      regex: 'myservice_(live|test)_[a-zA-Z0-9_-]{32,}'
+
+The hardcoded credential KEY name list (line ~70) covers a starter set of well-known
+credential variable names. Project-specific variable names are detected by the
+hook-config.yml addition above.
 """
 import sys
 import json
@@ -21,66 +39,69 @@ from pathlib import Path
 EXEMPT_PATHS = [
     ".env.example",
     "gitleaks.toml",
-    "Obsidian-airlens/",
     "/__tests__/",
     "/tests/",
     "/test/",
     ".test.",
     ".spec.",
     ".fixture.",
-    # Self + sibling test/MCP scanner
+    # Self + sibling test scripts (cite same patterns)
     "secret-content-scan.py",
     "secret-content-scan-test.sh",
-    "secret-mcp-input-scan.py",
-    # Hooks that cite the same patterns
-    "/scripts/hooks/pre-tool-guard.sh",
-    "/scripts/hooks/check-hardcoding.py",
-    "/scripts/hooks/_archive/",
+    # Hooks that cite the same patterns in documentation/comments
+    "/core/hooks/pre-tool-guard.sh",
+    "/core/hooks/check-hardcoding.py",
+    "/core/hooks/_archive/",
     # Policy + skill docs (cite variable names, no values)
-    ".claude/rules/",
-    ".claude/skills/",
+    "/rules/",
+    "/skills/",
+    "/docs/",
     # Plan files (~/.claude/plans/)
     "/plans/",
     # CI definition
     ".github/workflows/secret-scan.yml",
+    # Legacy archive (never scan content of preserved prior-project files)
+    "/legacy/",
 ]
 
-# Patterns that indicate secret bypass attempts in source content
+# Generic secret bypass patterns (7 default). Project-specific patterns can be
+# added through hook-config.yml: secret_patterns[].
 SECRET_PATTERNS = [
     # Python open() into secrets/ dir
     (
         r"""\bopen\s*\(\s*['"][^'"]*?secrets/""",
-        "Python open() reading from secrets/",
+        "Python file open from secrets/",
     ),
     # Python open() into .env* (excluding .env.example)
     (
         r"""\bopen\s*\(\s*['"][^'"]*?\.env(?!\.example)""",
-        "Python open() reading from .env*",
+        "Python file open from .env*",
     ),
     # Node fs.readFileSync / fs.readSync into secrets/
     (
         r"""\bfs\.(?:promises\.)?read(?:File)?Sync\s*\(\s*['"][^'"]*?secrets/""",
-        "Node fs.readFileSync() reading from secrets/",
+        "Node fs read from secrets/",
     ),
     # Node fs.readFileSync into .env* (excluding .env.example)
     (
         r"""\bfs\.(?:promises\.)?read(?:File)?Sync\s*\(\s*['"][^'"]*?\.env(?!\.example)""",
-        "Node fs.readFileSync() reading from .env*",
+        "Node fs read from .env*",
     ),
-    # Hardcoded secret key value: VAR = "..." (20+ chars)
+    # Hardcoded credential value: KNOWN_KEY = "..." (20+ chars). Starter list of
+    # well-known cloud / SaaS credential names. Extend via hook-config.yml.
     (
-        r"""\b(?:SUPABASE_SERVICE_ROLE_KEY|WAQI_TOKEN|OPENAQ_API_KEY|CLOUDFLARE_API_TOKEN|ANTHROPIC_API_KEY|OPENAI_API_KEY|STRIPE_SECRET_KEY|POLAR_API_KEY|RC_SECRET_KEY)\s*[:=]\s*['"][A-Za-z0-9_\-\.]{20,}['"]""",
-        "hardcoded secret key value",
+        r"""\b(?:AWS_SECRET_ACCESS_KEY|AWS_SECRET_KEY|AWS_ACCESS_KEY_ID|GCP_SERVICE_ACCOUNT_KEY|AZURE_CLIENT_SECRET|CLOUDFLARE_API_TOKEN|ANTHROPIC_API_KEY|OPENAI_API_KEY|STRIPE_SECRET_KEY|STRIPE_RESTRICTED_KEY|GITHUB_TOKEN|GITHUB_PAT|SLACK_TOKEN|SLACK_BOT_TOKEN|DATABASE_URL|DATABASE_PASSWORD|JWT_SECRET|SESSION_SECRET|PRIVATE_KEY|SUPABASE_SERVICE_ROLE_KEY|SUPABASE_JWT_SECRET)\s*[:=]\s*['"][A-Za-z0-9_\-\.]{20,}['"]""",
+        "hardcoded credential value",
     ),
     # OpenAI / Stripe API key pattern — word-boundary (no quote required, catches URL/MCP)
     (
         r"""\bsk-[A-Za-z0-9_\-]{40,}\b""",
-        "OpenAI/Stripe API key (sk-...)",
+        "API key literal (sk-...)",
     ),
     # JWT token (3 dot-separated base64url segments) — word-boundary
     (
         r"""\beyJ[A-Za-z0-9_\-]{20,}\.eyJ[A-Za-z0-9_\-]{20,}\.[A-Za-z0-9_\-]{20,}\b""",
-        "JWT token (eyJ...)",
+        "JWT token literal",
     ),
 ]
 
@@ -105,12 +126,12 @@ def scan_content(content: str) -> list[tuple[str, str]]:
 
 
 def log_violation(reason: str) -> None:
-    """Write security violation record to .claude/logs/security-violations.jsonl (schema v2).
+    """Append security violation record to .agent/logs/security-violations.jsonl.
 
-    Matches bash log_violation() in pre-tool-guard.sh / context-mode-guard.sh / gsd-cwd-guard.sh / r4-mutex-check.sh.
-    Silent fail — broadcast best-effort.
+    Matches the schema written by other guard hooks. Silent on failure —
+    we never want telemetry issues to crash an AI session.
     """
-    repo_root = os.environ.get("CLAUDE_PROJECT_DIR")
+    repo_root = os.environ.get("AGENT_PROJECT_DIR") or os.environ.get("CLAUDE_PROJECT_DIR")
     if not repo_root:
         try:
             repo_root = subprocess.check_output(
@@ -123,18 +144,18 @@ def log_violation(reason: str) -> None:
     if not repo_root:
         return
 
-    log_dir = Path(repo_root) / ".claude" / "logs"
+    log_dir = Path(repo_root) / ".agent" / "logs"
     try:
         log_dir.mkdir(parents=True, exist_ok=True)
     except Exception:
         return
 
-    repro_env = os.environ.get("AIRLENS_REPRODUCE_TEST", "")
+    repro_env = os.environ.get("AGENT_REPRODUCE_TEST", "")
     reproduce_test = repro_env in ("1", "true", "TRUE", "True")
 
     record = {
         "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "guard": 2,
+        "guard": "secrets",
         "hook": "secret-content-scan.py",
         "reason": reason,
         "session_id": os.environ.get("AGENT_SESSION_ID", "main"),
@@ -148,9 +169,9 @@ def log_violation(reason: str) -> None:
     except Exception:
         pass
 
-    # work-feed broadcast (R13 — blocked event, multi-agent visibility)
+    # Optional broadcast — work-feed visibility for multi-session coordination
     try:
-        broadcast = Path(repo_root) / "scripts" / "infra" / "agent-session.sh"
+        broadcast = Path(repo_root) / "core" / "infra" / "agent-session.sh"
         if broadcast.is_file() and os.access(broadcast, os.X_OK):
             subprocess.run(
                 [str(broadcast), "broadcast", "blocked",
@@ -175,7 +196,7 @@ def emit_deny(reason: str) -> None:
 
 
 def walk_strings(obj) -> list[str]:
-    """Recursive collect all string values from nested dict/list."""
+    """Recursively collect all string values from nested dict/list."""
     if isinstance(obj, str):
         return [obj]
     if isinstance(obj, dict):
@@ -185,8 +206,9 @@ def walk_strings(obj) -> list[str]:
     return []
 
 
-# MCP write/external tool prefixes — recursive walk_strings on tool_input.
-# (P2 — secrets-bypass-mcp-url-content.md)
+# MCP write/external-tool prefixes whose input may carry secrets nested in URLs
+# or content fields. Each adapter that connects new MCP servers should review
+# this list and add prefixes covering URL/content payloads.
 MCP_RECURSIVE_PREFIXES = (
     "mcp__firecrawl__",
     "mcp__plugin_context-mode_",
@@ -210,8 +232,8 @@ def extract_chunks(tool_name: str, tool_input: dict) -> list[str]:
             for edit in edits:
                 if isinstance(edit, dict) and isinstance(edit.get("new_string"), str):
                     chunks.append(edit["new_string"])
-    elif tool_name.startswith("mcp__supabase__"):
-        # execute_sql / apply_migration / deploy_edge_function
+    elif tool_name.startswith("mcp__supabase__") or tool_name.startswith("mcp__postgres__"):
+        # Database MCP servers: execute_sql / apply_migration / deploy_*
         for key in ("query", "name"):
             value = tool_input.get(key)
             if isinstance(value, str):
@@ -222,7 +244,7 @@ def extract_chunks(tool_name: str, tool_input: dict) -> list[str]:
                 if isinstance(entry, dict) and isinstance(entry.get("content"), str):
                     chunks.append(entry["content"])
     elif any(tool_name.startswith(p) for p in MCP_RECURSIVE_PREFIXES):
-        # firecrawl / context-mode / Notion / Drive / stitch — full recursive walk
+        # Crawler / search / cloud-storage MCP — recursive walk to catch nested URLs
         chunks.extend(walk_strings(tool_input))
     elif tool_name == "WebFetch":
         for key in ("url", "prompt"):
@@ -246,7 +268,7 @@ def main() -> None:
     tool_input = data.get("tool_input", {})
     file_path = tool_input.get("file_path", "")
 
-    # File-based path uses EXEMPT whitelist. MCP path always scans.
+    # File-based path uses EXEMPT whitelist. MCP / WebFetch paths always scan.
     if file_path and is_exempt(file_path):
         sys.exit(0)
 
@@ -264,12 +286,11 @@ def main() -> None:
         for label, snippet in findings:
             print(f"  - {label}: {snippet}", file=sys.stderr)
         print(
-            "\n.claude/rules/policy/security-guards.md §2 — secret 변경 자동화 영원히 회피.\n"
-            "Place secrets in env-managed `.env.local` / `secrets/` (gitignored) and read via Edge Function.",
+            "\nSee rules/security-guards.md (Risk Area: secrets).\n"
+            "Place credentials in env-managed `.env.local` or `secrets/` (gitignored) and read via secure server-side code.",
             file=sys.stderr,
         )
 
-        # Schema v2 jsonl sink (matches 4 bash writers — security-violations-schema-v2.md)
         first_label = findings[0][0]
         reason = f"{first_label} in {label_source}"
         log_violation(reason)
@@ -277,7 +298,7 @@ def main() -> None:
 
         sys.exit(0)
 
-    # Pass through (empty stdout — Claude Code skips decision parse)
+    # Pass through (empty stdout — `allow` per docs/hook-protocol.md § 3)
     sys.exit(0)
 
 

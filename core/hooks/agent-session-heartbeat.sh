@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Claude Code UserPromptSubmit / PostToolUse hook — heartbeat current cwd worktree session.
+# UserPromptSubmit / PostToolUse hook — heartbeat current cwd worktree session.
 # Silent and best-effort.
-# Wire by adding to .claude/settings.local.json under "UserPromptSubmit" and/or "PostToolUse".
+# Wire under "UserPromptSubmit" and/or "PostToolUse" matchers.
 
 set -e
 
@@ -19,7 +19,7 @@ resolve_canonical_root() {
 }
 
 ROOT="$(resolve_canonical_root)"
-SESSION_SH="$ROOT/scripts/infra/agent-session.sh"
+SESSION_SH="$ROOT/core/infra/agent-session.sh"
 [[ -x "$SESSION_SH" ]] || exit 0
 "$SESSION_SH" heartbeat-cwd >/dev/null 2>&1 || true
 exit 0
