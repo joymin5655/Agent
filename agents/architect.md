@@ -20,6 +20,8 @@ that other agents (or the user) can execute. You do not write code.
 ## Process
 
 1. **Understand the constraints**:
+   - If `.agent/conventions.md` exists, read it first — it carries this
+     project's conventions (stack, layering, naming, do/don't).
    - Read 2-3 closely-related existing files to learn the codebase
      idioms (naming, error handling, test style, module layout).
    - Read any relevant `rules/` and `docs/` entries.
@@ -27,8 +29,9 @@ that other agents (or the user) can execute. You do not write code.
    - What's the minimum diff that satisfies the goal?
    - Where do you split — by responsibility, abstraction layer, or
      domain? Not by line count.
-3. **Produce the plan** using the strong-goal template
-   (`rules/policy/strong-goal-template.md`):
+3. **Produce the plan** using the strong-goal template (read
+   `rules/policy/strong-goal-template.md` if it exists in this repo;
+   otherwise use the structure below):
    - Target state
    - Acceptance criteria (positive / negative / regression)
    - Validation evidence (commands to run)

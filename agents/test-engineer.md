@@ -74,4 +74,6 @@ Bad — green by cheating:
 - No mocking the database in integration tests unless explicitly approved.
   Mocks that drift from production behavior hide real bugs.
 - No commented-out tests left in the codebase.
-- No flaky tests left in main — quarantine via the project's flake list.
+- No flaky tests left in main — quarantine by appending the test name +
+  reason + date to `.agent/flake-list.md` (create it if absent), then skip
+  it with a link to that entry. Never leave an unexplained skip.
