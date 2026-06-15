@@ -1,60 +1,74 @@
 #!/usr/bin/env python3
-"""
-PreToolUse hook: Detect hardcoded constants in Write/Edit tool calls.
+"""PreToolUse hook — Detect hardcoded constants in Write/Edit content.
 
-Checks for common hardcoding patterns:
-- Inline color arrays ([r, g, b]) not from config
-- Magic numbers (standalone numeric constants)
-- Duplicated constant definitions
-- Inline gradient strings
+Blocks common hardcoding anti-patterns:
+  - Inline RGB color arrays (style values that should live in a theme/config)
+  - Linear-gradient strings with hardcoded RGB values
+  - Const arrays of tick/label/stop strings (chart data that should come from config)
 
-Reads tool_input from stdin (JSON).
-Exit 0 + empty stdout = allow; Exit 0 + permissionDecision="deny" = block.
+The 3 default patterns target UI/design hardcoding. Project-specific patterns
+can be added via `hook-config.yml: hardcoding_patterns[]`.
+
+Hook protocol: reads canonical event JSON from stdin, writes decision JSON (deny)
+to stdout on match, or empty stdout (allow) otherwise. Exit always 0.
 """
 import sys
 import json
 import re
 
-# Files exempt from hardcoding checks
+# Files / path patterns exempt from hardcoding checks
 EXEMPT_PATHS = {
-    "config.ts",           # config IS the source of truth
+    "config.ts",
     "config.js",
-    "config/aqi.ts",       # AQI config is the threshold source of truth
-    "types.ts",            # type definitions may have literal unions
+    "config.py",
+    "types.ts",
     "types.js",
-    ".test.",              # test fixtures
+    ".test.",
     ".spec.",
     "test/",
     "__tests__/",
-    ".yml",                # CI workflows
+    ".yml",
     ".yaml",
-    ".md",                 # documentation
-    ".json",               # data files
+    ".md",
+    ".json",
     "tailwind.config",
     "vite.config",
+    "webpack.config",
+    "rollup.config",
     "tsconfig",
     "eslint",
     "prettier",
-    ".html",               # standalone HTML prototypes
-    "assets/",             # asset files (prototypes, screenshots)
+    ".html",
+    "assets/",
+    "/fixtures/",
+    "/legacy/",
 }
 
-# Patterns that indicate hardcoded data (not config imports)
+# Generic hardcoding patterns. Extend via hook-config.yml: hardcoding_patterns[].
 HARDCODING_PATTERNS = [
     # Inline color segment arrays: [number, [r, g, b]]
-    (r'\[\s*\d+\s*,\s*\[\s*\d+\s*,\s*\d+\s*,\s*\d+\s*\]\s*\]', "Inline color segment array — must use config import"),
+    (
+        r'\[\s*\d+\s*,\s*\[\s*\d+\s*,\s*\d+\s*,\s*\d+\s*\]\s*\]',
+        "Inline color segment array — define in a theme/config file and import",
+    ),
     # CSS gradient strings with rgb values
-    (r"linear-gradient\s*\(\s*\d+deg\s*,\s*rgb\(", "Hardcoded CSS gradient — must derive from config color scale"),
-    # Const arrays of tick labels (e.g., ['0', '12', '35'])
-    (r"(?:const|let|var)\s+\w*(?:TICK|LABEL|STOP).*=\s*\[", "Hardcoded tick/label array — must use config"),
+    (
+        r"linear-gradient\s*\(\s*\d+deg\s*,\s*rgb\(",
+        "Hardcoded CSS gradient — derive from a config color scale",
+    ),
+    # Const arrays of tick/label/stop strings
+    (
+        r"(?:const|let|var)\s+\w*(?:TICK|LABEL|STOP).*=\s*\[",
+        "Hardcoded tick/label/stop array — define in a config file and import",
+    ),
 ]
 
-# More specific patterns only for component/hook files
+# Component-area specific check. Only fires on files in components / hooks / pages dirs.
 COMPONENT_PATTERNS = [
-    # Mode/layer/option arrays defined in components
-    (r"(?:const|let|var)\s+(?:MODES|LAYERS|OPTIONS|ALTITUDES|PROJECTIONS)\s*[=:]", "UI metadata array defined in component — must use config import"),
-    # Inline AQI/PM2.5 threshold functions (should use pm25ToSimpleTier / pm25ToEpaHex from lib/config/aqi)
-    (r"pm25\s*[<>=!]+\s*(?:12|35\.4|55\.4|150\.4|250\.4|50|100|200|300)\b", "Hardcoded PM2.5 threshold — use pm25ToSimpleTier() or pm25ToEpaHex() from lib/config/aqi"),
+    (
+        r"(?:const|let|var)\s+(?:MODES|LAYERS|OPTIONS)\s*[=:]",
+        "UI metadata array defined in component — extract to a config file and import",
+    ),
 ]
 
 
@@ -67,18 +81,14 @@ def is_exempt(file_path: str) -> bool:
 
 def check_content(content: str, file_path: str) -> list[str]:
     warnings = []
-
     for pattern, message in HARDCODING_PATTERNS:
         matches = re.findall(pattern, content)
         if matches:
             warnings.append(f"[HARDCODING] {message} (found {len(matches)} match(es))")
-
-    # Component-specific checks
     if "/components/" in file_path or "/hooks/" in file_path or "/pages/" in file_path:
         for pattern, message in COMPONENT_PATTERNS:
             if re.search(pattern, content):
                 warnings.append(f"[HARDCODING] {message}")
-
     return warnings
 
 
@@ -104,8 +114,6 @@ def main():
         sys.exit(0)
 
     tool_input = data.get("tool_input", {})
-
-    # Determine file path
     file_path = tool_input.get("file_path", "")
     if not file_path:
         sys.exit(0)
@@ -113,25 +121,22 @@ def main():
     if is_exempt(file_path):
         sys.exit(0)
 
-    # Get content to check
-    content = tool_input.get("content", "")  # Write tool
+    content = tool_input.get("content", "")
     if not content:
-        content = tool_input.get("new_string", "")  # Edit tool
-
+        content = tool_input.get("new_string", "")
     if not content:
         sys.exit(0)
 
     warnings = check_content(content, file_path)
-
     if warnings:
         print(f"[Hook] BLOCKED: Hardcoding detected in {file_path.split('/')[-1]}", file=sys.stderr)
         for w in warnings:
             print(f"  {w}", file=sys.stderr)
-        print(f"\nMove constants to config file (e.g., src/lib/earth/config.ts) and import them.", file=sys.stderr)
+        print("\nExtract constants to a config file and import them. To customize patterns, "
+              "edit hook-config.yml: hardcoding_patterns[].", file=sys.stderr)
         emit_deny("Hardcoding detected in " + file_path.split("/")[-1])
         sys.exit(0)
 
-    # Pass through (empty stdout — Claude Code skips decision parse)
     sys.exit(0)
 
 

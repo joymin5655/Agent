@@ -1,8 +1,8 @@
 # Agent
 
-**AI-agnostic agent framework**: rules, hooks, agents, skills, and automation that work identically across Claude Code, Codex CLI, and Gemini CLI — and on any project.
+**A portable AI agent harness** — curated review/build/test agents, secret-hardening + worktree + plan-gate hooks, and supervise/tdd/diagnose/wrap skills. Install once as a **Claude Code plugin** and use it in every project. The core is AI-agnostic: the same hooks return the same decision under Claude Code, Codex CLI, and Gemini CLI.
 
-> Status: v0.1.0 (initial generic-only rewrite). License: **TBD**.
+> Status: v0.2.0. License: **MIT**. Installable as a Claude Code plugin (below) or as a shell framework for all 3 AIs.
 
 ---
 
@@ -23,7 +23,27 @@ When you adopt this framework in a project, you get:
 
 ## Quick start
 
+### Install as a Claude Code plugin (recommended)
+
+```
+/plugin marketplace add joymin5655/Agent
+/plugin install agent-harness@agent
+```
+
+That's it — every project gets the agents, skills, hooks, and the `/project-init`
+command, with zero per-project setup. The plugin bundles:
+
+- **agents** (`agents/`) — `architect`, `code-reviewer`, `security-reviewer`, `test-engineer`, `build-error-resolver`
+- **skills** (`skills/`) — `supervise`, `tdd`, `diagnose`, `wrap`
+- **hooks** (`hooks/hooks.json`) — secret-hardening, worktree mutex, plan-gate, TDD guard, supervisor dispatch, Stop-time quality gate
+- **command** — `/project-init` to scaffold project-level files (`CLAUDE.md`, rules, `gitleaks.toml`)
+
+To scaffold the current repo after installing: run `/project-init`.
+
 ### One-command install (all 3 AIs)
+
+> Use this shell path if you also drive Codex CLI / Gemini CLI, or prefer not to use the plugin system.
+
 
 ```bash
 gh repo clone joymin5655/Agent ~/agent
@@ -71,12 +91,19 @@ Idempotent — re-running skips existing files (use `--force` to overwrite).
 
 ```
 Agent/
+├── .claude-plugin/              # Claude Code plugin + marketplace manifests
+│   ├── plugin.json
+│   └── marketplace.json
 ├── README.md                    # this file
 ├── AGENTS.md                    # agents.md spec, 3-AI guide
 ├── CHANGELOG.md
-├── setup.sh                     # 4-mode installer
+├── LICENSE                      # MIT
+├── setup.sh                     # 4-mode installer (shell path)
 ├── gitleaks.toml                # base secret-scan config
 ├── .gitignore
+│
+├── commands/                   # slash commands (/project-init)
+├── hooks/                      # plugin hook wiring (hooks.json → core/hooks via adapter)
 │
 ├── docs/                        # concept + protocol docs
 │   ├── architecture.md
@@ -213,4 +240,4 @@ See [`docs/getting-started.md`](docs/getting-started.md) and [`rules/contributin
 
 ## License
 
-**TBD**. See repo issues or contact the maintainer.
+[MIT](LICENSE) © joymin ([@joymin5655](https://github.com/joymin5655)).

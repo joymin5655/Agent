@@ -1,23 +1,29 @@
 #!/usr/bin/env python3
-"""AirLens — Circuit Breaker (PostToolUse: Bash)
+"""PostToolUse hook — Circuit Breaker
 
-Detects repeated failures within a sliding window and warns to change strategy.
-Threshold: 3 failures within 60 seconds.
-State file: /tmp/airlens-circuit-breaker.json
+Detects repeated Bash failures within a sliding window and emits an `additionalContext`
+warning advising the AI to change strategy. Prevents infinite retry loops on the same
+broken command.
+
+Threshold: 3 failures within 60 seconds (configurable via env vars).
+State file: /tmp/agent-circuit-breaker.json (per-machine, ephemeral)
+
+Hook protocol: reads canonical event JSON from stdin. Writes additionalContext JSON to
+stdout when threshold crossed. Empty stdout otherwise. Exit always 0.
 """
 
 import json
+import os
 import sys
 import time
 from pathlib import Path
 
-STATE_FILE = Path("/tmp/airlens-circuit-breaker.json")
-WINDOW_SECONDS = 60
-THRESHOLD = 3
+STATE_FILE = Path(os.environ.get("AGENT_CIRCUIT_BREAKER_STATE", "/tmp/agent-circuit-breaker.json"))
+WINDOW_SECONDS = int(os.environ.get("AGENT_CIRCUIT_BREAKER_WINDOW", "60"))
+THRESHOLD = int(os.environ.get("AGENT_CIRCUIT_BREAKER_THRESHOLD", "3"))
 
 
 def load_state() -> list:
-    """Load failure records from state file."""
     if not STATE_FILE.exists():
         return []
     try:
@@ -28,7 +34,6 @@ def load_state() -> list:
 
 
 def save_state(records: list) -> None:
-    """Save failure records to state file."""
     try:
         STATE_FILE.write_text(json.dumps(records))
     except OSError:
@@ -36,13 +41,10 @@ def save_state(records: list) -> None:
 
 
 def extract_error_signature(result_text: str) -> str:
-    """Extract a short signature from error output for deduplication."""
     lines = result_text.strip().split("\n")
-    # Take last non-empty line as error signature (most specific)
     for line in reversed(lines):
         stripped = line.strip()
         if stripped and len(stripped) > 10:
-            # Truncate to 120 chars for comparison
             return stripped[:120]
     return result_text[:120] if result_text else "unknown"
 
@@ -57,21 +59,17 @@ def main() -> None:
     if tool_name != "Bash":
         return
 
-    # Check if the tool result indicates failure
-    result = data.get("tool_result", {})
-    # PostToolUse receives stdout/stderr; check for error indicators
+    result = data.get("tool_result") or data.get("tool_response") or {}
     result_text = ""
     if isinstance(result, dict):
         result_text = result.get("stderr", "") or result.get("stdout", "")
     elif isinstance(result, str):
         result_text = result
 
-    # Check exit code from tool result
     exit_code = None
     if isinstance(result, dict):
-        exit_code = result.get("exit_code")
+        exit_code = result.get("exit_code") or result.get("exitCode")
 
-    # If no clear failure signal, skip
     is_error = False
     if exit_code is not None and exit_code != 0:
         is_error = True
@@ -83,24 +81,18 @@ def main() -> None:
     now = time.time()
 
     if not is_error:
-        # On success, prune old records but don't add new ones
         records = load_state()
         records = [r for r in records if now - r.get("ts", 0) < WINDOW_SECONDS]
         save_state(records)
         return
 
-    # Record this failure
     signature = extract_error_signature(result_text)
     records = load_state()
-
-    # Prune records outside window
     records = [r for r in records if now - r.get("ts", 0) < WINDOW_SECONDS]
     records.append({"ts": now, "sig": signature})
     save_state(records)
 
-    # Check if threshold exceeded
     if len(records) >= THRESHOLD:
-        # Count similar errors (fuzzy match: first 60 chars)
         short_sig = signature[:60]
         similar = sum(1 for r in records if r.get("sig", "")[:60] == short_sig)
 
@@ -123,8 +115,6 @@ def main() -> None:
             }
         }
         print(json.dumps(output))
-
-        # Reset after warning to avoid spamming
         save_state([])
 
 

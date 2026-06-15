@@ -1,8 +1,17 @@
 #!/usr/bin/env bash
-# Claude Code SessionStart hook — register lock entry if cwd is inside .worktrees/<agent>-<slug>/.
-# Silent and best-effort: never blocks claude session start.
-# Wire by adding to .claude/settings.local.json:
-#   "hooks": { "SessionStart": [{ "matcher": "*", "hooks": [{ "type": "command", "command": "scripts/hooks/agent-session-start.sh" }] }] }
+# SessionStart hook — register lock entry + GC stale sessions + broadcast started.
+#
+# Silent and best-effort: never blocks AI session start.
+# Wire by adding to your AI's SessionStart matcher (see adapters/<ai>/settings.template).
+#
+# Behavior:
+#   1. Register the current cwd as an active session in .agent/locks/active-sessions.json
+#   2. Garbage-collect stale entries (heartbeat > 30 min)
+#   3. Broadcast a 'started' event for multi-session visibility
+#   4. Emit a SessionStart additionalContext with:
+#      - Dashboard summary (other active sessions, locks, recent events)
+#      - main-behind-origin/main commit count
+#      - tdd-guard test cache freshness (if cache present)
 
 set -e
 
@@ -20,47 +29,39 @@ resolve_canonical_root() {
 }
 
 ROOT="$(resolve_canonical_root)"
-SESSION_SH="$ROOT/scripts/infra/agent-session.sh"
+SESSION_SH="$ROOT/core/infra/agent-session.sh"
 [[ -x "$SESSION_SH" ]] || exit 0
 
 "$SESSION_SH" register-cwd >/dev/null 2>&1 || true
 
-# T0-D: auto GC on SessionStart.
-# (1) Prune git worktree admin entries for removed dirs.
-# (2) Run agent-session.sh gc to drop stale lock entries (heartbeat > 30min).
-# (3) Remove worktrees whose branches are fully merged into origin/main.
+# Auto GC on SessionStart:
+#   1. Prune git worktree admin entries for removed dirs
+#   2. Drop stale lock entries (heartbeat > 30min)
+#   3. Clean up worktrees whose branches are fully merged into origin/main
 git -C "$ROOT" worktree prune 2>/dev/null || true
 "$SESSION_SH" gc >/dev/null 2>&1 || true
-if [[ -x "$ROOT/scripts/hooks/worktree-stale-cleanup.sh" ]]; then
-  "$ROOT/scripts/hooks/worktree-stale-cleanup.sh" 2>/dev/null || true
+if [[ -x "$ROOT/core/infra/worktree-stale-cleanup.sh" ]]; then
+  "$ROOT/core/infra/worktree-stale-cleanup.sh" 2>/dev/null || true
 fi
 
-# 2026-05-01 fix: supervisor flag 세션 단위 reset.
-# write_flags가 더 이상 매 prompt마다 DISPATCHED를 unlink 하지 않으므로,
-# 새 세션 시작 시 깨끗한 상태로 복원. 누적 false-positive 방지.
-rm -f /tmp/airlens-intent-feature \
-      /tmp/airlens-required-agents \
-      /tmp/airlens-dispatched-agents \
-      /tmp/airlens-harness-mode \
-      /tmp/airlens-supervisor-analysis.json 2>/dev/null || true
+# Reset per-session supervisor flag files (so leftover state doesn't leak across sessions)
+rm -f /tmp/agent-intent-feature \
+      /tmp/agent-required-agents \
+      /tmp/agent-dispatched-agents \
+      /tmp/agent-harness-mode \
+      /tmp/agent-supervisor-analysis.json 2>/dev/null || true
 
-# Tier 2 — broadcast 'started' event so other sessions see this one come online.
-# When cwd is the main tree (no AGENT_SESSION_ID, no worktree), fall back to a
-# main-tree-tagged session_id so the work-feed still records new sessions.
+# Broadcast 'started' event so other sessions see this one come online.
+# Fall back to main-tree-tagged session_id when no AGENT_SESSION_ID and no worktree.
 if ! "$SESSION_SH" broadcast started "session start" 2>/dev/null; then
   AGENT_SESSION_ID="${AGENT:-claude}-main-$(date -u +%Y%m%dT%H%M%SZ)" \
     "$SESSION_SH" broadcast started "session start (main tree)" 2>/dev/null || true
 fi
 
-# G1+G2 (session-awareness-hook-gaps plan) — emit additionalContext JSON so the
-# SessionStart prompt receives a system reminder with:
-#   1) dashboard summary (active sessions + locks + recent events) — R11
-#   2) main behind origin/main count + recent commits — detect main updates
-#
-# Claude Code SessionStart hook ignores raw stdout for prompt context; only
-# the {"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"..."}}
-# JSON shape is injected. Falls back to plain stdout when jq is missing
-# (still useful for tail logs).
+# Emit additionalContext JSON for the SessionStart prompt:
+#   1) Dashboard summary (active sessions + locks + recent events) — R11
+#   2) main behind origin/main count + recent commits
+#   3) tdd-guard cache freshness (if present)
 if command -v jq >/dev/null 2>&1; then
   CTX_PARTS=()
 
@@ -69,13 +70,13 @@ if command -v jq >/dev/null 2>&1; then
     CTX_PARTS+=("=== Multi-agent dashboard ===" "$SUMMARY")
   fi
 
-  # Wave 5 — supervisor /goal-mode TUI status (silent when no active goals).
+  # Supervisor goal-mode TUI status (silent when no active goals)
   GOAL_TUI="$("$SESSION_SH" goal-dashboard 2>/dev/null || true)"
   if [[ -n "$GOAL_TUI" ]]; then
     CTX_PARTS+=("" "$GOAL_TUI")
   fi
 
-  # G2 — silent best-effort fetch + behind detection.
+  # main behind origin/main — silent best-effort fetch
   if /usr/bin/git -C "$ROOT" fetch origin main --quiet 2>/dev/null; then
     BEHIND="$(/usr/bin/git -C "$ROOT" rev-list --count main..origin/main 2>/dev/null || echo 0)"
     if [[ -n "$BEHIND" && "$BEHIND" -gt 0 ]]; then
@@ -85,8 +86,8 @@ if command -v jq >/dev/null 2>&1; then
     fi
   fi
 
-  # tdd-guard vitest cache freshness (frosted-mason Phase 1.3, TTL 600s).
-  TDD_CACHE="$ROOT/.claude/state/vitest-last-run.json"
+  # tdd-guard test cache freshness (TTL 600s default)
+  TDD_CACHE="$ROOT/.agent/state/test-last-run.json"
   if [[ -f "$TDD_CACHE" ]]; then
     CACHE_MTIME="$(/usr/bin/stat -f %m "$TDD_CACHE" 2>/dev/null || /usr/bin/stat -c %Y "$TDD_CACHE" 2>/dev/null || echo 0)"
     if [[ "$CACHE_MTIME" -gt 0 ]]; then
@@ -94,11 +95,11 @@ if command -v jq >/dev/null 2>&1; then
       AGE_S="$((NOW_EPOCH - CACHE_MTIME))"
       FAILED_COUNT="$(/usr/bin/jq -r '.failedFiles | length' "$TDD_CACHE" 2>/dev/null || echo 0)"
       if [[ "$AGE_S" -gt 600 ]]; then
-        FRESHNESS="stale (${AGE_S}s, TTL 600s — run npm run test:run in apps/web to refresh)"
+        FRESHNESS="stale (${AGE_S}s, TTL 600s — run your test suite to refresh)"
       else
         FRESHNESS="fresh (${AGE_S}s)"
       fi
-      CTX_PARTS+=("" "=== tdd-guard vitest cache: $FRESHNESS — $FAILED_COUNT failed file(s) ===")
+      CTX_PARTS+=("" "=== tdd-guard test cache: $FRESHNESS — $FAILED_COUNT failed file(s) ===")
     fi
   fi
 
@@ -109,7 +110,6 @@ if command -v jq >/dev/null 2>&1; then
       '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $ctx}}'
   fi
 else
-  # jq missing — keep legacy stdout behavior (visible in transcript only).
   "$SESSION_SH" dashboard --format=summary 2>/dev/null || true
 fi
 

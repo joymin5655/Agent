@@ -1,20 +1,37 @@
 #!/usr/bin/env python3
-"""
-tdd-guard PreToolUse hook (frosted-mason Phase 2 + Phase 3).
+"""tdd-guard PreToolUse hook — RGR-aware TDD enforcement.
 
-Strengthened from advisory-only (original 48-line bash) to RGR-aware enforcement.
+Blocks creating new production code when a corresponding failing test doesn't exist.
+Implements the Red-Green-Refactor (RGR) discipline at hook level.
+
+Modes (AGENT_TDD_GUARD_MODE):
+  - off     — skip entirely
+  - dryrun  — log verdict but never block (default — observation phase)
+  - block   — return permissionDecision=deny when RGR rules violated
+
+Configuration env vars:
+  - AGENT_TDD_GUARD_MODE          off | dryrun | block
+  - AGENT_TDD_GUARD_SINK          relative path for dryrun jsonl (default .agent/logs/tdd-guard-dryrun.jsonl)
+  - AGENT_TDD_SCOPE_REGEX         file path regex to enforce on (default: src/.+\\.(ts|tsx|js|jsx|py)$)
+  - AGENT_TDD_CACHE_PATH          relative path to test run cache JSON (default .agent/state/test-last-run.json)
+  - AGENT_TDD_CACHE_TTL           cache TTL in seconds (default 600)
+
+Risk-area whitelist:
+  Files matching project risk-area patterns (production data / secrets / deploy / etc.) are
+  exempted — RGR enforcement defers to risk-area hooks. Define in hook-config.yml.
 
 Decision flow:
-  1. Mode check (AIRLENS_TDD_GUARD_MODE: dryrun|block|off, default dryrun)
-  2. Parse stdin -> tool_input.file_path
-  3. Phase 3 — 5-guard whitelist (production-migration / secret / edge-fn / billing) -> guard_skip
-  4. Scope filter (Phase 1 default = A, apps/web/src/) -> skip if outside
-  5. Skip patterns preserved from original L20-26 (test/spec/types/config/etc.)
-  6. Cache freshness (mtime > 600s = stale) -> mode_stale, always allow
-  7. Failing test resolution in target file area
-  8. Verdict -> dryrun jsonl + advisory (dryrun) or decision:deny (block)
+  1. Mode check
+  2. Parse tool_input.file_path
+  3. Risk-area whitelist (immediate allow if matched)
+  4. Scope filter
+  5. Skip patterns (tests, types, config, etc.)
+  6. Cache freshness
+  7. Failing test resolution
+  8. Verdict → dryrun jsonl + (advisory or deny based on mode)
 
-Plan: ~/.claude/plans/tdd-guard-self-strengthen-frosted-mason.md §Phase 2 + §Phase 3
+Hook protocol: reads canonical event JSON from stdin, writes decision JSON or empty.
+Exit always 0.
 """
 import json
 import os
@@ -23,32 +40,39 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 
-MODE = os.environ.get("AIRLENS_TDD_GUARD_MODE", "dryrun")
+MODE = os.environ.get("AGENT_TDD_GUARD_MODE", "dryrun")
 if MODE == "off":
     sys.exit(0)
 
-TTL_SECONDS = 600
+TTL_SECONDS = int(os.environ.get("AGENT_TDD_CACHE_TTL", "600"))
 DRYRUN_SINK_RELATIVE = os.environ.get(
-    "AIRLENS_TDD_GUARD_SINK", ".claude/logs/tdd-guard-dryrun.jsonl"
+    "AGENT_TDD_GUARD_SINK", ".agent/logs/tdd-guard-dryrun.jsonl"
 )
-CACHE_RELATIVE = ".claude/state/vitest-last-run.json"
+CACHE_RELATIVE = os.environ.get(
+    "AGENT_TDD_CACHE_PATH", ".agent/state/test-last-run.json"
+)
 
-# Phase 3 — 5-guard whitelist (CRITICAL — security-guards.md SOT)
-# ML uncertainty (#5) deferred to scope B/C (models/) — Phase 1 = scope A only.
+# Risk-area whitelist — files matching these patterns skip TDD enforcement.
+# Edit this list or override via hook-config.yml: risk_areas[].paths.
+# Each entry: (compiled-regex, category-label).
 GUARD_PATTERNS = [
-    (re.compile(r"supabase/migrations/.+\.sql$"), "production-migration"),
+    (re.compile(r"(^|/)migrations/.+\.sql$"), "production-migration"),
     (re.compile(r"(^|/)(secrets/|\.env)"), "secret"),
-    (re.compile(r"supabase/functions/[^/]+/index\.ts$"), "edge-fn"),
-    (re.compile(r"apps/.+/billing/"), "billing"),
+    (re.compile(r"(^|/)functions/[^/]+/index\.(ts|js)$"), "edge-fn"),
+    (re.compile(r"(^|/)billing/"), "billing"),
 ]
 
-SCOPE_RE = re.compile(r"apps/web/src/.+\.(ts|tsx)$")
+# Scope — only enforce TDD on files matching this. Configurable via env.
+SCOPE_RE = re.compile(
+    os.environ.get("AGENT_TDD_SCOPE_REGEX", r"(^|/)src/.+\.(ts|tsx|js|jsx|py)$")
+)
 
+# Files to skip — tests themselves, types, config, etc.
 SKIP_PATTERNS = [
-    re.compile(r"\.(test|spec)\.(ts|tsx)$"),
-    re.compile(r"(types/|config/|constants/|locales/|styles/)"),
+    re.compile(r"\.(test|spec)\.(ts|tsx|js|jsx|py)$"),
+    re.compile(r"(types/|config/|constants/|locales/|styles/|fixtures/)"),
     re.compile(r"\.(css|scss|json|d\.ts)$"),
-    re.compile(r"(/index\.ts$|vite-env)"),
+    re.compile(r"(/index\.(ts|js)$|env\.d\.ts)"),
 ]
 
 
@@ -128,7 +152,9 @@ def resolve_failing_test(rel_target, cache):
 
     candidates = []
     for d in [target_dir, f"{target_dir}/__tests__"]:
-        for ext in ["test.ts", "test.tsx", "spec.ts", "spec.tsx"]:
+        for ext in ["test.ts", "test.tsx", "spec.ts", "spec.tsx",
+                    "test.js", "test.jsx", "spec.js", "spec.jsx",
+                    "test.py", "spec.py"]:
             candidates.append(f"{d}/{target_basename}.{ext}")
 
     by_file = {tr["file"]: tr for tr in (cache.get("testResults") or [])}
@@ -167,17 +193,17 @@ def main():
 
     root = repo_root()
 
-    # Phase 3 — 5-guard whitelist (CRITICAL, immediate allow)
+    # Risk-area whitelist
     for pat, area in GUARD_PATTERNS:
         if pat.search(file_path):
             log_dryrun(root, file_path, "guard_skip", area, area, 0)
             sys.exit(0)
 
-    # Scope filter (Phase 1 default = A)
+    # Scope filter
     if not SCOPE_RE.search(file_path):
         sys.exit(0)
 
-    # Existing skip patterns (preserved from original L20-26)
+    # Existing skip patterns
     for pat in SKIP_PATTERNS:
         if pat.search(file_path):
             sys.exit(0)
@@ -186,18 +212,16 @@ def main():
     cache, age = cache_load(root)
     if cache is None or age > TTL_SECONDS:
         reason = (
-            f"cache missing or unreadable" if cache is None
+            "cache missing or unreadable" if cache is None
             else f"cache stale ({age}s > {TTL_SECONDS}s TTL)"
         )
         log_dryrun(root, file_path, "mode_stale", reason, None, age)
         if MODE == "block":
-            rel = file_path.split("/apps/web/", 1)[-1] if "/apps/web/" in file_path else file_path
             emit_advisory(
-                f"vitest cache stale ({age}s). Run `npm run test:run` in apps/web to enable RGR enforcement. ({rel})"
+                f"test cache stale ({age}s). Run your test suite to enable RGR enforcement."
             )
         sys.exit(0)
 
-    # Relative path normalization
     rel = file_path
     if file_path.startswith(root + "/"):
         rel = file_path[len(root) + 1:]
@@ -211,7 +235,7 @@ def main():
     if MODE == "block":
         emit_deny(reason)
     else:
-        emit_advisory(f"would block: {reason} (dryrun mode — set AIRLENS_TDD_GUARD_MODE=block to enforce)")
+        emit_advisory(f"would block: {reason} (dryrun mode — set AGENT_TDD_GUARD_MODE=block to enforce)")
 
     sys.exit(0)
 
