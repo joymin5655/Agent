@@ -66,6 +66,21 @@ jobs:
               if "name:" not in head:
                   fail.append(f"agent without frontmatter: {a}")
 
+          # 4) registry model == agent .md model (drift guard — the two halves of
+          #    the routing contract must agree)
+          import re
+          reg = json.load(open("agents/master-registry.json"))
+          for entry in reg.get("agents", []):
+              aid, rmodel = entry.get("id"), entry.get("model")
+              md = pathlib.Path("agents") / f"{aid}.md"
+              if not md.exists():
+                  fail.append(f"registry id '{aid}' has no agents/{aid}.md"); continue
+              parts = md.read_text(encoding="utf-8").split("---", 2)
+              mm = re.search(r"(?m)^model:\s*(\S+)", parts[1]) if len(parts) >= 3 else None
+              mdmodel = mm.group(1) if mm else None
+              if rmodel != mdmodel:
+                  fail.append(f"model drift: registry '{aid}'={rmodel} but agents/{aid}.md={mdmodel}")
+
           if fail:
               print("VALIDATION FAILED:")
               for f in fail: print("  -", f)

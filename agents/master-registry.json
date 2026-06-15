@@ -1,5 +1,5 @@
 {
-  "_comment": "Master agent registry template. Copy to .agent/agents/master-registry.json in your project and edit to suit. The supervisor.py hook reads this to suggest specialists for incoming work.",
+  "_comment": "Shipped default agent registry. core/hooks/supervisor.py and session-init.py read this (they look for agents/master-registry.json, then .claude/agents/master-registry.json, then .agent/agents/registry.json). To customize per project, copy this file into your project at one of those paths and edit. Each `model` MUST equal the model: frontmatter in agents/<id>.md — the CI drift guard (validate-plugin) enforces it.",
   "version": 1,
   "agents": [
     {
@@ -35,7 +35,7 @@
         "file_globs": ["**/auth/**", "**/secrets/**", "**/.env*"]
       },
       "aliases": [],
-      "model": "sonnet",
+      "model": "opus",
       "memory_scope": "local"
     },
     {
@@ -59,7 +59,7 @@
         "file_globs": []
       },
       "aliases": ["typescript-reviewer", "build-fixer"],
-      "model": "sonnet",
+      "model": "haiku",
       "memory_scope": "local"
     }
   ]
