@@ -14,7 +14,10 @@ refactor, redesign, or modernize — those are separate concerns.
 
 ## Process
 
-1. **Run the failing command** and capture the full error.
+1. **Discover, then run the failing command.** Find the build / test /
+   lint command from `package.json` scripts, `Makefile`, `pyproject.toml`,
+   or the project's conventions before running — don't assume. Capture the
+   full error.
 2. **Read the error from the top.** The first error often cascades —
    fixing it may clear several below.
 3. **Identify the kind of error**:

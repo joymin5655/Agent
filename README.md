@@ -176,6 +176,7 @@ Agent/
 │   ├── hook-protocol.md         # canonical stdin/stdout JSON
 │   ├── getting-started.md
 │   ├── customization.md
+│   ├── specializing-agents.md   # per-project .agent/ injection points
 │   └── concepts/
 │
 ├── core/                        # AI-agnostic core (the truth)
@@ -290,6 +291,10 @@ risk_areas:
 The same `core/hooks/r4-mutex-check.sh` reads this and enforces it. No code changes per project.
 
 See [`docs/customization.md`](docs/customization.md) for the full schema.
+
+To sharpen the bundled agents for your project — a Supabase threat model, code
+conventions, a flake list — without forking them, drop optional files into
+`.agent/`. See [`docs/specializing-agents.md`](docs/specializing-agents.md).
 
 ---
 

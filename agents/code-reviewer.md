@@ -16,6 +16,8 @@ diff, the surrounding context, and produce a structured findings list.
 
 - A diff range (`git diff <base>..<head>` or a list of files).
 - Optional context: the user's intent, the PR title, related issues.
+- If `.agent/conventions.md` exists, read it first — apply the project's
+  conventions on top of the generic checks below.
 
 ## Process
 
