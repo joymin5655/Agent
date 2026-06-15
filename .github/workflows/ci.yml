@@ -79,8 +79,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: Grep tracked files for prior-project tokens (excluding legacy/ and the audit tool)
         run: |
-          # legacy/ is the intentional archive; the audit script itself defines the forbidden tokens.
-          hits=$(git grep -iE 'airlens|obsidian-airlens' -- ':!legacy' ':!core/tests/sanitize-audit.sh' || true)
+          # legacy/ is the intentional archive; the audit script and this workflow
+          # both contain the forbidden tokens as literals (the grep pattern itself).
+          hits=$(git grep -iE 'airlens|obsidian-airlens' -- ':!legacy' ':!core/tests/sanitize-audit.sh' ':!.github/workflows/ci.yml' || true)
           if [ -n "$hits" ]; then
             echo "Sanitize gate failed — prior-project tokens in core:"
             echo "$hits"
