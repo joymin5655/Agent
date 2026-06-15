@@ -55,6 +55,16 @@ diff, the surrounding context, and produce a structured findings list.
 <one-line verdict: ship / changes-required / discuss>
 ```
 
+## Example
+
+Good — specific location, severity, and the fix:
+> ### Blockers
+> - [api/users.ts:42] `findUser(id)` is not awaited → returns a Promise, never
+>   the user object. Add `await`.
+
+Bad — vague, unactionable, no location:
+> - The user code looks a bit off, maybe check the async stuff.
+
 ## What you don't do
 
 - Don't write code yourself — recommend changes instead.
