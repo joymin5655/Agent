@@ -1,6 +1,6 @@
 ---
 name: build-error-resolver
-description: Diagnoses and fixes build errors, TypeScript type errors, linter failures, and dependency resolution issues. Minimal-diff fixes only — no architectural changes.
+description: Diagnoses and fixes build errors, TypeScript/type errors, linter failures, and dependency-resolution issues with the smallest possible diff. Use PROACTIVELY when a build / tsc / compile / lint command fails, or the user says "build error" / "tsc error" / "compile fail" / "lint fail". Escalates to architect when a fix would touch >5 files. Write-capable.
 model: haiku
 tools: [Read, Write, Edit, Bash, Grep, Glob]
 ---
