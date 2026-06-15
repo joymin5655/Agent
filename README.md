@@ -172,6 +172,25 @@ Model is cost-tiered per role (deep review/design → opus, execution → sonnet
 
 Command: **`/project-init`** scaffolds project-level files (`CLAUDE.md`, rules, `gitleaks.toml`).
 
+## Benchmark
+
+A self-benchmark on a fixture with **8 planted bugs** ([`docs/benchmark/`](docs/benchmark/results.md)),
+scored blind by an independent opus judge. Honest result — a near-tie, reported with the losses:
+
+| Stack | Detection | False positives |
+|---|---|---|
+| **agent-harness** (`code-reviewer` + `security-reviewer`) | **8/8** | **0** |
+| **oh-my-claudecode** (bundled `code-reviewer`) | **8/8** | 1 (hedged) |
+
+The curated 2-agent pair matched the larger plugin on detection and was cleaner (zero false
+positives), and its lane split held — `code-reviewer` correctly deferred both security bugs to
+`security-reviewer`. But OMC's single broad sweep surfaced **2 genuine extra defects the harness
+lanes missed** (a rowset-vs-record bug and `SELECT *` leakage), and pinned line numbers more
+precisely. That's the whole positioning in one experiment: the harness is a **thin, zero-FP quality
++ governance lane**; the **long tail is delegated to OMC**. Two stacks, different jobs — see
+[`docs/benchmark/results.md`](docs/benchmark/results.md) for the full method, raw findings, and the
+follow-ups it surfaced.
+
 ## Layout
 
 ```
@@ -197,6 +216,7 @@ Agent/
 │   ├── getting-started.md
 │   ├── customization.md
 │   ├── specializing-agents.md   # per-project .agent/ injection points
+│   ├── benchmark/               # reviewer self-benchmark (fixture + ground truth + results)
 │   └── concepts/
 │
 ├── core/                        # AI-agnostic core (the truth)
