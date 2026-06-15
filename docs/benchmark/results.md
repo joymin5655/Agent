@@ -69,15 +69,30 @@ So the harness earns its keep as a **thin, predictable quality + governance lane
 the right move is to **delegate the long tail to OMC**, exactly as the dispatch
 guide routes it. Two stacks, different jobs.
 
-## What the benchmark told us to fix
+## What the benchmark told us to fix — applied + re-verified
 
-Tracked follow-ups for the agent definitions (not yet applied):
+Both follow-ups were applied to the agent definitions and re-measured on the same
+fixture (blind reviewers, opus judge). The earlier `:9`/`:11` "slip" was really an
+ambiguous convention — `:9` is where the `await` fix goes; `:11` is where the
+symptom shows — so the fix is a *precise convention*, not a one-line correction.
 
-- **`code-reviewer`**: tighten the location contract so a finding's `line` field
-  matches the defect it describes (the G2 `:9`/`:11` slip).
-- **`security-reviewer`**: add an explicit "skip defects already owned by
-  code-reviewer unless they have a security consequence" rule to cut cross-lane
-  duplication.
+- **`code-reviewer` — location-precision rule** (cite the line where the fix is
+  applied, and note the surfacing line when different). **Verified landed**: the
+  re-run cited the missing-await at line 9 *and* noted "rows[0] at line 11 is
+  undefined" — origin + surfacing, per contract. Security deferral stayed intact
+  (it flagged only the await at L9, not the SQLi).
+- **`security-reviewer` — stay-in-lane rule** (raise a code-reviewer-owned defect
+  only with a concrete exploit, not a quality framing). **Verified landed**: the
+  re-run kept G1 + G3 with specific attack scenarios and dropped all five
+  cross-lane re-reports (await / email / JSON.parse / N+1 / `any`), with zero
+  false positives, and correctly did *not* raise the parameterized-email case.
+
+Trade-off, reported honestly: the lane-discipline rule removes the (incidental,
+noisy) cross-lane redundancy in which `security-reviewer` re-reported
+code-reviewer-owned bugs. That is correct lane separation, but it means each lane
+must be reliable in its own scope — a defect code-reviewer happens to miss is no
+longer masked by a security re-report. (Detection is sampling-variant run to run;
+these edits change citation format and lane scope, not detection breadth.)
 
 ## Reproduce
 

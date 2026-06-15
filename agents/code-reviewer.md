@@ -57,6 +57,12 @@ diff, the surrounding context, and produce a structured findings list.
 <one-line verdict: ship / changes-required / discuss>
 ```
 
+**Location precision** — a finding's `[path:line]` must point to the line where
+the fix is applied (the defect's origin), not a nearby symptom. When a bug
+originates in one place but surfaces in another (e.g. a Promise left un-awaited
+at the call site, misused lines later), cite the origin and note the surfacing
+line: `[api/users.ts:9] missing await (surfaces as undefined at :11)`.
+
 ## Example
 
 Good — specific location, severity, and the fix:
