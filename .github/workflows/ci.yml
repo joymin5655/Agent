@@ -12,6 +12,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read   # gitleaks-action@v2 enumerates PR commits via the API on pull_request events
 
 jobs:
   secret-scan:
