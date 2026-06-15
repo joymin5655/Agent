@@ -92,6 +92,24 @@ Idempotent — re-running skips existing files (use `--force` to overwrite).
 
 ---
 
+## What you need to do
+
+The plugin install is the only **required** step. Full checklist:
+
+1. **Install** (once, global):
+   ```
+   /plugin marketplace add joymin5655/Agent
+   /plugin install agent-harness@agent
+   ```
+2. **Restart Claude Code.** Agents and hooks load at session start — they won't appear until you restart or open a new session.
+3. **Verify.** Run `/plugin` (agent-harness shows *enabled*). In a new session the agents resolve as `agent-harness:architect`, `agent-harness:code-reviewer`, `agent-harness:security-reviewer`, `agent-harness:test-engineer`, `agent-harness:build-error-resolver` — and `/project-init` is available.
+4. **(Optional) Avoid hook double-firing.** In a repo that already runs another hook-heavy agent plugin (e.g. oh-my-claudecode), this harness's secret/worktree/supervisor hooks overlap with it. Disable the agent-harness plugin in that one repo via `/plugin` — the agents still namespace cleanly as `agent-harness:*`, so there's no name collision either way.
+5. **(Optional) Specialize per project.** Drop `.agent/threat-model.md` or `.agent/conventions.md` to sharpen the generic agents for your stack ([`docs/specializing-agents.md`](docs/specializing-agents.md)), or run `/project-init` to scaffold `CLAUDE.md` + rules + `gitleaks.toml`.
+
+Driving Codex CLI / Gemini CLI too, or prefer no plugin system? Use the shell `setup.sh` path (**One-command install**, above) instead — it wires the same core into `~/.codex` and `~/.gemini` as well.
+
+---
+
 ## Architecture
 
 One canonical hook protocol; thin per-AI adapters translate native events to it. Write a guard
@@ -127,13 +145,15 @@ bundles the agents/skills/commands — so `/plugin install` gives you the whole 
 
 ## Catalog
 
-| Agents (`agents/`) | Role |
-|---|---|
-| `architect` | Plans multi-file work (read-only) |
-| `code-reviewer` | Reviews diffs for quality/correctness |
-| `security-reviewer` | OWASP Top 10, secrets, auth, injection |
-| `test-engineer` | Writes/maintains tests, enforces TDD |
-| `build-error-resolver` | Minimal-diff fixes for build/type/lint errors |
+| Agents (`agents/`) | Model | Mode | Role |
+|---|---|---|---|
+| `architect` | opus | read-only | Plans multi-file work; never writes code |
+| `code-reviewer` | sonnet | read-only | Reviews diffs; defers security to security-reviewer |
+| `security-reviewer` | opus | read-only | OWASP Top 10, secrets, auth, injection — owns security findings |
+| `test-engineer` | sonnet | write | Writes/maintains tests, enforces red-green TDD |
+| `build-error-resolver` | haiku | write | Minimal-diff fixes for build/type/lint errors |
+
+Model is cost-tiered per role (deep review/design → opus, execution → sonnet, mechanical → haiku) and kept in sync with `agents/master-registry.json` by a CI drift guard. Read-only agents are enforced read-only (no `Write`/`Edit`/`Bash`). Specialize any of them per project with `.agent/` files — see [`docs/specializing-agents.md`](docs/specializing-agents.md).
 
 | Skills (`skills/`) | Trigger |
 |---|---|
