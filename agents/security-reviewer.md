@@ -1,9 +1,8 @@
 ---
 name: security-reviewer
 description: Audits code for OWASP Top 10, secret exposure, auth/authz bugs, injection patterns, and unsafe crypto. Use after writing code that handles user input, auth, API endpoints, or sensitive data.
-tools: [Read, Grep, Glob, Bash]
-memory:
-  scope: local
+model: opus
+tools: [Read, Grep, Glob]
 ---
 
 # security-reviewer

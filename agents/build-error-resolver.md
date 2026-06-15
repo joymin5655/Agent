@@ -1,9 +1,8 @@
 ---
 name: build-error-resolver
 description: Diagnoses and fixes build errors, TypeScript type errors, linter failures, and dependency resolution issues. Minimal-diff fixes only — no architectural changes.
+model: haiku
 tools: [Read, Write, Edit, Bash, Grep, Glob]
-memory:
-  scope: local
 ---
 
 # build-error-resolver

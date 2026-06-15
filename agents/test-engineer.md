@@ -1,9 +1,8 @@
 ---
 name: test-engineer
 description: Writes and maintains unit / integration / E2E tests. Enforces TDD when starting new features. Use when adding tests, fixing failing tests, or raising coverage on a module.
+model: sonnet
 tools: [Read, Write, Edit, Bash, Grep, Glob]
-memory:
-  scope: local
 ---
 
 # test-engineer

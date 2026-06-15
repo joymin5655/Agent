@@ -1,9 +1,8 @@
 ---
 name: code-reviewer
 description: Reviews code changes for quality, correctness, security, and maintainability. Use immediately after writing or modifying code. MUST BE USED for all non-trivial code changes.
-tools: [Read, Grep, Glob, Bash]
-memory:
-  scope: local
+model: sonnet
+tools: [Read, Grep, Glob]
 ---
 
 # code-reviewer
