@@ -8,7 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- (placeholder for next release)
+- `.github/workflows/ci.yml` — CI: gitleaks secret scan + plugin manifest/hook/agent validation + sanitize gate
+- README portfolio polish: badges, Mermaid architecture diagram, agent/skill/hook catalog
 
 ## [0.2.0] — 2026-06-15
 

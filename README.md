@@ -1,5 +1,10 @@
 # Agent
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+![Version](https://img.shields.io/badge/version-0.2.0-blue.svg)
+![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-7c3aed.svg)
+![AI-agnostic](https://img.shields.io/badge/AI-Claude%20%7C%20Codex%20%7C%20Gemini-orange.svg)
+
 **A portable AI agent harness** — curated review/build/test agents, secret-hardening + worktree + plan-gate hooks, and supervise/tdd/diagnose/wrap skills. Install once as a **Claude Code plugin** and use it in every project. The core is AI-agnostic: the same hooks return the same decision under Claude Code, Codex CLI, and Gemini CLI.
 
 > Status: v0.2.0. License: **MIT**. Installable as a Claude Code plugin (below) or as a shell framework for all 3 AIs.
@@ -86,6 +91,66 @@ Scaffolds into the project:
 Idempotent — re-running skips existing files (use `--force` to overwrite).
 
 ---
+
+## Architecture
+
+One canonical hook protocol; thin per-AI adapters translate native events to it. Write a guard
+once in `core/hooks/`, and it returns the same `allow` / `ask` / `deny` decision everywhere.
+
+```mermaid
+flowchart LR
+    subgraph AIs["AI runtimes"]
+        CC["Claude Code"]
+        CX["Codex CLI"]
+        GM["Gemini CLI"]
+    end
+    subgraph Adapters["adapters/ (thin)"]
+        A1["claude-code/adapter.sh"]
+        A2["codex/"]
+        A3["gemini/"]
+    end
+    subgraph Core["core/ (the truth)"]
+        H["hooks/ — secret scan · worktree mutex · plan-gate · tdd-guard · supervisor"]
+        I["infra/ — session coordination · auto-ship"]
+    end
+    CC --> A1 --> H
+    CX --> A2 --> H
+    GM --> A3 --> H
+    H -->|allow / ask / deny| AIs
+
+    PLUG[".claude-plugin/ + hooks/hooks.json"] -. "Claude Code plugin install" .-> A1
+    PLUG -. "bundles" .-> AG["agents/ · skills/ · commands/"]
+```
+
+The **Claude Code plugin** (`.claude-plugin/`) wires the same core through `hooks/hooks.json` and
+bundles the agents/skills/commands — so `/plugin install` gives you the whole harness with zero setup.
+
+## Catalog
+
+| Agents (`agents/`) | Role |
+|---|---|
+| `architect` | Plans multi-file work (read-only) |
+| `code-reviewer` | Reviews diffs for quality/correctness |
+| `security-reviewer` | OWASP Top 10, secrets, auth, injection |
+| `test-engineer` | Writes/maintains tests, enforces TDD |
+| `build-error-resolver` | Minimal-diff fixes for build/type/lint errors |
+
+| Skills (`skills/`) | Trigger |
+|---|---|
+| `supervise` | Delegate a plan to autonomous execution |
+| `tdd` | Red-Green-Refactor enforcement |
+| `diagnose` | Hard-to-reproduce bugs, missing feedback loop |
+| `wrap` | Commit + PR automation with safeguards |
+
+| Hooks (`hooks/hooks.json` → `core/hooks/`) | Event |
+|---|---|
+| secret-content-scan · check-hardcoding | PreToolUse (Write/Edit) |
+| pre-tool-guard · r4-mutex · context-mode-guard | PreToolUse |
+| tdd-guard · supervisor | PreToolUse (Write/Edit) |
+| plan-gate · session heartbeat | UserPromptSubmit |
+| session-quality-gate · session-close | Stop |
+
+Command: **`/project-init`** scaffolds project-level files (`CLAUDE.md`, rules, `gitleaks.toml`).
 
 ## Layout
 

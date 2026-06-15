@@ -1,0 +1,89 @@
+# CI for the agent-harness plugin — secret scan, plugin manifest validation, sanitize gate.
+# (Actions use major-version tags; pin to commit SHAs for stricter supply-chain hardening.)
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 6 * * 1' # weekly Mon 06:00 UTC
+
+permissions:
+  contents: read
+
+jobs:
+  secret-scan:
+    name: gitleaks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: gitleaks.toml
+
+  validate-plugin:
+    name: validate plugin manifests + hooks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate manifests, hook refs, and agent frontmatter
+        run: |
+          python3 - <<'PY'
+          import json, os, sys, pathlib
+          fail = []
+
+          # 1) manifests are valid JSON with required fields
+          p = json.load(open(".claude-plugin/plugin.json"))
+          for k in ("name", "version", "description", "license"):
+              if not p.get(k): fail.append(f"plugin.json missing {k}")
+          m = json.load(open(".claude-plugin/marketplace.json"))
+          if not m.get("plugins"): fail.append("marketplace.json has no plugins[]")
+          if m.get("plugins", [{}])[0].get("source") != "./":
+              fail.append("marketplace.json plugin source must be './'")
+          h = json.load(open("hooks/hooks.json"))
+
+          # 2) every hooks.json command resolves to an existing executable core hook
+          for event, groups in h["hooks"].items():
+              for g in groups:
+                  for c in g["hooks"]:
+                      hook = c["command"].split()[-1]            # e.g. pre-tool-guard.sh
+                      path = pathlib.Path("core/hooks") / hook
+                      if not path.exists():
+                          fail.append(f"hooks.json -> missing core/hooks/{hook}")
+                      elif not os.access(path, os.X_OK):
+                          fail.append(f"hooks.json -> not executable core/hooks/{hook}")
+
+          # 3) every agents/*.md carries a name: frontmatter (real, discoverable agents)
+          for a in pathlib.Path("agents").glob("*.md"):
+              head = a.read_text(encoding="utf-8")[:400]
+              if "name:" not in head:
+                  fail.append(f"agent without frontmatter: {a}")
+
+          if fail:
+              print("VALIDATION FAILED:")
+              for f in fail: print("  -", f)
+              sys.exit(1)
+          print("plugin manifests, hook refs, and agent frontmatter OK")
+          PY
+
+  sanitize:
+    name: sanitize gate (no prior-project taint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Grep tracked files for prior-project tokens (excluding legacy/ and the audit tool)
+        run: |
+          # legacy/ is the intentional archive; the audit script itself defines the forbidden tokens.
+          hits=$(git grep -iE 'airlens|obsidian-airlens' -- ':!legacy' ':!core/tests/sanitize-audit.sh' || true)
+          if [ -n "$hits" ]; then
+            echo "Sanitize gate failed — prior-project tokens in core:"
+            echo "$hits"
+            exit 1
+          fi
+          echo "sanitize gate clean"
