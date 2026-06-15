@@ -1,0 +1,20 @@
+{
+  "name": "agent",
+  "owner": {
+    "name": "joymin",
+    "url": "https://github.com/joymin5655"
+  },
+  "metadata": {
+    "description": "joymin's personal agent harness — a portable, AI-agnostic agent system packaged as a Claude Code plugin.",
+    "version": "0.2.0"
+  },
+  "plugins": [
+    {
+      "name": "agent-harness",
+      "source": "./",
+      "description": "Curated review/build/test agents + secret-hardening/worktree/plan-gate hooks + supervise/tdd/diagnose/wrap skills. Install once, use in every project.",
+      "category": "workflow",
+      "tags": ["agents", "harness", "code-review", "security", "hooks", "tdd", "worktree"]
+    }
+  ]
+}
