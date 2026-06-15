@@ -7,7 +7,7 @@ for a given user request.
 
 ## Format
 
-`master-registry.json.template` is the structural template. Each entry:
+`agents/master-registry.json` is the shipped default registry (and the structural reference). Each entry:
 
 ```json
 {
@@ -54,4 +54,4 @@ Document deviations in `rules/policy/skill-adoption-comparison.md`.
 - `agents/code-reviewer.md`, `agents/architect.md`, etc. — concrete
   agent definitions distributed with the framework.
 - `core/hooks/supervisor.py` — the orchestrator.
-- `master-registry.json.template` — registry skeleton.
+- `agents/master-registry.json` — the shipped default registry, read by the hooks. Each `model` is kept in sync with `agents/<id>.md` by the CI drift guard.
