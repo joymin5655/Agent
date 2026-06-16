@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+# Git post-commit hook — Auto-PR auto-sync.
+#
+# Keeps the remote up to date whenever the agent system changes: pushes the
+# current FEATURE branch and ensures a PR exists. A human still merges.
+#
+# Activated by running `setup.sh --hooks-only` or `setup.sh --project`
+# (which sets `core.hooksPath=core/git-hooks`), AND opting in explicitly:
+#     git config agent.autosync true
+#
+# Opt out:    git config agent.autosync false   (or unset)
+#
+# SAFE for a public repo:
+#   - OPT-IN: default off; merely wiring core.hooksPath does NOT auto-push.
+#   - Auto-PR mode: NEVER auto-pushes main/master directly.
+#   - SELF-GATED by gitleaks BEFORE any push (does not depend on pre-push,
+#     which may be inactive on a fresh clone where core.hooksPath is unset).
+#   - Non-blocking: post-commit exit code is ignored; every step best-effort.
+#
+# DRY-RUN (testability):  AGENT_AUTOSYNC_DRYRUN=1 prints the actions it WOULD
+# take and runs no gitleaks/push/gh.
+#
+# Sync log: <repo>/.git/agent-autosync.log  (inside .git, never committed).
+#
+# set -u (catch unset vars) but NOT set -e (must not abort on a failed check).
+
+set -u
+
+# --- locate repo --------------------------------------------------------------
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+GITDIR="$(git rev-parse --git-dir 2>/dev/null)" || exit 0
+case "$GITDIR" in
+  /*) : ;;                       # already absolute
+  *)  GITDIR="$ROOT/$GITDIR" ;;  # make absolute
+esac
+LOG="$GITDIR/agent-autosync.log"
+
+log() {
+  # Timestamped append; never fail the hook on a log error.
+  printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*" >> "$LOG" 2>/dev/null || true
+}
+
+DRYRUN="${AGENT_AUTOSYNC_DRYRUN:-0}"
+
+# --- (a) OPT-IN GATE ----------------------------------------------------------
+ENABLED="$(git config --bool agent.autosync 2>/dev/null || true)"
+if [ "$ENABLED" != "true" ]; then
+  exit 0   # silent: not opted in
+fi
+
+# --- (b) CI GATE --------------------------------------------------------------
+if [ -n "${GITHUB_ACTIONS:-}" ]; then
+  log "auto-sync: GITHUB_ACTIONS set — never auto-sync inside CI, skipping"
+  exit 0
+fi
+
+# --- (c) BRANCH GATE ----------------------------------------------------------
+branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)"
+if [ "$branch" = "main" ] || [ "$branch" = "master" ]; then
+  log "auto-sync: on $branch — Auto-PR needs a feature branch, skipping"
+  exit 0
+fi
+
+# Detached HEAD: abbrev-ref returns the literal "HEAD" — no branch to push/PR.
+if [ "$branch" = "HEAD" ] || [ -z "$branch" ]; then
+  log "auto-sync: detached HEAD (no branch) — skipping"
+  exit 0
+fi
+
+# --- (d) SCOPE GATE -----------------------------------------------------------
+# Only sync agent-system changes.
+CHANGED="$(git diff-tree --root --no-commit-id --name-only -r HEAD 2>/dev/null || true)"
+in_scope=0
+while IFS= read -r f; do
+  [ -z "$f" ] && continue
+  case "$f" in
+    agents/*|hooks/*|skills/*|core/*|commands/*|rules/*|codex-skills/*|docs/*|.claude-plugin/*)
+      in_scope=1
+      break
+      ;;
+  esac
+done <<INNER_EOF
+$CHANGED
+INNER_EOF
+
+if [ "$in_scope" -ne 1 ]; then
+  log "auto-sync: HEAD touched no agent-system paths — out of scope, skipping"
+  exit 0
+fi
+
+# --- (g) DRY-RUN --------------------------------------------------------------
+# Print the exact actions WITHOUT running gitleaks/push/gh.
+if [ "$DRYRUN" = "1" ]; then
+  echo "DRYRUN push origin $branch"
+  echo "DRYRUN gh pr create --base main --head $branch --fill (if no PR exists)"
+  log "auto-sync: DRYRUN — would push origin $branch and ensure PR"
+  exit 0
+fi
+
+# --- (e) SECRET SELF-GATE (CRITICAL — runs BEFORE any push) -------------------
+# Do NOT rely on pre-push: on a fresh clone core.hooksPath may be unset.
+if ! command -v gitleaks >/dev/null 2>&1; then
+  log "auto-sync: gitleaks unavailable — refusing to auto-push"
+  exit 0
+fi
+CONFIG_ARG=""
+[ -f "$ROOT/gitleaks.toml" ] && CONFIG_ARG="--config=$ROOT/gitleaks.toml"
+# Scan ONLY the just-made HEAD commit (--log-opts "-1").
+if ! gitleaks detect --source "$ROOT" --no-banner --redact $CONFIG_ARG --log-opts "-1" >/dev/null 2>&1; then
+  log "auto-sync: gitleaks flagged — push aborted"
+  exit 0
+fi
+
+# --- (f) PUSH + PR in the BACKGROUND (commit returns instantly) ---------------
+(
+  set +e
+  if git push -u origin "$branch" >/dev/null 2>&1; then
+    log "auto-sync: pushed origin $branch"
+  else
+    log "auto-sync: git push failed for $branch (best-effort)"
+    exit 0
+  fi
+
+  if command -v gh >/dev/null 2>&1; then
+    if gh pr view "$branch" >/dev/null 2>&1; then
+      log "auto-sync: PR already exists for $branch"
+    else
+      if gh pr create --base main --head "$branch" --fill >/dev/null 2>&1; then
+        log "auto-sync: opened PR for $branch (base main)"
+      else
+        log "auto-sync: gh pr create failed for $branch (best-effort)"
+      fi
+    fi
+  else
+    log "auto-sync: gh unavailable — pushed but no PR created"
+  fi
+) </dev/null >/dev/null 2>&1 &
+disown 2>/dev/null || true
+
+log "auto-sync: dispatched background push+PR for $branch"
+exit 0

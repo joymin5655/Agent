@@ -187,6 +187,7 @@ install_git_hooks() {
 
     chmod +x "$FRAMEWORK_ROOT/core/git-hooks/pre-commit" \
              "$FRAMEWORK_ROOT/core/git-hooks/pre-push" \
+             "$FRAMEWORK_ROOT/core/git-hooks/post-commit" \
              "$FRAMEWORK_ROOT/core/git-hooks/scan-push-diff.py" \
              "$FRAMEWORK_ROOT/core/git-hooks/check-staged.py"
 
