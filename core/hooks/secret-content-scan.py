@@ -31,6 +31,7 @@ import sys
 import json
 import os
 import re
+import signal
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -106,30 +107,10 @@ SECRET_PATTERNS = [
 ]
 
 
-def is_exempt(file_path: str) -> bool:
-    for pattern in EXEMPT_PATHS:
-        if pattern in file_path:
-            return True
-    return False
+def _find_repo_root() -> str:
+    """Discover the project root: env override first, else git toplevel.
 
-
-def scan_content(content: str) -> list[tuple[str, str]]:
-    findings: list[tuple[str, str]] = []
-    for pattern, label in SECRET_PATTERNS:
-        match = re.search(pattern, content)
-        if match:
-            snippet = match.group(0)
-            if len(snippet) > 80:
-                snippet = snippet[:77] + "..."
-            findings.append((label, snippet))
-    return findings
-
-
-def log_violation(reason: str) -> None:
-    """Append security violation record to .agent/logs/security-violations.jsonl.
-
-    Matches the schema written by other guard hooks. Silent on failure —
-    we never want telemetry issues to crash an AI session.
+    Returns "" when it cannot be determined. Never raises.
     """
     repo_root = os.environ.get("AGENT_PROJECT_DIR") or os.environ.get("CLAUDE_PROJECT_DIR")
     if not repo_root:
@@ -139,8 +120,113 @@ def log_violation(reason: str) -> None:
                 stderr=subprocess.DEVNULL,
             ).decode().strip()
         except Exception:
-            return
+            return ""
+    return repo_root or ""
 
+
+# --- Additive project-specific extensions (fail-safe, never weakens built-ins) ---
+# Built-ins above ALWAYS remain and run FIRST (trusted, fast, no timeout).
+# Config-supplied patterns are kept in a SEPARATE list so the scanner can run
+# them AFTER built-ins under a runtime SIGALRM watchdog (a malicious config
+# regex can at most delay ~2s — it can NEVER lose built-in detection).
+# The loader is import-guarded so a missing/broken loader degrades to built-ins.
+CONFIG_SECRET_PATTERNS: list[tuple[str, str]] = []
+try:
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import hook_config  # noqa: E402
+
+    _ext = hook_config.load_extensions(_find_repo_root())
+
+    # Collect extra secret patterns into the SEPARATE config list (scanned under
+    # the watchdog after built-ins — never mixed into the trusted built-in list).
+    for _regex, _label in _ext.get("secret_patterns", []):
+        CONFIG_SECRET_PATTERNS.append((_regex, _label))
+
+    # Append extra exempt path fragments (already bounded by the loader so they
+    # cannot exempt the universe).
+    for _p in _ext.get("exempt_paths", []):
+        EXEMPT_PATHS.append(_p)
+
+    # Fold extra credential key names into one additional key=value pattern.
+    _key_names = _ext.get("credential_key_names", [])
+    if _key_names:
+        _alt = "|".join(re.escape(_k) for _k in _key_names)
+        CONFIG_SECRET_PATTERNS.append((
+            r"""\b(?:""" + _alt + r""")\s*[:=]\s*['"][A-Za-z0-9_\-.]{20,}['"]""",
+            "hardcoded credential value (project)",
+        ))
+except Exception:
+    # Fail-safe: any loader failure leaves the hook running with built-ins only.
+    pass
+
+
+class _ScanTimeout(Exception):
+    """Raised by the SIGALRM handler to abandon a catastrophic config regex."""
+
+
+def is_exempt(file_path: str) -> bool:
+    for pattern in EXEMPT_PATHS:
+        if pattern in file_path:
+            return True
+    return False
+
+
+def _scan_with(patterns: list[tuple[str, str]], content: str) -> list[tuple[str, str]]:
+    findings: list[tuple[str, str]] = []
+    for pattern, label in patterns:
+        match = re.search(pattern, content)
+        if match:
+            snippet = match.group(0)
+            if len(snippet) > 80:
+                snippet = snippet[:77] + "..."
+            findings.append((label, snippet))
+    return findings
+
+
+def scan_content(content: str) -> list[tuple[str, str]]:
+    """Scan one content chunk. Built-in patterns run FIRST (trusted, no timeout);
+    config-supplied patterns run AFTER under a 2s SIGALRM watchdog so a
+    catastrophic-backtracking config regex can at most delay ~2s and can NEVER
+    lose the built-in findings already collected. On platforms without SIGALRM,
+    config patterns rely on the loader's denylist/length-cap only.
+    """
+    # 1) Built-ins first — always run, never time-bounded (trusted + fast).
+    findings = _scan_with(SECRET_PATTERNS, content)
+
+    # 2) Config-supplied patterns under a runtime watchdog. If none, done.
+    if not CONFIG_SECRET_PATTERNS:
+        return findings
+
+    if hasattr(signal, "SIGALRM"):
+        def _on_timeout(signum, frame):
+            raise _ScanTimeout()
+
+        prev_handler = signal.signal(signal.SIGALRM, _on_timeout)
+        signal.alarm(2)
+        try:
+            findings.extend(_scan_with(CONFIG_SECRET_PATTERNS, content))
+        except _ScanTimeout:
+            # A config regex hit catastrophic backtracking — abandon remaining
+            # config patterns. Built-in findings already collected are kept.
+            pass
+        finally:
+            # Always clear the alarm so it cannot fire later, and restore handler.
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, prev_handler)
+    else:
+        # No SIGALRM (e.g. Windows) — rely on the loader denylist/length-cap.
+        findings.extend(_scan_with(CONFIG_SECRET_PATTERNS, content))
+
+    return findings
+
+
+def log_violation(reason: str) -> None:
+    """Append security violation record to .agent/logs/security-violations.jsonl.
+
+    Matches the schema written by other guard hooks. Silent on failure —
+    we never want telemetry issues to crash an AI session.
+    """
+    repo_root = _find_repo_root()
     if not repo_root:
         return
 
