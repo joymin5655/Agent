@@ -69,6 +69,7 @@ When porting the full registry-aware supervisor into `core/hooks/supervisor.py`:
 
 ## Provenance
 
-AirLens audit `airlens-groovy-robin` (2026-06-20). Empirically the lone offending token was
-`API`; the fix + a 7-case reproduce test live in the AirLens consumer tree. This rule lifts the
+Distilled from a consumer-project harness audit (2026-06). Empirically the lone offending
+token was a generic `API` substring that false-matched client UI files into an edge-function
+specialist; the concrete fix + reproduce test live in that consumer tree. This rule lifts the
 reusable shape into the portable harness so other projects inherit it.
