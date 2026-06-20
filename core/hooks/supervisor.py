@@ -7,7 +7,8 @@ The supervisor is the orchestrator that:
   3. Returns `ask` if a feature-class intent lacks specialist dispatch
 
 This is the v0.1.0 minimal stub. The full registry-aware orchestrator (54KB+)
-will be ported in v0.2.0 — see core/hooks/README.md roadmap.
+will be ported in v0.2.0 — see core/hooks/README.md roadmap. The port MUST follow
+rules/policy/specialist-routing.md (domain-anchored matchers + ghost→executor fallback).
 
 For v0.1.0, this stub:
   - Loads agents/master-registry.json (or .claude/agents/master-registry.json) if present
