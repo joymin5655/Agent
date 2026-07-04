@@ -100,7 +100,7 @@ bash ~/agent/setup.sh                    # no flag = all three AIs
 | `--claude` | Claude Code만 (`~/.claude/settings.json`) |
 | `--codex` | Codex CLI만 (`~/.codex/config.toml`) |
 | `--gemini` | Gemini CLI만 (`~/.gemini/settings.json`) |
-| `--project` | 현재 레포 스캐폴드: `CLAUDE.md` / `AGENTS.md` / `GEMINI.md` / `gitleaks.toml` / `.claude/rules/` / `hook-config.yml` / git pre-commit + pre-push 훅 |
+| `--project` | 현재 레포 스캐폴드: `CLAUDE.md` / `AGENTS.md` / `GEMINI.md` / `gitleaks.toml` / `hook-config.yml` / git pre-commit + pre-push 훅 |
 | `--hooks-only` | git-hooks만, AI 설정 없음 |
 | `--all` | 위 전부 |
 
@@ -283,7 +283,7 @@ bash core/tests/post-commit-autosync-test.sh
 
 ```yaml
 risk_areas:
-  - id: production-data
+  - id: data
     description: "Production database migrations and schema changes"
     paths: ["migrations/*.sql"]
     commands: ["psql.*production", "alembic upgrade"]

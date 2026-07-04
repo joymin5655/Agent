@@ -41,31 +41,12 @@ The framework treats **file-based memory** as the authoritative SoT for facts. P
 
 ---
 
-## Hook integration
-
-The framework's `memory-explore-verify.py` hook (PreToolUse on Write|Edit|MultiEdit, file = plan/memory) advises if you're about to write something that contradicts existing memory.
-
-It's **advisory only** — never blocks. But its stderr advice should be heeded.
-
-Example:
-```
-# AI tries to write a new plan saying "user prefers tabs over spaces"
-# but memory has feedback_indentation.md saying "user prefers spaces"
-
-⚠️  Memory drift detected: feedback_indentation.md states user prefers spaces.
-   Re-read the file before committing this plan.
-```
-
----
-
 ## What memory is NOT for
 
 The auto-capture plug-ins (Claude-Mem, etc.) are tempting but dangerous when they auto-edit user-facing files:
 
 - **Don't** let auto-memory edit `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, or project docs.
 - **Do** let it append to its own private store (`~/.claude/auto-mem/...`) for retrieval.
-
-The framework's `claude-mem-watch.py` hook records hash + size of protected paths each Stop event. If a protected file changes between sessions without a corresponding user action, you'll see it in `.claude/logs/claude-mem-watch.jsonl`.
 
 ---
 
@@ -84,6 +65,4 @@ The fix: hooks + discipline. R1 (read body before responding) catches this.
 ## See also
 
 - [`../../rules/memory-discipline.md`](../../rules/memory-discipline.md) — R1-R5 canonical
-- [`../../core/hooks/memory-explore-verify.py`](../../core/hooks/memory-explore-verify.py) — drift advisory
-- [`../../core/hooks/claude-mem-watch.py`](../../core/hooks/claude-mem-watch.py) — protected-path watch
 - [`../../rules/policy/subagent-memory-policy.md`](../../rules/policy/subagent-memory-policy.md) — subagent memory scoping

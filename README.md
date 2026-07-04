@@ -100,7 +100,7 @@ bash ~/agent/setup.sh                    # no flag = all three AIs
 | `--claude` | Claude Code only (`~/.claude/settings.json`) |
 | `--codex` | Codex CLI only (`~/.codex/config.toml`) |
 | `--gemini` | Gemini CLI only (`~/.gemini/settings.json`) |
-| `--project` | Scaffold the current repo: `CLAUDE.md` / `AGENTS.md` / `GEMINI.md` / `gitleaks.toml` / `.claude/rules/` / `hook-config.yml` / git pre-commit + pre-push hooks |
+| `--project` | Scaffold the current repo: `CLAUDE.md` / `AGENTS.md` / `GEMINI.md` / `gitleaks.toml` / `hook-config.yml` / git pre-commit + pre-push hooks |
 | `--hooks-only` | git-hooks only, no AI configs |
 | `--all` | Everything above |
 
@@ -280,7 +280,7 @@ Each project gets a `hook-config.yml` that defines:
 
 ```yaml
 risk_areas:
-  - id: production-data
+  - id: data
     description: "Production database migrations and schema changes"
     paths: ["migrations/*.sql"]
     commands: ["psql.*production", "alembic upgrade"]

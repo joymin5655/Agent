@@ -19,4 +19,3 @@ mode = "workspace-write"
 allow_network = false
 
 # Skills directory (optional — set if using ~/.codex/skills layout).
-# skills_dir = "{{FRAMEWORK_ROOT}}/codex-skills"
