@@ -154,10 +154,11 @@ def main() -> None:
     )
     print(summary, file=sys.stderr)
 
-    # Append to violations log (cross-session learning).
-    os.makedirs(log_dir, exist_ok=True)
+    # Append to violations log (cross-session learning). log_dir derives from
+    # untrusted stdin cwd — a bogus/unwritable path must not crash the Stop hook.
     violations_file = os.path.join(log_dir, "quality-gate-violations.jsonl")
     try:
+        os.makedirs(log_dir, exist_ok=True)
         with open(violations_file, "a", encoding="utf-8") as vf:
             vf.write(json.dumps({
                 "ts": date.today().isoformat(),
