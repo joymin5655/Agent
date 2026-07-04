@@ -104,16 +104,6 @@ install_codex() {
     else
         echo "  NOTE: ~/bin doesn't exist. Put codex-shell-wrap.sh on your PATH manually."
     fi
-
-    # Symlink skills directory if user opts in
-    local skills_target="$HOME/.codex/skills"
-    if [[ ! -e "$skills_target" ]]; then
-        if confirm "  Symlink ~/.codex/skills -> framework codex-skills?"; then
-            mkdir -p "$(dirname "$skills_target")"
-            ln -sf "$FRAMEWORK_ROOT/codex-skills" "$skills_target"
-            echo "  symlink: $skills_target -> $FRAMEWORK_ROOT/codex-skills"
-        fi
-    fi
 }
 
 # ---------------------------------------------------------------------------

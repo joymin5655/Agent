@@ -82,7 +82,7 @@ withheld.
 The hook only syncs commits that touched at least one of these top-level paths:
 
 ```
-agents/  hooks/  skills/  core/  commands/  rules/  codex-skills/  docs/  .claude-plugin/
+agents/  hooks/  skills/  core/  commands/  rules/  docs/  .claude-plugin/
 ```
 
 Commits that change nothing in these paths are skipped (logged as out of scope).

@@ -58,6 +58,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   showed zero dispatches for either skill. `supervise` and `wrap` are
   retained. The `tdd-guard` hook is unrelated to the `tdd` skill and
   continues to run unchanged. Recoverable via `git mv` from the archive.
+- `codex-skills/` retired to `legacy/trim-2026-07-04/codex-skills/`. Basis:
+  zero usage recorded in 7 weeks of session telemetry. The Codex CLI
+  adapter (`adapters/codex/`) is unrelated and remains active; `setup.sh`
+  no longer offers the `~/.codex/skills` symlink install step. See
+  `legacy/trim-2026-07-04/ARCHIVE-NOTE.md` for the full recovery procedure.
 
 ## [0.2.0] — 2026-06-15
 

@@ -207,7 +207,6 @@ Agent/
 ├── adapters/           # claude-code (thin) · codex · gemini
 ├── rules/              # generic policy docs
 ├── templates/          # project scaffold templates
-├── codex-skills/       # Codex-native skill format
 ├── docs/               # architecture · protocol · guides · benchmark
 ├── github/             # PR template + workflow templates
 └── legacy/             # archived v0 mirror (out of scope)
