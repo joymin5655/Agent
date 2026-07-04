@@ -46,6 +46,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Shipped agent set reduced 10 → 5 (`architect`, `code-reviewer`, `security-reviewer`,
   `test-engineer`, `build-error-resolver`) and skills 16 → 4 (`supervise`, `tdd`,
   `diagnose`, `wrap`); the removed items remain available in `legacy/`
+- Shipped agent set reduced 5 → 2: `architect`, `test-engineer`, and
+  `build-error-resolver` archived to `legacy/trim-2026-07-04/agents/`. Basis:
+  7 weeks of session telemetry showed zero dispatches for these three, and
+  their roles are covered by other tooling. `code-reviewer` and
+  `security-reviewer` are retained (they form the benchmarked review pair —
+  see `docs/benchmark/results.md`). Recoverable via `git mv` from the
+  archive plus re-adding the entries to `agents/master-registry.json`.
 
 ## [0.2.0] — 2026-06-15
 

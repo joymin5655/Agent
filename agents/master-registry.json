@@ -15,18 +15,6 @@
       "memory_scope": "local"
     },
     {
-      "id": "architect",
-      "description": "Designs implementation plans for new features or refactors.",
-      "matches": {
-        "keywords": ["design", "architecture", "how should we structure", "plan the"],
-        "tools": [],
-        "file_globs": []
-      },
-      "aliases": ["designer", "code-architect"],
-      "model": "opus",
-      "memory_scope": "project"
-    },
-    {
       "id": "security-reviewer",
       "description": "Audits for OWASP Top 10, secret exposure, auth/authz bugs.",
       "matches": {
@@ -36,30 +24,6 @@
       },
       "aliases": [],
       "model": "opus",
-      "memory_scope": "local"
-    },
-    {
-      "id": "test-engineer",
-      "description": "Writes / fixes unit, integration, and E2E tests.",
-      "matches": {
-        "keywords": ["test", "spec", "fixture", "tdd"],
-        "tools": [],
-        "file_globs": ["**/*.test.*", "**/*.spec.*", "**/tests/**", "**/__tests__/**"]
-      },
-      "aliases": ["test-writer", "tdd-guide"],
-      "model": "sonnet",
-      "memory_scope": "local"
-    },
-    {
-      "id": "build-error-resolver",
-      "description": "Diagnoses and fixes build / TypeScript / linker errors.",
-      "matches": {
-        "keywords": ["build error", "tsc error", "compile fail", "lint fail"],
-        "tools": ["Bash"],
-        "file_globs": []
-      },
-      "aliases": ["typescript-reviewer", "build-fixer"],
-      "model": "haiku",
       "memory_scope": "local"
     }
   ]
