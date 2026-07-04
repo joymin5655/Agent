@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `docs/harness-improvement-plan.md` — audit scorecard + prioritized backlog + autonomous
   improvement-loop design (Korean)
 - `gitleaks.toml` — detect NVIDIA NIM API keys (`nvapi-` prefix; built-in rules miss it)
+- `docs/architecture.md` — "Determinism and model-invariance" section: the hooks (gates)
+  are model-invariant and machine-proven so via `core/tests/adapter-parity.sh`; the
+  plan/execute/verify process is enforced by the harness rather than requested of a model;
+  generated content (plans, code, prose) is honestly NOT guaranteed identical across models
 
 ### Changed
 - README rewritten for first-time readers: concept primer table, install-path chooser
@@ -25,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dependency), "See it work" example, 4-layer architecture summary, trimmed layout tree
 - Hook count corrected everywhere: 17 executable hooks + 1 shared module
   (`hook_config.py`) — previous "~25" claim was stale
+- README.md/README.ko.md's "Why AI-agnostic?" section now cross-links to
+  `docs/architecture.md`'s new "Determinism and model-invariance" section
 
 ### Fixed
 - `plan-gate` was wired to `UserPromptSubmit` in `hooks/hooks.json` but is a

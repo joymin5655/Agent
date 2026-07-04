@@ -118,6 +118,36 @@ The same `pre-tool-guard.sh` script is invoked by all 3 AIs. The adapter handles
 
 ---
 
+## Determinism and model-invariance
+
+Two different guarantees live in this framework, and they don't mix.
+
+**Deterministic gates (the hooks) are model-invariant.** `core/hooks/*` scripts are plain
+code — same event JSON in, same decision JSON out, regardless of which AI or model fired
+the event. This isn't a claim about model behavior; it's proven mechanically:
+`core/tests/adapter-parity.sh` feeds one logical event through all 3 adapters and asserts
+an identical decision. Swap Claude for Codex or Gemini, swap one model for another — the
+gate doesn't care, because it's a script executing a fixed pattern match, not a model call.
+
+**Process (plan → execute → verify) is enforced by the harness, not requested of the
+model.** Plan-mode, TDD's red-green-refactor, risk-area asks/denies — a model doesn't
+choose to follow these. `plan-gate.py` blocks Write/Edit until an approval flag exists on
+disk; `tdd-guard.py` blocks new production code until a failing test exists in the same
+area. A model that skips or forgets the process still can't act, because the tool call is
+denied before it reaches the model's intended effect (pillar ③: a request is a request, a
+boundary is physical).
+
+**What's honestly NOT model-invariant: generated content.** The plan a model writes, the
+code it produces, the prose in a commit message — these vary by model and prompt. The
+framework guarantees the same gates fire and the same process is enforced; it does not
+guarantee byte-identical output. Two different models running the same mission through the
+same hooks will produce different diffs that both pass the same gates — same enforcement,
+not same output.
+
+See [`core/tests/adapter-parity.sh`](../core/tests/adapter-parity.sh) for the machine proof.
+
+---
+
 ## Tests by layer
 
 | Layer | Test type | Location |

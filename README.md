@@ -232,7 +232,10 @@ One hook protocol, three adapters:
 
 A `pre-tool-guard.sh` written once works for all 3 AIs. Adding a new AI runtime means
 writing one new adapter — `core/hooks/*` doesn't change.
-See [`docs/hook-protocol.md`](docs/hook-protocol.md) for the canonical event schema.
+See [`docs/hook-protocol.md`](docs/hook-protocol.md) for the canonical event schema, and
+[Determinism and model-invariance](docs/architecture.md#determinism-and-model-invariance)
+for exactly what's guaranteed identical across AIs/models (the gates) versus what isn't
+(generated content).
 
 ## Benchmark
 
