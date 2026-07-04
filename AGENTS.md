@@ -48,13 +48,10 @@ See [`docs/hook-protocol.md`](docs/hook-protocol.md) for the schema.
 After any core hook change, run:
 
 ```bash
-bash core/tests/adapter-smoke/claude-code/run.sh
-bash core/tests/adapter-smoke/codex/run.sh
-bash core/tests/adapter-smoke/gemini/run.sh
-bash core/tests/cross-ai-parity.sh
+bash core/tests/adapter-parity.sh
 ```
 
-All 3 must return the same decision for the same input event.
+All 3 adapters must return the same decision for the same input event.
 
 ### 4. Test discipline (TDD)
 
@@ -109,19 +106,18 @@ See [`rules/multi-agent-worktree.md`](rules/multi-agent-worktree.md) for the ful
 # Linting / type-check (Python hooks)
 python3 -m ruff check core/
 
-# Hook tests
-python3 -m pytest core/tests/ -v
-
-# Adapter smoke
-bash core/tests/adapter-smoke/claude-code/run.sh
-bash core/tests/adapter-smoke/codex/run.sh
-bash core/tests/adapter-smoke/gemini/run.sh
+# Cross-AI parity (same event → same decision across all 3 adapters)
+bash core/tests/adapter-parity.sh
 
 # Sanitize audit
 bash core/tests/sanitize-audit.sh
 
-# Full verification
-bash core/tests/verify-all.sh
+# Config parsing + autosync hook
+bash core/tests/hook-config-test.sh
+bash core/tests/post-commit-autosync-test.sh
+
+# Full verification (all test scripts)
+for t in core/tests/*.sh; do bash "$t" || exit 1; done
 ```
 
 ---

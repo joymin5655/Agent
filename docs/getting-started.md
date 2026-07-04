@@ -8,6 +8,7 @@
 
 - `git` 2.30+
 - `bash` 5.0+ (macOS 12+, any modern Linux)
+- `python3` (several hooks are Python scripts)
 - One of: Claude Code CLI / Codex CLI / Gemini CLI installed
 - Optional: `gitleaks` 8+ (`brew install gitleaks` or download from releases)
 - Optional: `gh` 2.0+ (for repo operations)
@@ -37,7 +38,7 @@ This installs adapter configs to:
 - `~/.codex/config.toml` (Codex CLI)
 - `~/.gemini/settings.json` (Gemini CLI)
 
-Existing configs are merged. Use `--force` to overwrite.
+Existing files are skipped; replacements prompt for confirmation. Set `AGENT_SETUP_YES=1` for non-interactive runs.
 
 ### Selective
 
@@ -60,12 +61,10 @@ Useful if you only want secret-scan + check-staged in pre-commit/pre-push.
 ## 3. Verify install
 
 ```bash
-# Hook protocol smoke test
-bash ~/agent/core/tests/adapter-smoke/claude-code/run.sh
-bash ~/agent/core/tests/adapter-smoke/codex/run.sh
-bash ~/agent/core/tests/adapter-smoke/gemini/run.sh
+# Cross-AI parity test (same event → same decision across all 3 adapters)
+bash ~/agent/core/tests/adapter-parity.sh
 
-# Each should print: "PASS — 4/4 cases"
+# Should end with: "=== Parity results: 6 passed, 0 failed ==="
 ```
 
 ---

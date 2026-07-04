@@ -123,10 +123,10 @@ The same `pre-tool-guard.sh` script is invoked by all 3 AIs. The adapter handles
 
 | Layer | Test type | Location |
 |---|---|---|
-| 1 | Unit (synthetic event JSON → decision JSON) | `core/tests/<hook>-test.sh` |
-| 2 | Adapter smoke (native event → adapter → core → decision → enforcement) | `core/tests/adapter-smoke/<ai>/run.sh` |
-| 2 | Cross-AI parity (same logical event → same decision across all 3) | `core/tests/cross-ai-parity.sh` |
-| 3 | Bootstrap (fresh project → setup.sh → expected files) | `core/tests/bootstrap-test.sh` |
+| 1 | Unit (config parsing, hook behavior) | `core/tests/hook-config-test.sh`, `core/tests/post-commit-autosync-test.sh` |
+| 1 | Domain-neutrality gate | `core/tests/sanitize-audit.sh` |
+| 2 | Cross-AI parity (same logical event → same decision across all 3 adapters) | `core/tests/adapter-parity.sh` |
+| 3 | Bootstrap (fresh project → setup.sh → expected files) | *(planned)* |
 
 Layer 4 is the project's responsibility.
 
