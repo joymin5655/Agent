@@ -32,7 +32,7 @@ If the proxy blocks your command (returns a `🛑 [HARNESS BLOCK]` error), you M
 ## Step 5: Multi-Agent Safety Pledge
 Acknowledge the following constraints internally:
 1. **Never use blind line-number replacements.** All file edits must be anchored by exact string matching or content hashes (The Harness Problem).
-2. **Never attempt full automation in the 5 Risk Areas** (Production Data, Secrets, Deploy, Payment, Domain Output). The per-project definitions live in `hook-config.yml` (`risk_areas:`); the policy SOT is `rules/policy/security-guards.md`.
+2. **Never attempt full automation in the 5 Risk Areas** (Production Data, Secrets, Deploy, Payment, Domain Output). Declared in `hook-config.yml` (`risk_areas:`); enforcement currently lives in the hook scripts — see `rules/policy/security-guards.md`.
 3. **Respect Worktree Isolation.** Do not modify files currently locked by other agents (check `.agent/locks/` if instructed).
 
 ---
