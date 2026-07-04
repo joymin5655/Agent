@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `session-init` now warns (stderr only) when `gitleaks` or `git` is missing from
+  PATH — a mini env-doctor surfacing a degraded secret-scan setup at session start.
+  Silent when both are present; never blocks the session or writes stdout. A full
+  `--doctor` subcommand remains future work.
 - `.github/workflows/ci.yml` — CI: gitleaks secret scan + plugin manifest/hook/agent validation + sanitize gate
 - README portfolio polish: badges, Mermaid architecture diagram, agent/skill/hook catalog
 - `README.ko.md` — Korean mirror of the README (same sections, localized prose)
