@@ -57,7 +57,7 @@ EXEMPT_PATHS = [
     "/rules/",
     "/skills/",
     "/docs/",
-    # Plan files (~/.claude/plans/)
+    # Plan files (~/.agent/plans/)
     "/plans/",
     # CI definition
     ".github/workflows/secret-scan.yml",
