@@ -10,6 +10,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - `.github/workflows/ci.yml` — CI: gitleaks secret scan + plugin manifest/hook/agent validation + sanitize gate
 - README portfolio polish: badges, Mermaid architecture diagram, agent/skill/hook catalog
+- `README.ko.md` — Korean mirror of the README (same sections, localized prose)
+- `docs/harness-improvement-plan.md` — audit scorecard + prioritized backlog + autonomous
+  improvement-loop design (Korean)
+- `gitleaks.toml` — detect NVIDIA NIM API keys (`nvapi-` prefix; built-in rules miss it)
+
+### Changed
+- README rewritten for first-time readers: concept primer table, install-path chooser
+  (plugin vs shell), prerequisites section (incl. previously undocumented `python3`
+  dependency), "See it work" example, 4-layer architecture summary, trimmed layout tree
+- Hook count corrected everywhere: 17 executable hooks + 1 shared module
+  (`hook_config.py`) — previous "~25" claim was stale
+
+### Fixed
+- Phantom test paths removed from `README.md`, `AGENTS.md`, `docs/architecture.md`,
+  `docs/getting-started.md` — `core/tests/adapter-smoke/*/run.sh`, `cross-ai-parity.sh`,
+  `verify-all.sh`, `bootstrap-test.sh`, and a pytest invocation never existed; docs now
+  reference the 4 real test scripts (`sanitize-audit`, `adapter-parity`, `hook-config-test`,
+  `post-commit-autosync-test`)
+- Documented overwrite behavior corrected: `setup.sh` has no `--force` flag — replacements
+  prompt interactively, or set `AGENT_SETUP_YES=1`
+- `README.md` infra path corrected: `scripts/infra/agent-session.sh` → `core/infra/agent-session.sh`
+
+### Removed
+- *(recorded retroactively — the trim shipped before 0.2.0 but was never logged)*
+  Shipped agent set reduced 10 → 5 (`architect`, `code-reviewer`, `security-reviewer`,
+  `test-engineer`, `build-error-resolver`) and skills 16 → 4 (`supervise`, `tdd`,
+  `diagnose`, `wrap`); the removed items remain available in `legacy/`
 
 ## [0.2.0] — 2026-06-15
 

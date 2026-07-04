@@ -5,110 +5,119 @@
 ![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-7c3aed.svg)
 ![AI-agnostic](https://img.shields.io/badge/AI-Claude%20%7C%20Codex%20%7C%20Gemini-orange.svg)
 
-**A portable AI agent harness** — curated review/build/test agents, secret-hardening + worktree + plan-gate hooks, and supervise/tdd/diagnose/wrap skills. Install once as a **Claude Code plugin** and use it in every project. The core is AI-agnostic: the same hooks return the same decision under Claude Code, Codex CLI, and Gemini CLI.
+**English** | [한국어](README.ko.md)
 
-> Status: v0.2.0. License: **MIT**. Installable as a Claude Code plugin (below) or as a shell framework for all 3 AIs.
+**Agent is a safety harness for AI coding agents.** Think of a climbing harness: your AI
+(Claude Code, Codex CLI, or Gemini CLI) does the climbing — writes code, runs commands,
+opens PRs — and the harness stops it from falling: committing secrets, colliding with
+another AI session, skipping tests, or touching things it shouldn't.
 
----
+Install it once as a **Claude Code plugin** (or via a shell script for all three CLIs) and
+every project gets the same guardrails. The rules are written once and return the same
+**allow / ask / deny** answer no matter which AI is driving.
 
-## What this gives you
-
-When you adopt this framework in a project, you get:
-
-1. **Multi-session safety** — when you have multiple AI sessions running (Claude in one terminal, Codex in another, Gemini in a third), they don't collide. Locks on shared resources (production DBs, deploy commands, payment libraries) are coordinated through a single JSON lock file.
-2. **Secret hardening** — a 6-layer secret defense (`gitleaks` config + pre-commit + pre-push + Bash/MCP content scanners + project policy doc + CI workflow). Catches OpenAI/Anthropic/AWS/Stripe/Slack/Supabase + custom tokens in code, env files, MCP tool calls, and `git push` diffs.
-3. **Plan-first discipline** — hooks classify your prompt by tier (trivial / interactive / autonomous / conversational), gate destructive operations, and enforce a "think before coding" loop.
-4. **Test-Driven enforcement** — a `tdd-guard` hook blocks creating new production code unless a corresponding test file exists.
-5. **Policy enforcement** — generic `.claude/rules/` style policy docs covering contributing, public-repo safety, memory discipline, multi-agent worktree coordination, 5 project risk areas (configurable).
-6. **Worktree coordination** — `scripts/infra/agent-session.sh` for branch-per-task discipline with automatic stale-session GC and heartbeat tracking.
-7. **Commit + PR automation** — `auto-ship.sh` runs `gitleaks` + project-defined risk-area checks + CI watch + admin merge in one command. Aborts if any safeguard trips.
-8. **Cross-AI parity** — the same `core/hooks/*` script returns the same decision (`allow` / `deny` / `ask`) no matter which AI invokes it. Adapters translate native AI events to a canonical JSON protocol.
+> Status: v0.2.0 · License: **MIT**
 
 ---
+
+## Concepts in 60 seconds
+
+New to this space? These seven terms are all you need to read the rest of this page.
+
+| Term | Plain meaning |
+|---|---|
+| **harness** | The whole safety layer: agents + hooks + skills + rules, wrapped around your AI. |
+| **hook** | A small script your AI runtime runs automatically before/after an action. It answers **allow**, **ask**, or **deny**. 17 of them live in [`core/hooks/`](core/hooks/). |
+| **adapter** | A thin translator between one AI CLI's native event format and the harness's canonical JSON. There are 3 ([`adapters/`](adapters/)). |
+| **agent** | A specialist your AI delegates to — e.g. a security reviewer that only reviews and never writes. 5 ship here ([`agents/`](agents/)). |
+| **skill** | A reusable step-by-step workflow the AI follows, e.g. the TDD loop. 4 ship here ([`skills/`](skills/)). |
+| **plan-gate** | A hook that classifies your prompt and forces a written plan before risky, multi-step work. |
+| **mutex** | A lock file so two AI sessions never touch the same risky area (prod DB, deploys, payments) at once. |
+
+More depth: [`docs/concepts/`](docs/concepts/).
+
+## What you get
+
+1. **Multi-session safety** — Claude in one terminal, Codex in another: they don't collide. Locks on shared resources are coordinated through a single JSON lock file.
+2. **Secret hardening** — a 6-layer defense (`gitleaks` config + pre-commit + pre-push + Bash/MCP content scanners + policy doc + CI). Catches OpenAI/Anthropic/AWS/Stripe/Slack/Supabase + custom tokens in code, env files, MCP tool calls, and push diffs.
+3. **Plan-first discipline** — hooks classify your prompt by tier (trivial / interactive / autonomous / conversational) and gate destructive operations behind a plan.
+4. **Test-Driven enforcement** — `tdd-guard` blocks new production code unless a corresponding test file exists.
+5. **Policy enforcement** — generic `.claude/rules/`-style policy docs: contributing, public-repo safety, memory discipline, worktree coordination, 5 configurable risk areas.
+6. **Worktree coordination** — `core/infra/agent-session.sh` for branch-per-task discipline with stale-session GC and heartbeats.
+7. **Commit + PR automation** — `auto-ship.sh` runs gitleaks + risk-area checks + CI watch + merge in one command; aborts if any safeguard trips.
+8. **Cross-AI parity** — the same `core/hooks/*` script returns the same decision under all three AIs.
+
+## Prerequisites
+
+Required:
+
+- `git` 2.30+
+- `bash` 5.0+ (macOS ships 3.2 — `brew install bash`)
+- `python3` (several hooks are Python scripts)
+- At least one AI CLI: [Claude Code](https://claude.com/claude-code), Codex CLI, or Gemini CLI
+
+Optional:
+
+- `gitleaks` 8+ — secret scanning. If missing, hooks skip the secret-scan step (CI still enforces it).
+- `gh` 2.0+ — for repo operations and `auto-ship.sh`.
 
 ## Quick start
 
-### Install as a Claude Code plugin (recommended)
+Two install paths — both wire up the same core:
+
+| You… | Take |
+|---|---|
+| use Claude Code | **Path A** — plugin (about 1 minute) |
+| also (or only) drive Codex CLI / Gemini CLI, or prefer no plugin system | **Path B** — shell install |
+
+Not sure? Take Path A.
+
+### Path A — Claude Code plugin (recommended)
 
 ```
 /plugin marketplace add joymin5655/Agent
 /plugin install agent-harness@agent
 ```
 
-That's it — every project gets the agents, skills, hooks, and the `/project-init`
-command, with zero per-project setup. The plugin bundles:
+Then:
 
-- **agents** (`agents/`) — `architect`, `code-reviewer`, `security-reviewer`, `test-engineer`, `build-error-resolver`
-- **skills** (`skills/`) — `supervise`, `tdd`, `diagnose`, `wrap`
-- **hooks** (`hooks/hooks.json`) — secret-hardening, worktree mutex, plan-gate, TDD guard, supervisor dispatch, Stop-time quality gate
-- **command** — `/project-init` to scaffold project-level files (`CLAUDE.md`, rules, `gitleaks.toml`)
+1. **Restart Claude Code.** Agents and hooks load at session start.
+2. **Verify.** Run `/plugin` — `agent-harness` shows *enabled*. In a new session the agents resolve as `agent-harness:architect`, `agent-harness:code-reviewer`, etc., and `/project-init` is available.
+3. **Scaffold a project.** Inside any repo, run `/project-init` to generate `CLAUDE.md`, rules, and `gitleaks.toml`.
+4. *(Optional)* In a repo that already runs another hook-heavy plugin, disable agent-harness there via `/plugin` — agents stay namespaced as `agent-harness:*`, so there's no collision either way.
 
-To scaffold the current repo after installing: run `/project-init`.
+The plugin bundles: **5 agents**, **4 skills**, the hook set, and the `/project-init` command.
 
-### One-command install (all 3 AIs)
-
-> Use this shell path if you also drive Codex CLI / Gemini CLI, or prefer not to use the plugin system.
-
+### Path B — shell install (Codex CLI / Gemini CLI / all three)
 
 ```bash
-gh repo clone joymin5655/Agent ~/agent
-bash ~/agent/setup.sh
+gh repo clone joymin5655/Agent ~/agent   # or: git clone https://github.com/joymin5655/Agent ~/agent
+bash ~/agent/setup.sh                    # no flag = all three AIs
 ```
 
-This installs adapter configs to:
-- `~/.claude/settings.json` (Claude Code hook registration)
-- `~/.codex/config.toml` (Codex CLI hook registration)
-- `~/.gemini/settings.json` (Gemini CLI hook registration)
+| Flag | Installs |
+|---|---|
+| `--claude` | Claude Code only (`~/.claude/settings.json`) |
+| `--codex` | Codex CLI only (`~/.codex/config.toml`) |
+| `--gemini` | Gemini CLI only (`~/.gemini/settings.json`) |
+| `--project` | Scaffold the current repo: `CLAUDE.md` / `AGENTS.md` / `GEMINI.md` / `gitleaks.toml` / `.claude/rules/` / `hook-config.yml` / git pre-commit + pre-push hooks |
+| `--hooks-only` | git-hooks only, no AI configs |
+| `--all` | Everything above |
 
-Existing configs are merged, not overwritten. Use `--force` to overwrite.
+Flags combine (`bash setup.sh --claude --project`). Idempotent — existing files are
+skipped; when a file would be replaced, setup asks interactively. Set `AGENT_SETUP_YES=1`
+for non-interactive runs. There is no `--force` flag.
 
-### Selective install
+## See it work
 
-```bash
-bash ~/agent/setup.sh --claude       # Claude Code only
-bash ~/agent/setup.sh --codex        # Codex CLI only
-bash ~/agent/setup.sh --gemini       # Gemini CLI only
-bash ~/agent/setup.sh --hooks-only   # git-hooks only (no AI configs)
+Ask your AI to read a file under `secrets/`:
+
+```
+🚫 Tool blocked: Direct secrets/ access blocked. Use environment variable.
 ```
 
-### Add to a project
-
-```bash
-cd /path/to/your/project
-bash ~/agent/setup.sh --project
-```
-
-Scaffolds into the project:
-- `CLAUDE.md` (if absent — generic template)
-- `AGENTS.md` (if absent — generic template)
-- `GEMINI.md` (if absent — generic template)
-- `gitleaks.toml` (if absent)
-- `.claude/rules/` (sanitized generic copies)
-- `hook-config.yml` (project-customizable risk areas)
-- `.gitignore` additions (runtime state)
-- `.git/hooks/{pre-commit, pre-push}` (gitleaks + scan-push-diff)
-
-Idempotent — re-running skips existing files (use `--force` to overwrite).
-
----
-
-## What you need to do
-
-The plugin install is the only **required** step. Full checklist:
-
-1. **Install** (once, global):
-   ```
-   /plugin marketplace add joymin5655/Agent
-   /plugin install agent-harness@agent
-   ```
-2. **Restart Claude Code.** Agents and hooks load at session start — they won't appear until you restart or open a new session.
-3. **Verify.** Run `/plugin` (agent-harness shows *enabled*). In a new session the agents resolve as `agent-harness:architect`, `agent-harness:code-reviewer`, `agent-harness:security-reviewer`, `agent-harness:test-engineer`, `agent-harness:build-error-resolver` — and `/project-init` is available.
-4. **(Optional) Avoid hook double-firing.** In a repo that already runs another hook-heavy agent plugin (e.g. oh-my-claudecode), this harness's secret/worktree/supervisor hooks overlap with it. Disable the agent-harness plugin in that one repo via `/plugin` — the agents still namespace cleanly as `agent-harness:*`, so there's no name collision either way.
-5. **(Optional) Specialize per project.** Drop `.agent/threat-model.md` or `.agent/conventions.md` to sharpen the generic agents for your stack ([`docs/specializing-agents.md`](docs/specializing-agents.md)), or run `/project-init` to scaffold `CLAUDE.md` + rules + `gitleaks.toml`.
-
-Driving Codex CLI / Gemini CLI too, or prefer no plugin system? Use the shell `setup.sh` path (**One-command install**, above) instead — it wires the same core into `~/.codex` and `~/.gemini` as well.
-
----
+That exact block fires under Claude Code, Codex CLI, and Gemini CLI — same script, same
+decision. That's the whole point.
 
 ## Architecture
 
@@ -140,6 +149,13 @@ flowchart LR
     PLUG -. "bundles" .-> AG["agents/ · skills/ · commands/"]
 ```
 
+Four layers, lowest wins:
+
+- **L1 `core/`** — AI-agnostic hooks and infra. The single source of truth.
+- **L2 `adapters/`** — per-AI translators (claude-code is a thin pass-through; codex and gemini do real translation).
+- **L3 `templates/`** — project scaffolds that `setup.sh --project` / `/project-init` copy in.
+- **L4 your project** — overrides via `hook-config.yml` and optional `.agent/` files. No core edits needed.
+
 The **Claude Code plugin** (`.claude-plugin/`) wires the same core through `hooks/hooks.json` and
 bundles the agents/skills/commands — so `/plugin install` gives you the whole harness with zero setup.
 
@@ -162,7 +178,7 @@ Model is cost-tiered per role (deep review/design → opus, execution → sonnet
 | `diagnose` | Hard-to-reproduce bugs, missing feedback loop |
 | `wrap` | Commit + PR automation with safeguards |
 
-| Hooks (`hooks/hooks.json` → `core/hooks/`) | Event |
+| Hooks — 17, wired via `hooks/hooks.json` → `core/hooks/` | Event |
 |---|---|
 | secret-content-scan · check-hardcoding | PreToolUse (Write/Edit) |
 | pre-tool-guard · r4-mutex · context-mode-guard | PreToolUse |
@@ -172,143 +188,96 @@ Model is cost-tiered per role (deep review/design → opus, execution → sonnet
 
 Command: **`/project-init`** scaffolds project-level files (`CLAUDE.md`, rules, `gitleaks.toml`).
 
+## Layout
+
+```
+Agent/
+├── .claude-plugin/     # Claude Code plugin + marketplace manifests
+├── setup.sh            # shell installer — 6 combinable flags
+├── gitleaks.toml       # base secret-scan config
+├── AGENTS.md           # operating rules for AIs working on this repo
+├── CHANGELOG.md
+│
+├── agents/             # 5 agent definitions + master-registry.json
+├── skills/             # 4 skills (supervise · tdd · diagnose · wrap)
+├── commands/           # 1 slash command (/project-init)
+├── hooks/              # plugin hook wiring (hooks.json)
+│
+├── core/               # AI-agnostic core — the truth
+│   ├── hooks/          #   17 portable hooks + hook_config.py (shared module)
+│   ├── infra/          #   session coordination · auto-ship · goal mode
+│   ├── git-hooks/      #   pre-commit · pre-push
+│   └── tests/          #   4 test scripts
+│
+├── adapters/           # claude-code (thin) · codex · gemini
+├── rules/              # generic policy docs
+├── templates/          # project scaffold templates
+├── codex-skills/       # Codex-native skill format
+├── docs/               # architecture · protocol · guides · benchmark
+├── github/             # PR template + workflow templates
+└── legacy/             # archived v0 mirror (out of scope)
+```
+
+## Why "AI-agnostic"?
+
+One hook protocol, three adapters:
+
+```
+ [AI runtime]  Claude / Codex / Gemini
+      │  native hook event
+      ▼
+ [adapter]  translates to canonical stdin JSON
+      ▼
+ [core/hooks/<name>]  decides once
+      ▼
+ [adapter]  translates back to the AI's native format
+      ▼
+ [AI runtime enforces]  allow / ask / deny
+```
+
+A `pre-tool-guard.sh` written once works for all 3 AIs. Adding a new AI runtime means
+writing one new adapter — `core/hooks/*` doesn't change.
+See [`docs/hook-protocol.md`](docs/hook-protocol.md) for the canonical event schema.
+
 ## Benchmark
 
-A self-benchmark on a fixture with **8 planted bugs** ([`docs/benchmark/`](docs/benchmark/results.md)),
-scored blind by an independent opus judge. Honest result — a near-tie, reported with the losses:
+A self-benchmark on a fixture with **8 planted bugs**, scored blind by an independent opus judge:
 
 | Stack | Detection | False positives |
 |---|---|---|
 | **agent-harness** (`code-reviewer` + `security-reviewer`) | **8/8** | **0** |
 | **oh-my-claudecode** (bundled `code-reviewer`) | **8/8** | 1 (hedged) |
 
-The curated 2-agent pair matched the larger plugin on detection and was cleaner (zero false
-positives), and its lane split held — `code-reviewer` correctly deferred both security bugs to
-`security-reviewer`. But OMC's single broad sweep surfaced **2 genuine extra defects the harness
-lanes missed** (a rowset-vs-record bug and `SELECT *` leakage), and pinned line numbers more
-precisely. That's the whole positioning in one experiment: the harness is a **thin, zero-FP quality
-+ governance lane**; the **long tail is delegated to OMC**. Two stacks, different jobs — see
-[`docs/benchmark/results.md`](docs/benchmark/results.md) for the full method, raw findings, and the
-follow-ups it surfaced.
-
-## Layout
-
-```
-Agent/
-├── .claude-plugin/              # Claude Code plugin + marketplace manifests
-│   ├── plugin.json
-│   └── marketplace.json
-├── README.md                    # this file
-├── AGENTS.md                    # agents.md spec, 3-AI guide
-├── CHANGELOG.md
-├── LICENSE                      # MIT
-├── setup.sh                     # 4-mode installer (shell path)
-├── gitleaks.toml                # base secret-scan config
-├── .gitignore
-│
-├── commands/                   # slash commands (/project-init)
-├── hooks/                      # plugin hook wiring (hooks.json → core/hooks via adapter)
-│
-├── docs/                        # concept + protocol docs
-│   ├── architecture.md
-│   ├── ai-adapters.md
-│   ├── hook-protocol.md         # canonical stdin/stdout JSON
-│   ├── getting-started.md
-│   ├── customization.md
-│   ├── specializing-agents.md   # per-project .agent/ injection points
-│   ├── benchmark/               # reviewer self-benchmark (fixture + ground truth + results)
-│   └── concepts/
-│
-├── core/                        # AI-agnostic core (the truth)
-│   ├── hooks/                   # ~25 portable hooks
-│   ├── infra/                   # session coordination, auto-ship
-│   ├── git-hooks/               # pre-commit, pre-push
-│   └── tests/                   # hook + adapter tests
-│
-├── adapters/                    # 3 AI bridges
-│   ├── claude-code/
-│   ├── codex/
-│   └── gemini/
-│
-├── rules/                       # generic policy docs
-├── agents/                      # generic agent definitions (Claude format)
-├── skills/                      # generic SKILL.md files (Claude format)
-├── codex-skills/                # Codex-native skill format
-├── templates/                   # project scaffold templates
-│
-├── github/
-│   ├── workflows.template/      # secret-scan.yml, lint.yml
-│   └── PULL_REQUEST_TEMPLATE.md
-│
-└── legacy/
-    └── v0-mirror-2026-05-12/        # archived original mirror content
-```
-
----
-
-## Why "AI-agnostic"?
-
-The core innovation: **one hook protocol, three adapters**.
-
-```
-                     [Your AI runtime]
-                            │
-                  Claude / Codex / Gemini
-                            │
-                    [native hook event]
-                            │
-                            ▼
-                    [adapter — translates]
-                            │
-                 canonical stdin JSON
-                            │
-                            ▼
-                   [core/hooks/<name>]
-                            │
-                 canonical stdout JSON
-                            │
-                            ▼
-                  [adapter — translates back]
-                            │
-                native decision (allow/deny/ask)
-                            │
-                            ▼
-                  [AI runtime enforces]
-```
-
-A `pre-tool-guard.sh` written once works for all 3 AIs. When you add a new AI runtime, you only write a new adapter — `core/hooks/*` doesn't change.
-
-See [`docs/hook-protocol.md`](docs/hook-protocol.md) for the canonical event schema.
-
----
+Honest read: a near-tie. The curated 2-agent pair was cleaner (zero false positives) and its
+lane split held, but OMC's broad sweep surfaced 2 genuine extra defects the lanes missed.
+Positioning in one line: this harness is a thin, zero-FP quality + governance lane; the long
+tail is delegated to broader stacks. Full method and raw findings:
+[`docs/benchmark/results.md`](docs/benchmark/results.md).
 
 ## What this is NOT
 
 - **Not a deployable application** — this is a framework you adopt into your own project.
 - **Not an AI runtime** — you bring your own (Claude Code, Codex, Gemini, etc.).
 - **Not a replacement for `.claude/`** — it generates and supplements `.claude/`, `.codex/`, `.gemini/` configs.
-- **Not opinionated about your code** — only about session coordination, secret hygiene, and policy enforcement. Your project's stack, language, and architecture are up to you.
-
----
+- **Not opinionated about your code** — only about session coordination, secret hygiene, and policy enforcement. Your stack, language, and architecture are up to you.
 
 ## Verification
-
-After install:
 
 ```bash
 # 1) gitleaks runs clean
 gitleaks detect --no-git --source . --config gitleaks.toml
 
-# 2) hook protocol smoke test (each AI)
-bash core/tests/adapter-smoke/claude-code/run.sh
-bash core/tests/adapter-smoke/codex/run.sh
-bash core/tests/adapter-smoke/gemini/run.sh
+# 2) domain-neutrality gate (also runs in CI)
+bash core/tests/sanitize-audit.sh
 
-# 3) cross-AI parity (same event → same decision across all 3 AIs)
-bash core/tests/cross-ai-parity.sh
+# 3) cross-AI parity: same event → same decision across all 3 adapters
+bash core/tests/adapter-parity.sh
+# → === Parity results: 6 passed, 0 failed ===
+
+# 4) config parsing + autosync hook
+bash core/tests/hook-config-test.sh
+bash core/tests/post-commit-autosync-test.sh
 ```
-
----
 
 ## Customization
 
@@ -329,20 +298,20 @@ risk_areas:
 ```
 
 The same `core/hooks/r4-mutex-check.sh` reads this and enforces it. No code changes per project.
+Full schema: [`docs/customization.md`](docs/customization.md). To sharpen the bundled agents
+for your stack without forking them, drop optional files into `.agent/` —
+see [`docs/specializing-agents.md`](docs/specializing-agents.md).
 
-See [`docs/customization.md`](docs/customization.md) for the full schema.
+## Docs
 
-To sharpen the bundled agents for your project — a Supabase threat model, code
-conventions, a flake list — without forking them, drop optional files into
-`.agent/`. See [`docs/specializing-agents.md`](docs/specializing-agents.md).
-
----
-
-## Migration from legacy
-
-If you were using the previous 2026-05-12 mirror version, see [`legacy/v0-mirror-2026-05-12/ARCHIVE-NOTE.md`](legacy/v0-mirror-2026-05-12/ARCHIVE-NOTE.md) for the migration map.
-
----
+- [`docs/getting-started.md`](docs/getting-started.md) — 5-minute install walkthrough
+- [`docs/architecture.md`](docs/architecture.md) — the 4-layer model in depth
+- [`docs/hook-protocol.md`](docs/hook-protocol.md) — canonical event schema (write your own hooks)
+- [`docs/customization.md`](docs/customization.md) — risk areas and per-project config
+- [`docs/specializing-agents.md`](docs/specializing-agents.md) — per-project agent injection
+- [`docs/benchmark/results.md`](docs/benchmark/results.md) — reviewer self-benchmark
+- [`docs/harness-improvement-plan.md`](docs/harness-improvement-plan.md) — audit + improvement roadmap *(Korean)*
+- Migrating from the pre-2026-05 mirror? See [`legacy/v0-mirror-2026-05-12/ARCHIVE-NOTE.md`](legacy/v0-mirror-2026-05-12/ARCHIVE-NOTE.md).
 
 ## Contributing
 
