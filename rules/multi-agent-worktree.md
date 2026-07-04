@@ -55,7 +55,6 @@ Resources that can only be touched by one session at a time:
 - Production database migration apply (`production-db`)
 - Production deploy (`production-deploy`)
 - Serverless function deploy (`edge-function-deploy`)
-- Payment-system live calls (`payment-live`)
 
 Resource patterns are configurable via `hook-config.yml` —
 see `docs/customization.md`.

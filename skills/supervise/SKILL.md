@@ -41,11 +41,8 @@ For each wave i ∈ {1..N}:
 
 a. **Read Wave i section** of the plan.
 b. **Dispatch specialist(s)** based on the wave's content:
-   - Wave touches `core/hooks/` → `code-reviewer` after
-   - Wave touches tests → `test-engineer`
+   - Wave touches `core/hooks/` or general code → `code-reviewer` after
    - Wave touches auth/secrets → `security-reviewer`
-   - Build errors mid-wave → `build-error-resolver`
-   - New feature design needed → `architect`
 c. **Execute** the wave's intended changes.
 d. **Audit**:
    ```bash

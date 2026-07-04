@@ -25,8 +25,6 @@ follows it as instructions to the AI.>
 |---|---|
 | `/wrap` | Commit + PR creation with security guard checks. |
 | `/supervise` | Multi-wave plan dispatch with audit + risk-area abort. |
-| `/tdd` | Red-Green-Refactor cycle enforcement. |
-| `/diagnose` | Root-cause analysis for reproducible bugs. |
 
 ## Adding a skill
 
@@ -44,4 +42,5 @@ plug-in + a third-party skill bundle), the precedence is:
 local in-place (skills/) > context-mode > superpowers > plug-in
 ```
 
-Override per-project in `rules/policy/skill-adoption-comparison.md`.
+Override per-project and document deviations in your adoption log (see
+`rules/external-plugin-policy.md` "Record of adoptions").

@@ -9,7 +9,9 @@ defaults; consumers override via `hook-config.yml`.
 - **Default pattern**: `^.*/migrations/.*\.sql$`
 - **Risk**: irreversible data modification or loss.
 - **Gate hook**: `core/hooks/r4-mutex-check.sh` claims the
-  `production-data` resource; concurrent sessions block.
+  `production-db` resource (a mutex resource name, not a risk-area ID —
+  see `templates/hook-config.yml.template`'s `resources:` section);
+  concurrent sessions block.
 - **Decision**: `ask` (user must explicitly confirm).
 
 ## 2. Secrets (`secrets`)

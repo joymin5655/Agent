@@ -29,8 +29,8 @@ New to this space? These seven terms are all you need to read the rest of this p
 | **harness** | The whole safety layer: agents + hooks + skills + rules, wrapped around your AI. |
 | **hook** | A small script your AI runtime runs automatically before/after an action. It answers **allow**, **ask**, or **deny**. 17 of them live in [`core/hooks/`](core/hooks/). |
 | **adapter** | A thin translator between one AI CLI's native event format and the harness's canonical JSON. There are 3 ([`adapters/`](adapters/)). |
-| **agent** | A specialist your AI delegates to — e.g. a security reviewer that only reviews and never writes. 5 ship here ([`agents/`](agents/)). |
-| **skill** | A reusable step-by-step workflow the AI follows, e.g. the TDD loop. 4 ship here ([`skills/`](skills/)). |
+| **agent** | A specialist your AI delegates to — e.g. a security reviewer that only reviews and never writes. 2 ship here ([`agents/`](agents/)). |
+| **skill** | A reusable step-by-step workflow the AI follows, e.g. the commit + PR flow. 2 ship here ([`skills/`](skills/)). |
 | **plan-gate** | A hook that classifies your prompt and forces a written plan before risky, multi-step work. |
 | **mutex** | A lock file so two AI sessions never touch the same risky area (prod DB, deploys, payments) at once. |
 
@@ -53,7 +53,7 @@ Required:
 
 - `git` 2.30+
 - `bash` 5.0+ (macOS ships 3.2 — `brew install bash`)
-- `python3` (several hooks are Python scripts)
+- `python3` 3.9+ (several hooks are Python scripts)
 - At least one AI CLI: [Claude Code](https://claude.com/claude-code), Codex CLI, or Gemini CLI
 
 Optional:
@@ -82,11 +82,11 @@ Not sure? Take Path A.
 Then:
 
 1. **Restart Claude Code.** Agents and hooks load at session start.
-2. **Verify.** Run `/plugin` — `agent-harness` shows *enabled*. In a new session the agents resolve as `agent-harness:architect`, `agent-harness:code-reviewer`, etc., and `/project-init` is available.
+2. **Verify.** Run `/plugin` — `agent-harness` shows *enabled*. In a new session the agents resolve as `agent-harness:code-reviewer`, `agent-harness:security-reviewer`, and `/project-init` is available.
 3. **Scaffold a project.** Inside any repo, run `/project-init` to generate `CLAUDE.md`, rules, and `gitleaks.toml`.
 4. *(Optional)* In a repo that already runs another hook-heavy plugin, disable agent-harness there via `/plugin` — agents stay namespaced as `agent-harness:*`, so there's no collision either way.
 
-The plugin bundles: **5 agents**, **4 skills**, the hook set, and the `/project-init` command.
+The plugin bundles: **2 agents**, **2 skills**, the hook set, and the `/project-init` command.
 
 ### Path B — shell install (Codex CLI / Gemini CLI / all three)
 
@@ -100,7 +100,7 @@ bash ~/agent/setup.sh                    # no flag = all three AIs
 | `--claude` | Claude Code only (`~/.claude/settings.json`) |
 | `--codex` | Codex CLI only (`~/.codex/config.toml`) |
 | `--gemini` | Gemini CLI only (`~/.gemini/settings.json`) |
-| `--project` | Scaffold the current repo: `CLAUDE.md` / `AGENTS.md` / `GEMINI.md` / `gitleaks.toml` / `.claude/rules/` / `hook-config.yml` / git pre-commit + pre-push hooks |
+| `--project` | Scaffold the current repo: `CLAUDE.md` / `AGENTS.md` / `GEMINI.md` / `gitleaks.toml` / `hook-config.yml` / git pre-commit + pre-push hooks |
 | `--hooks-only` | git-hooks only, no AI configs |
 | `--all` | Everything above |
 
@@ -163,19 +163,14 @@ bundles the agents/skills/commands — so `/plugin install` gives you the whole 
 
 | Agents (`agents/`) | Model | Mode | Role |
 |---|---|---|---|
-| `architect` | opus | read-only | Plans multi-file work; never writes code |
 | `code-reviewer` | sonnet | read-only | Reviews diffs; defers security to security-reviewer |
 | `security-reviewer` | opus | read-only | OWASP Top 10, secrets, auth, injection — owns security findings |
-| `test-engineer` | sonnet | write | Writes/maintains tests, enforces red-green TDD |
-| `build-error-resolver` | haiku | write | Minimal-diff fixes for build/type/lint errors |
 
 Model is cost-tiered per role (deep review/design → opus, execution → sonnet, mechanical → haiku) and kept in sync with `agents/master-registry.json` by a CI drift guard. Read-only agents are enforced read-only (no `Write`/`Edit`/`Bash`). Specialize any of them per project with `.agent/` files — see [`docs/specializing-agents.md`](docs/specializing-agents.md).
 
 | Skills (`skills/`) | Trigger |
 |---|---|
 | `supervise` | Delegate a plan to autonomous execution |
-| `tdd` | Red-Green-Refactor enforcement |
-| `diagnose` | Hard-to-reproduce bugs, missing feedback loop |
 | `wrap` | Commit + PR automation with safeguards |
 
 | Hooks — 17, wired via `hooks/hooks.json` → `core/hooks/` | Event |
@@ -183,7 +178,8 @@ Model is cost-tiered per role (deep review/design → opus, execution → sonnet
 | secret-content-scan · check-hardcoding | PreToolUse (Write/Edit) |
 | pre-tool-guard · r4-mutex · context-mode-guard | PreToolUse |
 | tdd-guard · supervisor | PreToolUse (Write/Edit) |
-| plan-gate · session heartbeat | UserPromptSubmit |
+| session heartbeat | UserPromptSubmit |
+| plan-gate | PostToolUse (ExitPlanMode/Task/Agent) |
 | session-quality-gate · session-close | Stop |
 
 Command: **`/project-init`** scaffolds project-level files (`CLAUDE.md`, rules, `gitleaks.toml`).
@@ -198,8 +194,8 @@ Agent/
 ├── AGENTS.md           # operating rules for AIs working on this repo
 ├── CHANGELOG.md
 │
-├── agents/             # 5 agent definitions + master-registry.json
-├── skills/             # 4 skills (supervise · tdd · diagnose · wrap)
+├── agents/             # 2 agent definitions + master-registry.json
+├── skills/             # 2 skills (supervise · wrap)
 ├── commands/           # 1 slash command (/project-init)
 ├── hooks/              # plugin hook wiring (hooks.json)
 │
@@ -212,7 +208,6 @@ Agent/
 ├── adapters/           # claude-code (thin) · codex · gemini
 ├── rules/              # generic policy docs
 ├── templates/          # project scaffold templates
-├── codex-skills/       # Codex-native skill format
 ├── docs/               # architecture · protocol · guides · benchmark
 ├── github/             # PR template + workflow templates
 └── legacy/             # archived v0 mirror (out of scope)
@@ -237,7 +232,10 @@ One hook protocol, three adapters:
 
 A `pre-tool-guard.sh` written once works for all 3 AIs. Adding a new AI runtime means
 writing one new adapter — `core/hooks/*` doesn't change.
-See [`docs/hook-protocol.md`](docs/hook-protocol.md) for the canonical event schema.
+See [`docs/hook-protocol.md`](docs/hook-protocol.md) for the canonical event schema, and
+[Determinism and model-invariance](docs/architecture.md#determinism-and-model-invariance)
+for exactly what's guaranteed identical across AIs/models (the gates) versus what isn't
+(generated content).
 
 ## Benchmark
 
@@ -281,11 +279,11 @@ bash core/tests/post-commit-autosync-test.sh
 
 ## Customization
 
-Each project gets a `hook-config.yml` that defines:
+`setup.sh --project` scaffolds a `hook-config.yml` that documents your project's policy shape:
 
 ```yaml
 risk_areas:
-  - id: production-data
+  - id: data
     description: "Production database migrations and schema changes"
     paths: ["migrations/*.sql"]
     commands: ["psql.*production", "alembic upgrade"]
@@ -297,9 +295,13 @@ risk_areas:
   # ... add your own
 ```
 
-The same `core/hooks/r4-mutex-check.sh` reads this and enforces it. No code changes per project.
-Full schema: [`docs/customization.md`](docs/customization.md). To sharpen the bundled agents
-for your stack without forking them, drop optional files into `.agent/` —
+That `risk_areas:` block is declarative — a documented record of your project's policy.
+Enforcement of it today lives in each hook script's own hardcoded patterns
+(`core/hooks/pre-tool-guard.sh`, `core/hooks/r4-mutex-check.sh`), not a dynamic read of this
+file. The one mechanism that *is* dynamically loaded per project is the secret-scan pattern
+extension, via `.agent/hook-config.yml`. Full schema and the real-vs-documented split:
+[`docs/customization.md`](docs/customization.md). To sharpen the bundled agents for your stack
+without forking them, drop optional files into `.agent/` —
 see [`docs/specializing-agents.md`](docs/specializing-agents.md).
 
 ## Docs

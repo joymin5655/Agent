@@ -1,6 +1,6 @@
 # Specializing agents per project
 
-The five bundled agents are deliberately **generic** — they ship one house
+The two bundled agents are deliberately **generic** — they ship one house
 style and work in any repo. To make them sharp for *your* project without
 forking the agent definitions, drop optional files into a `.agent/` directory
 at your repo root. Each agent reads its file (if present) and layers the
@@ -12,9 +12,9 @@ This is the portability mechanism: **one harness, specialized per repo.**
 
 | File | Read by | Purpose |
 |---|---|---|
-| `.agent/conventions.md` | architect, code-reviewer | Stack, layering, naming, do/don't — project idioms the reviewer/architect should enforce. |
+| `.agent/conventions.md` | code-reviewer | Stack, layering, naming, do/don't — project idioms the reviewer should enforce. |
 | `.agent/threat-model.md` | security-reviewer | The project's real attack surface (deployment model, trust boundaries, sensitive tables/endpoints, auth model). |
-| `.agent/flake-list.md` | test-engineer | Quarantine log for known-flaky tests (name + reason + date). The agent appends here instead of leaving silent skips. |
+| `.agent/flake-list.md` | *(pattern — any custom agent you add for test upkeep)* | Quarantine log for known-flaky tests (name + reason + date). The agent appends here instead of leaving silent skips. |
 | `agents/master-registry.json` | supervisor.py, session-init.py | Per-project routing overrides (keywords, file_globs, model). Copy the shipped default and edit. |
 
 All are **optional**. With none present, the agents run their generic
@@ -60,7 +60,7 @@ OWASP Top 10 list — without any change to the agent definition.
 
 ## Conventions and flake-list examples
 
-`.agent/conventions.md` (read by architect + code-reviewer):
+`.agent/conventions.md` (read by code-reviewer):
 
 ```markdown
 # Conventions
@@ -70,7 +70,7 @@ OWASP Top 10 list — without any change to the agent definition.
 - Tests: AAA pattern; integration tests hit a real test DB (no DB mocks).
 ```
 
-`.agent/flake-list.md` (appended by test-engineer):
+`.agent/flake-list.md` (example — appended by a custom test-focused agent you add):
 
 ```markdown
 # Flake list
