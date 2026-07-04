@@ -104,3 +104,5 @@ jobs:
             exit 1
           fi
           echo "sanitize gate clean"
+      - name: Full token-set audit (superset — same script devs run locally)
+        run: bash core/tests/sanitize-audit.sh
