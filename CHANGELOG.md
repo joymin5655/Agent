@@ -30,6 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with matcher `ExitPlanMode|Task|Agent`, and broadened the plan-class check to
   accept the `Task` tool name (subagent dispatch differs by Claude Code version).
   READMEs' hook tables corrected to match.
+- `session-quality-gate` wrote its violations log to `parents[2]` of the hook
+  file — the plugin install cache when installed as a plugin — instead of the
+  user's project. Log destination is now resolved at runtime: stdin event `cwd`
+  → `CLAUDE_PROJECT_DIR` → `os.getcwd()`. Detection and block logic unchanged.
 - Phantom test paths removed from `README.md`, `AGENTS.md`, `docs/architecture.md`,
   `docs/getting-started.md` — `core/tests/adapter-smoke/*/run.sh`, `cross-ai-parity.sh`,
   `verify-all.sh`, `bootstrap-test.sh`, and a pytest invocation never existed; docs now
