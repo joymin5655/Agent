@@ -11,6 +11,8 @@ Hook protocol: reads stdin (ignored), writes empty stdout (allow). Stderr is
 informational and visible in the AI transcript.
 """
 
+from __future__ import annotations
+
 import json
 import os
 import shutil

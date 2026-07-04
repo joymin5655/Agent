@@ -53,7 +53,7 @@
 
 - `git` 2.30+
 - `bash` 5.0+ (macOS 기본은 3.2 — `brew install bash`)
-- `python3` (훅 여러 개가 Python 스크립트)
+- `python3` 3.9+ (훅 여러 개가 Python 스크립트)
 - AI CLI 최소 1개: [Claude Code](https://claude.com/claude-code), Codex CLI, Gemini CLI
 
 선택:
