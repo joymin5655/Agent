@@ -68,3 +68,11 @@ commits = []
 # description = "MyService API token format"
 # regex = '''myservice_(live|test)_[a-zA-Z0-9_-]{32,}'''
 # tags = ["myservice", "api"]
+
+# NVIDIA NIM API key — built-in rules miss the `nvapi-` format.
+[[rules]]
+id = "nvidia-nim-api-key"
+description = "NVIDIA NIM API key"
+regex = '''nvapi-[A-Za-z0-9_-]{20,}'''
+keywords = ["nvapi-"]
+tags = ["nvidia", "ai", "api"]
