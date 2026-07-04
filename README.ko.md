@@ -235,7 +235,10 @@ Agent/
 
 한 번 작성한 `pre-tool-guard.sh`가 3개 AI 모두에서 동작합니다. 새 AI 런타임을 추가할 때는
 어댑터 하나만 새로 쓰면 되고 `core/hooks/*`는 바뀌지 않습니다.
-표준 이벤트 스키마: [`docs/hook-protocol.md`](docs/hook-protocol.md).
+표준 이벤트 스키마: [`docs/hook-protocol.md`](docs/hook-protocol.md). AI/모델마다 무엇이
+동일하게 보장되고(게이트) 무엇은 아닌지(생성된 콘텐츠) 정확한 설명은 아키텍처 문서의
+[Determinism and model-invariance](docs/architecture.md#determinism-and-model-invariance)
+절을 참고하세요.
 
 ## 벤치마크
 
