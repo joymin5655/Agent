@@ -38,6 +38,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   file — the plugin install cache when installed as a plugin — instead of the
   user's project. Log destination is now resolved at runtime: stdin event `cwd`
   → `CLAUDE_PROJECT_DIR` → `os.getcwd()`. Detection and block logic unchanged.
+- `session-init` crashed at load on Python 3.9 — its `pathlib.Path | None` return
+  annotation (PEP 604) is evaluated at def-time and raises `TypeError` before 3.10.
+  Added `from __future__ import annotations` so annotations are treated as strings;
+  the annotation itself is unchanged. Supported Python floor is 3.9 (now documented
+  in README Prerequisites).
 - Phantom test paths removed from `README.md`, `AGENTS.md`, `docs/architecture.md`,
   `docs/getting-started.md` — `core/tests/adapter-smoke/*/run.sh`, `cross-ai-parity.sh`,
   `verify-all.sh`, `bootstrap-test.sh`, and a pytest invocation never existed; docs now

@@ -53,7 +53,7 @@ Required:
 
 - `git` 2.30+
 - `bash` 5.0+ (macOS ships 3.2 — `brew install bash`)
-- `python3` (several hooks are Python scripts)
+- `python3` 3.9+ (several hooks are Python scripts)
 - At least one AI CLI: [Claude Code](https://claude.com/claude-code), Codex CLI, or Gemini CLI
 
 Optional:
