@@ -72,6 +72,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `docs/concepts/plan-mode.md`; and removed the `.claude/rules/` scaffold
   over-claim from `docs/architecture.md`, `README.md`, and `README.ko.md`
   (`setup.sh --project` never creates it)
+- Docs drift sweep follow-up: removed the two remaining phantom
+  `rules/policy/skill-adoption-comparison.md` references (`docs/master-registry.md`,
+  `skills/README.md`); removed the phantom `classify-prompt.py` hook citation from
+  `docs/concepts/plan-mode.md` (no `UserPromptSubmit` hook exists beyond
+  `agent-session-heartbeat.sh` — tier classification is the AI applying the
+  documented heuristics itself, not an automated hook). Rewrote
+  `docs/customization.md` end to end after discovering its documented
+  `hook-config.yml` schema doesn't match what any hook actually loads: only
+  `core/hooks/hook_config.py` (used by `secret-content-scan.py`) reads a config
+  file dynamically, from `.agent/hook-config.yml`/`.json` — a `[regex, label]`-pair
+  `secret_patterns`/`exempt_paths`/`credential_key_names` schema, optionally
+  nested under `python_hooks:`. The previously-documented `risk_areas:`/`resources:`/
+  `hardcoding:` map (from `templates/hook-config.yml.template`) is not read by
+  any hook at runtime — `pre-tool-guard.sh`, `r4-mutex-check.sh`, and
+  `check-hardcoding.py` each match against patterns hardcoded in the script, not
+  a project's `hook-config.yml`. The doc's old `secret_patterns` example
+  (`{id, description, regex}` objects) was also independently confirmed to
+  silently parse to an empty list under the real loader, which expects
+  `[regex, label]` pairs — verified by running `hook_config._coerce_pattern_list`
+  directly against both shapes. `README.md`/`README.ko.md`'s customization
+  section and other doc mentions of a dynamically-loaded `risk_areas:`/`resources:`
+  still describe the same not-yet-implemented mechanism and were out of scope for
+  this sweep — flagged for a follow-up pass.
 
 ### Removed
 - *(recorded retroactively — the trim shipped before 0.2.0 but was never logged)*

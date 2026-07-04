@@ -47,7 +47,8 @@ When multiple sources register the same agent name:
 local in-place (agents/) > context-mode > superpowers > third-party plug-in
 ```
 
-Document deviations in `rules/policy/skill-adoption-comparison.md`.
+Document deviations in your adoption log (see `rules/external-plugin-policy.md`
+"Record of adoptions").
 
 ## See also
 
