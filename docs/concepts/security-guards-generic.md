@@ -79,20 +79,28 @@ The 6 layers stack defense in depth. Layers 1-2 catch most. Layer 3 catches what
 
 ## How to extend
 
-To add a project-specific risk area:
+`risk_areas:` in `hook-config.yml` is declarative — a documented record of
+your project's policy shape. Today, `pre-tool-guard.sh` matches against
+patterns hardcoded in the script itself, not a dynamic read of this file.
+To add a project-specific risk area, fork `pre-tool-guard.sh` and add your
+pattern there; keep the corresponding `risk_areas:` entry as a record of
+intent:
 
 ```yaml
-# hook-config.yml
+# hook-config.yml — documents intent; pre-tool-guard.sh itself must be
+# forked to actually enforce it (see docs/customization.md)
 risk_areas:
   - id: legacy-system-api
     description: "Calls to the deprecated legacy API"
     paths: ["src/lib/legacy-client/**"]
     commands: ["curl .*legacy.internal"]
     decision: ask
-    abort_code: 20  # use 17-99 for project-specific codes
 ```
 
-That's it. The same `pre-tool-guard.sh` reads this and enforces it. No fork.
+The one mechanism that *is* dynamically loaded per project — no fork
+required — is the secret-scan pattern extension via `.agent/hook-config.yml`.
+See [`../customization.md`](../customization.md) for the full
+real-vs-documented split.
 
 ---
 
