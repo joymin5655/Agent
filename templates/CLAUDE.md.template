@@ -71,10 +71,7 @@ For non-trivial work, the framework's `supervisor.py` hook suggests
 specialist agents. Common dispatches:
 
 - New code → `code-reviewer` after writing
-- New tests → `test-engineer`
 - Security-sensitive changes → `security-reviewer`
-- Schema / migration → `database-reviewer`
-- Architecture-level decisions → `architect`
 
 ## Where to look
 

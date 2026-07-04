@@ -51,7 +51,7 @@ Document deviations in `rules/policy/skill-adoption-comparison.md`.
 
 ## See also
 
-- `agents/code-reviewer.md`, `agents/architect.md`, etc. — concrete
+- `agents/code-reviewer.md`, `agents/security-reviewer.md` — concrete
   agent definitions distributed with the framework.
 - `core/hooks/supervisor.py` — the orchestrator.
 - `agents/master-registry.json` — the shipped default registry, read by the hooks. Each `model` is kept in sync with `agents/<id>.md` by the CI drift guard.

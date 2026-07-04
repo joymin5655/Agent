@@ -17,7 +17,7 @@ from datetime import datetime
 PLAN_FLAG = pathlib.Path("/tmp/agent-plan-approved")
 
 # Agent subagent_type values considered "plan-class"
-PLAN_AGENT_TYPES = {"Plan", "plan", "Explore", "explore", "planner", "architect"}
+PLAN_AGENT_TYPES = {"Plan", "plan", "Explore", "explore", "planner"}
 
 # Description / prompt keyword heuristics (multilingual)
 PLAN_DESCRIPTION_KEYWORDS = (
