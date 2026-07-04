@@ -11,8 +11,11 @@ Hook protocol: reads stdin (ignored), writes empty stdout (allow). Stderr is
 informational and visible in the AI transcript.
 """
 
+from __future__ import annotations
+
 import json
 import os
+import shutil
 import sys
 import pathlib
 import subprocess
@@ -61,7 +64,27 @@ def cleanup_flags() -> None:
             pass
 
 
+def check_env() -> None:
+    """Warn (stderr only) when recommended external tools are missing.
+
+    A mini env-doctor: absent gitleaks/git degrades the secret-scan git hooks.
+    Never blocks the session and never writes stdout (hook protocol).
+    """
+    try:
+        missing = [t for t in ("gitleaks", "git") if shutil.which(t) is None]
+        if missing:
+            print(
+                f"[agent-harness] WARN: {', '.join(missing)} not found — "
+                "secret-scan git hooks will be skipped. Install: brew install gitleaks",
+                file=sys.stderr,
+            )
+    except Exception:
+        pass
+
+
 def main() -> None:
+    check_env()
+
     # Drain stdin (the AI sends event JSON; we don't need it for init)
     try:
         sys.stdin.read()

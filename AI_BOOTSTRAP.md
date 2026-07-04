@@ -6,8 +6,8 @@ This project uses a highly structured multi-agent harness. You are entering a sh
 
 ## Step 1: Establish Core Context
 You must immediately read and internalize the project's Single Source of Truth (SOT) for rules:
-- **READ:** `.claude/rules/OVERVIEW.md`
-  - This file contains the index for critical rules. If your task touches on any domain listed there (e.g., security, deployment, external plugins), you MUST read the corresponding detailed file in `.claude/rules/`.
+- **READ:** `rules/OVERVIEW.md`
+  - This file contains the index for critical rules. If your task touches on any domain listed there (e.g., security, deployment, external plugins), you MUST read the corresponding detailed file in `rules/`.
 
 ## Step 2: Establish Agent-Specific Context
 Based on your identity, read your specific configuration:
@@ -16,7 +16,7 @@ Based on your identity, read your specific configuration:
 
 ## Step 3: Load Appropriate Skills
 This repository uses extracted knowledge skills.
-- **SCAN:** List the contents of `.omc/skills/`.
+- **SCAN:** List the contents of `skills/`.
 - If your assigned task matches the trigger keywords of any skill file, READ that skill file before proceeding.
 
 ## Step 4: The Universal Harness Proxy (MANDATORY FOR NON-CLAUDE AGENTS)
@@ -32,8 +32,8 @@ If the proxy blocks your command (returns a `🛑 [HARNESS BLOCK]` error), you M
 ## Step 5: Multi-Agent Safety Pledge
 Acknowledge the following constraints internally:
 1. **Never use blind line-number replacements.** All file edits must be anchored by exact string matching or content hashes (The Harness Problem).
-2. **Never attempt full automation in the 5 Risk Areas** (Production Data, Secrets, Deploy, Payment, Domain Output). The per-project definitions live in `hook-config.yml` (`risk_areas:`); the policy SOT is `rules/policy/security-guards.md`.
-3. **Respect Worktree Isolation.** Do not modify files currently locked by other agents (check `.claude/locks/` if instructed).
+2. **Never attempt full automation in the 5 Risk Areas** (Production Data, Secrets, Deploy, Payment, Domain Output). Declared in `hook-config.yml` (`risk_areas:`); enforcement currently lives in the hook scripts — see `rules/policy/security-guards.md`.
+3. **Respect Worktree Isolation.** Do not modify files currently locked by other agents (check `.agent/locks/` if instructed).
 
 ---
 *Proceed with your task only after acknowledging and loading the context from Steps 1-5.*

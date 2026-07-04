@@ -60,8 +60,6 @@ See `hook-config.yml` for the project-specific patterns.
 |---|---|
 | `/wrap` | Commit + PR (with risk-area gates). |
 | `/supervise` | Multi-wave plan dispatch. |
-| `/tdd` | Red-Green-Refactor enforcement. |
-| `/diagnose` | Root-cause analysis. |
 
 See `skills/README.md` for the full list.
 
@@ -71,10 +69,7 @@ For non-trivial work, the framework's `supervisor.py` hook suggests
 specialist agents. Common dispatches:
 
 - New code → `code-reviewer` after writing
-- New tests → `test-engineer`
 - Security-sensitive changes → `security-reviewer`
-- Schema / migration → `database-reviewer`
-- Architecture-level decisions → `architect`
 
 ## Where to look
 

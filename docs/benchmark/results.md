@@ -4,6 +4,10 @@ A self-benchmark, run honestly. The point is **not** to declare the harness the
 winner — it's to measure where a thin curated 5-agent pack stands against a
 mature ~19-agent plugin, and to let the data set the positioning.
 
+> **Note (2026-07-04):** the shipped agent set was later trimmed to 2
+> (`code-reviewer` + `security-reviewer`) based on usage evidence; the
+> benchmarked pair is exactly those two, so the results below remain valid.
+
 ## Method
 
 - **Fixture**: [`sample-diff.ts`](sample-diff.ts) — a deliberately flawed module

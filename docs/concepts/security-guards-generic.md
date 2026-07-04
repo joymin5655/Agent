@@ -1,12 +1,12 @@
 # Concept — Project Risk Areas (Generic Security Guards)
 
-5 layers of defense against destructive AI actions. Each layer is independent — bypass one, others still trip.
+6 layers of defense against destructive AI actions. Each layer is independent — bypass one, others still trip.
 
-See [`../../rules/security-guards.md`](../../rules/security-guards.md) for the rule definitions.
+See [`../../rules/policy/security-guards.md`](../../rules/policy/security-guards.md) for the rule definitions.
 
 ---
 
-## The 5 layers
+## The 6 layers
 
 ```
 1. gitleaks (pre-commit)        ← catches secrets in staged changes
@@ -18,7 +18,8 @@ See [`../../rules/security-guards.md`](../../rules/security-guards.md) for the r
 4. Skill / wrap step            ← human-in-loop pre-merge check
    ↓ if bypassed
 5. Policy doc                   ← documented rules for risk areas
-   + Pre-push hook (Layer 6)    ← catches secret diffs at push time
+   ↓ if bypassed
+6. Pre-push hook                ← catches secret diffs at push time
 ```
 
 Each layer covers different bypass paths. The most common bypass paths the framework defends against:
@@ -44,10 +45,10 @@ The framework defines 5 default risk areas (each project can customize):
 
 | # | Default ID | What it covers | Default decision |
 |---|---|---|---|
-| 1 | production-data | DB migrations, direct SQL on production | `ask` (require confirmation) |
+| 1 | data | DB migrations, direct SQL on production | `ask` (require confirmation) |
 | 2 | secrets | `secrets/`, `.env*`, hardcoded credentials | `deny` (block always) |
-| 3 | edge-function-deploy | Server-side function/lambda deploys | `ask` |
-| 4 | payment-live | Live billing / Stripe / Polar / IAP code | `ask` |
+| 3 | deploy | Server-side function/lambda deploys | `ask` |
+| 4 | payment | Live billing / Stripe / Polar / IAP code | `ask` |
 | 5 | domain-output | User-facing forecast/prediction outputs (must include uncertainty) | `ask` |
 
 You define your own in `hook-config.yml`. See [`../customization.md`](../customization.md).
@@ -63,7 +64,7 @@ Layer 3 hooks return whichever decision your `hook-config.yml` specifies per ris
 
 ---
 
-## Why 5 layers?
+## Why 6 layers?
 
 Single-layer defense fails. Examples from real incidents:
 
@@ -72,26 +73,34 @@ Single-layer defense fails. Examples from real incidents:
 - **Hook-only** — fails if hook timeouts / misconfigured
 - **Policy doc-only** — doc rot; not enforced
 
-The 5 layers stack defense in depth. Layers 1-2 catch most. Layer 3 catches what they miss. Layer 4 catches workflow-level mistakes. Layer 5 is the human policy that wraps all of them.
+The 6 layers stack defense in depth. Layers 1-2 catch most. Layer 3 catches what they miss. Layer 4 catches workflow-level mistakes. Layer 5 is the human policy that wraps all of them. Layer 6 catches secret diffs at push time as a final backstop.
 
 ---
 
 ## How to extend
 
-To add a project-specific risk area:
+`risk_areas:` in `hook-config.yml` is declarative — a documented record of
+your project's policy shape. Today, `pre-tool-guard.sh` matches against
+patterns hardcoded in the script itself, not a dynamic read of this file.
+To add a project-specific risk area, fork `pre-tool-guard.sh` and add your
+pattern there; keep the corresponding `risk_areas:` entry as a record of
+intent:
 
 ```yaml
-# hook-config.yml
+# hook-config.yml — documents intent; pre-tool-guard.sh itself must be
+# forked to actually enforce it (see docs/customization.md)
 risk_areas:
   - id: legacy-system-api
     description: "Calls to the deprecated legacy API"
     paths: ["src/lib/legacy-client/**"]
     commands: ["curl .*legacy.internal"]
     decision: ask
-    abort_code: 20  # use 17-99 for project-specific codes
 ```
 
-That's it. The same `pre-tool-guard.sh` reads this and enforces it. No fork.
+The one mechanism that *is* dynamically loaded per project — no fork
+required — is the secret-scan pattern extension via `.agent/hook-config.yml`.
+See [`../customization.md`](../customization.md) for the full
+real-vs-documented split.
 
 ---
 
@@ -114,7 +123,7 @@ echo '{"ai":"gemini", ...secrets/db.env...}' | gemini-adapter pre-tool-guard
 
 ## See also
 
-- [`../../rules/security-guards.md`](../../rules/security-guards.md) — canonical 5-layer rule
+- [`../../rules/policy/security-guards.md`](../../rules/policy/security-guards.md) — canonical 6-layer rule
 - [`../../rules/public-repo.md`](../../rules/public-repo.md) — git safety guardrails
 - [`../../core/hooks/secret-content-scan.py`](../../core/hooks/secret-content-scan.py) — secret pattern scanner
 - [`../../core/hooks/pre-tool-guard.sh`](../../core/hooks/pre-tool-guard.sh) — primary Bash/Write hook

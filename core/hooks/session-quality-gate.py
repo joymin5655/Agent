@@ -20,20 +20,28 @@ Configuration (env vars):
 """
 import json
 import os
-import pathlib
 import re
 import subprocess
 import sys
 from datetime import date
-
-REPO_ROOT = str(pathlib.Path(__file__).resolve().parents[2])
-LOG_DIR = os.path.join(REPO_ROOT, ".agent/logs")
 
 SCAN_DIRS = tuple(
     s.strip()
     for s in os.environ.get("AGENT_QUALITY_SCAN_DIRS", "src/").split(",")
     if s.strip()
 )
+
+
+def resolve_log_dir(stdin_data: dict) -> str:
+    """Log destination = the active project's .agent/logs.
+
+    Resolve the project root at runtime so logs land in the user's project,
+    not the plugin install cache (this file's own location). Priority:
+    stdin event 'cwd' -> CLAUDE_PROJECT_DIR env -> os.getcwd().
+    """
+    cwd = stdin_data.get("cwd") if isinstance(stdin_data, dict) else ""
+    root = cwd or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+    return os.path.join(root, ".agent/logs")
 
 
 def get_changed_files() -> list[str]:
@@ -99,12 +107,15 @@ def main() -> None:
     # Stop hook input: {"session_id":"...","transcript_path":"...","cwd":"...",
     #                   "hook_event_name":"Stop","stop_hook_active":bool}
     stop_hook_active = False
+    stdin_data: dict = {}
     try:
         stdin_data = json.load(sys.stdin)
         if isinstance(stdin_data, dict):
             stop_hook_active = bool(stdin_data.get("stop_hook_active", False))
     except (json.JSONDecodeError, EOFError):
         pass
+
+    log_dir = resolve_log_dir(stdin_data)
 
     block_enabled = os.environ.get("AGENT_QUALITY_GATE_BLOCK", "1") == "1"
 
@@ -143,10 +154,11 @@ def main() -> None:
     )
     print(summary, file=sys.stderr)
 
-    # Append to violations log (cross-session learning).
-    os.makedirs(LOG_DIR, exist_ok=True)
-    violations_file = os.path.join(LOG_DIR, "quality-gate-violations.jsonl")
+    # Append to violations log (cross-session learning). log_dir derives from
+    # untrusted stdin cwd — a bogus/unwritable path must not crash the Stop hook.
+    violations_file = os.path.join(log_dir, "quality-gate-violations.jsonl")
     try:
+        os.makedirs(log_dir, exist_ok=True)
         with open(violations_file, "a", encoding="utf-8") as vf:
             vf.write(json.dumps({
                 "ts": date.today().isoformat(),

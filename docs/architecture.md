@@ -60,12 +60,11 @@ Each adapter also provides a `settings.template` or `config.template` showing ho
 `setup.sh --project` scaffolds the following into a target project:
 - `CLAUDE.md` / `AGENTS.md` / `GEMINI.md` (project-aware AI instructions)
 - `gitleaks.toml` (extends the base from `templates/gitleaks.toml.template`)
-- `.claude/rules/` (sanitized generic policy)
 - `hook-config.yml` (project's risk areas + resources)
 - `.gitignore` additions
 - `.git/hooks/{pre-commit, pre-push}` (link to `core/git-hooks/`)
 
-Idempotent. Existing files skipped unless `--force`.
+Idempotent. Existing files prompt "Overwrite?" before replacing — there is no `--force` flag; set `AGENT_SETUP_YES=1` to auto-confirm.
 
 ## Layer 4: Project consumer code
 
@@ -116,6 +115,42 @@ User: "run cat secrets/db.env"
 ```
 
 The same `pre-tool-guard.sh` script is invoked by all 3 AIs. The adapter handles the translation.
+
+---
+
+## Determinism and model-invariance
+
+Two different guarantees live in this framework, and they don't mix.
+
+**Deterministic gates (the hooks) are model-invariant.** `core/hooks/*` scripts are plain
+code — same event JSON in, same decision JSON out, regardless of which AI or model fired
+the event. This isn't a claim about model behavior; it's proven mechanically:
+`core/tests/adapter-parity.sh` feeds one logical event through all 3 adapters and asserts
+an identical decision. Swap Claude for Codex or Gemini, swap one model for another — the
+gate doesn't care, because it's a script executing a fixed pattern match, not a model call.
+
+**Process enforcement is real for risk areas, not yet wired for plan/TDD.** Risk-area
+asks/denies are an actual gate: `pre-tool-guard.sh` runs on `PreToolUse` and can return
+`permissionDecision: deny` before the tool executes — a model that ignores the policy
+still can't act, because the boundary sits in front of the effect, not in the model's
+judgment (pillar ③: a request is a request, a boundary is physical).
+
+Plan-mode and TDD are earlier-stage. `plan-gate.py` is a `PostToolUse` hook — it *records*
+plan approval (writes `/tmp/agent-plan-approved` after `ExitPlanMode` or a plan-class
+`Agent`/`Task` dispatch) but nothing currently reads that flag to gate `Write`/`Edit`; the
+consuming enforcer (a supervisor dispatch mode) isn't wired yet — see
+`docs/harness-improvement-plan.md` P1-4/P1-8. `tdd-guard.py` defaults to
+`AGENT_TDD_GUARD_MODE=dryrun`, which logs would-block verdicts as advisory only; it only
+returns a real deny when explicitly set to `AGENT_TDD_GUARD_MODE=block`.
+
+**What's honestly NOT model-invariant: generated content.** The plan a model writes, the
+code it produces, the prose in a commit message — these vary by model and prompt. The
+framework guarantees the same gates fire and the same process is enforced; it does not
+guarantee byte-identical output. Two different models running the same mission through the
+same hooks will produce different diffs that both pass the same gates — same enforcement,
+not same output.
+
+See [`core/tests/adapter-parity.sh`](../core/tests/adapter-parity.sh) for the machine proof.
 
 ---
 
