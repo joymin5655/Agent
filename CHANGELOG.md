@@ -53,6 +53,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `security-reviewer` are retained (they form the benchmarked review pair —
   see `docs/benchmark/results.md`). Recoverable via `git mv` from the
   archive plus re-adding the entries to `agents/master-registry.json`.
+- Shipped skill set reduced 4 → 2: `tdd` and `diagnose` archived to
+  `legacy/trim-2026-07-04/skills/`. Basis: 7 weeks of session telemetry
+  showed zero dispatches for either skill. `supervise` and `wrap` are
+  retained. The `tdd-guard` hook is unrelated to the `tdd` skill and
+  continues to run unchanged. Recoverable via `git mv` from the archive.
 
 ## [0.2.0] — 2026-06-15
 
