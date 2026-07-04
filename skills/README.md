@@ -25,8 +25,6 @@ follows it as instructions to the AI.>
 |---|---|
 | `/wrap` | Commit + PR creation with security guard checks. |
 | `/supervise` | Multi-wave plan dispatch with audit + risk-area abort. |
-| `/tdd` | Red-Green-Refactor cycle enforcement. |
-| `/diagnose` | Root-cause analysis for reproducible bugs. |
 
 ## Adding a skill
 

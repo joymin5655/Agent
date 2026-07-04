@@ -30,7 +30,7 @@ New to this space? These seven terms are all you need to read the rest of this p
 | **hook** | A small script your AI runtime runs automatically before/after an action. It answers **allow**, **ask**, or **deny**. 17 of them live in [`core/hooks/`](core/hooks/). |
 | **adapter** | A thin translator between one AI CLI's native event format and the harness's canonical JSON. There are 3 ([`adapters/`](adapters/)). |
 | **agent** | A specialist your AI delegates to — e.g. a security reviewer that only reviews and never writes. 2 ship here ([`agents/`](agents/)). |
-| **skill** | A reusable step-by-step workflow the AI follows, e.g. the TDD loop. 4 ship here ([`skills/`](skills/)). |
+| **skill** | A reusable step-by-step workflow the AI follows, e.g. the commit + PR flow. 2 ship here ([`skills/`](skills/)). |
 | **plan-gate** | A hook that classifies your prompt and forces a written plan before risky, multi-step work. |
 | **mutex** | A lock file so two AI sessions never touch the same risky area (prod DB, deploys, payments) at once. |
 
@@ -86,7 +86,7 @@ Then:
 3. **Scaffold a project.** Inside any repo, run `/project-init` to generate `CLAUDE.md`, rules, and `gitleaks.toml`.
 4. *(Optional)* In a repo that already runs another hook-heavy plugin, disable agent-harness there via `/plugin` — agents stay namespaced as `agent-harness:*`, so there's no collision either way.
 
-The plugin bundles: **2 agents**, **4 skills**, the hook set, and the `/project-init` command.
+The plugin bundles: **2 agents**, **2 skills**, the hook set, and the `/project-init` command.
 
 ### Path B — shell install (Codex CLI / Gemini CLI / all three)
 
@@ -171,8 +171,6 @@ Model is cost-tiered per role (deep review/design → opus, execution → sonnet
 | Skills (`skills/`) | Trigger |
 |---|---|
 | `supervise` | Delegate a plan to autonomous execution |
-| `tdd` | Red-Green-Refactor enforcement |
-| `diagnose` | Hard-to-reproduce bugs, missing feedback loop |
 | `wrap` | Commit + PR automation with safeguards |
 
 | Hooks — 17, wired via `hooks/hooks.json` → `core/hooks/` | Event |
@@ -196,7 +194,7 @@ Agent/
 ├── CHANGELOG.md
 │
 ├── agents/             # 2 agent definitions + master-registry.json
-├── skills/             # 4 skills (supervise · tdd · diagnose · wrap)
+├── skills/             # 2 skills (supervise · wrap)
 ├── commands/           # 1 slash command (/project-init)
 ├── hooks/              # plugin hook wiring (hooks.json)
 │
