@@ -106,6 +106,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `AI_BOOTSTRAP.md`'s Step 5 pledge softened from "definitions live in
   `hook-config.yml`" (implies runtime consumption) to "declared in
   `hook-config.yml`; enforcement currently lives in the hook scripts."
+  Same fix applied to the last two remaining spots the gate caught:
+  `docs/concepts/security-guards-generic.md`'s "How to extend" section no
+  longer claims "the same `pre-tool-guard.sh` reads this and enforces it" or
+  shows a fabricated `abort_code` key — the example is now framed as
+  declarative intent requiring a `pre-tool-guard.sh` fork to enforce, with a
+  link to `docs/customization.md`. `rules/multi-agent-worktree.md`'s R4
+  mutex-resource list dropped the phantom `payment-live` entry —
+  `core/hooks/r4-mutex-check.sh` only ever claims `production-db`,
+  `production-deploy`, or `edge-function-deploy`; there is no payment mutex.
 
 ### Removed
 - *(recorded retroactively — the trim shipped before 0.2.0 but was never logged)*
