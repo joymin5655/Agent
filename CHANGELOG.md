@@ -19,9 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   improvement-loop design (Korean)
 - `gitleaks.toml` — detect NVIDIA NIM API keys (`nvapi-` prefix; built-in rules miss it)
 - `docs/architecture.md` — "Determinism and model-invariance" section: the hooks (gates)
-  are model-invariant and machine-proven so via `core/tests/adapter-parity.sh`; the
-  plan/execute/verify process is enforced by the harness rather than requested of a model;
-  generated content (plans, code, prose) is honestly NOT guaranteed identical across models
+  are model-invariant and machine-proven so via `core/tests/adapter-parity.sh`; risk-area
+  denial is a real enforced gate while plan-mode/TDD enforcement is not yet wired (flag is
+  recorded but unconsumed — see P1-4/P1-8); generated content (plans, code, prose) is
+  honestly NOT guaranteed identical across models
 
 ### Changed
 - README rewritten for first-time readers: concept primer table, install-path chooser

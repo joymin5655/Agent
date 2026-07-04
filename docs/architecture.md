@@ -129,13 +129,19 @@ the event. This isn't a claim about model behavior; it's proven mechanically:
 an identical decision. Swap Claude for Codex or Gemini, swap one model for another — the
 gate doesn't care, because it's a script executing a fixed pattern match, not a model call.
 
-**Process (plan → execute → verify) is enforced by the harness, not requested of the
-model.** Plan-mode, TDD's red-green-refactor, risk-area asks/denies — a model doesn't
-choose to follow these. `plan-gate.py` blocks Write/Edit until an approval flag exists on
-disk; `tdd-guard.py` blocks new production code until a failing test exists in the same
-area. A model that skips or forgets the process still can't act, because the tool call is
-denied before it reaches the model's intended effect (pillar ③: a request is a request, a
-boundary is physical).
+**Process enforcement is real for risk areas, not yet wired for plan/TDD.** Risk-area
+asks/denies are an actual gate: `pre-tool-guard.sh` runs on `PreToolUse` and can return
+`permissionDecision: deny` before the tool executes — a model that ignores the policy
+still can't act, because the boundary sits in front of the effect, not in the model's
+judgment (pillar ③: a request is a request, a boundary is physical).
+
+Plan-mode and TDD are earlier-stage. `plan-gate.py` is a `PostToolUse` hook — it *records*
+plan approval (writes `/tmp/agent-plan-approved` after `ExitPlanMode` or a plan-class
+`Agent`/`Task` dispatch) but nothing currently reads that flag to gate `Write`/`Edit`; the
+consuming enforcer (a supervisor dispatch mode) isn't wired yet — see
+`docs/harness-improvement-plan.md` P1-4/P1-8. `tdd-guard.py` defaults to
+`AGENT_TDD_GUARD_MODE=dryrun`, which logs would-block verdicts as advisory only; it only
+returns a real deny when explicitly set to `AGENT_TDD_GUARD_MODE=block`.
 
 **What's honestly NOT model-invariant: generated content.** The plan a model writes, the
 code it produces, the prose in a commit message — these vary by model and prompt. The
