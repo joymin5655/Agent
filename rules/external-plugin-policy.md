@@ -21,7 +21,7 @@ alongside this framework.
    priority explicitly.
 3. **Pin namespaces**: same-name skills resolve in priority
    `local in-place > context-mode > superpowers > plug-in` by default
-   — document deviations in `rules/policy/skill-adoption-comparison.md`.
+   — document deviations in your adoption log (see "Record of adoptions" below).
 4. **Disable plug-in auto-edits to protected paths** (your `rules/`,
    `docs/`, `wiki/`, `core/`). If the plug-in can't be configured to
    skip these, fork or wrap it.
@@ -42,6 +42,6 @@ alongside this framework.
 
 ## Record of adoptions
 
-Keep a table in `rules/policy/skill-adoption-comparison.md` with one row
+Keep a table (e.g. a new file under `rules/policy/`) with one row
 per plug-in: install date, scope (global / project), conflicts found,
 T+30d verdict (keep / remove / replace).

@@ -60,12 +60,11 @@ Each adapter also provides a `settings.template` or `config.template` showing ho
 `setup.sh --project` scaffolds the following into a target project:
 - `CLAUDE.md` / `AGENTS.md` / `GEMINI.md` (project-aware AI instructions)
 - `gitleaks.toml` (extends the base from `templates/gitleaks.toml.template`)
-- `.claude/rules/` (sanitized generic policy)
 - `hook-config.yml` (project's risk areas + resources)
 - `.gitignore` additions
 - `.git/hooks/{pre-commit, pre-push}` (link to `core/git-hooks/`)
 
-Idempotent. Existing files skipped unless `--force`.
+Idempotent. Existing files prompt "Overwrite?" before replacing — there is no `--force` flag; set `AGENT_SETUP_YES=1` to auto-confirm.
 
 ## Layer 4: Project consumer code
 

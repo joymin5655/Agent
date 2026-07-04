@@ -1,12 +1,12 @@
 # Concept — Project Risk Areas (Generic Security Guards)
 
-5 layers of defense against destructive AI actions. Each layer is independent — bypass one, others still trip.
+6 layers of defense against destructive AI actions. Each layer is independent — bypass one, others still trip.
 
-See [`../../rules/security-guards.md`](../../rules/security-guards.md) for the rule definitions.
+See [`../../rules/policy/security-guards.md`](../../rules/policy/security-guards.md) for the rule definitions.
 
 ---
 
-## The 5 layers
+## The 6 layers
 
 ```
 1. gitleaks (pre-commit)        ← catches secrets in staged changes
@@ -18,7 +18,8 @@ See [`../../rules/security-guards.md`](../../rules/security-guards.md) for the r
 4. Skill / wrap step            ← human-in-loop pre-merge check
    ↓ if bypassed
 5. Policy doc                   ← documented rules for risk areas
-   + Pre-push hook (Layer 6)    ← catches secret diffs at push time
+   ↓ if bypassed
+6. Pre-push hook                ← catches secret diffs at push time
 ```
 
 Each layer covers different bypass paths. The most common bypass paths the framework defends against:
@@ -44,10 +45,10 @@ The framework defines 5 default risk areas (each project can customize):
 
 | # | Default ID | What it covers | Default decision |
 |---|---|---|---|
-| 1 | production-data | DB migrations, direct SQL on production | `ask` (require confirmation) |
+| 1 | data | DB migrations, direct SQL on production | `ask` (require confirmation) |
 | 2 | secrets | `secrets/`, `.env*`, hardcoded credentials | `deny` (block always) |
-| 3 | edge-function-deploy | Server-side function/lambda deploys | `ask` |
-| 4 | payment-live | Live billing / Stripe / Polar / IAP code | `ask` |
+| 3 | deploy | Server-side function/lambda deploys | `ask` |
+| 4 | payment | Live billing / Stripe / Polar / IAP code | `ask` |
 | 5 | domain-output | User-facing forecast/prediction outputs (must include uncertainty) | `ask` |
 
 You define your own in `hook-config.yml`. See [`../customization.md`](../customization.md).
@@ -63,7 +64,7 @@ Layer 3 hooks return whichever decision your `hook-config.yml` specifies per ris
 
 ---
 
-## Why 5 layers?
+## Why 6 layers?
 
 Single-layer defense fails. Examples from real incidents:
 
@@ -72,7 +73,7 @@ Single-layer defense fails. Examples from real incidents:
 - **Hook-only** — fails if hook timeouts / misconfigured
 - **Policy doc-only** — doc rot; not enforced
 
-The 5 layers stack defense in depth. Layers 1-2 catch most. Layer 3 catches what they miss. Layer 4 catches workflow-level mistakes. Layer 5 is the human policy that wraps all of them.
+The 6 layers stack defense in depth. Layers 1-2 catch most. Layer 3 catches what they miss. Layer 4 catches workflow-level mistakes. Layer 5 is the human policy that wraps all of them. Layer 6 catches secret diffs at push time as a final backstop.
 
 ---
 
@@ -114,7 +115,7 @@ echo '{"ai":"gemini", ...secrets/db.env...}' | gemini-adapter pre-tool-guard
 
 ## See also
 
-- [`../../rules/security-guards.md`](../../rules/security-guards.md) — canonical 5-layer rule
+- [`../../rules/policy/security-guards.md`](../../rules/policy/security-guards.md) — canonical 6-layer rule
 - [`../../rules/public-repo.md`](../../rules/public-repo.md) — git safety guardrails
 - [`../../core/hooks/secret-content-scan.py`](../../core/hooks/secret-content-scan.py) — secret pattern scanner
 - [`../../core/hooks/pre-tool-guard.sh`](../../core/hooks/pre-tool-guard.sh) — primary Bash/Write hook

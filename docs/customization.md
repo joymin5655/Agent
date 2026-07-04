@@ -31,7 +31,7 @@ version: "1.0"
 # ---------------------------------------------------------------------------
 risk_areas:
 
-  - id: production-data
+  - id: data
     description: "Production database migrations and direct SQL"
     paths:
       - "migrations/*.sql"
@@ -61,7 +61,7 @@ risk_areas:
     decision: deny
     abort_code: 15
 
-  - id: edge-function-deploy
+  - id: deploy
     description: "Server-side function deployment"
     paths:
       - "supabase/functions/*/index.ts"
@@ -74,7 +74,7 @@ risk_areas:
     decision: ask
     abort_code: 13
 
-  - id: payment-live
+  - id: payment
     description: "Live payment library / Stripe / Polar / IAP"
     paths:
       - "**/billing/**"

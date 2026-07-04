@@ -60,6 +60,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   CI sanitize job additionally runs the full token-set audit as a superset step
 - `core/hooks/secret-content-scan.py` plan-file comment corrected to the canonical
   `~/.agent/plans/` path
+- Docs drift sweep: removed phantom hook/file references (`memory-explore-verify.py`,
+  `claude-mem-watch.py`, `rules/policy/skill-adoption-comparison.md`) that described
+  tooling never implemented; standardized risk-area vocabulary to the canonical
+  `data` / `secrets` / `deploy` / `payment` / `domain-output` IDs across README,
+  README.ko, `docs/customization.md`, and `docs/concepts/security-guards-generic.md`;
+  corrected the security-guard layer count from 5 to 6 (matches `hooks.json`'s
+  "6-layer secret hardening"); canonicalized stale `.claude/` path references to the
+  runtime's actual `.agent/` and `rules/`/`skills/` locations in
+  `docs/concepts/multi-session-worktree.md`, `AI_BOOTSTRAP.md`, and
+  `docs/concepts/plan-mode.md`; and removed the `.claude/rules/` scaffold
+  over-claim from `docs/architecture.md`, `README.md`, and `README.ko.md`
+  (`setup.sh --project` never creates it)
 
 ### Removed
 - *(recorded retroactively — the trim shipped before 0.2.0 but was never logged)*

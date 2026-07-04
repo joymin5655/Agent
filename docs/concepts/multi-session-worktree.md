@@ -13,7 +13,7 @@ See [`../../rules/multi-agent-worktree.md`](../../rules/multi-agent-worktree.md)
 ```
 R1   — Each session creates a git worktree under .worktrees/<agent>-<slug>/
 R1.1 — Read-only work CAN happen on shared main checkout
-R2   — Sessions register themselves in .claude/locks/active-sessions.json
+R2   — Sessions register themselves in .agent/locks/active-sessions.json
 R3   — Heartbeat every 5 min; stale sessions auto-GC'd
 R4   — Shared resources (production DB, deploy, etc.) require explicit `claim`
 R4.1 — Code file mutex — another session editing a file → ask before overlapping
@@ -65,7 +65,7 @@ If you only ever run one AI session at a time, you don't need most of these rule
 But the discipline of `start` / `dashboard` / `stop` is still useful for:
 - Tracking which task each session is on
 - Telemetry / time-tracking
-- Audit trail in `.claude/logs/`
+- Audit trail in `.agent/logs/`
 
 ---
 
