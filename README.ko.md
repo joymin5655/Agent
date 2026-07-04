@@ -181,7 +181,8 @@ read-only 에이전트는 도구 수준에서 강제됩니다(`Write`/`Edit`/`Ba
 | secret-content-scan · check-hardcoding | PreToolUse (Write/Edit) |
 | pre-tool-guard · r4-mutex · context-mode-guard | PreToolUse |
 | tdd-guard · supervisor | PreToolUse (Write/Edit) |
-| plan-gate · session heartbeat | UserPromptSubmit |
+| session heartbeat | UserPromptSubmit |
+| plan-gate | PostToolUse (ExitPlanMode/Task/Agent) |
 | session-quality-gate · session-close | Stop |
 
 명령: **`/project-init`** — 프로젝트 파일(`CLAUDE.md`, 규칙, `gitleaks.toml`) 스캐폴드.

@@ -62,8 +62,8 @@ def main() -> None:
             pass
         return
 
-    # Agent tool — check if it's plan-class
-    if tool_name != "Agent":
+    # Agent tool — check if it's plan-class (Task/Agent per Claude Code version)
+    if tool_name not in ("Agent", "Task"):
         return
 
     if is_plan_agent(data):
