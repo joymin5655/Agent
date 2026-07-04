@@ -276,7 +276,7 @@ bash core/tests/post-commit-autosync-test.sh
 
 ## Customization
 
-Each project gets a `hook-config.yml` that defines:
+`setup.sh --project` scaffolds a `hook-config.yml` that documents your project's policy shape:
 
 ```yaml
 risk_areas:
@@ -292,9 +292,13 @@ risk_areas:
   # ... add your own
 ```
 
-The same `core/hooks/r4-mutex-check.sh` reads this and enforces it. No code changes per project.
-Full schema: [`docs/customization.md`](docs/customization.md). To sharpen the bundled agents
-for your stack without forking them, drop optional files into `.agent/` —
+That `risk_areas:` block is declarative — a documented record of your project's policy.
+Enforcement of it today lives in each hook script's own hardcoded patterns
+(`core/hooks/pre-tool-guard.sh`, `core/hooks/r4-mutex-check.sh`), not a dynamic read of this
+file. The one mechanism that *is* dynamically loaded per project is the secret-scan pattern
+extension, via `.agent/hook-config.yml`. Full schema and the real-vs-documented split:
+[`docs/customization.md`](docs/customization.md). To sharpen the bundled agents for your stack
+without forking them, drop optional files into `.agent/` —
 see [`docs/specializing-agents.md`](docs/specializing-agents.md).
 
 ## Docs

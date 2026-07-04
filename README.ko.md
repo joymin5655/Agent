@@ -279,7 +279,7 @@ bash core/tests/post-commit-autosync-test.sh
 
 ## 커스터마이즈
 
-프로젝트마다 `hook-config.yml`로 위험 영역을 정의합니다:
+`setup.sh --project`가 프로젝트의 정책 형태를 문서화하는 `hook-config.yml`을 스캐폴드합니다:
 
 ```yaml
 risk_areas:
@@ -295,9 +295,13 @@ risk_areas:
   # ... add your own
 ```
 
-같은 `core/hooks/r4-mutex-check.sh`가 이 파일을 읽어 강제합니다. 프로젝트별 코드 수정은
-없습니다. 전체 스키마: [`docs/customization.md`](docs/customization.md). 번들 에이전트를
-포크 없이 프로젝트에 맞게 벼리려면 `.agent/`에 선택 파일을 놓으세요 —
+이 `risk_areas:` 블록은 선언적입니다 — 프로젝트 정책을 기록한 문서일 뿐입니다. 현재
+실제 강제는 각 훅 스크립트에 하드코딩된 패턴(`core/hooks/pre-tool-guard.sh`,
+`core/hooks/r4-mutex-check.sh`)이 수행하며, 이 파일을 동적으로 읽지는 않습니다.
+프로젝트마다 실제로 동적 로드되는 유일한 메커니즘은 `.agent/hook-config.yml`을 통한
+secret-scan 패턴 확장입니다. 전체 스키마와 실제-대-문서 간극:
+[`docs/customization.md`](docs/customization.md). 번들 에이전트를 포크 없이 프로젝트에
+맞게 벼리려면 `.agent/`에 선택 파일을 놓으세요 —
 [`docs/specializing-agents.md`](docs/specializing-agents.md) 참조.
 
 ## 문서

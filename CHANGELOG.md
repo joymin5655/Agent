@@ -95,6 +95,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   section and other doc mentions of a dynamically-loaded `risk_areas:`/`resources:`
   still describe the same not-yet-implemented mechanism and were out of scope for
   this sweep — flagged for a follow-up pass.
+- Docs drift sweep, final pass: closed out the flagged follow-up above.
+  `README.md`/`README.ko.md`'s Customization section no longer claims
+  `core/hooks/r4-mutex-check.sh` "reads [`hook-config.yml`] and enforces it" —
+  the `risk_areas:` block is now described as declarative (a documented policy
+  record), with today's actual enforcement attributed to each hook script's own
+  hardcoded patterns and the one dynamically-loaded mechanism (secret-scan
+  extensions via `.agent/hook-config.yml`) called out, linking to
+  `docs/customization.md` for the full real-vs-documented split.
+  `AI_BOOTSTRAP.md`'s Step 5 pledge softened from "definitions live in
+  `hook-config.yml`" (implies runtime consumption) to "declared in
+  `hook-config.yml`; enforcement currently lives in the hook scripts."
 
 ### Removed
 - *(recorded retroactively — the trim shipped before 0.2.0 but was never logged)*
