@@ -5,7 +5,7 @@
 | 작성일 | 2026-07-04 |
 | 기준 버전 | v0.2.0 |
 | 대상 버전 | v0.2.1 (P0 위생) → v0.3.0 (P1 구조) → v0.3.x (P2 루프) |
-| 성격 | **계획 문서** — 이 문서 자체는 코드를 바꾸지 않는다. 모든 변경은 백로그 ID(P0-*/P1-*/P2-*)로 추적한다 |
+| 성격 | **계획 문서** — 이 문서 자체는 코드를 바꾸지 않는다. 모든 변경은 백로그 ID(P0-*/P1-*/P2-*/H-*/W-*)로 추적한다 |
 
 ---
 
@@ -83,13 +83,13 @@
 | # | 격차 | 검증 명령 → 실측 결과 |
 |---|---|---|
 | 1 | **팬텀 테스트 참조 15곳** — `README.md:303-308`, `AGENTS.md:51-54·116-118·124`, `docs/architecture.md:127-129`가 `core/tests/adapter-smoke/<ai>/run.sh`, `cross-ai-parity.sh`, `verify-all.sh`, `bootstrap-test.sh`를 지시하나 전부 미존재 | `grep -rn 'adapter-smoke\|cross-ai-parity\|verify-all\|bootstrap-test' README.md AGENTS.md docs/architecture.md` → 15건 매치, 대상 파일 0개 |
-| 2 | **도메인 잔재** — `AI_BOOTSTRAP.md:35`(Step 5 항목 2)의 Guarded Domains 목록에 이전 프로젝트 특화 항목 포함. 도메인 중립 원칙(`rules/policy/security-guards.md`의 일반 5영역) 위반. 해당 용어는 이 문서에 재기재하지 않는다 — 원문 참조 | `sed -n '35p' AI_BOOTSTRAP.md` |
+| 2 | **도메인 잔재** — `AI_BOOTSTRAP.md:35`(Step 5 항목 2)의 Guarded Domains 목록에 이전 프로젝트 특화 항목 포함. 도메인 중립 원칙(`rules/policy/security-guards.md`의 일반 5영역) 위반. 해당 용어는 이 문서에 재기재하지 않는다 — 원문 참조 **✅ P0-2로 해소(2026-07-04)** | `sed -n '35p' AI_BOOTSTRAP.md` |
 | 3 | **훅 수 드리프트** — `README.md:223`, `CHANGELOG.md:36`이 "~25 portable hooks" 표기 | `find core/hooks -maxdepth 1 -type f -perm -u+x ! -name README.md \| wc -l` → **17** (+ 비실행 공용 모듈 `hook_config.py` 1개) |
 | 4 | **축소 이력 미기록** — `CHANGELOG.md:40-42`(0.1.0)는 에이전트 10종·스킬 16종·codex-skills를 나열하나 현재 5종/4종. 0.2.0에 Removed 기록 없음 | `ls agents/*.md \| wc -l` → 5, `ls -d skills/*/ \| wc -l` → 4 |
 | 5 | **supervisor.py 스텁** — 헤더 자체가 "Supervisor stub". `skills/supervise/SKILL.md`의 풍부한 계약 대비 미구현 | `head -5 core/hooks/supervisor.py` |
-| 6 | **plans 경로 이중 진실** — `skills/supervise/SKILL.md`·`core/infra/supervisor-goal-audit.sh`는 `~/.agent/plans`(env `AGENT_PLANS_DIR`), `core/hooks/secret-content-scan.py:60` 주석은 `~/.claude/plans` | `grep -rn '\.claude/plans' core/ skills/ --exclude-dir=legacy` |
+| 6 | **plans 경로 이중 진실** — `skills/supervise/SKILL.md`·`core/infra/supervisor-goal-audit.sh`는 `~/.agent/plans`(env `AGENT_PLANS_DIR`), `core/hooks/secret-content-scan.py:60` 주석은 `~/.claude/plans` **✅ P0-5로 해소(2026-07-04)** | `grep -rn '\.claude/plans' core/ skills/ --exclude-dir=legacy` |
 | 7 | **더티 트리** — ` M gitleaks.toml`, `?? .omc/`, `?? CLAUDE.md`(개인 경로 포함 루트 파일, 배포 템플릿 아님) | `git status --short` |
-| 8 | **sanitize-audit 스캔 범위 부정합** — `.github/workflows/ci.yml:100`의 CI 잡은 grep 패턴 리터럴을 담고 있고 CI의 git grep은 자기 자신을 제외하지만, 로컬 `sanitize-audit.sh`에는 ci.yml 제외 규칙이 없어 **클린 트리에서도 로컬 감사가 항상 FAIL**. `.claude/locks/` 런타임 아티팩트도 스캔에 걸림 (2026-07-04 실측) | `bash core/tests/sanitize-audit.sh` → FAIL: ci.yml, .claude/locks/active-sessions.json |
+| 8 | **sanitize-audit 스캔 범위 부정합** — `.github/workflows/ci.yml:100`의 CI 잡은 grep 패턴 리터럴을 담고 있고 CI의 git grep은 자기 자신을 제외하지만, 로컬 `sanitize-audit.sh`에는 ci.yml 제외 규칙이 없어 **클린 트리에서도 로컬 감사가 항상 FAIL**. `.claude/locks/` 런타임 아티팩트도 스캔에 걸림 (2026-07-04 실측) **✅ P0-7로 해소(2026-07-04)** | `bash core/tests/sanitize-audit.sh` → FAIL: ci.yml, .claude/locks/active-sessions.json |
 
 ---
 
@@ -102,12 +102,12 @@
 | ID | 작업 | 근거 | 완료 조건 (기계 검증) | 규모 |
 |---|---|---|---|---|
 | P0-1 | README/AGENTS.md/architecture.md의 테스트 참조를 실존 4개(`sanitize-audit`/`adapter-parity`/`hook-config-test`/`post-commit-autosync-test`)로 정정. 누락 스크립트 신설은 P1로 이관 | 격차 #1 | 격차 #1의 grep 명령 0건(legacy/ 제외) 또는 참조 경로 전부 실존 | S |
-| P0-2 | AI_BOOTSTRAP.md Step 5 도메인 중립화 — 특화 항목 제거, `hook-config.yml risk_areas` 참조로 교체 + **`sanitize-audit.sh` 패턴 목록에 해당 용어 추가**("실패→규칙" 실천) | 격차 #2 | `bash core/tests/sanitize-audit.sh` clean + 패턴 목록에 신규 항목 존재 | S |
+| P0-2 ✅ 2026-07-04 | AI_BOOTSTRAP.md Step 5 도메인 중립화 — 특화 항목 제거, `hook-config.yml risk_areas` 참조로 교체 + **`sanitize-audit.sh` 패턴 목록에 해당 용어 추가**("실패→규칙" 실천) | 격차 #2 | `bash core/tests/sanitize-audit.sh` clean + 패턴 목록에 신규 항목 존재 | S |
 | P0-3 | 훅 수 표기 정정 — 정의 고정: "실행 훅 17 + 공용 모듈 1". README/CHANGELOG 수정, 계수 명령 병기 | 격차 #3 | 문서 수치 = 격차 #3 find 명령 출력 | S |
 | P0-4 | CHANGELOG Unreleased에 `Removed: agents 10→5, skills 16→4` 축소 이력 기록 | 격차 #4 | CHANGELOG Removed 섹션 존재, 수치 = 격차 #4 ls 명령 출력 | S |
-| P0-5 | plans 경로 단일화 — 정본 `~/.agent/plans`(AI-불가지 원칙; adapter가 도구별 경로 번역). `secret-content-scan.py:60` 주석 수정 | 격차 #6 | `grep -rn '\.claude/plans' core/ skills/ --exclude-dir=legacy` 0건 | S |
+| P0-5 ✅ 2026-07-04 | plans 경로 단일화 — 정본 `~/.agent/plans`(AI-불가지 원칙; adapter가 도구별 경로 번역). `secret-content-scan.py:60` 주석 수정 | 격차 #6 | `grep -rn '\.claude/plans' core/ skills/ --exclude-dir=legacy` 0건 | S |
 | P0-6 | 작업 트리 정화 — 루트 `CLAUDE.md`(개인 경로) .gitignore 처리 또는 템플릿 흡수, `gitleaks.toml` 변경 검토 후 커밋/원복, `.omc/` ignore | 격차 #7 | `git status --short` 출력 없음 | S |
-| P0-7 | sanitize-audit 스캔 범위 정합 — `ci.yml` 자기 제외 추가(또는 CI 잡의 패턴도 런타임 토큰 조립로 전환), `.claude/locks/` 등 런타임 아티팩트 제외 | 격차 #8 | 클린 워킹 트리에서 `bash core/tests/sanitize-audit.sh` PASS | S |
+| P0-7 ✅ 2026-07-04 | sanitize-audit 스캔 범위 정합 — `ci.yml` 자기 제외 추가(또는 CI 잡의 패턴도 런타임 토큰 조립로 전환), `.claude/locks/` 등 런타임 아티팩트 제외 | 격차 #8 | 클린 워킹 트리에서 `bash core/tests/sanitize-audit.sh` PASS | S |
 
 ### 4.2 P1 — 구조 (v0.3.0)
 
@@ -129,6 +129,34 @@
 | P2-3 | 결과 원장 + 브랜치 규약 — `.agent/loop/results.tsv`(untracked, 5열: commit/harness_score/duration_s/status/description≤80자), 브랜치 `harness-loop/<tag>` | 루프 요소⑥ | 드라이런 후 results.tsv에 keep/discard 행 기록 확인 | S |
 | P2-4 | 예산·타임아웃 연동 — `supervisor-goal.sh init` 재사용(세션당 시도 N=5), 런당 10분 타임아웃 kill→`timeout`·discard, GATE 연속 2회 실패 시 circuit-breaker 중단 | 루프 요소④ | 강제 실패 시나리오에서 5회 후 정지 + 원장에 기록 | S |
 | P2-5 | 파일럿 3회 + 회고 — 기본 미션(리뷰어 프롬프트 쌍)으로 3세션 실행, keep율·비용·오탐 회고를 `docs/benchmark/`에 추가 | 검증 계층 | 회고 문서 존재 + results.tsv ≥3 세션분 | M |
+
+---
+
+### 4.4 H 시리즈 — 외부 벤치마크(팀 아키텍처 팩토리) 발굴 항목 (2026-07-04 추가)
+
+출처: revfactory/harness (Apache-2.0, §8). 6종 팀 아키텍처 패턴(Pipeline / Fan-out–Fan-in / Expert Pool / Producer-Reviewer / Supervisor / Hierarchical Delegation), "하네스 구성해줘" 메타 스킬(도메인 분석 → 팀 설계 → 에이전트·스킬 생성; "점검/감사/현황/동기화" 요청용 Phase 0 감사 분기 포함), with-skill vs baseline 병렬 비교 + assertion 정량 채점의 스킬 검증 방법론, A/B 증거 문화(n=15, +60% — 항상 한계 고지와 함께 인용)를 차용한다.
+
+| ID | 작업 | 근거 | 완료 조건 (기계 검증) | 규모 |
+|---|---|---|---|---|
+| H-1 | `docs/concepts/team-patterns.md` 신설 — 6 패턴 정의 + `/supervise` wave 구성과의 매핑표. `skills/supervise/SKILL.md` 1단계(플랜 읽기)에 "패턴 선택" 절 추가 | 패턴 어휘 부재로 wave 설계가 매번 즉흥 | 문서 존재 + 6 패턴 각각에 wave 매핑 행 + SKILL.md가 문서 참조 | S–M |
+| H-2 | 하네스 점검·감사 모드 — P1-1 doc-reality 게이트·registry drift·훅 수·sanitize-audit를 묶어 실행하고 보고서를 내는 유지보수 스킬. P1-1은 기계 게이트(CI), H-2는 그 소비자(에이전트 주도 감사) — 중복이 아닌 계층 관계 | 기둥④ 재니터의 실행 진입점 부재 | 드라이런 1회에 검사 항목별 pass/fail 표 출력 + P1-1 결과 인용 | M (P1-1 이후) |
+| H-3 | 스킬 A/B 테스트 하네스 — 출하 스킬 4종 대상 with-skill vs baseline 병렬 비교 + assertion 채점 + description 트리거 검증. P2-2 grade.sh(측정 대상=에이전트)와 채점 규약(GATE+단일 스칼라)만 공유하는 별도 항목 | 스킬 설명·트리거 효과가 미검증 | 스킬당 assertion ≥3, 리포트에 n·한계 고지 필수 기재 | L (P2-2와 병행) |
+| H-4 | `/project-init` 메타 팩토리 라이트 — 대상 프로젝트 도메인 분석 → `hook-config.yml risk_areas` 초안 + `.agent/` 특화 파일 제안 자동 생성 | 신규 프로젝트마다 risk_areas 수작업 | 샘플 프로젝트 실행 시 risk_areas 5키 초안 + 특화 제안 ≥1 생성, sanitize-audit PASS 유지 | M |
+
+### 4.5 W 시리즈 — 개인 워크플로우 통합 항목 (2026-07-04 추가)
+
+출처: 개인 지식 볼트 워크플로우 분석(2026-07-04, 실측 페인 기록 기반). **배치 원칙**: 이 레포는 공개·도메인 중립(sanitize 게이트 상시)이므로 개인 경로·볼트명은 하드코딩 금지 — repo에는 **설정 주도 제네릭 구현**만 싣고, 개인 경로 와이어링은 글로벌 레이어(사용자 홈 AI 런타임 설정)에서 한다. 개인 볼트는 프로젝트 훅이 없는 드라이브 루트에 있으므로 W-1·W-6류는 글로벌 훅으로만 발화 가능. **에스컬레이션 원칙**: secrets를 제외한 모든 가드는 deny가 아니라 ask까지만(가시성 우선 원칙).
+
+| ID | 작업 | 근거(실측 페인) | 완료 조건 (기계 검증) | 규모 | 배치 |
+|---|---|---|---|---|---|
+| W-7 | 가드 오탐 2건 수정 — ① `git commit -m` 메시지 본문을 파괴적 명령 스캔에서 제외 ② pipefail 하 `grep \| wc` 0-매치 false-abort 수정 | 정상 커밋·집계 명령이 가드에 차단된 실사례 | 픽스처: 파괴 명령을 "언급만" 하는 커밋 메시지 통과 + 0-매치 파이프 비중단 | S | repo |
+| W-3 | 시크릿 게이트 잔여분 — `.git/config` 원격 URL 토큰 스캔(pre-push) + `/wrap`에 합성 키 소화(fire-test) 단계(가짜 키 플랜트 → gitleaks 검출 확인 → 제거). ※ nvapi- 룰은 2026-07-04 출하 완료 | 리모트 URL 토큰은 파일 스캔 사각지대 | 토큰 포함 URL push 차단; fire-test는 합성 키 미검출 시 FAIL | S–M | repo |
+| W-4 | `/verify-claims` 스킬 — writer/reviewer/verifier 3-레인 "진실 방화벽". 이력서·블로그·포트폴리오류 공개물의 미검증 주장을 출판 전 게이트(ask) | 특정 프로젝트에서 검증 레인 효과 기입증 → 이식 | 미검증 주장 포함 픽스처 문서 → 주장 목록 + ask 발동 | M | repo |
+| W-1 | freshness-watchdog — SessionStart 글로벌 훅(제네릭): 설정 파일에 등록된 감시 대상(잡 하트비트·필수 경로)의 신선도/실존 검사, 실패 시 경고(ask 이하) | 개인 동기화 크론 무음 사망 ×3, 드라이브 재구성 3회의 사경로 잔존 | 합성 stale 하트비트 → 경고 발화; 설정 부재 시 no-op | M | 혼합(훅=repo, 감시 목록=개인) |
+| W-2 | `/reorg-sync` 스킬 — 이전/신규 경로 접두어를 인자로 받아 고아 참조 일괄 스윕(앵커·crontab·셔뱅·worktree gitfile·네이티브 메모리 키) | 드라이브 재구성마다 수작업 스윕 반복 | 픽스처 트리에서 5종 참조 전부 검출·치환 리포트 | M–L | repo(제네릭; 경로는 인자) |
+| W-8 | plan-gate 소스 우선 검증 — 메모리 파편은 트리거로만, 플랜의 사실 주장은 라이브 소스 재확인 요구 | 낡은 메모리 인용이 플랜에 그대로 유입 | 메모리-인용만 있는 합성 플랜 → 소스 재확인 요구(ask) | M | repo |
+| W-6 | 세션 종료 품질 게이트 일반화 — hook-config `session.close_checks`(임의 명령 리스트, 실패 시 ask)를 Stop 훅에 추가; 볼트 린트·통계 정합 명령은 개인 레이어에서 등록 | 수동 세션 마감 리추얼의 자동화 요구 | close_checks 실패 픽스처 → Stop에서 ask; 미설정 시 무동작 | M | 혼합 |
+| W-5 | 증류 리추얼 자율 루프 — `/supervise --goal-mode` 재사용: 원시 수집 → 월간 다이제스트 → 린트 0 → 승인 게이트 | 수집만 쌓이고 증류가 밀리는 만성 적체 | (개인 레이어) 1주기 실행 로그 + 승인 게이트 통과 기록 | L | 개인 레이어(repo 밖; repo는 goal-mode 그대로 제공) |
 
 ---
 
@@ -184,6 +212,7 @@ P0-1 ~ P0-6 (일괄, 반나절)          → v0.2.1 태그
 
 - 각 마일스톤 커밋은 conventional commit(`docs:`/`fix:`/`feat:`/`test:`) + CHANGELOG 갱신.
 - P2 착수 전 게이트: `bash core/tests/verify-all.sh` green + doc-reality green.
+- **H/W 시리즈 편입 (2026-07-04)**: W-7(가드 오탐, S)은 P0급 위생으로 즉시 착수 가능. H-1·W-3·W-4는 P1과 병행(v0.3.0 트랙). H-2는 P1-1 완료 후, H-3은 P2-2와 채점 규약 공유(v0.3.x). H-4·W-1·W-2·W-6·W-8은 v0.3.x. W-5는 개인 레이어에서 진행(repo 마일스톤 밖).
 
 ## 7. 이 문서 자체의 검증
 
@@ -192,7 +221,7 @@ P0-1 ~ P0-6 (일괄, 반나절)          → v0.2.1 태그
 1. §3.3 표의 각 검증 명령을 실행해 실측 결과 열과 대조 — 훅 17, 테스트 4, 에이전트 5, 스킬 4.
 2. `bash core/tests/sanitize-audit.sh` — **이 문서가 오염 파일 목록에 나타나지 않을 것.** (전체 감사는 격차 #8의 기존 원인으로 P0-7 완료 전까지 FAIL이 정상)
 3. `gitleaks detect --no-git --source docs/ --config gitleaks.toml`.
-4. 백로그 항목 수 검증: `grep -cE '^\| P[0-2]-[0-9]+' docs/harness-improvement-plan.md` = **18** (P0 7 + P1 6 + P2 5), 각 행에 완료 조건 존재.
+4. 백로그 항목 수 검증: `grep -cE '^\| P[0-2]-[0-9]+' docs/harness-improvement-plan.md` = **18** (P0 7 + P1 6 + P2 5), 각 행에 완료 조건 존재. H/W 시리즈: `grep -cE '^\| [HW]-[0-9]+' docs/harness-improvement-plan.md` = **12** (H 4 + W 8).
 5. 스코어카드(§3.1·§3.2)의 격차 행 ↔ 백로그 ID 상호 링크 고아 0건 (모든 "부분/미비" 행에 P* 링크 존재).
 6. AGENTS.md 규약 준수 — 도메인 중립 언어, 커밋 메시지 `docs(plan): add harness improvement plan`.
 
@@ -204,3 +233,4 @@ P0-1 ~ P0-6 (일괄, 반나절)          → v0.2.1 태그
 | 영상: "루프 엔지니어링 — '프롬프트하는 나'를 시스템으로 대체하는 법" (실밸개발자) | youtu.be/A7gwGNsL6y4 |
 | 노션: 하네스 엔지니어링 완벽 가이드 (4기둥·의사코드 보충자료) | raspy-roll-970.notion.site/AI-333f7725c9d98147957afad16db3b655 |
 | karpathy/autoresearch (README + program.md) | github.com/karpathy/autoresearch — 로컬 참조 클론: 드라이브 `_repos/reference/autoresearch` (`repos.yaml`의 `repoId: karpathy/autoresearch`, 클론 확인 2026-07-04) |
+| revfactory/harness — 팀 아키텍처 팩토리(Apache-2.0): 6 팀 패턴, 메타 스킬 6-phase 워크플로우, with/without-skill A/B 검증 방법론 | github.com/revfactory/harness |

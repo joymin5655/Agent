@@ -31,6 +31,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Documented overwrite behavior corrected: `setup.sh` has no `--force` flag — replacements
   prompt interactively, or set `AGENT_SETUP_YES=1`
 - `README.md` infra path corrected: `scripts/infra/agent-session.sh` → `core/infra/agent-session.sh`
+- `AI_BOOTSTRAP.md` Step 5 pledge now names the generic 5 risk areas (per `hook-config.yml`
+  / `rules/policy/security-guards.md`) instead of prior-project domain terms; the removed
+  terms were added to the sanitize-audit token list (failure → new rule)
+- `core/tests/sanitize-audit.sh` now scans git-visible content only (tracked +
+  untracked-unignored via `git grep --untracked`), mirroring the CI job's excludes —
+  runtime state and gitignored local files no longer cause permanent false FAILs;
+  CI sanitize job additionally runs the full token-set audit as a superset step
+- `core/hooks/secret-content-scan.py` plan-file comment corrected to the canonical
+  `~/.agent/plans/` path
 
 ### Removed
 - *(recorded retroactively — the trim shipped before 0.2.0 but was never logged)*
