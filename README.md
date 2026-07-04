@@ -178,7 +178,8 @@ Model is cost-tiered per role (deep review/design → opus, execution → sonnet
 | secret-content-scan · check-hardcoding | PreToolUse (Write/Edit) |
 | pre-tool-guard · r4-mutex · context-mode-guard | PreToolUse |
 | tdd-guard · supervisor | PreToolUse (Write/Edit) |
-| plan-gate · session heartbeat | UserPromptSubmit |
+| session heartbeat | UserPromptSubmit |
+| plan-gate | PostToolUse (ExitPlanMode/Task/Agent) |
 | session-quality-gate · session-close | Stop |
 
 Command: **`/project-init`** scaffolds project-level files (`CLAUDE.md`, rules, `gitleaks.toml`).

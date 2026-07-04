@@ -23,6 +23,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`hook_config.py`) — previous "~25" claim was stale
 
 ### Fixed
+- `plan-gate` was wired to `UserPromptSubmit` in `hooks/hooks.json` but is a
+  `PostToolUse` hook (its docstring and logic key off `tool_name`, a field absent
+  from `UserPromptSubmit` events). Result: every invocation was a silent no-op and
+  the `/tmp/agent-plan-approved` flag was never written. Rewired to `PostToolUse`
+  with matcher `ExitPlanMode|Task|Agent`, and broadened the plan-class check to
+  accept the `Task` tool name (subagent dispatch differs by Claude Code version).
+  READMEs' hook tables corrected to match.
 - Phantom test paths removed from `README.md`, `AGENTS.md`, `docs/architecture.md`,
   `docs/getting-started.md` — `core/tests/adapter-smoke/*/run.sh`, `cross-ai-parity.sh`,
   `verify-all.sh`, `bootstrap-test.sh`, and a pytest invocation never existed; docs now
