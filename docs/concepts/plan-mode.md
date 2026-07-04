@@ -24,13 +24,14 @@ The tier determines:
 
 ---
 
-## How the classifier works
+## How tier classification works
 
-`core/hooks/classify-prompt.py` fires on `UserPromptSubmit`. It:
+There is no dedicated classifier hook today — `UserPromptSubmit` only runs
+`agent-session-heartbeat.sh` (see `hooks/hooks.json`). The AI applies the
+heuristics itself when reading the prompt:
 1. Reads the user prompt
-2. Looks up `hook-config.yml: plan_tier.autonomous_triggers` and other heuristics
-3. Tags the prompt with a tier (writes to `.agent/state/plan-tier.json`)
-4. Hooks downstream can read the tier and adjust behavior
+2. Looks up `hook-config.yml: plan_tier.autonomous_triggers` and the heuristics below
+3. Picks a tier and adjusts its own plan-mode / clarifying-question behavior accordingly
 
 Example heuristics:
 - "fix this typo" → trivial
@@ -99,7 +100,6 @@ The framework has dedicated skills for this:
 
 ## See also
 
-- [`../../core/hooks/classify-prompt.py`](../../core/hooks/classify-prompt.py)
 - [`../../core/hooks/plan-gate.py`](../../core/hooks/plan-gate.py)
 - [`../../rules/policy/plan-first-clarifying.md`](../../rules/policy/plan-first-clarifying.md)
 - [`../../skills/wrap/SKILL.md`](../../skills/wrap/SKILL.md)

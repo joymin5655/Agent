@@ -42,4 +42,5 @@ plug-in + a third-party skill bundle), the precedence is:
 local in-place (skills/) > context-mode > superpowers > plug-in
 ```
 
-Override per-project in `rules/policy/skill-adoption-comparison.md`.
+Override per-project and document deviations in your adoption log (see
+`rules/external-plugin-policy.md` "Record of adoptions").
