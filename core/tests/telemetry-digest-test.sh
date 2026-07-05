@@ -11,8 +11,8 @@
 #   never-dispatched: 1 match (keyword "foo bar") + 3 ask-intent + 0 dispatched
 #                     (ask=3 >= 3, dispatched=0 -> NO-ACCEPT candidate)
 #   phantom-agent:    1 match (keyword "foo bar") + 1 ghost -> GHOST candidate
-#   keyword-magnet:   5 match, all keyword "generic term" -> 5/7 (~71%) of all matches
-#                     -> OVER-GENERAL candidate (total matches 7 >= min-sample 3)
+#   keyword-magnet:   8 match, all keyword "generic term" -> 8/11 (~73%) of all matches
+#                     -> OVER-GENERAL candidate (total matches 11 >= min-sample 3)
 #   old-specialist:   1 ask-intent dated 40 days ago (default window is 30 days)
 #                     -> must be excluded entirely from all counts/candidates
 #   + 1 line of garbage (not valid JSON) -> counted as skipped, never fatal
@@ -65,7 +65,7 @@ SAMPLE="$TMP_DIR/sample.jsonl"
   printf '{"ts":"%s","event":"UserPromptSubmit","session_id":"s5","action":"match","specialist":"phantom-agent","keyword":"foo bar"}\n' "$NOW_TS"
   printf '{"ts":"%s","event":"UserPromptSubmit","session_id":"s5","action":"ghost","specialist":"phantom-agent","keyword":"foo bar"}\n' "$NOW_TS"
 
-  for i in 1 2 3 4 5; do
+  for i in 1 2 3 4 5 6 7 8; do
     printf '{"ts":"%s","event":"UserPromptSubmit","session_id":"s6-%s","action":"match","specialist":"keyword-magnet","keyword":"generic term"}\n' "$NOW_TS" "$i"
   done
 
@@ -79,7 +79,7 @@ OUT_A="$(bash "$SCRIPT" "$SAMPLE" 2>&1)"
 RC_A=$?
 [[ $RC_A -eq 0 ]]
 check "exit-0-sample" $?
-[[ "$OUT_A" == *"match: 7"* ]]
+[[ "$OUT_A" == *"match: 11"* ]]
 check "action-count-match" $?
 [[ "$OUT_A" == *"ask-intent: 4"* ]]
 check "action-count-ask-intent" $?
@@ -111,7 +111,7 @@ echo "=== (d) GHOST rule candidate ==="
 check "rule-candidate-ghost" $?
 
 echo
-echo "=== also: OVER-GENERAL keyword concentration candidate (5/7 ~71% > 70%) ==="
+echo "=== also: OVER-GENERAL keyword concentration candidate (8/11 ~73% > 70%) ==="
 [[ "$OUT_A" == *"OVER-GENERAL"* && "$OUT_A" == *"generic term"* ]]
 check "rule-candidate-over-general" $?
 
