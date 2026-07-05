@@ -15,13 +15,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (a specialist logged `action=="ghost"` — registry references an agent id with
   no sibling `agents/<id>.md`) and `NO-ACCEPT` (a specialist was asked
   `ask-intent`+`ask-security` >= `$AGENT_TELEMETRY_MIN_ASKS` (default 3) times but
-  was never `dispatched` — the keyword may be over-matching, specialist-routing.md
-  Lesson 1). Read-only, no side effects; a malformed log line is skipped rather
-  than fatal (validated one line at a time — a single `jq .` pass over the whole
-  file aborts on the first parse error and silently drops every line after it).
-  Reproduce suite: `core/tests/telemetry-digest-test.sh` (17 scenarios: missing
-  log, empty log, known-sample stats + both rule candidates, malformed-line
-  resilience).
+  was never `dispatched` — message names `matches.keywords` and/or
+  `matches.file_globs` depending on which term actually drove the count,
+  specialist-routing.md Lesson 1). Known limitation, documented in the header:
+  NO-ACCEPT can't fire under `AGENT_SUPERVISOR_MODE=observe` (it logs
+  `observe-intent`/`observe-security` instead, which aren't counted). Read-only,
+  no side effects; a malformed or non-object-but-valid-JSON log line is dropped
+  rather than fatal (`jq -R -c 'fromjson? // empty | select(type == "object")'`
+  parses one line at a time — a single `jq .` pass over the whole file aborts on
+  the first parse error and silently drops every line after it). Reproduce
+  suite: `core/tests/telemetry-digest-test.sh` (21 scenarios: missing log, empty
+  log, known-sample stats + both rule candidates, malformed-line resilience,
+  `AGENT_TELEMETRY_MIN_ASKS` override, non-object-JSON resilience).
 - `core/hooks/supervisor.py` v0.2 — minimal **dispatch-not-advise** router (P1-4).
   Replaces the observation-only v0.1 stub. On `UserPromptSubmit` it word-boundary
   matches the prompt against each registry agent's `matches.keywords` and records a

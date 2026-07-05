@@ -5,9 +5,12 @@
 # to the digest script via a positional path arg and asserts the rendered report.
 # Covers: (a) missing log file, (b) action/specialist stats + rule candidates on a
 # known sample, (c) a malformed line does not crash the digest or drop valid entries,
-# (d) an empty log file.
+# (d) an empty log file, (e) AGENT_TELEMETRY_MIN_ASKS override (also proves
+# ask-security alone contributes to the NO-ACCEPT threshold sum), (f) syntactically
+# valid but non-object JSON lines (string/number/array/null) are dropped, not fatal.
 #
 # Usage: bash core/tests/telemetry-digest-test.sh
+# Exit 0: all pass. Exit 1: one or more failures.
 set -u
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -87,9 +90,6 @@ else
 fi
 [[ "$OUT_B" == *"digest: 9 events, 4 specialists, 2 rule candidate(s)"* ]]
 check "summary-line-exact" $?
-if [[ $RC_B -ne 0 || "$FAIL" -gt 0 ]]; then
-  : # keep going — individual checks already reported which one failed
-fi
 
 echo
 echo "=== (c) malformed line does not crash the digest or drop valid entries ==="
@@ -113,6 +113,42 @@ RC_D=$?
 check "exit-0-empty-log" $?
 [[ "$OUT_D" == *"digest: 0 events, 0 specialists, 0 rule candidate(s)"* ]]
 check "zeroed-digest-line-empty-file" $?
+
+echo
+echo "=== (e) AGENT_TELEMETRY_MIN_ASKS override (also proves ask-security alone counts toward the threshold) ==="
+# security-reviewer has only 1 ask-security in the sample (below the default
+# threshold of 3, asserted un-flagged in (b)). With the threshold lowered to 1,
+# it must now be flagged — proving both that $min_asks is actually wired to the
+# env var, and that ask-security alone (with 0 ask-intent) contributes to the
+# NO-ACCEPT sum (a regression that dropped the ask-security term would keep
+# this un-flagged even at threshold=1).
+OUT_E="$(AGENT_TELEMETRY_MIN_ASKS=1 bash "$SCRIPT" "$SAMPLE" 2>&1)"
+RC_E=$?
+[[ $RC_E -eq 0 ]]
+check "exit-0-min-asks-override" $?
+[[ "$OUT_E" == *"[NO-ACCEPT] specialist security-reviewer"* ]]
+check "min-asks-override-flags-security-reviewer" $?
+
+echo
+echo "=== (f) syntactically-valid non-object JSON lines are dropped, not fatal ==="
+# A bare string / number / array / null is still valid JSON but has no .action or
+# .specialist field — must be silently dropped, not crash the aggregation pass
+# (jq errors indexing a non-object with a string key under set -euo pipefail).
+NONOBJ="$TMP_DIR/nonobject.jsonl"
+cat > "$NONOBJ" <<'EOF'
+{"ts":"t","event":"UserPromptSubmit","action":"match","specialist":"code-reviewer"}
+"just a string"
+42
+[1,2,3]
+null
+{"ts":"t","event":"PostToolUse","action":"dispatched","specialist":"code-reviewer"}
+EOF
+OUT_F="$(bash "$SCRIPT" "$NONOBJ" 2>&1)"
+RC_F=$?
+[[ $RC_F -eq 0 ]]
+check "exit-0-non-object-json" $?
+[[ "$OUT_F" == *"digest: 2 events, 1 specialists, 0 rule candidate(s)"* ]]
+check "non-object-json-dropped-not-counted" $?
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="

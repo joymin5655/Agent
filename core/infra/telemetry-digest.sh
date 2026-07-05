@@ -20,13 +20,24 @@
 #   - GHOST      a specialist logged action=="ghost" >=1 time — the registry
 #                references an agent id with no sibling agents/<id>.md.
 #   - NO-ACCEPT  a specialist was asked (ask-intent + ask-security) >= threshold
-#                times but was never actually dispatched — the keyword may be
-#                over-matching (rules/policy/specialist-routing.md Lesson 1).
+#                times but was never actually dispatched — matches.keywords
+#                and/or matches.file_globs may be over-matching
+#                (rules/policy/specialist-routing.md Lesson 1).
+#
+# Known limitation: NO-ACCEPT only counts ask-intent/ask-security. A repo
+# running with AGENT_SUPERVISOR_MODE=observe (supervisor.py's escape hatch)
+# logs observe-intent/observe-security instead, so NO-ACCEPT cannot fire in
+# that mode regardless of how noisy the matching is (GHOST is unaffected —
+# ghost logging isn't mode-gated).
 #
 # A malformed line in the log is skipped, never fatal — this tool degrades
-# gracefully and never crashes on a corrupt log (a single `jq .` pass over the
-# whole file would abort on the first parse error and silently drop every
-# line after it, so lines are validated one at a time instead).
+# gracefully and never crashes on a corrupt log. A single `jq .` pass over the
+# whole file would abort on the first parse error and silently drop every line
+# after it, so lines are parsed with `fromjson? // empty` instead (jq's `-R`
+# raw-input mode treats each line as an independent parse — one bad line
+# can't affect any other). Lines that parse but aren't a JSON object (a bare
+# string/number/array — still syntactically valid JSON) are also dropped,
+# since only objects can carry the `action`/`specialist` fields this script reads.
 set -euo pipefail
 
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
@@ -44,12 +55,12 @@ if [[ ! -f "$LOG_PATH" ]]; then
     exit 0
 fi
 
-VALID_JSON="$(
-    while IFS= read -r line || [[ -n "$line" ]]; do
-        [[ -z "$line" ]] && continue
-        echo "$line" | jq -c . 2>/dev/null || true
-    done < "$LOG_PATH"
-)"
+if ! command -v jq >/dev/null 2>&1; then
+    echo "ERROR: jq not found — telemetry-digest.sh requires jq to parse supervisor.jsonl." >&2
+    exit 2
+fi
+
+VALID_JSON="$(jq -R -c 'fromjson? // empty | select(type == "object")' "$LOG_PATH")"
 
 if [[ -z "$VALID_JSON" ]]; then
     echo "(log file present but empty / no valid JSON lines)"
@@ -64,7 +75,6 @@ SUMMARY_JSON="$(printf '%s\n' "$VALID_JSON" | jq -s --argjson min_asks "$MIN_ASK
         actions: (
             group_by(.action // "unknown")
             | map({key: (.[0].action // "unknown"), value: length})
-            | sort_by(.key)
             | from_entries
         ),
         specialists: (
@@ -79,7 +89,6 @@ SUMMARY_JSON="$(printf '%s\n' "$VALID_JSON" | jq -s --argjson min_asks "$MIN_ASK
                     | from_entries
                 )
               })
-            | sort_by(.specialist)
         )
     }
     | . + {
@@ -91,12 +100,26 @@ SUMMARY_JSON="$(printf '%s\n' "$VALID_JSON" | jq -s --argjson min_asks "$MIN_ASK
             }]
             +
             [.specialists[]
-                | ((.by_action["ask-intent"] // 0) + (.by_action["ask-security"] // 0)) as $asked
+                | (.by_action["ask-intent"] // 0) as $intent_asks
+                | (.by_action["ask-security"] // 0) as $security_asks
+                | ($intent_asks + $security_asks) as $asked
                 | select($asked >= $min_asks and ((.by_action.dispatched // 0) == 0))
                 | {
                     type: "NO-ACCEPT",
                     specialist: .specialist,
-                    message: "specialist \(.specialist) asked \($asked) time(s), dispatched 0 — keyword may be over-matching; consider narrowing matches.keywords (specialist-routing.md Lesson 1)"
+                    message: (
+                        "specialist \(.specialist) asked \($asked) time(s) (\($intent_asks) intent + \($security_asks) security), dispatched 0 — "
+                        + (
+                            if $intent_asks > 0 and $security_asks > 0 then
+                                "matches.keywords and/or matches.file_globs may be over-matching; consider narrowing both"
+                            elif $security_asks > 0 then
+                                "matches.file_globs may be over-matching; consider narrowing it"
+                            else
+                                "matches.keywords may be over-matching; consider narrowing it"
+                            end
+                          )
+                        + " (specialist-routing.md Lesson 1)"
+                    )
                   }]
         )
     }
