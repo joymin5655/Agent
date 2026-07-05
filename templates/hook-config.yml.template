@@ -123,3 +123,26 @@ goal_mode:
 # hooks:
 #   pre_tool_guard: 'custom/my-pre-tool-guard.sh'
 #   secret_content_scan: 'custom/my-secret-scan.py'
+
+# ---------------------------------------------------------------------------
+# Secret-scan extensions — the ONLY block in this file actually loaded at
+# runtime. core/hooks/hook_config.py reads this from `.agent/hook-config.yml`
+# (copy this file there to activate — everything above (risk_areas: /
+# resources: / hardcoding:) is declarative documentation only, not read by
+# any hook; see docs/customization.md part 2).
+#
+# ADDITIVE ONLY: these entries can only ADD secret patterns / exempt paths /
+# credential key names on top of secret-content-scan.py's built-ins. There is
+# no way to remove, disable, or weaken a built-in, or flip deny -> allow.
+#
+# Uncomment and edit to activate:
+#
+# LIVE-SCHEMA-EXAMPLE-BEGIN
+# python_hooks:
+#   secret_patterns:                 # [regex, label] pairs — not {id, regex} objects
+#     - ["myservice_(live|test)_[a-zA-Z0-9_-]{32,}", "MyService API token"]
+#   exempt_paths:                    # substring fragments; each needs >=1 run of 3+ alnum chars
+#     - "vendor/fixtures/"
+#   credential_key_names:            # plain strings, folded into one extra KEY=value pattern
+#     - "MYSERVICE_TOKEN"
+# LIVE-SCHEMA-EXAMPLE-END
