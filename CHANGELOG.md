@@ -28,10 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it; JSON parsing runs through an embedded python3 heredoc instead). Always
   exits 0 (observer, not a gate) — a malformed line, a missing file, or an
   internal error degrades to a zeroed/"inactive" report rather than failing.
-  Reproduce suite: `core/tests/telemetry-digest-test.sh` (18 scenarios:
+  Reproduce suite: `core/tests/telemetry-digest-test.sh` (21 checks:
   action-count accuracy, funnel notation, all three rule candidates,
   malformed-line skip counting, `--window` filtering, missing-log handling,
-  `--json` output validity).
+  `--json` output validity, legacy v0.1-record degradation).
 - `core/hooks/supervisor.py` v0.2 — minimal **dispatch-not-advise** router (P1-4).
   Replaces the observation-only v0.1 stub. On `UserPromptSubmit` it word-boundary
   matches the prompt against each registry agent's `matches.keywords` and records a
