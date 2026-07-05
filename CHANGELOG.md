@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `core/infra/telemetry-digest.sh` (P1-5) — pillar④ janitor step 1: reads
+  `.agent/logs/supervisor.jsonl` (or an explicit path/`$AGENT_TELEMETRY_LOG`) and
+  reports action counts, per-specialist counts, and a rule-candidate section with
+  two heuristics derived only from what `supervisor.py` already logs: `GHOST`
+  (a specialist logged `action=="ghost"` — registry references an agent id with
+  no sibling `agents/<id>.md`) and `NO-ACCEPT` (a specialist was asked
+  `ask-intent`+`ask-security` >= `$AGENT_TELEMETRY_MIN_ASKS` (default 3) times but
+  was never `dispatched` — the keyword may be over-matching, specialist-routing.md
+  Lesson 1). Read-only, no side effects; a malformed log line is skipped rather
+  than fatal (validated one line at a time — a single `jq .` pass over the whole
+  file aborts on the first parse error and silently drops every line after it).
+  Reproduce suite: `core/tests/telemetry-digest-test.sh` (17 scenarios: missing
+  log, empty log, known-sample stats + both rule candidates, malformed-line
+  resilience).
 - `core/hooks/supervisor.py` v0.2 — minimal **dispatch-not-advise** router (P1-4).
   Replaces the observation-only v0.1 stub. On `UserPromptSubmit` it word-boundary
   matches the prompt against each registry agent's `matches.keywords` and records a
