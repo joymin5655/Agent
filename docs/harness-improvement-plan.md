@@ -62,8 +62,8 @@
 |---|---|---|---|
 | ① 컨텍스트 파일 | `templates/{CLAUDE,AGENTS,GEMINI}.md.template`, `rules/`, `AI_BOOTSTRAP.md`, `agents/master-registry.json` | **부분** | 구조는 우수하나 무결성 파손 — 격차 #1(팬텀 테스트 참조)·#2(도메인 잔재)·#3(훅 수 드리프트)·#6(plans 경로 이중 진실)이 에이전트에게 거짓 런타임 설정을 주입 → P0-1~P0-5 |
 | ② CI/CD 구조적 강제 | `.github/workflows/ci.yml`(registry model-drift guard), `core/git-hooks/`(gitleaks pre-commit/pre-push), `core/tests/sanitize-audit.sh` | **부분** | 레지스트리 드리프트는 잡지만 **문서 드리프트 게이트 부재** — 격차 #1·#3·#4가 CI를 통과해 옴. 로컬 sanitize-audit은 상시 FAIL(격차 #8)로 신뢰 상실. "실패→규칙" 철학의 자기 미적용 → P0-7, P1-1, P1-2 |
-| ③ 도구 경계 | `pre-tool-guard.sh`, `agent-proxy.sh`, `secret-content-scan.py`, r4-mutex 3종, `circuit-breaker.py`, 에이전트별 read-only tool set, `context-mode-guard.sh` | **충족 (최강)** | 과거 약점이던 `supervisor.py` 스텁(격차 #5)은 **✅ P1-4로 해소(2026-07-05)** — 의도 라우팅이 스킬 프롬프트(부탁)에서 훅의 승인 게이트(`ask`)로 승격됨. (`ask`는 deny가 아니라 interrupt-and-confirm이므로 강제가 아닌 확인 요구다.) 잔여: 그 결정 로그를 재니터가 소비하는 단계는 아직 없음 → P1-5 |
-| ④ 피드백 루프 + 재니터 | `session-quality-gate.py`(Stop), `circuit-breaker.py`, `supervisor-goal-audit.sh` | **미비 (최약)** | `supervisor.jsonl`에 기록만 하고 아무도 읽지 않음. 재니터·주기 정리·"실패→새 규칙" 파이프라인 전무 → P1-5, Part 3 전체 |
+| ③ 도구 경계 | `pre-tool-guard.sh`, `agent-proxy.sh`, `secret-content-scan.py`, r4-mutex 3종, `circuit-breaker.py`, 에이전트별 read-only tool set, `context-mode-guard.sh` | **충족 (최강)** | 과거 약점이던 `supervisor.py` 스텁(격차 #5)은 **✅ P1-4로 해소(2026-07-05)** — 의도 라우팅이 스킬 프롬프트(부탁)에서 훅의 승인 게이트(`ask`)로 승격됨. (`ask`는 deny가 아니라 interrupt-and-confirm이므로 강제가 아닌 확인 요구다.) 그 결정 로그를 재니터가 소비하는 단계도 **✅ P1-5로 해소(2026-07-05)** — `telemetry-digest.sh`(수동 실행). 잔여: 리포트→규칙 자동 반영 파이프라인은 Part 3 몫 |
+| ④ 피드백 루프 + 재니터 | `session-quality-gate.py`(Stop), `circuit-breaker.py`, `supervisor-goal-audit.sh`, `telemetry-digest.sh` | **부분** | `supervisor.jsonl`을 읽어 action/specialist 통계 + 규칙후보(GHOST/NO-ACCEPT) 리포트를 내는 1단계는 **✅ P1-5로 해소(2026-07-05)** — `core/infra/telemetry-digest.sh`, 수동 실행·read-only. 잔여: 주기 실행(cron/훅 연동 없음)과 리포트→실제 규칙 반영("실패→새 규칙" 자동 파이프라인)은 여전히 사람이 직접 수행 → Part 3 전체 |
 
 보조 개념(노션 의사코드 대비): 라우터=`plan-gate.py` 4-tier **충족**(supervisor 라우팅만 반쪽) · 유한 재시도=`circuit-breaker.py` **충족** · writer≠reviewer=에이전트 역할 분리+벤치마크 **충족** · 컨텍스트 매니저/GC=**부재**(장기 과제, 이번 백로그 범위 외).
 
@@ -76,7 +76,7 @@
 | 3 | 워크트리 격리 | `core/infra/agent-session.sh`, r4-mutex, file-mutex | **충족** | — |
 | 4 | 예산 가드레일 | `supervisor-goal.sh init <slug> <N> [<budget>]` | **부분** | 인프라 존재, 훅 수준 강제·토큰 계측 없음 → P2-4 |
 | 5 | 분리된 그레이더 | `core/tests/` 4종 + `docs/benchmark/ground-truth.md` | **부분** | 진짜 그레이더이나 커버리지 협소 — per-hook 테스트가 문서에만 존재(격차 #1) → P1-3, P2-2 |
-| 6 | 로깅 | `.agent/logs/supervisor.jsonl`, session store | **부분** | 실행 원장(results.tsv 상당) 부재, 로그 소비 부재 → P1-5, P2-3 |
+| 6 | 로깅 | `.agent/logs/supervisor.jsonl`, session store, `telemetry-digest.sh` | **부분** | 로그 소비는 **✅ P1-5로 해소(2026-07-05)** — `telemetry-digest.sh`. 실행 원장(results.tsv 상당)은 여전히 부재 → P2-3 |
 
 ### 3.3 확인된 격차 9건 (검증 명령 병기 — 2026-07-04 실측)
 
@@ -122,7 +122,7 @@
 | P1-2 | `core/tests/verify-all.sh` 실구현 — 실존 테스트 4종 + doc-reality + gitleaks 묶음 러너(README Quick commands 약속 이행) | 격차 #1 | `bash core/tests/verify-all.sh` exit 0, 하위 테스트별 pass/fail 라인 출력 | S–M |
 | P1-3 | per-hook 단위 테스트 ≥4개(`pre-tool-guard`, `secret-content-scan`, `plan-gate`, `tdd-guard` 우선) — synthetic event JSON → decision JSON 픽스처. **P2 그레이더 확장의 선행 조건** | 루프 요소⑤ | `core/tests/<hook>-test.sh` ≥4개 존재, verify-all에 포함 | M–L |
 | P1-4 ✅ 2026-07-05 (재정의 2026-07-04) | **dispatch, not advise** — `supervisor.py`가 권고 힌트(`systemMessage`)가 아니라 라우팅 결정을 내리게 한다: master-registry `matches.keywords` 매칭 후 specialist 미지정 feature급 의도엔 `ask`. 근거: advisory 힌트는 세션 로그 218건 감사에서 무시율 ~98%(관측) — 프롬프트는 부탁이지 강제가 아니므로 결정 자체를 훅이 내려야 함(기둥③ 자기 적용) | 격차 #5 + 훅 감사(advisory 무시율 ~98%, n=218) | synthetic prompt 이벤트 테스트 통과, `supervisor.jsonl`에 매칭 기록 + `ask` 발동(힌트가 아니라 결정) 확인 — ✅ 실측(2026-07-05): synthetic 이벤트 스위트 30/30 pass, `supervisor.jsonl`에 match/ask-intent/dispatched/ghost 기록 확인, `ask`는 힌트가 아니라 PreToolUse 결정 JSON으로 반환 (`f9af460` red 테스트 + `8d1a789` 구현) | M |
-| P1-5 | 텔레메트리 소비(기둥④ 1단계 재니터) — `core/infra/telemetry-digest.sh`: `supervisor.jsonl` deny/ask 통계 → 규칙 후보 리포트 | 기둥④ | 샘플 로그 입력 → 요약 출력 검증 | M |
+| P1-5 ✅ 2026-07-05 | 텔레메트리 소비(기둥④ 1단계 재니터) — `core/infra/telemetry-digest.sh`: `supervisor.jsonl` deny/ask 통계 → 규칙 후보 리포트 | 기둥④ | 샘플 로그 입력 → 요약 출력 검증 — ✅ 실측(2026-07-05, 리스펙 반영 재구현): action별 카운트 + specialist 퍼널(match→ask→dispatched, 전환율) + 상위 keyword + `NO-ACCEPT`(반복 ask에도 미배차)·`GHOST`(고스트 스페셜리스트)·`OVER-GENERAL`(단일 keyword가 전체 match의 >70%) 3종 규칙후보, `--window`(기본 30일)·`--json` 지원, 의존성 bash+python3만(jq 없음 — 1차 초안이 썼던 jq는 `setup.sh --doctor`의 jq WARN-tier 판정과 모순이라 리스펙에서 구조적으로 제거). 픽스처 스위트 21/21 pass(레거시 v0.1 레코드 degrade 3체크 포함). 커밋: red 테스트 2회(`32495e6`→`1914987`) + 구현 재작성(jq 기반 `9d9c4ad`/`79e3452`를 bash+python3 전용으로 교체). 1차 라운드는 `agent-harness:code-reviewer` 리뷰(needs-changes → 반영·재검증) 거침 | M |
 | P1-6 | `cross-ai-parity.sh` 실구현 — `adapter-parity.sh` 확장: 동일 논리 이벤트 → 3 adapter → 동일 decision | 격차 #1 | README Verification 절 명령이 실제 통과 | M |
 | P1-7 ✅ 2026-07-05 (신설) | `setup.sh --doctor` 정식 환경 진단 신설 — gitleaks/git 존재, python3 버전 플로어(3.9+), 훅 실행권한(`+x`), adapter 존재 여부를 한 번에 점검 | P0-10의 확장(임시 stderr 경고 → 정식 서브커맨드) | `bash setup.sh --doctor` 실행 시 각 항목 OK/WARN/FAIL 출력, 누락 시나리오 픽스처로 검증 — ✅ 실측(2026-07-05, `bb393d8`): 이 머신에서 `doctor: 9 pass, 0 warn, 0 fail`, 픽스처 3종(클린 레포/gitleaks 부재/훅 실행권한 결여) 전부 통과 | S–M |
 | P1-8 부분 완료 2026-07-05 (신설) | hook-config.yml 실배선 — `risk_areas:`/`resources:`를 런타임에 실제로 읽게 만들거나(최소한 `templates/hook-config.yml.template`에 `hook_config.py`가 실제 소비하는 `secret_patterns`/`exempt_paths`/`credential_key_names` 스키마를 포함시켜), 문서상 선언과 실제 로더 사이 간극을 좁힌다 | 격차 #9 | 템플릿의 키가 통합 테스트에서 실제로 소비됨을 증명(예: `core/tests/hook-config-test.sh` 확장) — 스키마 출하+소비 증명 테스트 ✅ 2026-07-05(`2ab9428`, 템플릿에 `LIVE-SCHEMA-EXAMPLE` 블록 + `hook-config-test.sh` case h 드리프트 가드); `risk_areas:`/`resources:`/`hardcoding:`를 실제 훅 런타임에 배선하는 잔여 작업은 미완료 | M–L |
@@ -232,7 +232,7 @@ P0-1 ~ P0-11 (최초 7건 반나절 + 훅 감사 배치 4건 2026-07-04)  → v0
 - P2 착수 전 게이트: `bash core/tests/verify-all.sh` green + doc-reality green.
 - **H/W 시리즈 편입 (2026-07-04)**: W-7(가드 오탐, S)은 P0급 위생으로 즉시 착수 가능. H-1·W-3·W-4는 P1과 병행(v0.3.0 트랙). H-2는 P1-1 완료 후, H-3은 P2-2와 채점 규약 공유(v0.3.x). H-4·W-1·W-2·W-6·W-8·W-9는 v0.3.x. W-5는 개인 레이어에서 진행(repo 마일스톤 밖).
 - **2026-07-04 감사 배치**: P0 시리즈 전체(P0-1~P0-11) 완료 — 훅 배선 버그 3건(P0-8/9/11) + 환경 경고 1건(P0-10) 포함.
-- **2026-07-05 P1 배치**: P1-4(dispatch-not-advise) · P1-7(--doctor) 출하, P1-8(hook-config 실로더 스키마) 부분 출하(스키마+소비 증명 테스트, 런타임 배선은 잔여).
+- **2026-07-05 P1 배치**: P1-4(dispatch-not-advise) · P1-5(telemetry-digest 재니터) · P1-7(--doctor) 출하, P1-8(hook-config 실로더 스키마) 부분 출하(스키마+소비 증명 테스트, 런타임 배선은 잔여).
 
 ## 7. 이 문서 자체의 검증
 
