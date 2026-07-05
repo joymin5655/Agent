@@ -71,6 +71,11 @@ SAMPLE="$TMP_DIR/sample.jsonl"
 
   printf '{"ts":"%s","event":"PreToolUse","session_id":"s7","action":"ask-intent","specialist":"old-specialist"}\n' "$OLD_TS"
 
+  # Legacy v0.1 stub-format record: valid JSON object, but no action/specialist
+  # fields at all (the real pre-P1-4 log is full of these). Must land in the
+  # "unknown" bucket — never skipped, never a rule candidate.
+  printf '{"ts":"%s","event":"PreToolUse","tool_name":"Edit","intent":"","session_id":"legacy1"}\n' "$NOW_TS"
+
   echo '{ this is not valid json ]'
 } > "$SAMPLE"
 
@@ -131,6 +136,23 @@ fi
 # proves the old-specialist's ask-intent didn't leak into the in-window stats.
 [[ "$OUT_A" == *"ask-intent: 4"* ]]
 check "window-filter-excludes-old-record-from-counts" $?
+
+echo
+echo "=== legacy v0.1 record (object without action field) -> unknown bucket, no candidate ==="
+[[ "$OUT_A" == *"unknown: 1"* ]]
+check "legacy-record-lands-in-unknown-bucket" $?
+# Still exactly 1 skipped line (the garbage one) — the legacy record is valid JSON.
+if [[ "$OUT_A" == *"skipped"*"2"* || "$OUT_A" == *"2"*"skipped"* ]]; then
+  check "legacy-record-not-counted-as-skipped" 1
+else
+  check "legacy-record-not-counted-as-skipped" 0
+fi
+# And it must not surface as any rule candidate.
+if [[ "$OUT_A" == *"legacy1"* ]]; then
+  check "legacy-record-no-rule-candidate" 1
+else
+  check "legacy-record-no-rule-candidate" 0
+fi
 
 echo
 echo "=== (g) missing log file -> exit 0, inactive message ==="
