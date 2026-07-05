@@ -62,7 +62,7 @@
 |---|---|---|---|
 | ① 컨텍스트 파일 | `templates/{CLAUDE,AGENTS,GEMINI}.md.template`, `rules/`, `AI_BOOTSTRAP.md`, `agents/master-registry.json` | **부분** | 구조는 우수하나 무결성 파손 — 격차 #1(팬텀 테스트 참조)·#2(도메인 잔재)·#3(훅 수 드리프트)·#6(plans 경로 이중 진실)이 에이전트에게 거짓 런타임 설정을 주입 → P0-1~P0-5 |
 | ② CI/CD 구조적 강제 | `.github/workflows/ci.yml`(registry model-drift guard), `core/git-hooks/`(gitleaks pre-commit/pre-push), `core/tests/sanitize-audit.sh` | **부분** | 레지스트리 드리프트는 잡지만 **문서 드리프트 게이트 부재** — 격차 #1·#3·#4가 CI를 통과해 옴. 로컬 sanitize-audit은 상시 FAIL(격차 #8)로 신뢰 상실. "실패→규칙" 철학의 자기 미적용 → P0-7, P1-1, P1-2 |
-| ③ 도구 경계 | `pre-tool-guard.sh`, `agent-proxy.sh`, `secret-content-scan.py`, r4-mutex 3종, `circuit-breaker.py`, 에이전트별 read-only tool set, `context-mode-guard.sh` | **충족 (최강)** | 유일 약점: `supervisor.py` 스텁(격차 #5) — 의도 라우팅 경계가 스킬 프롬프트(부탁) 수준에 머묾 → P1-4 |
+| ③ 도구 경계 | `pre-tool-guard.sh`, `agent-proxy.sh`, `secret-content-scan.py`, r4-mutex 3종, `circuit-breaker.py`, 에이전트별 read-only tool set, `context-mode-guard.sh` | **충족 (최강)** | 과거 약점이던 `supervisor.py` 스텁(격차 #5)은 **✅ P1-4로 해소(2026-07-05)** — 의도 라우팅이 스킬 프롬프트(부탁)가 아니라 훅의 `ask` 결정으로 강제됨. 잔여: 그 결정 로그를 재니터가 소비하는 단계는 아직 없음 → P1-5 |
 | ④ 피드백 루프 + 재니터 | `session-quality-gate.py`(Stop), `circuit-breaker.py`, `supervisor-goal-audit.sh` | **미비 (최약)** | `supervisor.jsonl`에 기록만 하고 아무도 읽지 않음. 재니터·주기 정리·"실패→새 규칙" 파이프라인 전무 → P1-5, Part 3 전체 |
 
 보조 개념(노션 의사코드 대비): 라우터=`plan-gate.py` 4-tier **충족**(supervisor 라우팅만 반쪽) · 유한 재시도=`circuit-breaker.py` **충족** · writer≠reviewer=에이전트 역할 분리+벤치마크 **충족** · 컨텍스트 매니저/GC=**부재**(장기 과제, 이번 백로그 범위 외).
@@ -86,11 +86,11 @@
 | 2 | **도메인 잔재** — `AI_BOOTSTRAP.md:35`(Step 5 항목 2)의 Guarded Domains 목록에 이전 프로젝트 특화 항목 포함. 도메인 중립 원칙(`rules/policy/security-guards.md`의 일반 5영역) 위반. 해당 용어는 이 문서에 재기재하지 않는다 — 원문 참조 **✅ P0-2로 해소(2026-07-04)** | `sed -n '35p' AI_BOOTSTRAP.md` |
 | 3 | **훅 수 드리프트** — `README.md:223`, `CHANGELOG.md:36`이 "~25 portable hooks" 표기 **✅ P0-3로 해소(기존 커밋, 2026-07-04 표기 갱신)** | `find core/hooks -maxdepth 1 -type f -perm -u+x ! -name README.md \| wc -l` → **17** (+ 비실행 공용 모듈 `hook_config.py` 1개); 라이브 문서 "~25" 잔존 0건 |
 | 4 | **축소 이력 미기록** — `CHANGELOG.md:40-42`(0.1.0)는 에이전트 10종·스킬 16종·codex-skills를 나열하나 현재 2종/2종. 0.2.0에 Removed 기록 없음 **✅ P0-4로 해소(기존 커밋, 2026-07-04 표기 갱신)** | `ls agents/*.md \| wc -l` → 2, `ls -d skills/*/ \| wc -l` → 2; CHANGELOG Removed 섹션에 10→5(0.2.0)·5→2/4→2(2026-07-04) 트림 이력 존재 |
-| 5 | **supervisor.py 스텁** — 헤더 자체가 "Supervisor stub". `skills/supervise/SKILL.md`의 풍부한 계약 대비 미구현 | `head -5 core/hooks/supervisor.py` |
+| 5 | **supervisor.py 스텁** — 헤더 자체가 "Supervisor stub". `skills/supervise/SKILL.md`의 풍부한 계약 대비 미구현 **✅ P1-4로 해소(2026-07-05)** | `head -5 core/hooks/supervisor.py` → "Supervisor v0.2 (minimal dispatcher). Dispatch, not advise." (`f9af460`+`8d1a789`) |
 | 6 | **plans 경로 이중 진실** — `skills/supervise/SKILL.md`·`core/infra/supervisor-goal-audit.sh`는 `~/.agent/plans`(env `AGENT_PLANS_DIR`), `core/hooks/secret-content-scan.py:60` 주석은 `~/.claude/plans` **✅ P0-5로 해소(2026-07-04)** | `grep -rn '\.claude/plans' core/ skills/ --exclude-dir=legacy` |
 | 7 | **더티 트리** — ` M gitleaks.toml`, `?? .omc/`, `?? CLAUDE.md`(개인 경로 포함 루트 파일, 배포 템플릿 아님) **✅ P0-6으로 해소(기존 커밋, 2026-07-04 표기 갱신)** | `git status --short` → 클린(`.omc/` gitignore 처리, 루트 `CLAUDE.md` untracked) |
 | 8 | **sanitize-audit 스캔 범위 부정합** — `.github/workflows/ci.yml:100`의 CI 잡은 grep 패턴 리터럴을 담고 있고 CI의 git grep은 자기 자신을 제외하지만, 로컬 `sanitize-audit.sh`에는 ci.yml 제외 규칙이 없어 **클린 트리에서도 로컬 감사가 항상 FAIL**. `.claude/locks/` 런타임 아티팩트도 스캔에 걸림 (2026-07-04 실측) **✅ P0-7로 해소(2026-07-04)** | `bash core/tests/sanitize-audit.sh` → FAIL: ci.yml, .claude/locks/active-sessions.json |
-| 9 | **hook-config.yml `risk_areas:`/`resources:`/`hardcoding:` 미배선** — `setup.sh --project`가 출하하는 `templates/hook-config.yml.template`을 런타임에 읽는 훅이 0개(전부 스크립트 하드코딩). 실동작 로더는 `hook_config.py`의 secret-scan 확장(`.agent/hook-config.yml`) 뿐인데, 그 스키마(`secret_patterns`/`exempt_paths`/`credential_key_names`)는 출하 템플릿에 없음. 문서 드리프트 감사(Phase 3, 2026-07-04)에서 발견 — 미해결 → P1-8 | `grep -rln 'yaml.safe_load' core/` → `core/hooks/hook_config.py` 1개뿐 |
+| 9 | **hook-config.yml `risk_areas:`/`resources:`/`hardcoding:` 미배선** — `setup.sh --project`가 출하하는 `templates/hook-config.yml.template`을 런타임에 읽는 훅이 0개(전부 스크립트 하드코딩). 실동작 로더는 `hook_config.py`의 secret-scan 확장(`.agent/hook-config.yml`) 뿐인데, 그 스키마(`secret_patterns`/`exempt_paths`/`credential_key_names`)는 출하 템플릿에 없음. 문서 드리프트 감사(Phase 3, 2026-07-04)에서 발견 → P1-8 **부분 해소(2026-07-05, `2ab9428`)**: 실로더 스키마는 템플릿에 출하 + 소비 증명 테스트로 드리프트 가드 완료. `risk_areas:`/`resources:`/`hardcoding:`를 실제 훅 런타임에 배선하는 것은 여전히 미해결 잔여 | `grep -rln 'yaml.safe_load' core/` → `core/hooks/hook_config.py` 1개뿐 |
 
 ---
 
@@ -121,11 +121,11 @@
 | P1-1 | **doc-reality 게이트** `core/tests/doc-reality-test.sh` 신설 — 문서 내 참조 경로 실존 검증 + 수치 클레임(훅/에이전트/스킬 수) 실측 대조. `ci.yml`에 잡 추가. 격차 #1·#3·#4 재발 방지의 규칙화(기둥②의 자기 적용) | 기둥② | P0 이전 README에 FAIL, P0 이후 PASS 데모; CI 등록 | M |
 | P1-2 | `core/tests/verify-all.sh` 실구현 — 실존 테스트 4종 + doc-reality + gitleaks 묶음 러너(README Quick commands 약속 이행) | 격차 #1 | `bash core/tests/verify-all.sh` exit 0, 하위 테스트별 pass/fail 라인 출력 | S–M |
 | P1-3 | per-hook 단위 테스트 ≥4개(`pre-tool-guard`, `secret-content-scan`, `plan-gate`, `tdd-guard` 우선) — synthetic event JSON → decision JSON 픽스처. **P2 그레이더 확장의 선행 조건** | 루프 요소⑤ | `core/tests/<hook>-test.sh` ≥4개 존재, verify-all에 포함 | M–L |
-| P1-4 (재정의 2026-07-04) | **dispatch, not advise** — `supervisor.py`가 권고 힌트(`systemMessage`)가 아니라 라우팅 결정을 내리게 한다: master-registry `matches.keywords` 매칭 후 specialist 미지정 feature급 의도엔 `ask`. 근거: advisory 힌트는 세션 로그 218건 감사에서 무시율 ~98%(관측) — 프롬프트는 부탁이지 강제가 아니므로 결정 자체를 훅이 내려야 함(기둥③ 자기 적용) | 격차 #5 + 훅 감사(advisory 무시율 ~98%, n=218) | synthetic prompt 이벤트 테스트 통과, `supervisor.jsonl`에 매칭 기록 + `ask` 발동(힌트가 아니라 결정) 확인 | M |
+| P1-4 ✅ 2026-07-05 (재정의 2026-07-04) | **dispatch, not advise** — `supervisor.py`가 권고 힌트(`systemMessage`)가 아니라 라우팅 결정을 내리게 한다: master-registry `matches.keywords` 매칭 후 specialist 미지정 feature급 의도엔 `ask`. 근거: advisory 힌트는 세션 로그 218건 감사에서 무시율 ~98%(관측) — 프롬프트는 부탁이지 강제가 아니므로 결정 자체를 훅이 내려야 함(기둥③ 자기 적용) | 격차 #5 + 훅 감사(advisory 무시율 ~98%, n=218) | synthetic prompt 이벤트 테스트 통과, `supervisor.jsonl`에 매칭 기록 + `ask` 발동(힌트가 아니라 결정) 확인 — ✅ 실측(2026-07-05): synthetic 이벤트 스위트 30/30 pass, `supervisor.jsonl`에 match/ask-intent/dispatched/ghost 기록 확인, `ask`는 힌트가 아니라 PreToolUse 결정 JSON으로 반환 (`f9af460` red 테스트 + `8d1a789` 구현) | M |
 | P1-5 | 텔레메트리 소비(기둥④ 1단계 재니터) — `core/infra/telemetry-digest.sh`: `supervisor.jsonl` deny/ask 통계 → 규칙 후보 리포트 | 기둥④ | 샘플 로그 입력 → 요약 출력 검증 | M |
 | P1-6 | `cross-ai-parity.sh` 실구현 — `adapter-parity.sh` 확장: 동일 논리 이벤트 → 3 adapter → 동일 decision | 격차 #1 | README Verification 절 명령이 실제 통과 | M |
-| P1-7 신설 | `setup.sh --doctor` 정식 환경 진단 신설 — gitleaks/git 존재, python3 버전 플로어(3.9+), 훅 실행권한(`+x`), adapter 존재 여부를 한 번에 점검 | P0-10의 확장(임시 stderr 경고 → 정식 서브커맨드) | `bash setup.sh --doctor` 실행 시 각 항목 OK/WARN/FAIL 출력, 누락 시나리오 픽스처로 검증 | S–M |
-| P1-8 신설 | hook-config.yml 실배선 — `risk_areas:`/`resources:`를 런타임에 실제로 읽게 만들거나(최소한 `templates/hook-config.yml.template`에 `hook_config.py`가 실제 소비하는 `secret_patterns`/`exempt_paths`/`credential_key_names` 스키마를 포함시켜), 문서상 선언과 실제 로더 사이 간극을 좁힌다 | 격차 #9 | 템플릿의 키가 통합 테스트에서 실제로 소비됨을 증명(예: `core/tests/hook-config-test.sh` 확장) | M–L |
+| P1-7 ✅ 2026-07-05 (신설) | `setup.sh --doctor` 정식 환경 진단 신설 — gitleaks/git 존재, python3 버전 플로어(3.9+), 훅 실행권한(`+x`), adapter 존재 여부를 한 번에 점검 | P0-10의 확장(임시 stderr 경고 → 정식 서브커맨드) | `bash setup.sh --doctor` 실행 시 각 항목 OK/WARN/FAIL 출력, 누락 시나리오 픽스처로 검증 — ✅ 실측(2026-07-05, `bb393d8`): 이 머신에서 `doctor: 9 pass, 0 warn, 0 fail`, 픽스처 3종(클린 레포/gitleaks 부재/훅 실행권한 결여) 전부 통과 | S–M |
+| P1-8 부분 완료 2026-07-05 (신설) | hook-config.yml 실배선 — `risk_areas:`/`resources:`를 런타임에 실제로 읽게 만들거나(최소한 `templates/hook-config.yml.template`에 `hook_config.py`가 실제 소비하는 `secret_patterns`/`exempt_paths`/`credential_key_names` 스키마를 포함시켜), 문서상 선언과 실제 로더 사이 간극을 좁힌다 | 격차 #9 | 템플릿의 키가 통합 테스트에서 실제로 소비됨을 증명(예: `core/tests/hook-config-test.sh` 확장) — 스키마 출하+소비 증명 테스트 ✅ 2026-07-05(`2ab9428`, 템플릿에 `LIVE-SCHEMA-EXAMPLE` 블록 + `hook-config-test.sh` case h 드리프트 가드); `risk_areas:`/`resources:`/`hardcoding:`를 실제 훅 런타임에 배선하는 잔여 작업은 미완료 | M–L |
 
 ### 4.3 P2 — 자율 개선 루프 (v0.3.x, §5 설계의 구현)
 
@@ -232,6 +232,7 @@ P0-1 ~ P0-11 (최초 7건 반나절 + 훅 감사 배치 4건 2026-07-04)  → v0
 - P2 착수 전 게이트: `bash core/tests/verify-all.sh` green + doc-reality green.
 - **H/W 시리즈 편입 (2026-07-04)**: W-7(가드 오탐, S)은 P0급 위생으로 즉시 착수 가능. H-1·W-3·W-4는 P1과 병행(v0.3.0 트랙). H-2는 P1-1 완료 후, H-3은 P2-2와 채점 규약 공유(v0.3.x). H-4·W-1·W-2·W-6·W-8·W-9는 v0.3.x. W-5는 개인 레이어에서 진행(repo 마일스톤 밖).
 - **2026-07-04 감사 배치**: P0 시리즈 전체(P0-1~P0-11) 완료 — 훅 배선 버그 3건(P0-8/9/11) + 환경 경고 1건(P0-10) 포함.
+- **2026-07-05 P1 배치**: P1-4(dispatch-not-advise) · P1-7(--doctor) 출하, P1-8(hook-config 실로더 스키마) 부분 출하(스키마+소비 증명 테스트, 런타임 배선은 잔여).
 
 ## 7. 이 문서 자체의 검증
 
