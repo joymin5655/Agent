@@ -8,6 +8,9 @@ made by the hook, not suggested to the model. This dispatcher:
   1. UserPromptSubmit — matches the prompt against each registry agent's
      `matches.keywords` (word-boundary, case-insensitive). A real match records a
      short-lived intent (30-min TTL) in .agent/state/supervisor-intent.json.
+     Keywords MUST be domain anchors, not generic tokens (specialist-routing Lesson 1):
+     a phrase a consumer writes as often as an author (bare "review", "auth") cross-domain
+     false-matches, so the shipped registry uses multi-word anchors ("review this diff").
   2. PreToolUse (Write/Edit/MultiEdit) — if a fresh, un-asked intent exists, returns a
      `permissionDecision: "ask"` naming the specialist (once per intent, no repeat nag).
      A separate security matcher asks on `matches.file_globs` for the tool, independent
@@ -108,7 +111,9 @@ def save_state(root: pathlib.Path, state: dict) -> None:
     p = state_path(root)
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps(state), encoding="utf-8")
+        tmp = p.with_name(p.name + ".tmp")
+        tmp.write_text(json.dumps(state), encoding="utf-8")
+        os.replace(tmp, p)  # atomic — a torn write must never corrupt the intent file
     except Exception:
         pass
 
@@ -118,6 +123,12 @@ def delete_state(root: pathlib.Path) -> None:
         state_path(root).unlink()
     except Exception:
         pass
+
+
+def clear_intent(state: dict) -> None:
+    """Drop the intent fields, leaving security_asked_paths (independent dedup) intact."""
+    for k in ("ts", "specialist", "keyword", "asked"):
+        state.pop(k, None)
 
 
 def intent_expired(state: dict) -> bool:
@@ -248,8 +259,7 @@ def handle_pre(root: pathlib.Path, data: dict) -> bytes:
 
     # Expire a stale intent before reading it (keep any security_asked_paths).
     if state.get("ts") and intent_expired(state):
-        for k in ("ts", "specialist", "keyword", "asked"):
-            state.pop(k, None)
+        clear_intent(state)
         save_state(root, state)
 
     # (a) intent-based ask — once per intent. Intent was ghost-filtered at UPS time.
@@ -328,7 +338,13 @@ def handle_post(root: pathlib.Path, data: dict) -> bytes:
 
     sub_norm = subagent.split(":")[-1]  # namespace-agnostic: x:code-reviewer -> code-reviewer
     if sub_norm in targets or subagent in targets:
-        delete_state(root)
+        # Resolve the intent only — keep security_asked_paths so a sensitive path
+        # already vetted this session isn't re-asked after an unrelated dispatch.
+        clear_intent(state)
+        if state.get("security_asked_paths"):
+            save_state(root, state)
+        else:
+            delete_state(root)
         log_event(root, "PostToolUse", tool, action="dispatched", specialist=specialist)
     return b""
 

@@ -6,7 +6,7 @@
       "id": "code-reviewer",
       "description": "Reviews diffs for quality, correctness, security, performance.",
       "matches": {
-        "keywords": ["review", "check this code", "code review", "look over"],
+        "keywords": ["code review", "review this code", "review this diff", "review the diff", "check this code"],
         "tools": [],
         "file_globs": []
       },
@@ -18,8 +18,8 @@
       "id": "security-reviewer",
       "description": "Audits for OWASP Top 10, secret exposure, auth/authz bugs.",
       "matches": {
-        "keywords": ["security", "auth", "owasp", "vulnerability", "secret leak"],
-        "tools": ["Write", "Edit"],
+        "keywords": ["security review", "security audit", "owasp", "vulnerability", "secret leak"],
+        "tools": ["Write", "Edit", "MultiEdit"],
         "file_globs": ["**/auth/**", "**/secrets/**", "**/.env*"]
       },
       "aliases": [],
