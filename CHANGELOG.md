@@ -40,6 +40,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `core/tests/setup-doctor-test.sh` (clean-repo exit 0, gitleaks WARN under a
   restricted PATH, exit 1 + named FAIL line when a hook loses its executable
   bit — exercised against a throwaway `mktemp` copy, never the real tree).
+- `templates/hook-config.yml.template` (P1-8 partial) — ships the real,
+  dynamically-loaded `python_hooks:` schema (`core/hooks/hook_config.py`) as a
+  commented example, bracketed by `LIVE-SCHEMA-EXAMPLE-BEGIN`/`END` markers,
+  clearly labeled as the ONE block in the file actually read at runtime —
+  distinct from the `risk_areas:`/`resources:`/`hardcoding:` blocks above it,
+  which remain declarative-only (docs/customization.md part 2). New drift-guard
+  case in `core/tests/hook-config-test.sh` (case h) extracts and uncomments
+  that example into a real `.agent/hook-config.yml` and round-trips it through
+  `hook_config.load_extensions()`, so template and loader can't silently drift
+  apart. `docs/customization.md` cross-references the new template section.
 - `.github/workflows/ci.yml` — CI: gitleaks secret scan + plugin manifest/hook/agent validation + sanitize gate
 - README portfolio polish: badges, Mermaid architecture diagram, agent/skill/hook catalog
 - `README.ko.md` — Korean mirror of the README (same sections, localized prose)
