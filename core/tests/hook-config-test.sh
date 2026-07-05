@@ -17,6 +17,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 HOOK="$REPO_ROOT/core/hooks/secret-content-scan.py"
 CONFIG_DIR="$REPO_ROOT/.agent"
 CONFIG_JSON="$CONFIG_DIR/hook-config.json"
+CONFIG_YML="$CONFIG_DIR/hook-config.yml"
 
 PASS=0
 FAIL=0
@@ -25,16 +26,21 @@ FAIL=0
 SK_TOKEN="sk-$(printf 'A%.0s' $(seq 1 45))"          # sk- + 45 'A' → built-in API key pattern
 MYCO_TOKEN="myco_secret_$(printf 'B%.0s' $(seq 1 24))"  # matches the custom config regex
 
-# Track whether the repo already had an .agent/hook-config.json so we never
-# clobber a real one. We only create/remove our own temp file.
+# Track whether the repo already had an .agent/hook-config.{json,yml} so we
+# never clobber a real one. We only create/remove our own temp files.
 PREEXISTING_CONFIG=0
 [[ -f "$CONFIG_JSON" ]] && PREEXISTING_CONFIG=1
+PREEXISTING_YML=0
+[[ -f "$CONFIG_YML" ]] && PREEXISTING_YML=1
 HAD_AGENT_DIR=0
 [[ -d "$CONFIG_DIR" ]] && HAD_AGENT_DIR=1
 
 cleanup() {
   if [[ "$PREEXISTING_CONFIG" -eq 0 && -f "$CONFIG_JSON" ]]; then
     rm -f "$CONFIG_JSON"
+  fi
+  if [[ "$PREEXISTING_YML" -eq 0 && -f "$CONFIG_YML" ]]; then
+    rm -f "$CONFIG_YML"
   fi
   if [[ "$HAD_AGENT_DIR" -eq 0 && -d "$CONFIG_DIR" ]]; then
     rmdir "$CONFIG_DIR" 2>/dev/null || true
@@ -44,6 +50,10 @@ trap cleanup EXIT
 
 if [[ "$PREEXISTING_CONFIG" -eq 1 ]]; then
   echo "FAIL — a real $CONFIG_JSON exists; refusing to overwrite. Aborting test."
+  exit 1
+fi
+if [[ "$PREEXISTING_YML" -eq 1 ]]; then
+  echo "FAIL — a real $CONFIG_YML exists; refusing to overwrite. Aborting test."
   exit 1
 fi
 mkdir -p "$CONFIG_DIR"
@@ -156,6 +166,42 @@ run_case "redos-config-builtin-still-deny" \
   "{\"event\":\"PreToolUse\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"app/config.ts\",\"content\":\"k = '${SK_TOKEN}'\"}}" \
   deny
 rm -f "$CONFIG_JSON"
+
+echo "=== (h) template's live-schema example is loader-consumable (drift guard) ==="
+# templates/hook-config.yml.template ships a commented python_hooks: example
+# bracketed by LIVE-SCHEMA-EXAMPLE-BEGIN/END markers. Extract it, uncomment
+# it into a real .agent/hook-config.yml, and load it through
+# hook_config.load_extensions() directly (bypassing the hook subprocess,
+# since PyYAML is an optional dependency). If the template's example ever
+# drifts out of sync with what hook_config.py actually parses, this fails.
+TEMPLATE="$REPO_ROOT/templates/hook-config.yml.template"
+if ! python3 -c "import yaml" 2>/dev/null; then
+  echo "  skip [live-schema-example] PyYAML not importable — .yml loading is optional, not exercised here"
+else
+  sed -n '/LIVE-SCHEMA-EXAMPLE-BEGIN/,/LIVE-SCHEMA-EXAMPLE-END/p' "$TEMPLATE" \
+    | sed -e '/LIVE-SCHEMA-EXAMPLE-BEGIN/d' -e '/LIVE-SCHEMA-EXAMPLE-END/d' -e 's/^# \{0,1\}//' \
+    > "$CONFIG_YML"
+
+  LOAD_OUT=$(python3 - "$REPO_ROOT" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1] + "/core/hooks")
+import hook_config
+print(hook_config.load_extensions(sys.argv[1]))
+PY
+  )
+
+  if [[ "$LOAD_OUT" == *"myservice_(live|test)_[a-zA-Z0-9_-]{32,}"* \
+     && "$LOAD_OUT" == *"MyService API token"* \
+     && "$LOAD_OUT" == *"vendor/fixtures/"* \
+     && "$LOAD_OUT" == *"MYSERVICE_TOKEN"* ]]; then
+    echo "  ok   [live-schema-example] template example round-trips through hook_config.load_extensions()"
+    PASS=$((PASS + 1))
+  else
+    echo "  FAIL [live-schema-example] template example did not load as expected :: $LOAD_OUT"
+    FAIL=$((FAIL + 1))
+  fi
+  rm -f "$CONFIG_YML"
+fi
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="

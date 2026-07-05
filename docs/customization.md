@@ -25,6 +25,14 @@ never remove or weaken a built-in, never flip `deny` to `allow`.
 - File: `.agent/hook-config.yml` (requires PyYAML; skipped entirely if absent)
   or `.agent/hook-config.json`, at the resolved repo root. Both are read if
   both exist; their lists are concatenated.
+- `templates/hook-config.yml.template` (the file `setup.sh --project` scaffolds
+  to your project root) now ships this exact schema as a commented
+  `python_hooks:` example at its bottom, bracketed by
+  `LIVE-SCHEMA-EXAMPLE-BEGIN`/`END` markers — uncomment it and copy the
+  project-root file to `.agent/hook-config.yml` to activate. A drift-guard
+  test (`core/tests/hook-config-test.sh` case h) round-trips that exact
+  example through `hook_config.load_extensions()`, so the template and the
+  loader can't silently fall out of sync.
 - Repo root resolution: `$AGENT_PROJECT_DIR` env var, else `$CLAUDE_PROJECT_DIR`,
   else `git rev-parse --show-toplevel`. There is no `$AGENT_HOOK_CONFIG` env
   var and no upward directory walk — those apply only to the aspirational
