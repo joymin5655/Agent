@@ -7,8 +7,11 @@
 #   - the next Write/Edit raises a `permissionDecision: "ask"` naming the specialist
 #   - the ask fires ONCE per intent (no repeat nag)
 #   - dispatching the specialist (Task/Agent) resolves the intent (namespace-agnostic)
+#     and preserves the security_asked_paths dedup (M-2)
 #   - ghost specialists (registry id with no sibling <id>.md) never ask — stderr hint only
-#   - a security file-glob matcher asks independently of intent, once per path
+#   - a security file-glob matcher asks independently of intent, once per path (Write/Edit/MultiEdit)
+#   - domain-anchored keywords do NOT false-match generic "review" sentences (Lesson 1)
+#   - native Claude Code field shapes (hook_event_name / prompt) work via fallbacks (M-4)
 #   - AGENT_SUPERVISOR_MODE=observe downgrades ask -> stderr
 #   - broken stdin / absent registry is fail-open (exit 0, empty stdout)
 #
@@ -231,6 +234,37 @@ run_hook "$F10" "$(ups_event 'please review this code')"
 assert_rc_zero      "10-no-registry"
 assert_empty_stdout "10-no-registry"
 assert_no_state     "10-no-registry" "$F10"
+
+echo "=== 11. Lesson 1: generic 'review' sentences do NOT match (domain anchors) ==="
+F11="$(make_default_fixture)"
+run_hook "$F11" "$(ups_event 'review my plan for tomorrow')"
+assert_no_state "11-plan" "$F11"
+run_hook "$F11" "$(ups_event 'let me review the options')"
+assert_no_state "11-options" "$F11"
+
+echo "=== 12. M-2: dispatch clears intent but preserves security dedup ==="
+F12="$(make_default_fixture)"
+run_hook "$F12" "$(pre_event Write 'src/auth/login.ts')"
+assert_stdout_has "12-sec-ask" 'security-reviewer'
+run_hook "$F12" "$(ups_event 'please review this code')"
+run_hook "$F12" "$(post_event 'code-reviewer')"
+assert_state_exists "12-sec-preserved" "$F12" 'security_asked_paths'
+run_hook "$F12" "$(pre_event Write 'src/auth/login.ts')"
+assert_empty_stdout "12-sec-still-deduped"
+
+echo "=== 13. M-3: MultiEdit on **/auth/** triggers security ask (tools include MultiEdit) ==="
+F13="$(make_default_fixture)"
+run_hook "$F13" "$(pre_event MultiEdit 'src/auth/session.ts')"
+assert_stdout_has "13-multiedit-ask" '"permissionDecision": "ask"'
+assert_stdout_has "13-multiedit-ask" 'security-reviewer'
+
+echo "=== 14. M-4: native shape (hook_event_name + prompt) records intent + native ask ==="
+F14="$(make_default_fixture)"
+run_hook "$F14" '{"hook_event_name":"UserPromptSubmit","prompt":"please review this code"}'
+assert_state_exists "14-native-intent" "$F14" "code-reviewer"
+run_hook "$F14" '{"hook_event_name":"PreToolUse","tool_name":"Edit","tool_input":{"file_path":"src/widget.ts"}}'
+assert_stdout_has "14-native-ask" '"permissionDecision": "ask"'
+assert_stdout_has "14-native-ask" 'code-reviewer'
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="

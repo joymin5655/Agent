@@ -63,6 +63,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   honestly NOT guaranteed identical across models
 
 ### Changed
+- `agents/master-registry.json` — supervisor keyword matchers hardened to domain
+  anchors (review follow-up, MAJOR-1; specialist-routing Lesson 1). code-reviewer
+  drops bare `review`/`look over` for multi-word phrases (`code review`,
+  `review this diff`, …); security-reviewer drops bare `security`/`auth` for
+  `security review`/`security audit`/`owasp`/… — generic tokens a consumer writes as
+  often as an author (`review my plan`, `the auth flow`) no longer false-route a
+  specialist. `security-reviewer.matches.tools` gains `MultiEdit` (aligns with the
+  `Write|Edit|MultiEdit` hook wiring); `file_globs` (path anchors) unchanged. Default
+  mode stays `dispatch` — only the match surface narrowed, not the enforcement.
 - `core/hooks/README.md` — `supervisor.py` moved from the deferred-roadmap "generic
   stub" row to the shipped-hooks table as the v0.2 minimal dispatcher; the roadmap row
   now scopes the remaining deferral to the full 54KB registry-aware orchestrator
