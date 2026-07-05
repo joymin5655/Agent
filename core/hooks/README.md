@@ -20,6 +20,7 @@ AI-agnostic hook implementations. Each script reads a canonical event JSON from 
 | `session-init.py` | SessionStart | Surface project agent inventory + cleanup per-session flags |
 | `session-close.sh` | Stop | Session cleanup + broadcast done + optional macOS notification |
 | `plan-gate.py` | PostToolUse (Agent + ExitPlanMode) | Set plan-approval flag after plan-class agent or ExitPlanMode |
+| `supervisor.py` | UserPromptSubmit + PreToolUse (Write/Edit/MultiEdit) + PostToolUse (Task/Agent) | v0.2 minimal dispatcher — records a registry-keyword intent, `ask`s on the next edit (once), resolves on specialist dispatch; independent security file-glob matcher; ghost→executor fallback; `AGENT_SUPERVISOR_MODE=observe` downgrades to stderr |
 
 ## Roadmap — v0.2.0 ports
 
@@ -30,7 +31,7 @@ The following hooks exist in the prior project but are deferred because they req
 
 | Deferred hook | Reason | Equivalent v0.1.0 substitute |
 |---|---|---|
-| `supervisor.py` (54KB original) | Project-specific registry + dispatch routing | Generic stub provided — see `supervisor.py` |
+| `supervisor.py` (54KB original) | Full registry-aware orchestrator — intent classifier + multi-dept fan-out | v0.2 minimal dispatcher shipped (keyword intent + `ask` + dispatch-resolve + security glob); the full 54KB orchestrator remains deferred |
 | `memory-explore-verify.py` | Needs `_memory_drift_patterns.py` catalog rewrite | Manual code-review for memory writes |
 | `policy-drift-watch.py` | Path-list specific to source project | None — projects implement their own drift watch via `hook-config.yml: memory_protected_paths` |
 | `claude-mem-watch.py` | Tied to Claude-Mem plug-in (third-party) | None — Claude-Mem users can install the plug-in's own hook |
