@@ -9,29 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - `core/infra/telemetry-digest.sh` (P1-5) — pillar④ janitor step 1: reads
-  `.agent/logs/supervisor.jsonl` (path arg, or `$AGENT_TELEMETRY_LOG`, or
-  `<repo-root>/.agent/logs/supervisor.jsonl`) and reports action counts, a
-  per-specialist funnel (match → ask → dispatched, with conversion %), top
-  keywords by match count, and a rule-candidate section with three heuristics
-  derived only from what `supervisor.py` already logs: `NO-ACCEPT` (a
-  specialist was asked `ask-intent`+`ask-security` ≥3 times but never
-  `dispatched` — specialist-routing.md Lesson 1), `GHOST` (a specialist logged
-  `action=="ghost"` — registry references an agent id with no sibling
-  `agents/<id>.md`), and `OVER-GENERAL` (a single keyword accounts for >70% of
-  all `match` records, once total matches ≥3). `--window <days>` (default 30)
-  scopes records by `ts`; `--json` emits a machine-parseable JSON blob instead
-  of the human report. Known limitation, documented in the header: NO-ACCEPT
-  can't fire under `AGENT_SUPERVISOR_MODE=observe` (it logs
-  `observe-intent`/`observe-security` instead, which aren't counted).
-  Dependencies are bash + python3 only — no `jq` (an earlier draft used `jq`,
-  which contradicts `setup.sh --doctor`'s own WARN-tier/optional stance on
-  it; JSON parsing runs through an embedded python3 heredoc instead). Always
-  exits 0 (observer, not a gate) — a malformed line, a missing file, or an
-  internal error degrades to a zeroed/"inactive" report rather than failing.
-  Reproduce suite: `core/tests/telemetry-digest-test.sh` (18 scenarios:
-  action-count accuracy, funnel notation, all three rule candidates,
-  malformed-line skip counting, `--window` filtering, missing-log handling,
-  `--json` output validity).
+  `.agent/logs/supervisor.jsonl` (or an explicit path/`$AGENT_TELEMETRY_LOG`) and
+  reports action counts, per-specialist counts, and a rule-candidate section with
+  two heuristics derived only from what `supervisor.py` already logs: `GHOST`
+  (a specialist logged `action=="ghost"` — registry references an agent id with
+  no sibling `agents/<id>.md`) and `NO-ACCEPT` (a specialist was asked
+  `ask-intent`+`ask-security` >= `$AGENT_TELEMETRY_MIN_ASKS` (default 3) times but
+  was never `dispatched` — message names `matches.keywords` and/or
+  `matches.file_globs` depending on which term actually drove the count,
+  specialist-routing.md Lesson 1). Known limitation, documented in the header:
+  NO-ACCEPT can't fire under `AGENT_SUPERVISOR_MODE=observe` (it logs
+  `observe-intent`/`observe-security` instead, which aren't counted). Read-only,
+  no side effects; a malformed or non-object-but-valid-JSON log line is dropped
+  rather than fatal (`jq -R -c 'fromjson? // empty | select(type == "object")'`
+  parses one line at a time — a single `jq .` pass over the whole file aborts on
+  the first parse error and silently drops every line after it). Reproduce
+  suite: `core/tests/telemetry-digest-test.sh` (21 scenarios: missing log, empty
+  log, known-sample stats + both rule candidates, malformed-line resilience,
+  `AGENT_TELEMETRY_MIN_ASKS` override, non-object-JSON resilience).
 - `core/hooks/supervisor.py` v0.2 — minimal **dispatch-not-advise** router (P1-4).
   Replaces the observation-only v0.1 stub. On `UserPromptSubmit` it word-boundary
   matches the prompt against each registry agent's `matches.keywords` and records a
