@@ -142,11 +142,8 @@ echo "=== legacy v0.1 record (object without action field) -> unknown bucket, no
 [[ "$OUT_A" == *"unknown: 1"* ]]
 check "legacy-record-lands-in-unknown-bucket" $?
 # Still exactly 1 skipped line (the garbage one) — the legacy record is valid JSON.
-if [[ "$OUT_A" == *"skipped"*"2"* || "$OUT_A" == *"2"*"skipped"* ]]; then
-  check "legacy-record-not-counted-as-skipped" 1
-else
-  check "legacy-record-not-counted-as-skipped" 0
-fi
+[[ "$OUT_A" == *"skipped malformed: 1"* ]]
+check "legacy-record-not-counted-as-skipped" $?
 # And it must not surface as any rule candidate.
 if [[ "$OUT_A" == *"legacy1"* ]]; then
   check "legacy-record-no-rule-candidate" 1
