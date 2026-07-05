@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `core/hooks/supervisor.py` v0.2 — minimal **dispatch-not-advise** router (P1-4).
+  Replaces the observation-only v0.1 stub. On `UserPromptSubmit` it word-boundary
+  matches the prompt against each registry agent's `matches.keywords` and records a
+  30-min TTL intent in `.agent/state/supervisor-intent.json`; the next
+  Write/Edit/MultiEdit then returns `permissionDecision: "ask"` naming the specialist
+  (once per intent — no repeat nag), and dispatching that specialist via Task/Agent
+  (namespace-agnostic: `x:code-reviewer` resolves `code-reviewer`) clears the intent.
+  A separate security matcher `ask`s on `matches.file_globs` for the tool, independent
+  of intent, once per path. Ghost specialists (a registry id with no sibling `<id>.md`)
+  never `ask` — stderr hint + `{"action":"ghost"}` log only (specialist-routing Lesson 2).
+  `AGENT_SUPERVISOR_MODE=observe` downgrades every `ask` to stderr; any exception is
+  fail-open (exit 0, empty stdout). Wired into `hooks/hooks.json` on all three events.
+  Reproduce suite: `core/tests/supervisor-dispatch-test.sh` (10 scenarios).
 - `session-init` now warns (stderr only) when `gitleaks` or `git` is missing from
   PATH — a mini env-doctor surfacing a degraded secret-scan setup at session start.
   Silent when both are present; never blocks the session or writes stdout. A full
@@ -25,6 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   honestly NOT guaranteed identical across models
 
 ### Changed
+- `core/hooks/README.md` — `supervisor.py` moved from the deferred-roadmap "generic
+  stub" row to the shipped-hooks table as the v0.2 minimal dispatcher; the roadmap row
+  now scopes the remaining deferral to the full 54KB registry-aware orchestrator
 - README rewritten for first-time readers: concept primer table, install-path chooser
   (plugin vs shell), prerequisites section (incl. previously undocumented `python3`
   dependency), "See it work" example, 4-layer architecture summary, trimmed layout tree
