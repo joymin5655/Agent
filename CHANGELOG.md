@@ -8,10 +8,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `core/hooks/supervisor.py` v0.2 — minimal **dispatch-not-advise** router (P1-4).
+  Replaces the observation-only v0.1 stub. On `UserPromptSubmit` it word-boundary
+  matches the prompt against each registry agent's `matches.keywords` and records a
+  30-min TTL intent in `.agent/state/supervisor-intent.json`; the next
+  Write/Edit/MultiEdit then returns `permissionDecision: "ask"` naming the specialist
+  (once per intent — no repeat nag), and dispatching that specialist via Task/Agent
+  (namespace-agnostic: `x:code-reviewer` resolves `code-reviewer`) clears the intent.
+  A separate security matcher `ask`s on `matches.file_globs` for the tool, independent
+  of intent, once per path. Ghost specialists (a registry id with no sibling `<id>.md`)
+  never `ask` — stderr hint + `{"action":"ghost"}` log only (specialist-routing Lesson 2).
+  `AGENT_SUPERVISOR_MODE=observe` downgrades every `ask` to stderr; any exception is
+  fail-open (exit 0, empty stdout). Wired into `hooks/hooks.json` on all three events.
+  Reproduce suite: `core/tests/supervisor-dispatch-test.sh` (10 scenarios).
 - `session-init` now warns (stderr only) when `gitleaks` or `git` is missing from
   PATH — a mini env-doctor surfacing a degraded secret-scan setup at session start.
-  Silent when both are present; never blocks the session or writes stdout. A full
-  `--doctor` subcommand remains future work.
+  Silent when both are present; never blocks the session or writes stdout.
+- `setup.sh --doctor` (P1-7) — full environment diagnosis, read-only, zero install
+  side effects. Checks: `git` present; `python3` >= 3.9 (README-declared floor,
+  with version + path); `gitleaks` present (WARN if not — secret-scan git hook
+  skips); `jq` present only if a `core/hooks/*.sh` script actually shells out to
+  it (WARN if used-but-missing); every `core/hooks/*.sh`/`*.py` has its
+  executable bit (`hook_config.py` exempt — a library module imported by
+  `secret-content-scan.py`, never invoked directly); every `adapters/*/adapter.sh`
+  is executable; `agents/master-registry.json` parses and every entry's `model`
+  matches its sibling `agents/<id>.md` frontmatter (same drift guard as CI);
+  `hooks/hooks.json` parses and every referenced hook script exists and is
+  executable; `~/.agent/plans` exists (WARN + `mkdir` hint if not). Prints a
+  `[PASS|WARN|FAIL]` row per check plus a `doctor: N pass, N warn, N fail`
+  summary line; exits 1 iff any check FAILs. Reproduce suite:
+  `core/tests/setup-doctor-test.sh` (clean-repo exit 0, gitleaks WARN under a
+  restricted PATH, exit 1 + named FAIL line when a hook loses its executable
+  bit — exercised against a throwaway `mktemp` copy, never the real tree).
+- `templates/hook-config.yml.template` (P1-8 partial) — ships the real,
+  dynamically-loaded `python_hooks:` schema (`core/hooks/hook_config.py`) as a
+  commented example, bracketed by `LIVE-SCHEMA-EXAMPLE-BEGIN`/`END` markers,
+  clearly labeled as the ONE block in the file actually read at runtime —
+  distinct from the `risk_areas:`/`resources:`/`hardcoding:` blocks above it,
+  which remain declarative-only (docs/customization.md part 2). New drift-guard
+  case in `core/tests/hook-config-test.sh` (case h) extracts and uncomments
+  that example into a real `.agent/hook-config.yml` and round-trips it through
+  `hook_config.load_extensions()`, so template and loader can't silently drift
+  apart. `docs/customization.md` cross-references the new template section.
 - `.github/workflows/ci.yml` — CI: gitleaks secret scan + plugin manifest/hook/agent validation + sanitize gate
 - README portfolio polish: badges, Mermaid architecture diagram, agent/skill/hook catalog
 - `README.ko.md` — Korean mirror of the README (same sections, localized prose)
@@ -25,6 +63,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   honestly NOT guaranteed identical across models
 
 ### Changed
+- `agents/master-registry.json` — supervisor keyword matchers hardened to domain
+  anchors (review follow-up, MAJOR-1; specialist-routing Lesson 1). code-reviewer
+  drops bare `review`/`look over` for multi-word phrases (`code review`,
+  `review this diff`, …); security-reviewer drops bare `security`/`auth` for
+  `security review`/`security audit`/`owasp`/… — generic tokens a consumer writes as
+  often as an author (`review my plan`, `the auth flow`) no longer false-route a
+  specialist. `security-reviewer.matches.tools` gains `MultiEdit` (aligns with the
+  `Write|Edit|MultiEdit` hook wiring); `file_globs` (path anchors) unchanged. Default
+  mode stays `dispatch` — only the match surface narrowed, not the enforcement.
+- `core/hooks/README.md` — `supervisor.py` moved from the deferred-roadmap "generic
+  stub" row to the shipped-hooks table as the v0.2 minimal dispatcher; the roadmap row
+  now scopes the remaining deferral to the full 54KB registry-aware orchestrator
 - README rewritten for first-time readers: concept primer table, install-path chooser
   (plugin vs shell), prerequisites section (incl. previously undocumented `python3`
   dependency), "See it work" example, 4-layer architecture summary, trimmed layout tree

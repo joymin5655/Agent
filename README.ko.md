@@ -61,6 +61,9 @@
 - `gitleaks` 8+ — 시크릿 스캔. 없으면 훅은 시크릿 스캔 단계를 건너뜁니다(CI에서는 여전히 강제).
 - `gh` 2.0+ — 레포 작업과 `auto-ship.sh`용.
 
+`bash setup.sh --doctor`로 위 항목 + 훅/어댑터 실행권한 + 레지스트리 정합성을 언제든
+점검할 수 있습니다 — 읽기 전용, 설치 부작용 없음.
+
 ## 빠른 시작
 
 설치 경로는 두 가지 — 둘 다 같은 코어를 설치합니다:
@@ -278,6 +281,9 @@ bash core/tests/adapter-parity.sh
 # 4) config parsing + autosync hook
 bash core/tests/hook-config-test.sh
 bash core/tests/post-commit-autosync-test.sh
+
+# 5) environment diagnosis — read-only, no installs
+bash setup.sh --doctor
 ```
 
 ## 커스터마이즈

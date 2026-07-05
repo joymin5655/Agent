@@ -9,6 +9,7 @@
 #   bash setup.sh --project        # +current project scaffold (CLAUDE.md, hook-config.yml, etc.)
 #   bash setup.sh --hooks-only     # install git-hooks (pre-commit, pre-push) only
 #   bash setup.sh --all            # alias for default (all 3 AIs)
+#   bash setup.sh --doctor         # environment diagnosis only — no installs, read-only
 #
 # Combinations OK:
 #   bash setup.sh --claude --project
@@ -23,6 +24,7 @@ DO_CODEX=0
 DO_GEMINI=0
 DO_PROJECT=0
 DO_HOOKS=0
+DO_DOCTOR=0
 
 if [[ $# -eq 0 ]]; then
     DO_CLAUDE=1
@@ -37,6 +39,7 @@ for arg in "$@"; do
         --gemini)      DO_GEMINI=1 ;;
         --project)     DO_PROJECT=1 ;;
         --hooks-only)  DO_HOOKS=1 ;;
+        --doctor)      DO_DOCTOR=1 ;;
         --all)         DO_CLAUDE=1; DO_CODEX=1; DO_GEMINI=1 ;;
         -h|--help)
             sed -n '3,16p' "$0" | sed 's/^# \{0,1\}//'
@@ -190,11 +193,203 @@ install_git_hooks() {
 }
 
 # ---------------------------------------------------------------------------
+# Environment diagnosis (--doctor) — pure read-only checks, no side effects.
+# ---------------------------------------------------------------------------
+doctor() {
+    local hooks_dir="$FRAMEWORK_ROOT/core/hooks"
+    local -a rows=()
+    local pass=0 warn=0 fail=0
+
+    add_row() {
+        rows+=("$1|$2")
+        case "$1" in
+            PASS) pass=$((pass + 1)) ;;
+            WARN) warn=$((warn + 1)) ;;
+            FAIL) fail=$((fail + 1)) ;;
+        esac
+    }
+
+    # 1. git
+    if command -v git >/dev/null 2>&1; then
+        add_row PASS "git — $(git --version)"
+    else
+        add_row FAIL "git — not found"
+    fi
+
+    # 2. python3 >= 3.9 (README-declared floor)
+    if command -v python3 >/dev/null 2>&1; then
+        local py_path py_ver
+        py_path="$(command -v python3)"
+        py_ver="$(python3 --version 2>&1)"
+        if python3 -c 'import sys; sys.exit(0 if sys.version_info[:2] >= (3, 9) else 1)' 2>/dev/null; then
+            add_row PASS "python3 — $py_ver at $py_path (>= 3.9 required)"
+        else
+            add_row FAIL "python3 — $py_ver at $py_path (< 3.9 required by README)"
+        fi
+    else
+        add_row FAIL "python3 — not found (>= 3.9 required by README)"
+    fi
+
+    # 3. gitleaks (optional — hooks skip secret-scan without it, CI still enforces)
+    if command -v gitleaks >/dev/null 2>&1; then
+        add_row PASS "gitleaks — $(command -v gitleaks)"
+    else
+        add_row WARN "gitleaks — not found; secret-scan git hook will be skipped. Install: brew install gitleaks"
+    fi
+
+    # 4. jq — only relevant if a bash hook actually shells out to it
+    local jq_users
+    jq_users="$( { grep -l 'jq ' "$hooks_dir"/*.sh 2>/dev/null || true; } | xargs -n1 basename 2>/dev/null | paste -sd, - )"
+    if [[ -n "$jq_users" ]]; then
+        if command -v jq >/dev/null 2>&1; then
+            add_row PASS "jq — $(command -v jq) (used by: $jq_users)"
+        else
+            add_row WARN "jq — not found but used by: $jq_users"
+        fi
+    else
+        add_row PASS "jq — not required (no core/hooks/*.sh shells out to it)"
+    fi
+
+    # 5. core/hooks/*.sh + *.py executable. hook_config.py is a library module
+    #    imported by secret-content-scan.py (never invoked directly as a hook
+    #    process) and is intentionally exempt from this check.
+    local lib_only=("hook_config.py")
+    local not_exec=() f base skip m
+    for f in "$hooks_dir"/*.sh "$hooks_dir"/*.py; do
+        [[ -f "$f" ]] || continue
+        base="$(basename "$f")"
+        skip=0
+        for m in "${lib_only[@]}"; do
+            [[ "$base" == "$m" ]] && skip=1
+        done
+        [[ $skip -eq 1 ]] && continue
+        [[ -x "$f" ]] || not_exec+=("$base")
+    done
+    if [[ ${#not_exec[@]} -eq 0 ]]; then
+        add_row PASS "core/hooks/*.sh,*.py — all executable"
+    else
+        add_row FAIL "core/hooks/*.sh,*.py — not executable: $(IFS=,; echo "${not_exec[*]}")"
+    fi
+
+    # 6. adapters/*/adapter.sh executable
+    local not_exec_adapters=()
+    for f in "$FRAMEWORK_ROOT"/adapters/*/adapter.sh; do
+        [[ -f "$f" ]] || continue
+        [[ -x "$f" ]] || not_exec_adapters+=("${f#$FRAMEWORK_ROOT/}")
+    done
+    if [[ ${#not_exec_adapters[@]} -eq 0 ]]; then
+        add_row PASS "adapters/*/adapter.sh — all executable"
+    else
+        add_row FAIL "adapters/*/adapter.sh — not executable: $(IFS=,; echo "${not_exec_adapters[*]}")"
+    fi
+
+    # 7. agents/master-registry.json parses; every id has a sibling agents/<id>.md;
+    #    each md's `model:` frontmatter matches the registry (same drift guard as CI).
+    local reg_out reg_rc
+    if reg_out="$(FRAMEWORK_ROOT="$FRAMEWORK_ROOT" python3 - <<'PY' 2>&1
+import json, os, pathlib, re, sys
+root = pathlib.Path(os.environ["FRAMEWORK_ROOT"])
+try:
+    reg = json.loads((root / "agents" / "master-registry.json").read_text(encoding="utf-8"))
+except Exception as e:
+    print(f"registry parse failed: {e}")
+    sys.exit(1)
+problems = []
+for entry in reg.get("agents", []):
+    aid, rmodel = entry.get("id"), entry.get("model")
+    md = root / "agents" / f"{aid}.md"
+    if not md.exists():
+        problems.append(f"id '{aid}' has no agents/{aid}.md")
+        continue
+    parts = md.read_text(encoding="utf-8").split("---", 2)
+    mm = re.search(r"(?m)^model:\s*(\S+)", parts[1]) if len(parts) >= 3 else None
+    mdmodel = mm.group(1) if mm else None
+    if rmodel != mdmodel:
+        problems.append(f"model drift: '{aid}' registry={rmodel} md={mdmodel}")
+if problems:
+    print("; ".join(problems))
+    sys.exit(1)
+print(f"{len(reg.get('agents', []))} agents OK")
+PY
+    )"; then
+        reg_rc=0
+    else
+        reg_rc=$?
+    fi
+    if [[ $reg_rc -eq 0 ]]; then
+        add_row PASS "agents/master-registry.json — $reg_out"
+    else
+        add_row FAIL "agents/master-registry.json — $reg_out"
+    fi
+
+    # 8. hooks/hooks.json parses; every referenced hook exists and is executable.
+    local hj_out hj_rc
+    if hj_out="$(FRAMEWORK_ROOT="$FRAMEWORK_ROOT" python3 - <<'PY' 2>&1
+import json, os, pathlib, sys
+root = pathlib.Path(os.environ["FRAMEWORK_ROOT"])
+try:
+    h = json.loads((root / "hooks" / "hooks.json").read_text(encoding="utf-8"))
+except Exception as e:
+    print(f"hooks.json parse failed: {e}")
+    sys.exit(1)
+problems = []
+seen = set()
+for event, groups in h.get("hooks", {}).items():
+    for g in groups:
+        for c in g.get("hooks", []):
+            hook = c["command"].split()[-1]
+            seen.add(hook)
+            path = root / "core" / "hooks" / hook
+            if not path.exists():
+                problems.append(f"missing core/hooks/{hook}")
+            elif not os.access(path, os.X_OK):
+                problems.append(f"not executable core/hooks/{hook}")
+if problems:
+    print("; ".join(problems))
+    sys.exit(1)
+print(f"{len(seen)} distinct hook scripts referenced OK")
+PY
+    )"; then
+        hj_rc=0
+    else
+        hj_rc=$?
+    fi
+    if [[ $hj_rc -eq 0 ]]; then
+        add_row PASS "hooks/hooks.json — $hj_out"
+    else
+        add_row FAIL "hooks/hooks.json — $hj_out"
+    fi
+
+    # 9. ~/.agent/plans
+    if [[ -d "$HOME/.agent/plans" ]]; then
+        add_row PASS "~/.agent/plans — exists"
+    else
+        add_row WARN "~/.agent/plans — missing; mkdir -p ~/.agent/plans"
+    fi
+
+    echo "=== Environment diagnosis (--doctor) ==="
+    local row status msg
+    for row in "${rows[@]}"; do
+        status="${row%%|*}"
+        msg="${row#*|}"
+        printf '  [%-4s] %s\n' "$status" "$msg"
+    done
+    echo
+    echo "doctor: $pass pass, $warn warn, $fail fail"
+    [[ $fail -eq 0 ]]
+}
+
+# ---------------------------------------------------------------------------
 # Run
 # ---------------------------------------------------------------------------
 
 echo "Framework root: $FRAMEWORK_ROOT"
 echo
+
+if [[ $DO_DOCTOR -eq 1 ]]; then
+    doctor
+    exit $?
+fi
 
 [[ $DO_HOOKS -eq 1 ]]  && install_git_hooks
 [[ $DO_CLAUDE -eq 1 ]] && install_claude
