@@ -23,8 +23,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Reproduce suite: `core/tests/supervisor-dispatch-test.sh` (10 scenarios).
 - `session-init` now warns (stderr only) when `gitleaks` or `git` is missing from
   PATH — a mini env-doctor surfacing a degraded secret-scan setup at session start.
-  Silent when both are present; never blocks the session or writes stdout. A full
-  `--doctor` subcommand remains future work.
+  Silent when both are present; never blocks the session or writes stdout.
+- `setup.sh --doctor` (P1-7) — full environment diagnosis, read-only, zero install
+  side effects. Checks: `git` present; `python3` >= 3.9 (README-declared floor,
+  with version + path); `gitleaks` present (WARN if not — secret-scan git hook
+  skips); `jq` present only if a `core/hooks/*.sh` script actually shells out to
+  it (WARN if used-but-missing); every `core/hooks/*.sh`/`*.py` has its
+  executable bit (`hook_config.py` exempt — a library module imported by
+  `secret-content-scan.py`, never invoked directly); every `adapters/*/adapter.sh`
+  is executable; `agents/master-registry.json` parses and every entry's `model`
+  matches its sibling `agents/<id>.md` frontmatter (same drift guard as CI);
+  `hooks/hooks.json` parses and every referenced hook script exists and is
+  executable; `~/.agent/plans` exists (WARN + `mkdir` hint if not). Prints a
+  `[PASS|WARN|FAIL]` row per check plus a `doctor: N pass, N warn, N fail`
+  summary line; exits 1 iff any check FAILs. Reproduce suite:
+  `core/tests/setup-doctor-test.sh` (clean-repo exit 0, gitleaks WARN under a
+  restricted PATH, exit 1 + named FAIL line when a hook loses its executable
+  bit — exercised against a throwaway `mktemp` copy, never the real tree).
 - `.github/workflows/ci.yml` — CI: gitleaks secret scan + plugin manifest/hook/agent validation + sanitize gate
 - README portfolio polish: badges, Mermaid architecture diagram, agent/skill/hook catalog
 - `README.ko.md` — Korean mirror of the README (same sections, localized prose)

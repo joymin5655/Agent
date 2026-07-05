@@ -61,6 +61,9 @@ Optional:
 - `gitleaks` 8+ — secret scanning. If missing, hooks skip the secret-scan step (CI still enforces it).
 - `gh` 2.0+ — for repo operations and `auto-ship.sh`.
 
+Run `bash setup.sh --doctor` any time to check all of the above plus hook/adapter
+executable bits and registry integrity — read-only, no installs.
+
 ## Quick start
 
 Two install paths — both wire up the same core:
@@ -275,6 +278,9 @@ bash core/tests/adapter-parity.sh
 # 4) config parsing + autosync hook
 bash core/tests/hook-config-test.sh
 bash core/tests/post-commit-autosync-test.sh
+
+# 5) environment diagnosis — read-only, no installs
+bash setup.sh --doctor
 ```
 
 ## Customization
