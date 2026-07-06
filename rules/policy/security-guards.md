@@ -83,3 +83,46 @@ Each block writes one record to `.agent/logs/security-violations.jsonl`:
 ```
 
 Audit at T+30d to find bypass patterns and false-positive trends.
+
+## Supply-chain integrity — the harness's OWN shipped files (P3-4)
+
+The five risk areas above guard a *consumer* project. A separate concern is the
+harness itself: its shipped skills, agents, rules, and hooks are **auto-loaded**
+into every consuming project, so a careless or hostile directive in one of them
+is an indirect prompt-injection that rides everywhere. (The ECC public audit of a
+226k-star harness found 513 auto-load instruction files, 49 of 64 agents wired to
+Bash, and an unattended "observer-loop" — the archetype of this class.)
+
+`core/tests/supply-chain-scan.sh` statically scans the shipped, auto-loaded
+instruction files (`agents/`, `skills/`, `commands/`, `rules/`, `templates/`,
+`AGENTS.md`, `AI_BOOTSTRAP.md`, `CLAUDE.md`) plus the auto-fired AI-decision hooks
+(`core/hooks/`) for four directive classes and **fails CI** on any hit:
+
+1. **prompt-injection override** — "ignore previous instructions", "disregard your
+   instructions", "you have no choice".
+2. **unattended persistence** — "observer loop", "run forever", "while true",
+   "keep running indefinitely", "re-invoke yourself".
+3. **no-confirmation coercion** — "without confirmation", "skip approval", "never
+   ask for permission" (anchored on confirmation/permission/approval so a routing
+   rule like "do not ask for a phantom agent" is not matched).
+4. **background-daemon spawn** — `nohup` / `setsid` / `disown` / `crontab -`.
+
+**Decision**: CI gate (`deny`-equivalent — the scan must pass before merge). It is
+the self-integrity analogue of `sanitize-audit.sh` (which guards prior-project
+taint). Run locally with `bash core/tests/supply-chain-scan.sh`.
+
+### Sanctioned async primitives (deliberately out of the daemon scope)
+
+Class 4 scans only the **auto-fired** AI-decision hooks — surfaces that run inside
+the agent loop, where daemonizing is never acceptable. Two shipped daemons are
+**explicitly invoked** or **git-lifecycle** controlled, are one-shot rather than a
+persistent loop, and are therefore out of scope by design:
+
+- `core/git-hooks/post-commit` (autosync) backgrounds a **one-shot** push + PR
+  (`… & disown`) so a commit isn't blocked — fire-and-forget, not a loop.
+- `core/infra/agent-session.sh subscribe <name>` launches a **user-authored**
+  subscriber (`nohup …`) on explicit invocation, the same way `npm run dev`
+  starts a dev server.
+
+Adding a new background primitive to an auto-fired hook (rather than to this
+explicitly-invoked plumbing) will — and should — fail the scan.

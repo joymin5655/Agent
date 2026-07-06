@@ -41,6 +41,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`cat .eslintrc.json > backup.txt`) by requiring the config to be the mutate
   target. First test for this hook: `core/tests/pre-tool-guard-test.sh` (28
   checks, incl. regression coverage of the existing destructive/secret rules).
+- **P3-4 — self supply-chain scan.** `core/tests/supply-chain-scan.sh` statically
+  scans the harness's OWN shipped, auto-loaded instruction files (`agents/`,
+  `skills/`, `commands/`, `rules/`, `templates/`, `AGENTS.md`, `AI_BOOTSTRAP.md`,
+  `CLAUDE.md`) plus the auto-fired AI-decision hooks (`core/hooks/`) for four
+  injection-style directive classes — prompt-injection override, unattended
+  observer-loop persistence, no-confirmation coercion, and background-daemon
+  spawn (nohup/setsid/disown/crontab) — and fails on any hit. Patterns are
+  calibrated to zero hits on the clean tree; the no-confirm class is anchored on
+  confirmation/permission/approval so a routing rule like "do not ask for a
+  phantom agent" is not flagged. The daemon class scans only the auto-fired
+  hooks; explicitly-invoked plumbing with sanctioned one-shot async (autosync
+  post-commit push, `agent-session.sh subscribe`) is out of scope and documented
+  in `rules/policy/security-guards.md`. This is the self-integrity analogue of
+  `sanitize-audit.sh`. Wired as a **new CI job** (4th). Test:
+  `core/tests/supply-chain-scan-test.sh` (9 checks: 4-class detection +
+  clean-tree pass + false-positive guards for the phantom rule, start_new_session,
+  and infra-scope daemons).
 - **P3-5 — independent completion-claim verifier (eval-harness seed).** A
   builder-validator layer that re-checks a completion claim from a separate
   context, so "the builder says it's done" is never the last word.
