@@ -25,6 +25,7 @@ follows it as instructions to the AI.>
 |---|---|
 | `/wrap` | Commit + PR creation with security guard checks. |
 | `/supervise` | Multi-wave plan dispatch with audit + risk-area abort. |
+| `/verify-completion` | Independently re-verify a completion claim (mechanical evidence + refute-by-default judge) before "done" is accepted. |
 
 ## Adding a skill
 
