@@ -41,6 +41,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`cat .eslintrc.json > backup.txt`) by requiring the config to be the mutate
   target. First test for this hook: `core/tests/pre-tool-guard-test.sh` (28
   checks, incl. regression coverage of the existing destructive/secret rules).
+- **P3-4 — self supply-chain scan.** `core/tests/supply-chain-scan.sh` statically
+  scans the harness's OWN shipped, auto-loaded instruction files (`agents/`,
+  `skills/`, `commands/`, `rules/`, `templates/`, `AGENTS.md`, `AI_BOOTSTRAP.md`,
+  `CLAUDE.md`) for three prose classes — prompt-injection override, unattended
+  observer-loop persistence, no-confirmation coercion — and the auto-fired
+  AI-decision hooks (`core/hooks/`) for a background-daemon-spawn class
+  (nohup/setsid/disown/crontab), failing on any hit. Patterns are calibrated to
+  zero hits on the clean tree; the no-confirm class is anchored on
+  confirmation/permission/approval so a routing rule like "do not ask for a
+  phantom agent" is not flagged. Explicitly-invoked plumbing with sanctioned
+  one-shot async (autosync post-commit push, `agent-session.sh subscribe`) is out
+  of scope and documented in `rules/policy/security-guards.md`. This is the
+  self-integrity analogue of `sanitize-audit.sh`. Wired as a **new CI job** (4th).
+  Adversarial-review hardening (13-agent refute-by-default pass) closed real
+  detection gaps: instruction files are now scanned as `*.md` **plus**
+  `*.template` (scaffolding copied verbatim into consumers) and `*.json` (the
+  agent registry); hooks are scanned as **every file** (a hook may be
+  extensionless); each prose class is matched against a **whitespace-flattened**
+  copy so an injection wrapped across soft line breaks can't evade line-oriented
+  grep; and the self-reference exemption is anchored to **exact paths** (a file
+  merely named `security-guards.md` elsewhere no longer inherits it). Test:
+  `core/tests/supply-chain-scan-test.sh` (20 checks: 4-class detection incl.
+  templates, extensionless hooks, wrapped/multi-line, JSON registry, all four
+  daemon tokens + clean-tree pass + false-positive guards for the phantom rule,
+  start_new_session, infra-scope daemons, and the path-anchored exemption).
 - **P3-5 — independent completion-claim verifier (eval-harness seed).** A
   builder-validator layer that re-checks a completion claim from a separate
   context, so "the builder says it's done" is never the last word.
