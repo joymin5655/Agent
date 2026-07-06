@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # supply-chain-scan.sh — static scan of the harness's OWN shipped, auto-loaded
 # instruction files (agents / skills / commands / rules / templates / AGENTS.md
-# / AI_BOOTSTRAP.md / CLAUDE.md) plus its AUTO-FIRED hooks (core/hooks,
-# core/git-hooks) for INJECTION-STYLE directives (P3-4).
+# / AI_BOOTSTRAP.md / CLAUDE.md — as *.md, *.template, and *.json) plus its
+# AUTO-FIRED AI-decision hooks (core/hooks, every file) for INJECTION-STYLE
+# directives (P3-4).
 #
 # Why: a harness's auto-loaded instruction files are an indirect prompt-injection
 # surface. The ECC public audit (a 226k-star harness) found 513 auto-load
@@ -23,9 +24,13 @@
 #                                    "never ask for permission"  (anchored on
 #                                    confirmation/permission/approval so a routing
 #                                    rule like "do not ask for a phantom agent"
-#                                    is NOT matched)
-#   4. background-daemon spawn    — nohup / setsid / disown / `crontab -`  (in
-#                                    prose OR shipped code)
+#                                    is NOT matched)   [classes 1-3 = prose]
+#   4. background-daemon spawn    — nohup / setsid / disown / `crontab -`, scanned
+#                                    in the AUTO-FIRED hooks only (see scope note)
+#
+# Prose classes 1-3 are matched both line-by-line AND against a whitespace-
+# flattened copy of each file, so an injection wrapped across soft line breaks
+# (deliberately, or by an 80-column reflow) cannot evade a line-oriented grep.
 #
 # Usage:
 #   bash core/tests/supply-chain-scan.sh            # scan this repo (CI + local)
@@ -36,68 +41,88 @@ set -u
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 TARGET="${1:-$REPO_ROOT}"
 
-# Auto-loaded instruction (prose) scope — where 1/2/3 apply.
+# Auto-loaded instruction (prose) scope — where classes 1/2/3 apply. Scanned as
+# *.md, *.template (scaffolding copied verbatim into consumers, where it BECOMES
+# their CLAUDE.md / AGENTS.md / rules), and *.json (the agent registry).
 INSTR_PATHS=(agents skills commands rules templates AGENTS.md AI_BOOTSTRAP.md CLAUDE.md)
-# Auto-FIRED code scope — where the daemon-spawn class (4) also applies. Only
-# the AI-decision-loop hooks (core/hooks: PreToolUse / Stop / UserPromptSubmit /
-# etc.) qualify: they fire inside the agent's own loop, so a hook that daemonizes
-# there is the hidden observer-loop threat, and it must always be clean.
+PROSE_FIND_EXPR=(-name '*.md' -o -name '*.template' -o -name '*.json')
+
+# Auto-FIRED code scope — where the daemon-spawn class (4) applies. Only the
+# AI-decision-loop hooks (core/hooks: PreToolUse / Stop / UserPromptSubmit / …)
+# qualify: they fire inside the agent's own loop, so a hook that daemonizes there
+# is the hidden observer-loop threat, and it must always be clean. EVERY file is
+# scanned (a hook may be extensionless — hooks.json dispatches by filename).
 #
 # Deliberately OUT of scope, with sanctioned async primitives documented in
 # rules/policy/security-guards.md:
-#   - core/git-hooks (git-lifecycle): post-commit autosync backgrounds a ONE-SHOT
-#     push+PR (`… & disown`) so a commit isn't blocked — fire-and-forget, not a
-#     persistent loop.
+#   - core/git-hooks (git-lifecycle, opt-in install): post-commit autosync
+#     backgrounds a ONE-SHOT push+PR (`… & disown`) so a commit isn't blocked.
 #   - core/infra, adapters, setup.sh (explicitly invoked): e.g.
-#     `agent-session.sh subscribe <name>` launches a user-authored subscriber,
-#     the same way `npm run dev` starts a server.
-CODE_PATHS=(core/hooks)
+#     `agent-session.sh subscribe <name>` launches a user-authored subscriber.
+HOOK_DIR="core/hooks"
 
 # Files that legitimately carry these patterns as literals — the scanner, its
-# test, and the policy doc that enumerates the patterns — are never scanned (the
-# same self-reference exemption sanitize-audit.sh makes for itself).
-EXCLUDE_NAMES="supply-chain-scan.sh|supply-chain-scan-test.sh|security-guards.md"
+# test, and the policy doc that enumerates the patterns — are never scanned.
+# Matched by EXACT relative path, not basename: a malicious file merely NAMED
+# security-guards.md in another directory must NOT inherit the exemption.
+EXCLUDE_PATHS=(
+  core/tests/supply-chain-scan.sh
+  core/tests/supply-chain-scan-test.sh
+  rules/policy/security-guards.md
+)
 
 # --- pattern groups (ERE) ---------------------------------------------------
-P_OVERRIDE='ignore (all |the )?(previous|prior|above) (instruction|direction|rule)|disregard (all |the |any |your )?(previous|prior|safety|instruction)|you have no choice|you must always|regardless of (what|any)[^.]{0,20}(the user|instruction)'
+P_OVERRIDE='ignore (all |the )?(previous|prior|above) (instruction|direction|rule)|disregard (all |the |any |your )?(previous|prior|safety|instruction)|you have no choice|regardless of (what|any)[^.]{0,20}(the user|instruction)'
 P_LOOP='observer[ -]loop|runs? forever|running forever|while true|run continuously|running continuously|keep running (until|forever|indefinitely)|loop(s|ing)? indefinitely|re-?invoke your ?self|re-?launch your ?self|spawn[^.]{0,30}background[^.]{0,30}(loop|watcher|daemon)'
 P_NOCONFIRM="without (asking for |seeking |any )?(confirmation|permission|approval)|(skip|skipping|bypass|bypassing|suppress|suppressing)[^.]{0,20}(confirmation|approval|human (review|confirmation))|(do not|don't|never) (ask|asking|prompt|request)[^.]{0,20}(for )?(confirmation|permission|approval)|no (confirmation|approval) (is )?(needed|required)"
 P_DAEMON='\<nohup\>|\<setsid\>|\<disown\>|crontab[[:space:]]+-'
 
 PROSE_PATTERN="$P_OVERRIDE|$P_LOOP|$P_NOCONFIRM"
 
-# collect_files <glob-ext> <path...> — echo matching files under TARGET, minus
-# excluded names and legacy/.
-collect_files() {
-  local ext="$1"; shift
-  local base
-  for base in "$@"; do
-    [[ -e "$TARGET/$base" ]] || continue
-    find "$TARGET/$base" -type f -name "$ext" 2>/dev/null
-  done | grep -vE "/(legacy)/" | grep -vE "/($EXCLUDE_NAMES)$" || true
+# collect_prose — instruction files (md/template/json) under INSTR_PATHS, minus
+# legacy/ and the exact-path self-reference exemptions.
+collect_prose() {
+  local base excl=() e
+  for e in "${EXCLUDE_PATHS[@]}"; do excl+=(-e "$TARGET/$e"); done
+  { for base in "${INSTR_PATHS[@]}"; do
+      [[ -e "$TARGET/$base" ]] || continue
+      find "$TARGET/$base" -type f \( "${PROSE_FIND_EXPR[@]}" \) 2>/dev/null
+    done; } | grep -vE "/(legacy)/" | grep -vxF "${excl[@]}" || true
+}
+
+# collect_hooks — EVERY file under the auto-fired hook dir (extensionless too).
+collect_hooks() {
+  [[ -e "$TARGET/$HOOK_DIR" ]] || return 0
+  find "$TARGET/$HOOK_DIR" -type f 2>/dev/null | grep -vE "/(legacy)/" || true
 }
 
 HITS=""
 
-# 1/2/3 — prose injection directives in auto-loaded instruction files (.md)
+# classes 1-3 — prose injection directives, line-by-line …
 while IFS= read -r f; do
   [[ -z "$f" ]] && continue
   m=$(grep -nHiE "$PROSE_PATTERN" "$f" 2>/dev/null || true)
   [[ -n "$m" ]] && HITS+="$m"$'\n'
-done < <(collect_files '*.md' "${INSTR_PATHS[@]}")
+  # … and against a whitespace-flattened copy, so a directive wrapped across
+  # soft line breaks (attacker or 80-col reflow) cannot slip past line-oriented
+  # grep. Reported as "(wrapped)" since a line number is not meaningful.
+  w=$(tr '\n' ' ' < "$f" 2>/dev/null | tr -s '[:space:]' ' ' | grep -oiE "$PROSE_PATTERN" | head -1 || true)
+  [[ -n "$w" ]] && [[ -z "$m" ]] && HITS+="$f (wrapped): $w"$'\n'
+done < <(collect_prose)
 
-# 4 — background-daemon spawn in instruction prose AND shipped code
+# class 4 — background-daemon spawn in the auto-fired hooks
 while IFS= read -r f; do
   [[ -z "$f" ]] && continue
   m=$(grep -nHiE "$P_DAEMON" "$f" 2>/dev/null || true)
   [[ -n "$m" ]] && HITS+="$m"$'\n'
-done < <( { collect_files '*.md' "${INSTR_PATHS[@]}"
-           collect_files '*.sh' "${CODE_PATHS[@]}"
-           collect_files '*.py' "${CODE_PATHS[@]}"; } | sort -u)
+done < <(collect_hooks)
 
 if [[ -n "${HITS//[$'\n']/}" ]]; then
   echo "FAIL — injection-style directive(s) in shipped harness files:"
-  printf '%s' "$HITS" | sed "s#^$TARGET/##; s/^/  /"
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    printf '  %s\n' "${line#"$TARGET"/}"
+  done <<< "$HITS"
   echo ""
   echo "A shipped, auto-loaded file must not instruct an agent to bypass human"
   echo "confirmation, self-perpetuate (observer-loop), or daemonize. Remove the"
