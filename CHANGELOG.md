@@ -88,8 +88,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - `docs/harness-improvement-plan.md` — added §4.7 P3 series (5 items) from a
-  2026-07-06 benchmark audit of 7 top personal harnesses (superpowers, ECC,
-  gstack, revfactory, hooks-mastery, Chachamaru, showcase): completion-gate test
+  2026-07-06 benchmark audit of 8 top personal harnesses (superpowers, ECC,
+  karpathy-skills, gstack, revfactory, hooks-mastery, Chachamaru, showcase):
+  completion-gate test
   verification (P3-1), upstream spec/plan discipline (P3-2), `--no-verify`/linter-
   tamper blocking (P3-3), self-supply-chain scan (P3-4), independent
   completion-claim verifier (P3-5). Adoptions ranked by demonstrated mechanism
