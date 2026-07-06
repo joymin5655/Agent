@@ -176,6 +176,20 @@
 | A-1 보류 | `doc-writer`/`verifier` 등 신규 에이전트 추가 | 수요 미검증 — A-0과 반대 방향(확장) 결정이라 별도 증거 기준 필요 | 착수하지 않음. 재상정 조건: 실사용 요청이 누적되면 재검토 | — |
 | G-1 결정 기록 | 글로벌 훅 일원화 = **Variant A**(이 플러그인 하네스로 통일, legacy global hook set 제거) | 두 하네스 병존 시 훅 충돌·중복 실행 위험 | 실행은 이 레포 밖 글로벌 레이어(사용자 홈 AI 런타임 설정)에서 진행(2026-07-04) — 레포 자체는 변경 없음, 결정만 기록 | — |
 
+### 4.7 P3 시리즈 — 외부 하네스 벤치마크 발굴 항목 (2026-07-06 추가)
+
+출처: 2026-07 GitHub 최상위 개인 하네스 7종(superpowers 247k★ / ECC 226k★ / karpathy-skills 188k★ / gstack 120k★ / revfactory 8.2k★ / showcase 6.0k★ / hooks-mastery 3.8k★ / Chachamaru 2.9k★)과 12차원 기능 분류 체계 비교 감사. 채택 기준은 **스타 수가 아니라 메커니즘의 실증 가치** — 카탈로그 극대화(ECC 277 스킬·gstack 60+)·프롬프트 강제("YOU DO NOT HAVE A CHOICE")·간접주입 영속화(ECC observer-loop 보안 감사 지적)·자기채점 벤치마크·실험 API 의존은 이 레포 설계 원칙(도메인 중립·의존성 플로어 bash+python3·"관측자는 차단하지 않는다" 재니터 계약·증거 기반 트림)과 충돌하므로 의도적으로 배제한다. 아래 5건은 "결정적 게이트로 완료·안전을 강화"하는 우리 노선에 정합하는 것만 선별했다.
+
+| ID | 작업 | 근거 (출처) | 완료 조건 (기계 검증) | 규모 |
+|---|---|---|---|---|
+| P3-1 | 완료 게이트 테스트 실검증 — `core/hooks/session-quality-gate.py`에 hook-config 주도 테스트 명령(`session.completion_tests`) 실행 추가, 실패 시 `ask`. 미설정 시 no-op | Stop 게이트가 스타일/하드코딩/console.log만 검사하고 테스트 통과는 미검증 — hooks-mastery(Stop 훅이 필수파일·export·테스트통과 검사 후 완료 허용)와 ECC(`--no-verify` 결정적 차단)가 독립적으로 같은 패턴 | 실패 테스트 픽스처 → Stop `ask`; 미설정 픽스처 → 무동작; always-exit-0 계약 보존 | S–M |
+| P3-2 | 상류 계획 규율 스킬 `/spec` — brainstorm→spec→plan 산출 후 `plan-gate.py`가 승인 게이트. superpowers 워크플로 **내용만** 차용하되 프롬프트 강제가 아닌 도구경계 게이트로 강제 | `/supervise`가 프롬프트→디스패치로 직행, spec/plan 규율 부재로 디스패치 신호 품질 저하. superpowers 방법론이 생태계 최고 호평(비판은 비용뿐) | `/spec` 실행 → `spec.md`+`plan.md` 생성 + plan-gate 승인 플래그 세트; 미승인 시 디스패치 차단 | M |
+| P3-3 | `--no-verify`·린터 설정 변조 차단 — `core/hooks/pre-tool-guard.sh`에 `git commit --no-verify`/`git push --no-verify` + 린터 설정 파일 수정 감지 추가 → `ask` | 현 가드는 삭제/force-push/.env만 차단, 검증 우회 커밋·린터 무력화는 사각지대. ECC가 린터 설정 수정 대신 코드 수정을 강제 — 우리 "도구경계=물리차단" 강점의 직접 확장 | no-verify 커밋 픽스처 차단; 린터 설정 편집 픽스처 `ask`; 정상 커밋 통과 | S |
+| P3-4 | 자기 하네스 서플라이체인 스캔 — 출하 스킬·훅·에이전트 파일의 주입성 지시(자동 실행 지시·"확인 요청 금지" 문구·백그라운드 서브프로세스 기동) 정적 스캔 테스트. `core/tests/`에 추가 | 대규모 하네스의 자동 로드 지시 파일이 간접 주입 벡터가 된 실사례(ECC 213k★ 감사: 513 자동 로드 지시 파일, 64 에이전트 중 49에 Bash, observer-loop 무인 영속화). 우리 도메인 중립 sanitize 게이트와 시너지 | observer-loop류 패턴을 심은 픽스처 파일 검출; 클린 트리 통과; CI 편입 | M |
+| P3-5 | 완료주장 독립 검증자 — wave/작업 완료 시 별개 컨텍스트 검증자가 완료주장(파일 존재·테스트 통과·주장↔산출물 정합)을 재검토하는 스킬. H-3 스킬 A/B 채점 규약과 LLM-judge 채점 계층 공유 | hooks-mastery builder-validator 패턴(빌더와 별개 context가 재검토). "테스트 통과 ≠ 실제 동작" 전훈의 구조화 + LLM 출력 품질 평가 하네스의 씨앗 | 허위 완료주장(존재하지 않는 파일 인용 등) 픽스처 → 검증자가 반증 리포트; 정합 픽스처 통과 | M–L |
+
+출처 URL: superpowers(github.com/obra/superpowers), ECC 및 보안 감사(github.com/affaan-m/everything-claude-code, dev.to/joergmichno "We Audited the Viral 213k-Star ECC Repo"), hooks-mastery(github.com/disler/claude-code-hooks-mastery), Chachamaru Go-네이티브 게이트(github.com/Chachamaru127/claude-code-harness). skip 결정 및 커리어 연계 상세는 개인 볼트 감사 리포트에 별도 기록(공개 레포 반입 제외).
+
 ---
 
 ## 5. Part 3 — `/harness-loop` 자율 개선 루프 설계 (단일 권고안)
@@ -241,7 +255,7 @@ P0-1 ~ P0-11 (최초 7건 반나절 + 훅 감사 배치 4건 2026-07-04)  → v0
 1. §3.3 표의 각 검증 명령을 실행해 실측 결과 열과 대조 — 훅 17, 테스트 4, 에이전트 2, 스킬 2.
 2. `bash core/tests/sanitize-audit.sh` — **PASS가 정상.** (P0-7 완료 이후로는 클린 워킹 트리에서 항상 PASS — 과거의 "FAIL이 정상" 예외는 P0-7 해소로 소멸)
 3. `gitleaks detect --no-git --source docs/ --config gitleaks.toml`.
-4. 백로그 항목 수 검증(2026-07-04 감사 배치 갱신, 실측): `grep -cE '^\| P[0-2]-[0-9]+' docs/harness-improvement-plan.md` = **24** (P0 11 + P1 8 + P2 5), 각 행에 완료 조건 존재. H/W 시리즈: `grep -cE '^\| [HW]-[0-9]+' docs/harness-improvement-plan.md` = **13** (H 4 + W 9). A/G 시리즈: `grep -cE '^\| [AG]-[0-9]+' docs/harness-improvement-plan.md` = **3** (A 2 + G 1; 완료 조건 대신 근거·상태 기재 — §4.6 참고).
+4. 백로그 항목 수 검증(2026-07-06 벤치마크 배치 갱신, 실측): `grep -cE '^\| P[0-3]-[0-9]+' docs/harness-improvement-plan.md` = **29** (P0 11 + P1 8 + P2 5 + P3 5), 각 행에 완료 조건 존재. H/W 시리즈: `grep -cE '^\| [HW]-[0-9]+' docs/harness-improvement-plan.md` = **13** (H 4 + W 9). A/G 시리즈: `grep -cE '^\| [AG]-[0-9]+' docs/harness-improvement-plan.md` = **3** (A 2 + G 1; 완료 조건 대신 근거·상태 기재 — §4.6 참고).
 5. 스코어카드(§3.1·§3.2)의 격차 행 ↔ 백로그 ID 상호 링크 고아 0건 (모든 "부분/미비" 행에 P* 링크 존재).
 6. AGENTS.md 규약 준수 — 도메인 중립 언어, 커밋 메시지 `docs(plan): add harness improvement plan`.
 
@@ -254,3 +268,4 @@ P0-1 ~ P0-11 (최초 7건 반나절 + 훅 감사 배치 4건 2026-07-04)  → v0
 | 노션: 하네스 엔지니어링 완벽 가이드 (4기둥·의사코드 보충자료) | raspy-roll-970.notion.site/AI-333f7725c9d98147957afad16db3b655 |
 | karpathy/autoresearch (README + program.md) | github.com/karpathy/autoresearch — 로컬 참조 클론: 드라이브 `_repos/reference/autoresearch` (`repos.yaml`의 `repoId: karpathy/autoresearch`, 클론 확인 2026-07-04) |
 | revfactory/harness — 팀 아키텍처 팩토리(Apache-2.0): 6 팀 패턴, 메타 스킬 6-phase 워크플로우, with/without-skill A/B 검증 방법론 | github.com/revfactory/harness |
+| 하네스 벤치마크 감사(2026-07-06) — 7종 개인 하네스 12차원 비교(§4.7 P3 시리즈 출처): 완료 게이트·상류 계획·서플라이체인·독립 검증자 | github.com/obra/superpowers · github.com/affaan-m/everything-claude-code · github.com/disler/claude-code-hooks-mastery · github.com/Chachamaru127/claude-code-harness · dev.to/joergmichno (ECC 213k★ 보안 감사) |
