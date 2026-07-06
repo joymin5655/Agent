@@ -95,17 +95,25 @@ Bash, and an unattended "observer-loop" — the archetype of this class.)
 
 `core/tests/supply-chain-scan.sh` statically scans the shipped, auto-loaded
 instruction files (`agents/`, `skills/`, `commands/`, `rules/`, `templates/`,
-`AGENTS.md`, `AI_BOOTSTRAP.md`, `CLAUDE.md`) plus the auto-fired AI-decision hooks
-(`core/hooks/`) for four directive classes and **fails CI** on any hit:
+`AGENTS.md`, `AI_BOOTSTRAP.md`, `CLAUDE.md` — as `*.md`, `*.template`, and `*.json`
+so scaffolding templates and the agent registry are covered) for the three prose
+classes, and the auto-fired AI-decision hooks (`core/hooks/`, every file — a hook
+may be extensionless) for the daemon class, and **fails CI** on any hit:
 
-1. **prompt-injection override** — "ignore previous instructions", "disregard your
-   instructions", "you have no choice".
-2. **unattended persistence** — "observer loop", "run forever", "while true",
-   "keep running indefinitely", "re-invoke yourself".
-3. **no-confirmation coercion** — "without confirmation", "skip approval", "never
-   ask for permission" (anchored on confirmation/permission/approval so a routing
-   rule like "do not ask for a phantom agent" is not matched).
-4. **background-daemon spawn** — `nohup` / `setsid` / `disown` / `crontab -`.
+1. **prompt-injection override** (prose) — "ignore previous instructions",
+   "disregard your instructions", "you have no choice".
+2. **unattended persistence** (prose) — "observer loop", "run forever", "while
+   true", "keep running indefinitely", "re-invoke yourself".
+3. **no-confirmation coercion** (prose) — "without confirmation", "skip approval",
+   "never ask for permission" (anchored on confirmation/permission/approval so a
+   routing rule like "do not ask for a phantom agent" is not matched).
+4. **background-daemon spawn** (hooks) — `nohup` / `setsid` / `disown` /
+   `crontab -`.
+
+The three prose classes are matched **both line-by-line and against a
+whitespace-flattened copy** of each file, so an injection wrapped across soft
+line breaks (deliberately, or by an 80-column reflow) cannot evade a line-oriented
+grep.
 
 **Decision**: CI gate (`deny`-equivalent — the scan must pass before merge). It is
 the self-integrity analogue of `sanitize-audit.sh` (which guards prior-project
