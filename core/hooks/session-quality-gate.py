@@ -32,16 +32,56 @@ SCAN_DIRS = tuple(
 )
 
 
-def resolve_log_dir(stdin_data: dict) -> str:
-    """Log destination = the active project's .agent/logs.
-
-    Resolve the project root at runtime so logs land in the user's project,
-    not the plugin install cache (this file's own location). Priority:
+def resolve_root(stdin_data: dict) -> str:
+    """Active project root at runtime, so hooks act on the user's project — not
+    the plugin install cache (this file's own location). Priority:
     stdin event 'cwd' -> CLAUDE_PROJECT_DIR env -> os.getcwd().
     """
     cwd = stdin_data.get("cwd") if isinstance(stdin_data, dict) else ""
-    root = cwd or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
-    return os.path.join(root, ".agent/logs")
+    return cwd or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+
+
+def resolve_log_dir(stdin_data: dict) -> str:
+    """Log destination = the active project's .agent/logs."""
+    return os.path.join(resolve_root(stdin_data), ".agent/logs")
+
+
+# Per-command wall-clock bound for a completion test (seconds). Overridable so a
+# slow suite can raise it; a runaway command can never hang the Stop event.
+COMPLETION_TEST_TIMEOUT = int(os.environ.get("AGENT_COMPLETION_TEST_TIMEOUT", "120") or "120")
+
+
+def run_completion_tests(root: str) -> list[str]:
+    """Run the project's `session.completion_tests` (P3-1) in `root`.
+
+    Returns a list of human-readable failure descriptions — empty when all pass
+    or none are configured. A nonzero exit, a timeout, OR a spawn error each
+    counts as a failure: an unverifiable completion must not silently pass. This
+    NEVER raises (a broken config or a missing interpreter degrades to []).
+    """
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import hook_config  # noqa: E402
+        cmds = hook_config.load_session_config(root).get("completion_tests", [])
+    except Exception:
+        return []
+
+    failures: list[str] = []
+    for cmd in cmds:
+        try:
+            r = subprocess.run(
+                cmd, shell=True, cwd=root or None,
+                capture_output=True, text=True, timeout=COMPLETION_TEST_TIMEOUT,
+            )
+            if r.returncode != 0:
+                tail = (r.stderr or r.stdout or "").strip().splitlines()[-3:]
+                detail = (" — " + " / ".join(t.strip() for t in tail)) if tail else ""
+                failures.append(f"`{cmd}` exited {r.returncode}{detail}")
+        except subprocess.TimeoutExpired:
+            failures.append(f"`{cmd}` timed out after {COMPLETION_TEST_TIMEOUT}s")
+        except Exception as e:  # spawn error, etc. — unverifiable => failure
+            failures.append(f"`{cmd}` could not run ({type(e).__name__})")
+    return failures
 
 
 def get_changed_files() -> list[str]:
@@ -115,9 +155,17 @@ def main() -> None:
     except (json.JSONDecodeError, EOFError):
         pass
 
-    log_dir = resolve_log_dir(stdin_data)
+    root = resolve_root(stdin_data)
+    log_dir = os.path.join(root, ".agent/logs")
 
     block_enabled = os.environ.get("AGENT_QUALITY_GATE_BLOCK", "1") == "1"
+    # Enforce only on the first Stop (anti-loop: a second Stop passes) and only
+    # when block is enabled (advisory mode never runs tests or blocks).
+    enforcing = block_enabled and not stop_hook_active
+
+    # P3-1: run the project's session.completion_tests. Gated on `enforcing` so
+    # a second Stop or advisory mode neither runs the suite nor blocks.
+    completion_failures = run_completion_tests(root) if enforcing else []
 
     files = get_changed_files()
     src_files = [
@@ -126,13 +174,8 @@ def main() -> None:
         and f.endswith((".tsx", ".ts"))
     ]
 
-    if not src_files:
-        print(json.dumps({}))
-        sys.exit(0)
-
     total_issues = 0
     file_reports: list[str] = []
-
     for filepath in src_files:
         issues = check_file(filepath)
         if issues:
@@ -142,16 +185,26 @@ def main() -> None:
                 + "\n".join(f"    - {i}" for i in issues)
             )
 
-    if total_issues == 0:
-        print(f"[quality gate] {len(src_files)} file(s) checked, 0 violations.",
-              file=sys.stderr)
+    # Both gates clean -> pass.
+    if total_issues == 0 and not completion_failures:
+        if src_files:
+            print(f"[quality gate] {len(src_files)} file(s) checked, 0 violations.",
+                  file=sys.stderr)
         print(json.dumps({}))
         sys.exit(0)
 
-    summary = (
-        f"[quality gate] {len(src_files)} file(s) checked, {total_issues} violation(s):\n"
-        + "\n".join(file_reports)
-    )
+    parts: list[str] = []
+    if total_issues:
+        parts.append(
+            f"[quality gate] {len(src_files)} file(s) checked, {total_issues} violation(s):\n"
+            + "\n".join(file_reports)
+        )
+    if completion_failures:
+        parts.append(
+            f"[completion gate] {len(completion_failures)} test command(s) failed:\n"
+            + "\n".join(f"    - {f}" for f in completion_failures)
+        )
+    summary = "\n\n".join(parts)
     print(summary, file=sys.stderr)
 
     # Append to violations log (cross-session learning). log_dir derives from
@@ -164,19 +217,20 @@ def main() -> None:
                 "ts": date.today().isoformat(),
                 "files": len(src_files),
                 "issues": total_issues,
+                "completion_failures": len(completion_failures),
                 "details": file_reports[:5],
             }, ensure_ascii=False) + "\n")
     except Exception:
         pass
 
-    # Completion gate: block on first Stop with violations. Second Stop passes
-    # (user has decided "intentional violation"). Env escape forces advisory.
-    if block_enabled and not stop_hook_active:
+    # Completion gate: block on the first Stop with any failure. Second Stop
+    # passes (user decided "intentional"). Advisory mode (BLOCK=0) never blocks.
+    if enforcing:
         reason = (
             f"{summary}\n\n"
             "Response halted by quality gate. Choose one:\n"
-            "  (a) Resolve — move types to types.ts / tokenize colors /\n"
-            "      remove console.log, then complete the response.\n"
+            "  (a) Resolve — fix the failing test(s) / move types to types.ts /\n"
+            "      tokenize colors / remove console.log, then complete.\n"
             "  (b) Intentional — state the reason explicitly, then complete\n"
             "      (the second Stop will pass automatically).\n"
             "  (c) Disable for this session: set AGENT_QUALITY_GATE_BLOCK=0\n"

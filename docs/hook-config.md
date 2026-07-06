@@ -52,6 +52,38 @@ The JSON form is identical in shape:
 }
 ```
 
+## Completion tests — `session.completion_tests` (P3-1)
+
+The Stop gate (`core/hooks/session-quality-gate.py`) can run project-declared
+verification commands before a response is allowed to end — so an agent cannot
+claim "done" while the project's own tests fail. Declare them under a top-level
+`session:` mapping (not under `python_hooks:`):
+
+```yaml
+session:
+  completion_tests:
+    - "npm test --silent"
+    - "npx tsc --noEmit"
+```
+
+Behavior:
+
+- Commands run on the **first Stop** of a response, in the project root. If any
+  exits non-zero, times out, or fails to spawn, the hook emits
+  `{"decision":"block"}` and the session cannot end until it passes. (Stop hooks
+  cannot emit `ask` — that verb is PreToolUse-only — so the enforcement verb is
+  `block`.)
+- A **second Stop** passes automatically (intentional-override anti-loop), and
+  `AGENT_QUALITY_GATE_BLOCK=0` makes the whole gate advisory. Each command is
+  bounded by `AGENT_COMPLETION_TEST_TIMEOUT` seconds (default 120).
+- **Trust model:** these commands run at the project's OWN trust level — the
+  same as its `package.json` scripts or Makefile. The loader bounds count (≤20)
+  and length (≤500 chars) but does not sandbox execution; an agent that could
+  add a `completion_tests` entry could already run the command directly, so this
+  adds enforcement, not new capability. Unset/empty ⇒ the gate does nothing.
+- Fail-safe: a missing / malformed config degrades to no completion tests; the
+  hook always exits 0 (an internal error never crashes the Stop event).
+
 ## Security guarantee — ADDITIVE ONLY
 
 The loader (`core/hooks/hook_config.py`) can **only make the scan stricter**:

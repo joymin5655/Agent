@@ -158,4 +158,32 @@ if echo "$COMMAND" | grep -qE 'git\s+add\s+.*data/artifacts/'; then
   exit 0
 fi
 
+# 13. Verification-gate bypass — `git commit/push --no-verify` (or `git commit -n`).
+# These skip the repo's own pre-commit / pre-push hooks (gitleaks + sanitize),
+# which is exactly how an unscanned secret or prior-project taint slips in. ASK
+# (not deny): a gate bypass is reversible, and ask keeps a commit-message that
+# merely mentions "-n" from being hard-blocked. `git push -n` is --dry-run, NOT
+# no-verify, so it is intentionally not matched.
+if echo "$COMMAND" | grep -qE 'git\s+commit\b[^|;&]*(--no-verify|(\s|^)-n(\s|$))' \
+   || echo "$COMMAND" | grep -qE 'git\s+push\b[^|;&]*--no-verify'; then
+  log_violation verify-bypass "git --no-verify skips the commit/push gate" "ask"
+  emit_ask "git --no-verify skips the repo's own pre-commit/pre-push gate (gitleaks + sanitize). Confirm you intend to bypass secret/taint scanning — otherwise commit through the normal path, or fix the failing hook."
+  exit 0
+fi
+
+# 14. Linter/gate config tampering via Bash — disabling a check to make code
+# "pass" instead of fixing the code (the ECC-flagged anti-pattern). Matches a
+# MUTATING shell op (sed -i / redirect / rm / mv / tee / truncate) targeting a
+# known linter/formatter/gate config. ASK — config edits can be legitimate;
+# the user confirms it is not a check being silently weakened. Reading a config
+# (cat/grep) is not matched. tsconfig/pyproject are intentionally out of scope
+# (too broad, edited routinely) to avoid false positives.
+_LINT_CFG='(\.eslintrc[a-zA-Z.]*|eslint\.config\.[a-zA-Z]+|\.prettierrc[a-zA-Z.]*|prettier\.config\.[a-zA-Z]+|\.?ruff\.toml|\.flake8|biome\.jsonc?|\.golangci\.ya?ml|\.pre-commit-config\.ya?ml|gitleaks\.toml)'
+if echo "$COMMAND" | grep -qE "$_LINT_CFG" \
+   && echo "$COMMAND" | grep -qE '(sed\s+-i|>>?|\brm\b|\bmv\b|\btruncate\b|\btee\b)'; then
+  log_violation lint-tamper "linter/gate config modified via shell" "ask"
+  emit_ask "This modifies a linter/formatter/gate config file. Confirm you are not disabling a check to make code pass — the fix belongs in the code, not the config. (Reading configs is fine; this only asks on edits.)"
+  exit 0
+fi
+
 exit 0

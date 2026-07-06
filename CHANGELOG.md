@@ -8,6 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **P3-1 — completion-gate test verification.** `core/hooks/session-quality-gate.py`
+  (Stop hook) now runs a project's `session.completion_tests` (declared in
+  `.agent/hook-config.yml|json`) on the first Stop; any command that exits
+  non-zero, times out, or fails to spawn emits `{"decision":"block"}` so a
+  session cannot end while the project's own tests fail. A second Stop passes
+  (anti-loop) and `AGENT_QUALITY_GATE_BLOCK=0` is advisory; per-command bound is
+  `AGENT_COMPLETION_TEST_TIMEOUT` (default 120s). New fail-safe/bounded loader
+  `hook_config.load_session_config` (≤20 cmds, ≤500 chars each; malformed →
+  empty). Trust model = the project's own scripts (docs/hook-config.md). Test:
+  `core/tests/quality-gate-completion-test.sh` (11 checks incl. YAML path,
+  advisory, anti-loop, malformed fail-safe).
+- **P3-3 — verification-gate-bypass + linter-tamper guards.**
+  `core/hooks/pre-tool-guard.sh` now `ask`s on `git commit/push --no-verify`
+  (and `git commit -n`), which skip the repo's own gitleaks+sanitize commit
+  gate, and on Bash edits to linter/formatter/gate configs (eslint, prettier,
+  ruff, flake8, biome, golangci, pre-commit, gitleaks) — the "disable the check
+  instead of fixing the code" anti-pattern. `git push -n` (dry-run) and normal
+  commits pass; reading a config passes. `ask` (not deny) per the escalation
+  principle. First test for this hook: `core/tests/pre-tool-guard-test.sh` (16
+  checks, incl. regression coverage of the existing destructive/secret rules).
 - `core/infra/telemetry-digest.sh` (P1-5) — pillar④ janitor step 1: reads
   `.agent/logs/supervisor.jsonl` (path arg, or `$AGENT_TELEMETRY_LOG`, or
   `<repo-root>/.agent/logs/supervisor.jsonl`) and reports action counts, a
