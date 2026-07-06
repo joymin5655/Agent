@@ -59,9 +59,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   review scripts can't make, emitting the same schema. New shared spec
   `docs/scoring-convention.md` unifies the verdict shape across the verifier,
   the H-3 skill A/B harness, and the `supervisor-goal-audit.sh` 25-point scorer.
-  Test: `core/tests/completion-verify-test.sh` (17 checks incl.
-  false-claim→refuted, consistent→confirmed, malformed fail-safe, YAML,
-  process-group isolation, over-cap refutation).
+  Adversarial-review hardening (11-agent refute-by-default pass): a present-but-
+  non-list section (`"files":"x"`) now REFUTES instead of being silently dropped
+  into a false CONFIRMED; command output is discarded to DEVNULL and the
+  `contains` read is bounded (5 MB) so a chatty command or a huge file can't OOM
+  the verifier. Test: `core/tests/completion-verify-test.sh` (25 checks incl.
+  false-claim→refuted, consistent→confirmed, malformed/non-list-section
+  fail-safe, YAML, process-group isolation, over-cap refutation, bare-string
+  file entry, --root default, timeout degrade, partial score).
 - `core/infra/telemetry-digest.sh` (P1-5) — pillar④ janitor step 1: reads
   `.agent/logs/supervisor.jsonl` (path arg, or `$AGENT_TELEMETRY_LOG`, or
   `<repo-root>/.agent/logs/supervisor.jsonl`) and reports action counts, a
