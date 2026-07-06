@@ -48,7 +48,19 @@ def resolve_log_dir(stdin_data: dict) -> str:
 
 # Per-command wall-clock bound for a completion test (seconds). Overridable so a
 # slow suite can raise it; a runaway command can never hang the Stop event.
-COMPLETION_TEST_TIMEOUT = int(os.environ.get("AGENT_COMPLETION_TEST_TIMEOUT", "120") or "120")
+def _parse_timeout(raw: str) -> int:
+    """Parse the per-command timeout, degrading to 120 on any bad value. This
+    runs at import (before main()'s try/except), so a typo like '2m' or '30s'
+    must NEVER raise — that would crash the Stop hook and break the load-bearing
+    'Stop always exits 0' contract. A non-positive value also degrades to 120."""
+    try:
+        v = int(raw)
+    except (TypeError, ValueError):
+        return 120
+    return v if v > 0 else 120
+
+
+COMPLETION_TEST_TIMEOUT = _parse_timeout(os.environ.get("AGENT_COMPLETION_TEST_TIMEOUT", "120"))
 
 
 def run_completion_tests(root: str) -> list[str]:
@@ -72,6 +84,21 @@ def run_completion_tests(root: str) -> list[str]:
             r = subprocess.run(
                 cmd, shell=True, cwd=root or None,
                 capture_output=True, text=True, timeout=COMPLETION_TEST_TIMEOUT,
+                # Run the command in its OWN process group/session so a teardown
+                # idiom that signals its GROUP (`kill 0`, `trap 'kill 0' EXIT`) —
+                # the common Makefile/integration-test teardown case — reaches only
+                # the command's own group, not this hook. Without it a group signal
+                # kills the hook with a signal code + empty stdout, breaking the
+                # 'Stop always exits 0' contract.
+                #
+                # Residual boundary: this changes the process GROUP, not parentage,
+                # so a command that reads $PPID and signals the hook's own pid
+                # directly with an UNCATCHABLE signal (`kill -9 $PPID`) cannot be
+                # defended from inside the process. That is a deliberate self-attack
+                # at the project's OWN trust level (completion_tests run as the
+                # project's package.json scripts do), and its outcome is a fail-open
+                # non-blocking stop — never corruption or a weakened security gate.
+                start_new_session=True,
             )
             if r.returncode != 0:
                 tail = (r.stderr or r.stdout or "").strip().splitlines()[-3:]

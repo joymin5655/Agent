@@ -14,15 +14,21 @@
 #     - cat secrets/ -> deny
 #     - a benign command -> allow
 #   New (P3-3):
-#     - git commit --no-verify -> deny        (bypasses the repo's own commit gate)
-#     - git commit -n -m "x"   -> deny
-#     - git push   --no-verify -> deny
+#     - git commit --no-verify -> ask         (bypasses the repo's own commit gate)
+#     - git commit -n -m "x"   -> ask
+#     - git commit -nm "x"     -> ask          (bundled short flag; git reads -n -m)
+#     - git commit -vn         -> ask          (bundled, -n not first)
+#     - git -c k=v commit --no-verify -> ask   (global opt before subcommand)
+#     - git -c core.hooksPath=… commit -> ask  (hooks disabled with no --no-verify)
+#     - git push   --no-verify -> ask
 #     - git push -n            -> allow        (that's --dry-run, NOT no-verify)
 #     - normal git commit -m   -> allow        (no false positive)
+#     - commit msg mentions -n -> allow        (message text is stripped before match)
 #     - sed -i on .eslintrc    -> ask          (linter-config tamper via Bash)
 #     - rm .prettierrc         -> ask
 #     - > eslint.config.js      -> ask
 #     - cat .eslintrc          -> allow        (reading a config is not tampering)
+#     - cat .eslintrc > out     -> allow        (read redirected elsewhere, not the config)
 #     - edit tsconfig.json     -> allow        (deliberately out of scope — no FP)
 #
 # Usage: bash core/tests/pre-tool-guard-test.sh
@@ -72,16 +78,30 @@ echo
 echo "=== P3-3: --no-verify commit/push bypass -> ask ==="
 run_case "commit-no-verify-ask"      'git commit --no-verify -m "wip"'    ask
 run_case "commit-n-shortflag-ask"    'git commit -n -m "wip"'             ask
+run_case "commit-nm-bundled-ask"     'git commit -nm "wip"'               ask
+run_case "commit-vn-bundled-ask"     'git commit -vn -m "wip"'            ask
+run_case "commit-nv-bundled-ask"     'git commit -nv'                     ask
+run_case "commit-c-optprefix-ask"    'git -c foo=bar commit --no-verify'  ask
+run_case "commit-hookspath-ask"      'git -c core.hooksPath=/dev/null commit -m x' ask
 run_case "push-no-verify-ask"        'git push --no-verify origin feat'   ask
 run_case "push-dryrun-n-allow"       'git push -n origin feat'            allow
 run_case "normal-commit-allow"       'git commit -m "feat: add thing"'    allow
+run_case "commit-am-allow"           'git commit -am "add all files"'     allow
+run_case "commit-amend-allow"        'git commit --amend --no-edit'       allow
+# message that merely MENTIONS the flag is stripped before matching -> no false ask
+run_case "commit-msg-mentions-n-allow"  'git commit -m "fix -n flag parsing"'   allow
+run_case "commit-msg-mentions-nv-allow" 'git commit -m "add --no-verify docs"'  allow
 
 echo
 echo "=== P3-3: linter/gate config tampering via Bash -> ask ==="
 run_case "sed-i-eslintrc-ask"        'sed -i "s/error/off/" .eslintrc.json'  ask
 run_case "rm-prettierrc-ask"         'rm .prettierrc'                         ask
 run_case "redirect-eslint-config-ask" 'echo "{}" > eslint.config.js'          ask
+run_case "truncate-flake8-ask"       'truncate -s 0 .flake8'                  ask
 run_case "cat-eslintrc-allow"        'cat .eslintrc.json'                     allow
+# a pure READ that redirects its output ELSEWHERE must not trip the mutate guard
+run_case "read-redirect-elsewhere-allow" 'cat .eslintrc.json > backup.txt'    allow
+run_case "grep-config-redirect-allow"    'grep rules .eslintrc.json > /dev/null' allow
 run_case "edit-tsconfig-allow"       'sed -i "s/strict/loose/" tsconfig.json' allow
 
 echo
