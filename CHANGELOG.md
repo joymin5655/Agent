@@ -16,9 +16,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (anti-loop) and `AGENT_QUALITY_GATE_BLOCK=0` is advisory; per-command bound is
   `AGENT_COMPLETION_TEST_TIMEOUT` (default 120s). New fail-safe/bounded loader
   `hook_config.load_session_config` (≤20 cmds, ≤500 chars each; malformed →
-  empty). Trust model = the project's own scripts (docs/hook-config.md). Test:
-  `core/tests/quality-gate-completion-test.sh` (11 checks incl. YAML path,
-  advisory, anti-loop, malformed fail-safe).
+  empty). Trust model = the project's own scripts (docs/hook-config.md).
+  Adversarial-review hardening of the always-exit-0 contract: the timeout env
+  var is parsed at import behind a guard (a typo like `2m`/`30s` degrades to
+  120 instead of crashing the Stop hook), and completion commands run with
+  `start_new_session=True` so a process-group teardown idiom (`kill 0`,
+  `trap 'kill 0' EXIT`) reaches only the command's own group, not the hook.
+  Test: `core/tests/quality-gate-completion-test.sh` (21 checks incl. YAML
+  path, advisory, anti-loop, malformed fail-safe, non-numeric timeout,
+  process-group isolation, timeout→block, loader bounds).
 - **P3-3 — verification-gate-bypass + linter-tamper guards.**
   `core/hooks/pre-tool-guard.sh` now `ask`s on `git commit/push --no-verify`
   (and `git commit -n`), which skip the repo's own gitleaks+sanitize commit
@@ -26,7 +32,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ruff, flake8, biome, golangci, pre-commit, gitleaks) — the "disable the check
   instead of fixing the code" anti-pattern. `git push -n` (dry-run) and normal
   commits pass; reading a config passes. `ask` (not deny) per the escalation
-  principle. First test for this hook: `core/tests/pre-tool-guard-test.sh` (16
+  principle. Adversarial-review hardening: the no-verify guard now also catches
+  git's bundled short-flag forms (`-nm`, `-vn`; git parses `-nm` as `-n -m`),
+  a `-c key=val` global option before the subcommand, and inline
+  `core.hooksPath=` — while a commit whose *message* merely mentions `-n` no
+  longer false-asks (the message is stripped before matching); the linter-tamper
+  rule no longer false-asks on a read that redirects elsewhere
+  (`cat .eslintrc.json > backup.txt`) by requiring the config to be the mutate
+  target. First test for this hook: `core/tests/pre-tool-guard-test.sh` (28
   checks, incl. regression coverage of the existing destructive/secret rules).
 - `core/infra/telemetry-digest.sh` (P1-5) — pillar④ janitor step 1: reads
   `.agent/logs/supervisor.jsonl` (path arg, or `$AGENT_TELEMETRY_LOG`, or

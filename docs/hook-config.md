@@ -82,7 +82,17 @@ Behavior:
   add a `completion_tests` entry could already run the command directly, so this
   adds enforcement, not new capability. Unset/empty ⇒ the gate does nothing.
 - Fail-safe: a missing / malformed config degrades to no completion tests; the
-  hook always exits 0 (an internal error never crashes the Stop event).
+  hook always exits 0 (an internal error never crashes the Stop event). The
+  per-command timeout is parsed defensively — a non-numeric `AGENT_COMPLETION_TEST_TIMEOUT`
+  (e.g. `2m`) degrades to 120s rather than crashing the hook at import.
+- Process isolation: each command runs in its **own** process group/session
+  (`start_new_session`), so a teardown idiom that signals its group
+  (`kill 0`, `trap 'kill 0' EXIT`) reaches only the command, never the Stop
+  hook. Residual boundary: this isolates the group, not parentage, so a command
+  that reads `$PPID` and signals the hook's own pid with an uncatchable signal
+  (`kill -9 $PPID`) cannot be defended in-process — that is a deliberate
+  self-attack at the project's own trust level, and its outcome is a fail-open
+  non-blocking stop, never corruption or a weakened gate.
 
 ## Security guarantee — ADDITIVE ONLY
 
