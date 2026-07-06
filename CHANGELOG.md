@@ -87,6 +87,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   honestly NOT guaranteed identical across models
 
 ### Changed
+- `docs/harness-improvement-plan.md` — added §4.7 P3 series (5 items) from a
+  2026-07-06 benchmark audit of 8 top personal harnesses (superpowers, ECC,
+  karpathy-skills, gstack, revfactory, hooks-mastery, Chachamaru, showcase):
+  completion-gate test
+  verification (P3-1), upstream spec/plan discipline (P3-2), `--no-verify`/linter-
+  tamper blocking (P3-3), self-supply-chain scan (P3-4), independent
+  completion-claim verifier (P3-5). Adoptions ranked by demonstrated mechanism
+  value, not stars; catalog-maximalism, prompt-coercion, and unattended
+  instinct-persistence explicitly rejected as design-principle conflicts. §7
+  backlog count 24 → 29 (P3 pattern `P[0-3]`).
 - `agents/master-registry.json` — supervisor keyword matchers hardened to domain
   anchors (review follow-up, MAJOR-1; specialist-routing Lesson 1). code-reviewer
   drops bare `review`/`look over` for multi-word phrases (`code review`,
