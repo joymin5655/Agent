@@ -231,3 +231,61 @@ def load_extensions(repo_root: str) -> dict:
     except Exception:
         # Absolute fail-safe — any unexpected failure degrades to built-ins only.
         return _empty()
+
+
+# Bounds for session.completion_tests (P3-1). A project cannot make the Stop
+# gate run an unbounded number of arbitrarily long commands.
+_MAX_COMPLETION_TESTS = 20
+_MAX_COMMAND_LEN = 500
+
+
+def load_session_config(repo_root: str) -> dict:
+    """Load the project's `session.*` config. Currently exposes one key:
+    `completion_tests` — a bounded list of shell command strings the Stop gate
+    (session-quality-gate.py) runs to verify completion.
+
+    Returns {"completion_tests": [str, ...]}. Missing / empty / malformed config
+    (no file, bad YAML/JSON, wrong shape, non-str / over-long entries) degrades
+    to an empty list. NEVER raises.
+
+    TRUST MODEL: these commands run in the PROJECT's own environment at the
+    project's own trust level — the same as its `package.json` scripts, Makefile,
+    or CI config. This loader BOUNDS count and length; it does not sandbox
+    execution. An agent that could add a `completion_tests` entry could already
+    run the same command directly, so this adds enforcement (can't claim done
+    while tests fail), not new capability. Unset => the gate does nothing.
+    """
+    try:
+        if not repo_root or not isinstance(repo_root, str):
+            return {"completion_tests": []}
+
+        base = os.path.join(repo_root, ".agent")
+        docs = []
+        yml_path = os.path.join(base, "hook-config.yml")
+        json_path = os.path.join(base, "hook-config.json")
+        if os.path.isfile(yml_path):
+            docs.append(_read_yaml(yml_path))
+        if os.path.isfile(json_path):
+            docs.append(_read_json(json_path))
+
+        cmds = []
+        for doc in docs:
+            if not isinstance(doc, dict):
+                continue
+            sess = doc.get("session")
+            if not isinstance(sess, dict):
+                continue
+            raw = sess.get("completion_tests")
+            if not isinstance(raw, list):
+                continue
+            for item in raw:
+                if isinstance(item, str) and item.strip() and len(item) <= _MAX_COMMAND_LEN:
+                    cmds.append(item)
+                    if len(cmds) >= _MAX_COMPLETION_TESTS:
+                        break
+            if len(cmds) >= _MAX_COMPLETION_TESTS:
+                break
+
+        return {"completion_tests": cmds}
+    except Exception:
+        return {"completion_tests": []}

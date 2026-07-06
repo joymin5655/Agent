@@ -52,6 +52,48 @@ The JSON form is identical in shape:
 }
 ```
 
+## Completion tests — `session.completion_tests` (P3-1)
+
+The Stop gate (`core/hooks/session-quality-gate.py`) can run project-declared
+verification commands before a response is allowed to end — so an agent cannot
+claim "done" while the project's own tests fail. Declare them under a top-level
+`session:` mapping (not under `python_hooks:`):
+
+```yaml
+session:
+  completion_tests:
+    - "npm test --silent"
+    - "npx tsc --noEmit"
+```
+
+Behavior:
+
+- Commands run on the **first Stop** of a response, in the project root. If any
+  exits non-zero, times out, or fails to spawn, the hook emits
+  `{"decision":"block"}` and the session cannot end until it passes. (Stop hooks
+  cannot emit `ask` — that verb is PreToolUse-only — so the enforcement verb is
+  `block`.)
+- A **second Stop** passes automatically (intentional-override anti-loop), and
+  `AGENT_QUALITY_GATE_BLOCK=0` makes the whole gate advisory. Each command is
+  bounded by `AGENT_COMPLETION_TEST_TIMEOUT` seconds (default 120).
+- **Trust model:** these commands run at the project's OWN trust level — the
+  same as its `package.json` scripts or Makefile. The loader bounds count (≤20)
+  and length (≤500 chars) but does not sandbox execution; an agent that could
+  add a `completion_tests` entry could already run the command directly, so this
+  adds enforcement, not new capability. Unset/empty ⇒ the gate does nothing.
+- Fail-safe: a missing / malformed config degrades to no completion tests; the
+  hook always exits 0 (an internal error never crashes the Stop event). The
+  per-command timeout is parsed defensively — a non-numeric `AGENT_COMPLETION_TEST_TIMEOUT`
+  (e.g. `2m`) degrades to 120s rather than crashing the hook at import.
+- Process isolation: each command runs in its **own** process group/session
+  (`start_new_session`), so a teardown idiom that signals its group
+  (`kill 0`, `trap 'kill 0' EXIT`) reaches only the command, never the Stop
+  hook. Residual boundary: this isolates the group, not parentage, so a command
+  that reads `$PPID` and signals the hook's own pid with an uncatchable signal
+  (`kill -9 $PPID`) cannot be defended in-process — that is a deliberate
+  self-attack at the project's own trust level, and its outcome is a fail-open
+  non-blocking stop, never corruption or a weakened gate.
+
 ## Security guarantee — ADDITIVE ONLY
 
 The loader (`core/hooks/hook_config.py`) can **only make the scan stricter**:
