@@ -106,3 +106,13 @@ jobs:
           echo "sanitize gate clean"
       - name: Full token-set audit (superset — same script devs run locally)
         run: bash core/tests/sanitize-audit.sh
+
+  supply-chain-scan:
+    name: supply-chain scan (no self-injection directives)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan shipped instruction files + hooks for injection-style directives
+        run: bash core/tests/supply-chain-scan.sh
+      - name: Verify the scanner (fixture detection + clean-tree pass + no false-positive)
+        run: bash core/tests/supply-chain-scan-test.sh
