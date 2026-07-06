@@ -41,6 +41,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`cat .eslintrc.json > backup.txt`) by requiring the config to be the mutate
   target. First test for this hook: `core/tests/pre-tool-guard-test.sh` (28
   checks, incl. regression coverage of the existing destructive/secret rules).
+- **P3-5 — independent completion-claim verifier (eval-harness seed).** A
+  builder-validator layer that re-checks a completion claim from a separate
+  context, so "the builder says it's done" is never the last word.
+  `core/infra/completion-verify.py` is the deterministic core: given a claim
+  (`.agent/claims/<slug>.yml|json` declaring cited files / tests / assertions)
+  it mechanically checks each file exists (and contains its declared substring),
+  each test exits 0, and each assertion holds, then emits a shared-convention
+  verdict JSON (`{verdict, score, dimensions, refutations}`). Refute-by-default:
+  a missing file, a failing test, a malformed/empty claim, or an over-cap claim
+  all resolve to `REFUTED` (exit 1) — never a crash, never a silent pass; exit 0
+  iff `CONFIRMED`, so it doubles as a CI/wave GATE. Bounded (≤50 files, ≤20
+  tests/assertions) and hardened with the same `start_new_session=True` +
+  guarded-timeout-parse lessons as P3-1. `skills/verify-completion/SKILL.md` is
+  the semantic layer on top — an independent-context judge that adds the
+  "does the code actually do what the claim says / are the tests meaningful"
+  review scripts can't make, emitting the same schema. New shared spec
+  `docs/scoring-convention.md` unifies the verdict shape across the verifier,
+  the H-3 skill A/B harness, and the `supervisor-goal-audit.sh` 25-point scorer.
+  Test: `core/tests/completion-verify-test.sh` (17 checks incl.
+  false-claim→refuted, consistent→confirmed, malformed fail-safe, YAML,
+  process-group isolation, over-cap refutation).
 - `core/infra/telemetry-digest.sh` (P1-5) — pillar④ janitor step 1: reads
   `.agent/logs/supervisor.jsonl` (path arg, or `$AGENT_TELEMETRY_LOG`, or
   `<repo-root>/.agent/logs/supervisor.jsonl`) and reports action counts, a
