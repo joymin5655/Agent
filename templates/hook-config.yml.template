@@ -108,6 +108,17 @@ session:
   worktree_prefix: '.worktrees'
   lock_dir: '.agent/locks'
   log_dir: '.agent/logs'
+  # completion_tests — LIVE (read by core/hooks/session-quality-gate.py, P3-1).
+  # Shell commands run on the FIRST Stop of a response. If any exits non-zero
+  # (or times out), the session is blocked from ending until it passes — you
+  # cannot claim "done" while tests fail. A second Stop passes (intentional
+  # override), as does AGENT_QUALITY_GATE_BLOCK=0 (advisory). Commands run at
+  # the project's OWN trust level (same as your package.json scripts); unset or
+  # empty = the completion gate does nothing. Per-command timeout:
+  # AGENT_COMPLETION_TEST_TIMEOUT seconds (default 120).
+  completion_tests: []
+  #   - "npm test --silent"
+  #   - "npx tsc --noEmit"
 
 # ---------------------------------------------------------------------------
 # Goal mode (supervisor-goal.sh)
@@ -125,11 +136,12 @@ goal_mode:
 #   secret_content_scan: 'custom/my-secret-scan.py'
 
 # ---------------------------------------------------------------------------
-# Secret-scan extensions — the ONLY block in this file actually loaded at
-# runtime. core/hooks/hook_config.py reads this from `.agent/hook-config.yml`
-# (copy this file there to activate — everything above (risk_areas: /
-# resources: / hardcoding:) is declarative documentation only, not read by
-# any hook; see docs/customization.md part 2).
+# Secret-scan extensions — loaded at runtime by core/hooks/hook_config.py from
+# `.agent/hook-config.yml` (copy this file there to activate). This block and
+# `session.completion_tests` (above) are the runtime-live parts of this file;
+# everything else (risk_areas: / resources: / hardcoding: / the rest of
+# session:) is declarative documentation only, not read by any hook. See
+# docs/customization.md part 2.
 #
 # ADDITIVE ONLY: these entries can only ADD secret patterns / exempt paths /
 # credential key names on top of secret-content-scan.py's built-ins. There is
