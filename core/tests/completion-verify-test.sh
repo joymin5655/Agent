@@ -171,6 +171,56 @@ RC=$(run_verify "$PROJ" "$PROJ/claim-overcap.json")
 refutes_contain "exceeds"; check "over-cap-refutation-explains" $?
 
 echo
+echo "=== (l) a present-but-non-list section -> REFUTED (not silently dropped) ==="
+# files all pass, but `tests` is a string, not a list. It must REFUTE the whole
+# claim (a malformed section can't be dropped so the rest CONFIRMs).
+cat > "$PROJ/claim-badsection.json" <<'EOF'
+{ "claim": { "summary": "x", "files": [ { "path": "src/mod.py" } ], "tests": "false" } }
+EOF
+RC=$(run_verify "$PROJ" "$PROJ/claim-badsection.json")
+[[ "$(verdict_of)" == "REFUTED" ]]; check "non-list-section-refuted" $?
+refutes_contain "must be a list"; check "non-list-section-explains" $?
+
+echo
+echo "=== (m) files-as-string (a whole section malformed) -> REFUTED ==="
+# the review's MAJOR repro: a non-list `files` must not be silently dropped while
+# a trivial passing test confirms the claim.
+cat > "$PROJ/claim-filesstr.json" <<'EOF'
+{ "claim": { "summary": "x", "files": "important.py", "tests": [ "true" ] } }
+EOF
+RC=$(run_verify "$PROJ" "$PROJ/claim-filesstr.json")
+[[ "$(verdict_of)" == "REFUTED" ]]; check "files-as-string-refuted" $?
+
+echo
+echo "=== (n) bare-string file entry -> exercises the string-form branch ==="
+cat > "$PROJ/claim-barepath.json" <<'EOF'
+{ "claim": { "summary": "x", "files": [ "src/mod.py" ] } }
+EOF
+RC=$(run_verify "$PROJ" "$PROJ/claim-barepath.json")
+[[ "$(verdict_of)" == "CONFIRMED" ]]; check "bare-string-file-confirmed" $?
+
+echo
+echo "=== (o) --root defaults to CWD when omitted ==="
+( cd "$PROJ" && python3 "$VERIFY" claim-ok.json ) > "$OUTFILE" 2>/dev/null
+RCO=$?
+[[ $RCO -eq 0 && "$(verdict_of)" == "CONFIRMED" ]]; check "root-defaults-to-cwd" $?
+
+echo
+echo "=== (p) non-numeric AGENT_VERIFY_CMD_TIMEOUT -> degrades, no crash ==="
+env AGENT_VERIFY_CMD_TIMEOUT=2m python3 "$VERIFY" --root "$PROJ" "$PROJ/claim-ok.json" > "$OUTFILE" 2>/dev/null
+RCP=$?
+[[ $RCP -eq 0 && "$(verdict_of)" == "CONFIRMED" ]]; check "badtimeout-degrades" $?
+
+echo
+echo "=== (q) partial score (0<score<1) on a mixed claim ==="
+cat > "$PROJ/claim-partial.json" <<'EOF'
+{ "claim": { "summary": "x", "files": [ { "path": "src/mod.py" } ], "tests": [ "false" ] } }
+EOF
+RC=$(run_verify "$PROJ" "$PROJ/claim-partial.json")
+[[ "$(verdict_of)" == "REFUTED" ]]; check "partial-refuted" $?
+[[ "$(score_of)" == "0.5" ]]; check "partial-score-half" $?
+
+echo
 echo "=== (j) verdict carries the shared-convention schema keys ==="
 python3 -c '
 import sys, json

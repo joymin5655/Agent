@@ -37,6 +37,11 @@ _MAX_FILES = 50
 _MAX_TESTS = 20
 _MAX_ASSERTIONS = 20
 _MAX_CMD_LEN = 500
+# Cap the bytes read for a `contains` check so a claim citing a huge regular file
+# can't slurp it whole and OOM the verifier. 5 MB is generous for source; a needle
+# past it does not match (refute-by-default's safe direction — a false REFUTED, not
+# a crash or a false CONFIRMED).
+_MAX_CONTAINS_BYTES = 5_000_000
 
 
 def _parse_timeout(raw):
@@ -79,14 +84,19 @@ def _run(cmd, root):
     error, timeout, or signal all count as failure. `start_new_session=True`
     isolates the command's process group so a teardown idiom that signals its
     group (`kill 0`, `trap 'kill 0' EXIT`) reaches only the command, never this
-    verifier."""
+    verifier.
+
+    Output is discarded to DEVNULL, not captured: only the exit code decides the
+    verdict, and capturing a chatty command's stdout would let it accumulate
+    unboundedly in the verifier's memory (a timeout bounds time, not memory) and
+    OOM-kill the gate before it can refute."""
     if not isinstance(cmd, str) or not cmd.strip() or len(cmd) > _MAX_CMD_LEN:
         return False
     try:
         r = subprocess.run(
             cmd, shell=True, cwd=root or None,
-            capture_output=True, text=True, timeout=CMD_TIMEOUT,
-            start_new_session=True,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            timeout=CMD_TIMEOUT, start_new_session=True,
         )
         return r.returncode == 0
     except Exception:
@@ -108,64 +118,64 @@ def verify(claim, root):
         "assertions": {"passed": 0, "total": 0},
     }
 
-    def _over_cap(seq, cap, kind):
-        # Refute-by-default on truncation: an over-long claim must not be able to
-        # HIDE a failing item past the cap behind padding. Exceeding the bound is
-        # itself a refutation, so the verdict can never be CONFIRMED by volume.
-        if isinstance(seq, list) and len(seq) > cap:
+    def _section(name, cap, kind):
+        # Normalize a claim section to a bounded list. A present-but-wrong-type
+        # section (`"tests": "false"`) is REFUTED, not silently dropped — else a
+        # malformed section would let the rest of the claim CONFIRM. Exceeding the
+        # cap is itself a refutation so padding can't hide a failing item past the
+        # bound; the verdict can never be CONFIRMED by volume.
+        raw = claim.get(name)
+        if raw is None:
+            return []
+        if not isinstance(raw, list):
+            refutations.append("`%s` must be a list" % name)
+            return []
+        if len(raw) > cap:
             refutations.append(
                 "claim declares %d %s — exceeds the %d cap; the excess is not verified"
-                % (len(seq), kind, cap)
+                % (len(raw), kind, cap)
             )
+        return raw[:cap]
 
-    files = claim.get("files") or []
-    _over_cap(files, _MAX_FILES, "files")
-    if isinstance(files, list):
-        for item in files[:_MAX_FILES]:
-            if isinstance(item, str):
-                path, contains = item, None
-            elif isinstance(item, dict):
-                path, contains = item.get("path"), item.get("contains")
-            else:
-                path, contains = None, None
-            dims["files"]["total"] += 1
-            if not isinstance(path, str) or not path:
-                refutations.append("files: an entry declares no `path`")
+    for item in _section("files", _MAX_FILES, "files"):
+        if isinstance(item, str):
+            path, contains = item, None
+        elif isinstance(item, dict):
+            path, contains = item.get("path"), item.get("contains")
+        else:
+            path, contains = None, None
+        dims["files"]["total"] += 1
+        if not isinstance(path, str) or not path:
+            refutations.append("files: an entry declares no `path`")
+            continue
+        full = os.path.join(root, path) if root else path
+        if not os.path.isfile(full):
+            refutations.append("file does not exist: %s" % path)
+            continue
+        if contains:
+            try:
+                with open(full, "r", encoding="utf-8", errors="replace") as fh:
+                    body = fh.read(_MAX_CONTAINS_BYTES)
+            except OSError:
+                body = ""
+            if str(contains) not in body:
+                refutations.append("file %s lacks claimed content: %r" % (path, contains))
                 continue
-            full = os.path.join(root, path) if root else path
-            if not os.path.isfile(full):
-                refutations.append("file does not exist: %s" % path)
-                continue
-            if contains:
-                try:
-                    with open(full, "r", encoding="utf-8", errors="replace") as fh:
-                        body = fh.read()
-                except OSError:
-                    body = ""
-                if str(contains) not in body:
-                    refutations.append("file %s lacks claimed content: %r" % (path, contains))
-                    continue
-            dims["files"]["passed"] += 1
+        dims["files"]["passed"] += 1
 
-    tests = claim.get("tests") or []
-    _over_cap(tests, _MAX_TESTS, "tests")
-    if isinstance(tests, list):
-        for cmd in tests[:_MAX_TESTS]:
-            dims["tests"]["total"] += 1
-            if _run(cmd, root):
-                dims["tests"]["passed"] += 1
-            else:
-                refutations.append("test did not pass: %s" % _label(cmd))
+    for cmd in _section("tests", _MAX_TESTS, "tests"):
+        dims["tests"]["total"] += 1
+        if _run(cmd, root):
+            dims["tests"]["passed"] += 1
+        else:
+            refutations.append("test did not pass: %s" % _label(cmd))
 
-    assertions = claim.get("assertions") or []
-    _over_cap(assertions, _MAX_ASSERTIONS, "assertions")
-    if isinstance(assertions, list):
-        for cmd in assertions[:_MAX_ASSERTIONS]:
-            dims["assertions"]["total"] += 1
-            if _run(cmd, root):
-                dims["assertions"]["passed"] += 1
-            else:
-                refutations.append("assertion did not hold: %s" % _label(cmd))
+    for cmd in _section("assertions", _MAX_ASSERTIONS, "assertions"):
+        dims["assertions"]["total"] += 1
+        if _run(cmd, root):
+            dims["assertions"]["passed"] += 1
+        else:
+            refutations.append("assertion did not hold: %s" % _label(cmd))
 
     total = sum(d["total"] for d in dims.values())
     passed = sum(d["passed"] for d in dims.values())
