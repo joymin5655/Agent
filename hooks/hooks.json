@@ -49,6 +49,7 @@
           { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" secret-content-scan.py" },
           { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" r4-file-mutex-check.sh" },
           { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" tdd-guard.py" },
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" spec-gate.py" },
           { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" supervisor.py" }
         ]
       },
