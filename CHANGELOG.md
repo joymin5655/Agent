@@ -7,7 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] — 2026-07-08
+
+> Cumulative since 0.2.0: the 0.2.1 plugin release (2026-07-07, model-routing
+> policy + the P3-1/3/4/5 batch) was cut without sectioning this file, so the
+> entries below span 0.2.1 and 0.2.2. Newly in 0.2.2: P3-2 (`/spec` +
+> spec-gate), the freedom-vs-enforcement calibration audit, and the T/E +
+> O/L/I backlog series.
+
 ### Added
+- **Freedom-vs-enforcement calibration audit + new backlog series.**
+  `docs/freedom-enforcement-calibration-2026-07.md` tiers every enforcement/
+  freedom point (deny/ask/block/advisory/observe/aspirational) and grounds
+  keep/promote/measure-first verdicts in 2026 external evidence. New backlog:
+  T-1 teaching gates (WHY/FIX in every gate message), T-2 gate registry +
+  fire-rate + expiry, T-3 negative skill-trigger examples, E-1 public eval
+  harness promotion (Pass^3); O-1 supervise delegation-contract revision
+  (4-part brief, fan-out cap 3–5, single-writer, isolated verify lane),
+  O-2 generic `skills/loop` (fresh-context / one-task-per-iteration /
+  file+git state), L-1 failure-mode-checklist grader redesign, L-2
+  grader/tests write-ban + append-only ledger, I-1 secret-scan matcher
+  consolidation, I-2 doctor cache/manifest drift checks
+  (`docs/harness-improvement-plan.md` §4.8–4.9).
 - **P3-1 — completion-gate test verification.** `core/hooks/session-quality-gate.py`
   (Stop hook) now runs a project's `session.completion_tests` (declared in
   `.agent/hook-config.yml|json`) on the first Stop; any command that exits
