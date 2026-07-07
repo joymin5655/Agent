@@ -101,6 +101,29 @@ check "manifest-drift-is-warn-not-fail" $?
 rm -rf "$MF_FIX"
 
 echo
+echo "=== (g2) hook manifest: structurally malformed settings -> clean WARN, no traceback ==="
+MF_FIX2="$(mktemp -d)"
+printf 'alpha-guard.js\n' > "$MF_FIX2/manifest"
+printf '{"hooks":{"PreToolUse":"not-a-list"}}' > "$MF_FIX2/settings.json"
+OUT_G2="$(AGENT_HOOK_MANIFEST="$MF_FIX2/manifest" AGENT_GLOBAL_SETTINGS="$MF_FIX2/settings.json" bash "$SETUP" --doctor 2>&1)"
+[[ "$OUT_G2" == *"[WARN"*"malformed hooks structure"* ]]
+check "manifest-malformed-structure-warn" $?
+[[ "$OUT_G2" != *"Traceback"* ]]
+check "manifest-malformed-no-traceback" $?
+
+echo
+echo "=== (g3) hook manifest: UTF-8 BOM in manifest -> still reconciles ==="
+printf '\xef\xbb\xbfalpha-guard.js\n' > "$MF_FIX2/manifest"
+cat > "$MF_FIX2/settings.json" <<'JSON'
+{"hooks":{"SessionStart":[{"matcher":"*","hooks":[
+  {"type":"command","command":"node \"/home/u/.claude/hooks/alpha-guard.js\""}]}]}}
+JSON
+OUT_G3="$(AGENT_HOOK_MANIFEST="$MF_FIX2/manifest" AGENT_GLOBAL_SETTINGS="$MF_FIX2/settings.json" bash "$SETUP" --doctor 2>&1)"
+[[ "$OUT_G3" == *"[PASS"*"1 declared / 1 live hooks all reconciled"* ]]
+check "manifest-bom-reconciles" $?
+rm -rf "$MF_FIX2"
+
+echo
 echo "=== (h) hook manifest: absent -> check skipped, exit unaffected ==="
 OUT_H="$(AGENT_HOOK_MANIFEST=/nonexistent/no-manifest bash "$SETUP" --doctor 2>&1)"
 [[ "$OUT_H" == *"hook manifest — none at /nonexistent/no-manifest (check skipped)"* ]]
