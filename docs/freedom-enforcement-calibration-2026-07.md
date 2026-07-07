@@ -14,7 +14,7 @@
 | # | 결론 | 대응 |
 |---|---|---|
 | 1 | **현 강제 지형은 2026 외부 컨센서스와 정합.** "체크 가능한 건 결정론적 기계로, 프롬프트엔 휴리스틱만" 원칙, secrets 외 ask-까지 에스컬레이션, fail-open, config-변조 감시(rule 14) 전부 외부 권고와 일치 | 유지 (§3a) |
-| 2 | **"기록만 하고 강제 안 함" 잔여 3곳이 최대 구조 리스크.** `risk_areas` YAML 미배선(격차 #9 잔여), plan-gate 플래그 소비자 부재, tdd-guard dryrun 로그 소비자 부재 — 전부 "거짓 문서는 거짓 동작" 철학의 자기 위반 | wire-or-delete (§3b) |
+| 2 | **"기록만 하고 강제 안 함" 잔여 3곳이 최대 구조 리스크.** `risk_areas` YAML 미배선(격차 #9 잔여), plan-gate 플래그 소비자 부재(감사 당일 P3-2 `spec-gate.py`로 배선 완료 — 기본 dryrun, block은 opt-in), tdd-guard dryrun 로그 소비자 부재 — 전부 "거짓 문서는 거짓 동작" 철학의 자기 위반 | wire-or-delete (§3b) |
 | 3 | **과잉 강제 후보는 데이터 없이 판정 불가.** 게이트별 발화율 계측이 없어 dead 게이트(한 번도 안 터짐)와 fatigue 게이트(상시 터져 고무도장화)를 구분할 수 없다 | 계측 먼저 (§3c → T-2) |
 | 4 | **외부 동향에서 채택할 것 4건** — teaching gates, 게이트 레지스트리+만료일, 스킬 부정 예제, eval 하네스 공개 승격 | 신규 백로그 T-1/T-2/T-3/E-1 (§3d) |
 
@@ -66,7 +66,7 @@ secrets deny(무우회), fail-open 전면, ask-티어 에스컬레이션 원칙(
 | 대상 | 문제 | 판정 |
 |---|---|---|
 | `hook-config.yml risk_areas:`/`resources:` | 훅 주석이 설정 확장을 약속하나 로더 부재 — "거짓 문서는 거짓 동작"의 자기 사례 | **P1-8 잔여로 완결**: 훅이 주석으로 인용하는 지점만 최소 배선하고, 배선하지 않을 약속(주석)은 삭제. 방치 금지 |
-| plan-gate 승인 플래그 | `plan-gate.py`가 쓰기만 하고 소비자 없음 | **P3-2에서 소비자 배선** (PreToolUse enforcer가 미승인 대형 변경에 ask — P3-2 완료 조건에 이미 명시) |
+| plan-gate 승인 플래그 | `plan-gate.py`가 쓰기만 하고 소비자 없음 (감사 시점 실측) | **P3-2로 배선 완료(감사 당일)** — `core/hooks/spec-gate.py`(PreToolUse Write/Edit)가 소비자. 기본 dryrun·block opt-in이므로 발화 데이터는 T-2 계측 대상에 포함 |
 | tdd-guard dryrun 로그 | `.agent/logs/tdd-guard-dryrun.jsonl`을 아무도 읽지 않음 | **T-2에서 digest 소비 추가**. 기본 dryrun 자체는 유지(아래 3c) |
 
 ### 3c. 과잉 강제 위험 → 계측 후 판단 (즉시 완화 아님)
