@@ -190,6 +190,30 @@
 
 출처 URL: superpowers(github.com/obra/superpowers), ECC 및 보안 감사(github.com/affaan-m/everything-claude-code, dev.to/joergmichno "We Audited the Viral 213k-Star ECC Repo"), hooks-mastery(github.com/disler/claude-code-hooks-mastery), Chachamaru Go-네이티브 게이트(github.com/Chachamaru127/claude-code-harness). skip 결정 및 커리어 연계 상세는 개인 볼트 감사 리포트에 별도 기록(공개 레포 반입 제외).
 
+### 4.8 T/E 시리즈 — 자유도/강제 캘리브레이션 감사 발굴 항목 (2026-07-07 추가)
+
+출처: `docs/freedom-enforcement-calibration-2026-07.md` (3축 감사: 레포 인벤토리 + 선행 감사·벤치마크 증류 + 2026 외부 하네스 엔지니어링 동향). 판정 요지: 현 강제 지형은 외부 컨센서스와 정합 — 잔여 리스크는 "기록만 하고 강제 안 함" 3곳(P1-8 잔여 / P3-2 / T-2가 각각 폐쇄)이며, 게이트 강도 조정은 게이트별 발화 데이터(T-2) 없이 하지 않는다. 기각 결정(전역 TDD block 승격, deny 티어 확대, 프롬프트 강제 문구 추가)은 캘리브레이션 문서 §3 참조.
+
+| ID | 작업 | 근거 | 완료 조건 (기계 검증) | 규모 |
+|---|---|---|---|---|
+| T-1 | **teaching gates** — 모든 deny/ask/block 결정 메시지에 근거(WHY: 어느 규칙·왜)와 수정 단계(FIX: 구체 대안 명령/경로)를 포함. 대상: `pre-tool-guard.sh`·`secret-content-scan.py`·`check-hardcoding.py`·`session-quality-gate.py` | 게이트 거부 메시지가 곧 에이전트 교정 지시 — route-around·인간 인터럽트를 줄이는 최저비용 개선 (캘리브레이션 §2) | 전 deny/ask/block 픽스처의 결정 JSON reason에 WHY/FIX 두 요소 존재 체크를 기존 per-hook 테스트에 추가 | S–M |
+| T-2 | **게이트 레지스트리 + fire-rate + 만료일** — 게이트별 "가정하는 모델 약점 + 검토 예정일" 메타데이터 문서(`docs/gate-registry.md`) + `telemetry-digest.sh` 확장: 기존 jsonl 싱크(security-violations·quality-gate-violations·tdd-guard-dryrun·supervisor)에서 게이트별 발화율/자동통과율 산출 → DEAD(발화 0)·FATIGUE(고빈도 ask) 후보 리포트 | 게이트 만료 원칙("가정은 만료된다") + permission 승인율 93% 고무도장 실측 — 계측 없이는 dead/fatigue 판정 불가. 모든 강도 조정의 선행 조건 | 레지스트리에 전 deny/ask/block 게이트 행 존재(검토일 포함) + digest 픽스처에 DEAD/FATIGUE 후보 라인 검증 | M |
+| T-3 | **스킬 부정 예제** — 출하 스킬 description에 negative-trigger("이럴 땐 발동하지 않음") 예제 추가 | 부정 예제 추가로 스킬 라우팅 정확도 73%→85% 보고(developers.openai.com/blog/skills-shell-tips) | 각 출하 SKILL.md description에 부정 예제 ≥1 존재 (grep 검증) | S |
+| E-1 | **eval 하네스 공개 승격** — P3-5(`completion-verify.py`)+H-3(스킬 A/B)를 공개 `evals/` 디렉터리로 승격: 라벨 테스트셋 + LLM-judge 채점(`docs/scoring-convention.md` 재사용) + **Pass^3**(독립 3회 전부 성공) + CI 회귀 게이트 | 2026 수렴 관행(경량 CI eval 게이트 + 회귀 추적, Pass^k 엄밀성 기준선) — 벤치마크 감사(2026-07-06)가 지목한 최대 갭이자 world-class 구분 신호 | `evals/` 존재 + 라벨셋 ≥10케이스 + CI 잡에서 Pass^3 리포트 생성 + 기준선 대비 회귀 시 FAIL | L |
+
+### 4.9 O/L/I 시리즈 — 오케스트레이션·루프 승격 + 인프라 (2026-07-08 추가)
+
+출처: 2026-07-08 레이어 통합 감사(3축: 로컬 레이어 인벤토리 · 사용 텔레메트리 · 외부 오케스트레이션/루프 동향). 외부 근거 요지 — **오케스트레이션**: orchestrator-worker(map-reduce-and-manage)가 정착 컨센서스이고 피어 스웜은 배제, write는 single-threaded, 실무 fan-out 3–5, 멀티에이전트는 토큰 ~15×라 고가치·병렬화 가능·read-heavy 작업 한정, **위임 계약 4요소(목표/출력형식/도구·범위/경계)가 품질 최대 레버**, 서브에이전트는 리드 대화 히스토리를 상속하지 않으므로 스폰 프롬프트가 컨텍스트를 전부 운반해야 함. **루프**: fresh-context·반복당 정확히 1 task·진행상태는 파일+git이 레퍼런스 패턴; 그레이더는 단일 스칼라 대신 실패모드 체크리스트(벤치마크 "최적화"의 73.8%가 실효익 0인 proxy-hacking 실측 — openreview.net/forum?id=ikrQWGgxYg; 테스트 덮어쓰기·채점 함수 변조 등 verifier 게이밍 문서화 — arxiv.org/pdf/2606.07379). 개인 규모에선 오케스트레이션 프레임워크 불채택이 컨센서스(핸드롤 유지). 로컬 레이어 위생: eager-load 표면은 스폰마다 배수 증식 — 전문 지시는 on-demand 스킬로.
+
+| ID | 작업 | 근거 | 완료 조건 (기계 검증) | 규모 |
+|---|---|---|---|---|
+| O-1 | **supervise 오케스트레이션 계약 개정** — ⓐ위임 계약 4요소 템플릿 `skills/supervise/templates/delegation-contract.md`(목표/출력형식/도구·범위/경계) ⓑwave당 fan-out 캡 3–5(초과 시 wave 분할) ⓒwrite single-threading(파일셋별 writer 1명 — 스킬 규율; 리뷰·검증 에이전트의 read-only **도구셋**이 유일한 기계 강제 지점) ⓓ적대 검증 레인 컨텍스트 격리(verifier는 fresh spawn, 저자 컨텍스트·자기평가 미전달, end-state만 채점). H-1 team-patterns 문서와 연계 | 위임 계약이 멀티에이전트 품질의 최대 레버(2026 컨센서스); write 경합은 문서화된 실패 모드 | 템플릿 파일 존재 + SKILL.md가 4요소·캡·single-writer·검증 격리 4규칙을 참조 + 픽스처 플랜에서 wave 분할 데모 + **리뷰·검증 에이전트 read-only 도구셋을 CI agent-frontmatter 검증이 가드**(기존 validate 잡 확장 — 규율 문서만으로 "기계화"를 주장하지 않기 위한 최소 기계 검증) | M |
+| O-2 | **`skills/loop` 범용 반복 실행 스킬** — 반복마다 fresh context, 반복당 정확히 1 task, 진행상태는 파일+git(컨텍스트 비의존 — 재시작 시 이어가기), 하드 예산·시도 캡(`supervisor-goal.sh` 재사용), 머지는 인간 승인. §5 harness-loop의 실행체 겸용(미션이 하네스 자신일 때 = P2, 임의 목표일 때 = 범용) | 루프 레퍼런스 패턴(fresh-context/1-task/파일 상태) + 기존 goal-mode 인프라 재사용 | 픽스처 미션 1회: 상태 파일 생성 → 세션 재시작 → 이어가기 성공 + 캡 도달 시 정지 기록 | M |
+| L-1 | **P2-2 grader 재설계 amendment** — 단일 스칼라 `harness_score` 채점을 실패모드 체크리스트 채점으로 교체: `evals/failure-modes.yaml`(명명된 실패모드 — 적대 리뷰 실적발 건: 조용한 드롭, glob 누락, 우회 플래그, false-CONFIRMED 등)에 대해 모드별 boolean+근거 인용. §5.1 대응표의 해당 행 수정. **E-1(evals/)이 선행 — 역순 금지(grader 없는 루프 = 지표 게이밍 확정)** | "채점 기준이 실패모드를 명시하지 않으면 검증 강화로는 게이밍을 못 막는다"(arxiv.org/pdf/2604.15149) — proxy-hacking 73.8% 실측(openreview.net/forum?id=ikrQWGgxYg) | §5 문서 수정 + `failure-modes.yaml` 초안 ≥8모드 + grade 출력이 모드별 verdict 나열 | S(문서) + M(구현, E-1 이후) |
+| L-2 | **grader/tests write-ban + append-only 원장** — 루프 실행 중 개선 에이전트의 `evals/`·`core/tests/` Write/Edit에 `ask`(**deny 아님 — secrets 외 ask-까지 에스컬레이션 원칙 유지**, 캘리브레이션 문서 §3a), results 원장은 append-only(truncate/rewrite에 `ask`) | verifier 게이밍 문서화(테스트 덮어쓰기·채점 함수 변조·감시 코드 사보타주 12% — arxiv.org/pdf/2606.07379) — "TARGET-외 diff discard"의 사전 보강 | 픽스처: 루프 세션 마커 하에서 `evals/` Write → `ask` 발동; 원장 append 외 변조 → `ask`; 정상 append·비루프 세션 → 통과(오탐 0) | S–M |
+| I-1 | **secret-content-scan 매처 통합** — `hooks/hooks.json`의 동일 훅 **7개** 매처 등록을 1개로 통합(동작 동일, PreToolUse 스택 주입 축소) | 훅 이벤트당 중복 주입은 순수 오버헤드 — 레이어 감사에서 전 이벤트 최다 혼잡 지점이 PreToolUse로 실측 | `adapter-parity.sh`·`hook-config-test.sh` green + hooks.json 내 해당 훅 매처 수 grep = 1 | S |
+| I-2 | **doctor 확장: 캐시·매니페스트 드리프트 검사** — ⓐ플러그인 설치 캐시에 다중 버전 공존 시 WARN(스테일 캐시가 트림된 에이전트/스킬을 계속 노출하는 드리프트의 근원 — 0.2.0/0.2.1 공존이 은퇴 에이전트 3종을 재노출한 실사례) ⓑ선언된 글로벌 훅 목록(사용자 매니페스트 파일, 경로는 env로) vs 실제 런타임 설정 대조 | 선언 상태의 기록·대조 부재가 통합 결정의 이틀 내 무음 드리프트를 허용한 실사례 | doctor 픽스처: 이중 버전 캐시 → WARN; 매니페스트 불일치 → WARN; 매니페스트 부재 → no-op | S–M |
+
 ---
 
 ## 5. Part 3 — `/harness-loop` 자율 개선 루프 설계 (단일 권고안)
@@ -247,6 +271,8 @@ P0-1 ~ P0-11 (최초 7건 반나절 + 훅 감사 배치 4건 2026-07-04)  → v0
 - **H/W 시리즈 편입 (2026-07-04)**: W-7(가드 오탐, S)은 P0급 위생으로 즉시 착수 가능. H-1·W-3·W-4는 P1과 병행(v0.3.0 트랙). H-2는 P1-1 완료 후, H-3은 P2-2와 채점 규약 공유(v0.3.x). H-4·W-1·W-2·W-6·W-8·W-9는 v0.3.x. W-5는 개인 레이어에서 진행(repo 마일스톤 밖).
 - **2026-07-04 감사 배치**: P0 시리즈 전체(P0-1~P0-11) 완료 — 훅 배선 버그 3건(P0-8/9/11) + 환경 경고 1건(P0-10) 포함.
 - **2026-07-05 P1 배치**: P1-4(dispatch-not-advise) · P1-5(telemetry-digest 재니터) · P1-7(--doctor) 출하, P1-8(hook-config 실로더 스키마) 부분 출하(스키마+소비 증명 테스트, 런타임 배선은 잔여).
+- **T/E 시리즈 편입 (2026-07-07 캘리브레이션 감사)**: T-1(teaching gates)·T-3(부정 예제)은 S급으로 W-7과 함께 즉시 착수 가능. T-2(게이트 레지스트리+계측)는 P1-5 telemetry-digest의 직접 확장이며 **모든 게이트 강도 조정(완화·강화)의 선행 조건**. E-1(eval 승격)은 P3-5·H-3·P2-2 채점 규약을 공유하는 v0.3.x 병행 트랙.
+- **O/L/I 시리즈 편입 (2026-07-08 레이어 통합 감사)**: I-1(매처 통합)·I-2(doctor 캐시/매니페스트 검사)는 S급 선행. O-1(supervise 계약 개정)이 오케스트레이션 트랙의 관문, O-2(`skills/loop`)가 그 위에서 §5 P2 루프의 실행체. L-1/L-2는 P2-2 착수 전 반영 필수(순서: E-1 → L-1/L-2 → P2). 상세 판정과 로컬 레이어 결정(레포 밖)은 별도 감사 기록 참조.
 
 ## 7. 이 문서 자체의 검증
 
@@ -255,7 +281,7 @@ P0-1 ~ P0-11 (최초 7건 반나절 + 훅 감사 배치 4건 2026-07-04)  → v0
 1. §3.3 표의 각 검증 명령을 실행해 실측 결과 열과 대조 — 훅 17, 테스트 4, 에이전트 2, 스킬 2.
 2. `bash core/tests/sanitize-audit.sh` — **PASS가 정상.** (P0-7 완료 이후로는 클린 워킹 트리에서 항상 PASS — 과거의 "FAIL이 정상" 예외는 P0-7 해소로 소멸)
 3. `gitleaks detect --no-git --source docs/ --config gitleaks.toml`.
-4. 백로그 항목 수 검증(2026-07-06 벤치마크 배치 갱신, 실측): `grep -cE '^\| P[0-3]-[0-9]+' docs/harness-improvement-plan.md` = **29** (P0 11 + P1 8 + P2 5 + P3 5), 각 행에 완료 조건 존재. H/W 시리즈: `grep -cE '^\| [HW]-[0-9]+' docs/harness-improvement-plan.md` = **13** (H 4 + W 9). A/G 시리즈: `grep -cE '^\| [AG]-[0-9]+' docs/harness-improvement-plan.md` = **3** (A 2 + G 1; 완료 조건 대신 근거·상태 기재 — §4.6 참고).
+4. 백로그 항목 수 검증(2026-07-07 캘리브레이션 배치 갱신, 실측): `grep -cE '^\| P[0-3]-[0-9]+' docs/harness-improvement-plan.md` = **29** (P0 11 + P1 8 + P2 5 + P3 5), 각 행에 완료 조건 존재. H/W 시리즈: `grep -cE '^\| [HW]-[0-9]+' docs/harness-improvement-plan.md` = **13** (H 4 + W 9). T/E 시리즈: `grep -cE '^\| [TE]-[0-9]+' docs/harness-improvement-plan.md` = **4** (T 3 + E 1 — §4.8). O/L/I 시리즈: `grep -cE '^\| [OLI]-[0-9]+' docs/harness-improvement-plan.md` = **6** (O 2 + L 2 + I 2 — §4.9). A/G 시리즈: `grep -cE '^\| [AG]-[0-9]+' docs/harness-improvement-plan.md` = **3** (A 2 + G 1; 완료 조건 대신 근거·상태 기재 — §4.6 참고).
 5. 스코어카드(§3.1·§3.2)의 격차 행 ↔ 백로그 ID 상호 링크 고아 0건 (모든 "부분/미비" 행에 P* 링크 존재).
 6. AGENTS.md 규약 준수 — 도메인 중립 언어, 커밋 메시지 `docs(plan): add harness improvement plan`.
 
