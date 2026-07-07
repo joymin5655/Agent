@@ -190,6 +190,17 @@
 
 출처 URL: superpowers(github.com/obra/superpowers), ECC 및 보안 감사(github.com/affaan-m/everything-claude-code, dev.to/joergmichno "We Audited the Viral 213k-Star ECC Repo"), hooks-mastery(github.com/disler/claude-code-hooks-mastery), Chachamaru Go-네이티브 게이트(github.com/Chachamaru127/claude-code-harness). skip 결정 및 커리어 연계 상세는 개인 볼트 감사 리포트에 별도 기록(공개 레포 반입 제외).
 
+### 4.8 T/E 시리즈 — 자유도/강제 캘리브레이션 감사 발굴 항목 (2026-07-07 추가)
+
+출처: `docs/freedom-enforcement-calibration-2026-07.md` (3축 감사: 레포 인벤토리 + 선행 감사·벤치마크 증류 + 2026 외부 하네스 엔지니어링 동향). 판정 요지: 현 강제 지형은 외부 컨센서스와 정합 — 잔여 리스크는 "기록만 하고 강제 안 함" 3곳(P1-8 잔여 / P3-2 / T-2가 각각 폐쇄)이며, 게이트 강도 조정은 게이트별 발화 데이터(T-2) 없이 하지 않는다. 기각 결정(전역 TDD block 승격, deny 티어 확대, 프롬프트 강제 문구 추가)은 캘리브레이션 문서 §3 참조.
+
+| ID | 작업 | 근거 | 완료 조건 (기계 검증) | 규모 |
+|---|---|---|---|---|
+| T-1 | **teaching gates** — 모든 deny/ask/block 결정 메시지에 근거(WHY: 어느 규칙·왜)와 수정 단계(FIX: 구체 대안 명령/경로)를 포함. 대상: `pre-tool-guard.sh`·`secret-content-scan.py`·`check-hardcoding.py`·`session-quality-gate.py` | 게이트 거부 메시지가 곧 에이전트 교정 지시 — route-around·인간 인터럽트를 줄이는 최저비용 개선 (캘리브레이션 §2) | 전 deny/ask/block 픽스처의 결정 JSON reason에 WHY/FIX 두 요소 존재 체크를 기존 per-hook 테스트에 추가 | S–M |
+| T-2 | **게이트 레지스트리 + fire-rate + 만료일** — 게이트별 "가정하는 모델 약점 + 검토 예정일" 메타데이터 문서(`docs/gate-registry.md`) + `telemetry-digest.sh` 확장: 기존 jsonl 싱크(security-violations·quality-gate-violations·tdd-guard-dryrun·supervisor)에서 게이트별 발화율/자동통과율 산출 → DEAD(발화 0)·FATIGUE(고빈도 ask) 후보 리포트 | 게이트 만료 원칙("가정은 만료된다") + permission 승인율 93% 고무도장 실측 — 계측 없이는 dead/fatigue 판정 불가. 모든 강도 조정의 선행 조건 | 레지스트리에 전 deny/ask/block 게이트 행 존재(검토일 포함) + digest 픽스처에 DEAD/FATIGUE 후보 라인 검증 | M |
+| T-3 | **스킬 부정 예제** — 출하 스킬 description에 negative-trigger("이럴 땐 발동하지 않음") 예제 추가 | 부정 예제 추가로 스킬 라우팅 정확도 73%→85% 보고(developers.openai.com/blog/skills-shell-tips) | 각 출하 SKILL.md description에 부정 예제 ≥1 존재 (grep 검증) | S |
+| E-1 | **eval 하네스 공개 승격** — P3-5(`completion-verify.py`)+H-3(스킬 A/B)를 공개 `evals/` 디렉터리로 승격: 라벨 테스트셋 + LLM-judge 채점(`docs/scoring-convention.md` 재사용) + **Pass^3**(독립 3회 전부 성공) + CI 회귀 게이트 | 2026 수렴 관행(경량 CI eval 게이트 + 회귀 추적, Pass^k 엄밀성 기준선) — 벤치마크 감사(2026-07-06)가 지목한 최대 갭이자 world-class 구분 신호 | `evals/` 존재 + 라벨셋 ≥10케이스 + CI 잡에서 Pass^3 리포트 생성 + 기준선 대비 회귀 시 FAIL | L |
+
 ---
 
 ## 5. Part 3 — `/harness-loop` 자율 개선 루프 설계 (단일 권고안)
@@ -247,6 +258,7 @@ P0-1 ~ P0-11 (최초 7건 반나절 + 훅 감사 배치 4건 2026-07-04)  → v0
 - **H/W 시리즈 편입 (2026-07-04)**: W-7(가드 오탐, S)은 P0급 위생으로 즉시 착수 가능. H-1·W-3·W-4는 P1과 병행(v0.3.0 트랙). H-2는 P1-1 완료 후, H-3은 P2-2와 채점 규약 공유(v0.3.x). H-4·W-1·W-2·W-6·W-8·W-9는 v0.3.x. W-5는 개인 레이어에서 진행(repo 마일스톤 밖).
 - **2026-07-04 감사 배치**: P0 시리즈 전체(P0-1~P0-11) 완료 — 훅 배선 버그 3건(P0-8/9/11) + 환경 경고 1건(P0-10) 포함.
 - **2026-07-05 P1 배치**: P1-4(dispatch-not-advise) · P1-5(telemetry-digest 재니터) · P1-7(--doctor) 출하, P1-8(hook-config 실로더 스키마) 부분 출하(스키마+소비 증명 테스트, 런타임 배선은 잔여).
+- **T/E 시리즈 편입 (2026-07-07 캘리브레이션 감사)**: T-1(teaching gates)·T-3(부정 예제)은 S급으로 W-7과 함께 즉시 착수 가능. T-2(게이트 레지스트리+계측)는 P1-5 telemetry-digest의 직접 확장이며 **모든 게이트 강도 조정(완화·강화)의 선행 조건**. E-1(eval 승격)은 P3-5·H-3·P2-2 채점 규약을 공유하는 v0.3.x 병행 트랙.
 
 ## 7. 이 문서 자체의 검증
 
@@ -255,7 +267,7 @@ P0-1 ~ P0-11 (최초 7건 반나절 + 훅 감사 배치 4건 2026-07-04)  → v0
 1. §3.3 표의 각 검증 명령을 실행해 실측 결과 열과 대조 — 훅 17, 테스트 4, 에이전트 2, 스킬 2.
 2. `bash core/tests/sanitize-audit.sh` — **PASS가 정상.** (P0-7 완료 이후로는 클린 워킹 트리에서 항상 PASS — 과거의 "FAIL이 정상" 예외는 P0-7 해소로 소멸)
 3. `gitleaks detect --no-git --source docs/ --config gitleaks.toml`.
-4. 백로그 항목 수 검증(2026-07-06 벤치마크 배치 갱신, 실측): `grep -cE '^\| P[0-3]-[0-9]+' docs/harness-improvement-plan.md` = **29** (P0 11 + P1 8 + P2 5 + P3 5), 각 행에 완료 조건 존재. H/W 시리즈: `grep -cE '^\| [HW]-[0-9]+' docs/harness-improvement-plan.md` = **13** (H 4 + W 9). A/G 시리즈: `grep -cE '^\| [AG]-[0-9]+' docs/harness-improvement-plan.md` = **3** (A 2 + G 1; 완료 조건 대신 근거·상태 기재 — §4.6 참고).
+4. 백로그 항목 수 검증(2026-07-07 캘리브레이션 배치 갱신, 실측): `grep -cE '^\| P[0-3]-[0-9]+' docs/harness-improvement-plan.md` = **29** (P0 11 + P1 8 + P2 5 + P3 5), 각 행에 완료 조건 존재. H/W 시리즈: `grep -cE '^\| [HW]-[0-9]+' docs/harness-improvement-plan.md` = **13** (H 4 + W 9). T/E 시리즈: `grep -cE '^\| [TE]-[0-9]+' docs/harness-improvement-plan.md` = **4** (T 3 + E 1 — §4.8). A/G 시리즈: `grep -cE '^\| [AG]-[0-9]+' docs/harness-improvement-plan.md` = **3** (A 2 + G 1; 완료 조건 대신 근거·상태 기재 — §4.6 참고).
 5. 스코어카드(§3.1·§3.2)의 격차 행 ↔ 백로그 ID 상호 링크 고아 0건 (모든 "부분/미비" 행에 P* 링크 존재).
 6. AGENTS.md 규약 준수 — 도메인 중립 언어, 커밋 메시지 `docs(plan): add harness improvement plan`.
 
