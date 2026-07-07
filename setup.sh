@@ -401,7 +401,7 @@ PY
         local mf_out mf_rc
         if mf_out="$(MANIFEST="$manifest" SETTINGS="$settings" python3 - <<'PY' 2>&1
 import json, os, sys
-manifest = [l.strip() for l in open(os.environ["MANIFEST"], encoding="utf-8")
+manifest = [l.strip() for l in open(os.environ["MANIFEST"], encoding="utf-8-sig")
             if l.strip() and not l.strip().startswith("#")]
 try:
     s = json.load(open(os.environ["SETTINGS"], encoding="utf-8"))
@@ -409,10 +409,14 @@ except Exception as e:
     print(f"settings parse failed: {e}")
     sys.exit(1)
 live = []
-for event, groups in (s.get("hooks") or {}).items():
-    for g in groups:
-        for c in g.get("hooks", []):
-            live.append(c.get("command", ""))
+try:
+    for event, groups in (s.get("hooks") or {}).items():
+        for g in groups:
+            for c in g.get("hooks", []):
+                live.append(c.get("command", ""))
+except (AttributeError, TypeError) as e:
+    print(f"settings has malformed hooks structure ({type(e).__name__}) — cannot reconcile")
+    sys.exit(1)
 missing = [m for m in manifest if not any(m in c for c in live)]
 undeclared = sorted({c.split("/")[-1].strip('"') for c in live
                      if not any(m in c for m in manifest)})
