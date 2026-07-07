@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.4] — 2026-07-08
+
+### Added
+- **M-1 — `docs/model-routing.md`.** Canonical cross-runtime model-tier policy:
+  a three-rung ladder (LOW mechanical / MID workhorse / TOP reasoning) with an
+  orthogonal effort dial ("effort before tier-up"), a work-class → tier table
+  for Claude Code / Codex CLI / Gemini CLI, floors (verify-judge ≥ MID,
+  fan-out workers default LOW — worker tier is the dominant cost lever at
+  ~15× multi-agent token spend), and an enforcement map. Explicitly rejected:
+  runtime model-switching hooks, automatic tier escalation, dedicated low-tier
+  agents, price constants in the repo.
+- **M-2 — verify-judge tier floor.** `/verify-completion`'s Layer 2 semantic
+  judge is documented as never-below-workhorse (sonnet-class): a low-tier
+  refute-by-default judge emits plausible false CONFIRMED verdicts and
+  silently disables the completion gate. Low-tier sessions must pass an
+  explicit `model` override on the judge dispatch.
+- **M-3 — adapter templates carry the tiers.** The Codex adapter ships
+  `quick.config.toml.template` (LOW) / `deep.config.toml.template` (TOP) as
+  per-profile config files (recent Codex CLI builds reject inline
+  `[profiles.*]` tables as legacy — verified against a live CLI); the Gemini
+  template ships a workhorse default model with explicit `-m` escalation.
+  Model IDs are marked as 2026-07 snapshots.
+
+### Changed
+- `skills/supervise/SKILL.md` Model policy: the mechanical-fixes row now names
+  its real mechanism (explicit per-call `model` override on the Agent
+  dispatch — no low-tier agent is shipped) and the table links to
+  `docs/model-routing.md` as its cross-runtime generalization.
+
 ## [0.2.3] — 2026-07-08
 
 ### Changed

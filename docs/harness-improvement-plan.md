@@ -214,6 +214,17 @@
 | I-1 ✅ 2026-07-08 | **secret-content-scan 매처 통합** — `hooks/hooks.json`의 동일 훅 **7개** 매처 등록을 통합(동작 동일, PreToolUse 등록 표면 축소) | 훅 이벤트당 중복 주입은 순수 오버헤드 — 레이어 감사에서 전 이벤트 최다 혼잡 지점이 PreToolUse로 실측 | ✅ 7→**2**로 통합: 비편집 싱크 6블록(supabase·firecrawl·WebFetch·notion·gdrive·stitch)을 유니온 매처 1개로, 편집 체인(Write\|Edit\|MultiEdit) 내 1개는 유지 — 체인 순서(hardcoding→secret→mutex→tdd→spec→supervisor) 보존이 1개 초과 절감보다 우선(매처 통합은 등록 표면 정리이지 이벤트당 실행 수는 동일). 커버 도구 19종 동일 검증 + `adapter-parity.sh` 6/6·`hook-config-test.sh` 10/10 green | S |
 | I-2 ✅ 2026-07-08 | **doctor 확장: 캐시·매니페스트 드리프트 검사** — ⓐ플러그인 설치 캐시에 다중 버전 공존 시 WARN(스테일 캐시가 트림된 에이전트/스킬을 계속 노출하는 드리프트의 근원 — 0.2.0/0.2.1 공존이 은퇴 에이전트 3종을 재노출한 실사례) ⓑ선언된 글로벌 훅 목록(사용자 매니페스트 파일, 경로는 env로) vs 실제 런타임 설정 대조 | 선언 상태의 기록·대조 부재가 통합 결정의 이틀 내 무음 드리프트를 허용한 실사례 | ✅ `setup.sh --doctor` 체크 10(캐시: `AGENT_PLUGIN_CACHE_ROOT`, 다중 버전 WARN·단일 PASS·부재 PASS)·체크 11(매니페스트: `AGENT_HOOK_MANIFEST`(기본 `~/.claude/LOCAL-LAYER.hooks`)·`AGENT_GLOBAL_SETTINGS`, 양방향 대조 declared-but-not-live/live-but-undeclared, **WARN only — 관측자는 차단하지 않음**, 부재 시 skip). 픽스처 `setup-doctor-test.sh` **15/15**(신규 8케이스: 이중캐시 WARN·단일 PASS·정합 PASS·양방향 드리프트 WARN+exit 0·**구조적 malformed settings → 클린 WARN·no-traceback**(적대 리뷰 MODERATE 반영)·**BOM 매니페스트 정합**(utf-8-sig, 리뷰 MINOR)·부재 skip) | S–M |
 
+### 4.10 M 시리즈 — 크로스런타임 모델 티어링 (2026-07-08 추가)
+
+출처: 2026-07-08 모델 티어링 감사(3축: 레포 라우팅 표면 · 로컬 런타임 설정 · 2026-07 모델 티어 지형). 판정 요지 — 기존 모델 정책(계획=무핀 inherit, 전문가=frontmatter 핀, CI 드리프트 가드)은 **Claude 전용**이었고 Codex/Gemini 런타임엔 티어 개념이 전무(어댑터=이벤트 번역기, 템플릿에 model 라인 0). 외부 수렴 관행 = 3단 사다리(LOW 기계적/MID 워크호스/TOP 추론) + 직교 effort 다이얼("단 올리기 전 단 내 effort부터"), 팬아웃 워커 티어가 최대 비용 레버(멀티에이전트 ~15×). 기각: 런타임 모델 스위칭 훅(프롬프트 분류기 부활), 자동 티어 에스컬레이션, 저티어 전용 에이전트 신설(로스터 큐레이션 역행), 가격 상수 레포 반입.
+
+| ID | 작업 | 근거 | 완료 조건 (기계 검증) | 규모 |
+|---|---|---|---|---|
+| M-1 ✅ 2026-07-08 | **`docs/model-routing.md` 신설** — 작업 클래스→티어 크로스런타임 정본(3단 사다리+effort 다이얼, 팬아웃=LOW 기본, enforcement map, 비채택 결정 4건 명기). supervise Model policy 표를 "Claude 강제 인스턴스"로 상호 링크 | 티어 정책이 supervise SKILL.md에만 있어 타 런타임으로 번역 불가였음 | ✅ 문서 존재 + supervise SKILL.md가 링크 참조 + 티어표에 3 런타임 열 전부 존재 | S |
+| M-2 ✅ 2026-07-08 | **verify-judge 티어 floor** — `/verify-completion` Layer 2 semantic judge에 워크호스(MID) 미만 금지 명문화: 저티어 세션이면 judge dispatch에 명시 `model` 오버라이드 | refute-by-default judge가 저티어에서 그럴듯한 false CONFIRMED를 내면 완료 게이트가 무음 무력화 — 게이트 중 유일하게 모델 품질에 판정이 직결 | ✅ verify-completion SKILL.md에 floor 문단 + model-routing.md Floors 절 | S |
+| M-3 ✅ 2026-07-08 | **어댑터 템플릿 티어 배선** — codex `quick.config.toml.template`(LOW)·`deep.config.toml.template`(TOP) 별도 프로파일 파일(최신 CLI가 인라인 `[profiles.*]`를 legacy로 거부 — 라이브 CLI 실증) + effort-before-tier-up 주석, gemini 템플릿에 기본 모델=워크호스 + caller `-m` 에스컬레이션 주석 (모델 ID는 2026-07 스냅샷 예시로 명기) | 하네스 모델 정책이 두 런타임으로 전혀 번역 안 되던 갭의 최소 배선 — 설정 파일이 유일한 티어 운반체(런타임 스위칭 훅은 기각) | ✅ 프로파일 템플릿 2파일 존재 + gemini 템플릿 model 블록 + model-routing.md enforcement map과 상호 참조 | S |
+| M-4 | **doctor 확장: 티어 프로파일 존재 검사** — `setup.sh --doctor`에 로컬 codex config의 quick/deep 프로파일 부재 시 INFO/WARN(템플릿 미적용 감지). I-2 매니페스트 검사와 동일한 WARN-only 관측자 원칙 | 템플릿은 복사 시점 이후 드리프트 감지 수단이 없음 — I-2와 같은 "선언 vs 실제" 대조 계열 | doctor 체크 추가 + 픽스처(프로파일 有/無/config 부재 skip) | S |
+
 ---
 
 ## 5. Part 3 — `/harness-loop` 자율 개선 루프 설계 (단일 권고안)
@@ -273,6 +284,7 @@ P0-1 ~ P0-11 (최초 7건 반나절 + 훅 감사 배치 4건 2026-07-04)  → v0
 - **2026-07-05 P1 배치**: P1-4(dispatch-not-advise) · P1-5(telemetry-digest 재니터) · P1-7(--doctor) 출하, P1-8(hook-config 실로더 스키마) 부분 출하(스키마+소비 증명 테스트, 런타임 배선은 잔여).
 - **T/E 시리즈 편입 (2026-07-07 캘리브레이션 감사)**: T-1(teaching gates)·T-3(부정 예제)은 S급으로 W-7과 함께 즉시 착수 가능. T-2(게이트 레지스트리+계측)는 P1-5 telemetry-digest의 직접 확장이며 **모든 게이트 강도 조정(완화·강화)의 선행 조건**. E-1(eval 승격)은 P3-5·H-3·P2-2 채점 규약을 공유하는 v0.3.x 병행 트랙.
 - **O/L/I 시리즈 편입 (2026-07-08 레이어 통합 감사)**: I-1(매처 통합)·I-2(doctor 캐시/매니페스트 검사)는 S급 선행. O-1(supervise 계약 개정)이 오케스트레이션 트랙의 관문, O-2(`skills/loop`)가 그 위에서 §5 P2 루프의 실행체. L-1/L-2는 P2-2 착수 전 반영 필수(순서: E-1 → L-1/L-2 → P2). 상세 판정과 로컬 레이어 결정(레포 밖)은 별도 감사 기록 참조.
+- **M 시리즈 편입 (2026-07-08 모델 티어링 감사)**: M-1~M-3(정본 문서·judge floor·템플릿 배선)은 S급 일괄 출하 — v0.2.4. M-4(doctor 프로파일 검사)는 I-2와 같은 관측자 계열로 백로그 적재.
 
 ## 7. 이 문서 자체의 검증
 
@@ -281,7 +293,7 @@ P0-1 ~ P0-11 (최초 7건 반나절 + 훅 감사 배치 4건 2026-07-04)  → v0
 1. §3.3 표의 각 검증 명령을 실행해 실측 결과 열과 대조 — 훅 17, 테스트 4, 에이전트 2, 스킬 2.
 2. `bash core/tests/sanitize-audit.sh` — **PASS가 정상.** (P0-7 완료 이후로는 클린 워킹 트리에서 항상 PASS — 과거의 "FAIL이 정상" 예외는 P0-7 해소로 소멸)
 3. `gitleaks detect --no-git --source docs/ --config gitleaks.toml`.
-4. 백로그 항목 수 검증(2026-07-07 캘리브레이션 배치 갱신, 실측): `grep -cE '^\| P[0-3]-[0-9]+' docs/harness-improvement-plan.md` = **29** (P0 11 + P1 8 + P2 5 + P3 5), 각 행에 완료 조건 존재. H/W 시리즈: `grep -cE '^\| [HW]-[0-9]+' docs/harness-improvement-plan.md` = **13** (H 4 + W 9). T/E 시리즈: `grep -cE '^\| [TE]-[0-9]+' docs/harness-improvement-plan.md` = **4** (T 3 + E 1 — §4.8). O/L/I 시리즈: `grep -cE '^\| [OLI]-[0-9]+' docs/harness-improvement-plan.md` = **6** (O 2 + L 2 + I 2 — §4.9). A/G 시리즈: `grep -cE '^\| [AG]-[0-9]+' docs/harness-improvement-plan.md` = **3** (A 2 + G 1; 완료 조건 대신 근거·상태 기재 — §4.6 참고).
+4. 백로그 항목 수 검증(2026-07-07 캘리브레이션 배치 갱신, 실측): `grep -cE '^\| P[0-3]-[0-9]+' docs/harness-improvement-plan.md` = **29** (P0 11 + P1 8 + P2 5 + P3 5), 각 행에 완료 조건 존재. H/W 시리즈: `grep -cE '^\| [HW]-[0-9]+' docs/harness-improvement-plan.md` = **13** (H 4 + W 9). T/E 시리즈: `grep -cE '^\| [TE]-[0-9]+' docs/harness-improvement-plan.md` = **4** (T 3 + E 1 — §4.8). O/L/I 시리즈: `grep -cE '^\| [OLI]-[0-9]+' docs/harness-improvement-plan.md` = **6** (O 2 + L 2 + I 2 — §4.9). M 시리즈: `grep -cE '^\| M-[0-9]+' docs/harness-improvement-plan.md` = **4** (M-1~M-3 ✅ + M-4 — §4.10). A/G 시리즈: `grep -cE '^\| [AG]-[0-9]+' docs/harness-improvement-plan.md` = **3** (A 2 + G 1; 완료 조건 대신 근거·상태 기재 — §4.6 참고).
 5. 스코어카드(§3.1·§3.2)의 격차 행 ↔ 백로그 ID 상호 링크 고아 0건 (모든 "부분/미비" 행에 P* 링크 존재).
 6. AGENTS.md 규약 준수 — 도메인 중립 언어, 커밋 메시지 `docs(plan): add harness improvement plan`.
 

@@ -80,6 +80,12 @@ to **refute**, not confirm:
 Default each open question to **REFUTED**. A confirmation needs a reason; a
 refutation is the resting state.
 
+**Judge tier floor: never below the workhorse (sonnet-class) tier**
+(`docs/model-routing.md`). This judge is a completion gate — a low-tier judge
+produces plausible-sounding false CONFIRMED verdicts and silently disables the
+gate. If the session itself runs on a low tier, the judge dispatch must carry
+an explicit `model` override up to the workhorse tier.
+
 ### 3. Combine and gate
 
 Merge the two passes into one verdict (`docs/scoring-convention.md` schema):
