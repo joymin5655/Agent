@@ -30,5 +30,7 @@ model = "gpt-5.4-mini"
 model_reasoning_effort = "low"
 
 [profiles.deep]         # TOP: planning, architecture, security review
-model = "gpt-5.5-codex-max"
-model_reasoning_effort = "xhigh"
+model = "gpt-5.5"
+model_reasoning_effort = "high"
+# If your account exposes a max-tier variant, pin it here instead (its
+# dedicated top effort level is exclusive to that tier).
