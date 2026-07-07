@@ -19,3 +19,16 @@ mode = "workspace-write"
 allow_network = false
 
 # Skills directory (optional — set if using ~/.codex/skills layout).
+
+# Model tier profiles (docs/model-routing.md). The unprefixed default model is
+# the workhorse (MID) tier; these profiles reach the LOW and TOP rungs with
+# `codex --profile quick` / `codex --profile deep`. Model IDs below are a
+# 2026-07 snapshot — substitute the current light/top models for your account.
+# Raise model_reasoning_effort within a rung before promoting a rung up.
+[profiles.quick]        # LOW: mechanical fixes, lookups, fan-out workers
+model = "gpt-5.4-mini"
+model_reasoning_effort = "low"
+
+[profiles.deep]         # TOP: planning, architecture, security review
+model = "gpt-5.5-codex-max"
+model_reasoning_effort = "xhigh"
