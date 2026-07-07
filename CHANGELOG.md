@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.3] — 2026-07-08
+
+### Changed
+- **I-1 — secret-content-scan matcher consolidation.** The 6 non-edit matcher
+  blocks (supabase ×3 tools, firecrawl ×5, WebFetch, Notion ×3, Google Drive
+  ×2, stitch ×2) collapse into one union matcher; the registration inside the
+  Write|Edit|MultiEdit chain stays to preserve chain order. 7→2 blocks, the
+  19 covered tools verified unchanged, no double-fire (each tool matches
+  exactly one block).
+
+### Added
+- **I-2 — doctor drift checks (10 & 11).** `setup.sh --doctor` now warns when
+  the plugin install cache holds more than one agent-harness version (a stale
+  cache re-exposing retired agents was a live incident), and reconciles a
+  user-declared global-hook manifest (`AGENT_HOOK_MANIFEST`, default
+  `~/.claude/LOCAL-LAYER.hooks`; `AGENT_GLOBAL_SETTINGS` for the live file)
+  against the runtime settings in both directions (declared-but-not-live /
+  live-but-undeclared). WARN-only — observers never block; no manifest → check
+  skipped. Manifest lines are trusted substrings authored by the user (an
+  over-broad line makes the check vacuous by choice). Fixtures:
+  `setup-doctor-test.sh` 12 checks.
+
 ## [0.2.2] — 2026-07-08
 
 > Cumulative since 0.2.0: the 0.2.1 plugin release (2026-07-07, model-routing
