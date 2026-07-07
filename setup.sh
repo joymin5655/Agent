@@ -367,6 +367,81 @@ PY
         add_row WARN "~/.agent/plans — missing; mkdir -p ~/.agent/plans"
     fi
 
+    # 10. plugin install cache — more than one cached version of this harness
+    #     means a stale copy can keep exposing retired agents/skills to the
+    #     runtime long after a trim. Runtime-specific path, env-overridable;
+    #     absence (not installed as a plugin) is fine.
+    local cache_root="${AGENT_PLUGIN_CACHE_ROOT:-$HOME/.claude/plugins/cache}"
+    local ver_count=0 ver_names="" vd
+    for vd in "$cache_root"/*/agent-harness/*/; do
+        [[ -d "$vd" ]] || continue
+        ver_count=$((ver_count + 1))
+        ver_names="${ver_names:+$ver_names,}$(basename "$vd")"
+    done
+    if [[ $ver_count -gt 1 ]]; then
+        add_row WARN "plugin cache — $ver_count cached agent-harness versions ($ver_names); a stale cache can expose retired agents/skills. Keep only the installed version"
+    elif [[ $ver_count -eq 1 ]]; then
+        add_row PASS "plugin cache — single agent-harness version cached ($ver_names)"
+    else
+        add_row PASS "plugin cache — no agent-harness plugin cache under ${cache_root/#$HOME/~} (ok)"
+    fi
+
+    # 11. declared global-hook manifest vs live runtime settings. Opt-in: the
+    #     manifest lists one expected hook-command substring per line (# and
+    #     blank lines ignored). No manifest -> check skipped. Catches silent
+    #     drift between what the user believes is registered globally and
+    #     what actually is. WARN only — observation, never a blocker.
+    local manifest="${AGENT_HOOK_MANIFEST:-$HOME/.claude/LOCAL-LAYER.hooks}"
+    local settings="${AGENT_GLOBAL_SETTINGS:-$HOME/.claude/settings.json}"
+    if [[ ! -f "$manifest" ]]; then
+        add_row PASS "hook manifest — none at ${manifest/#$HOME/~} (check skipped)"
+    elif [[ ! -f "$settings" ]]; then
+        add_row WARN "hook manifest — declared at ${manifest/#$HOME/~} but no settings file at ${settings/#$HOME/~}"
+    else
+        local mf_out mf_rc
+        if mf_out="$(MANIFEST="$manifest" SETTINGS="$settings" python3 - <<'PY' 2>&1
+import json, os, sys
+manifest = [l.strip() for l in open(os.environ["MANIFEST"], encoding="utf-8-sig")
+            if l.strip() and not l.strip().startswith("#")]
+try:
+    s = json.load(open(os.environ["SETTINGS"], encoding="utf-8"))
+except Exception as e:
+    print(f"settings parse failed: {e}")
+    sys.exit(1)
+live = []
+try:
+    for event, groups in (s.get("hooks") or {}).items():
+        for g in groups:
+            for c in g.get("hooks", []):
+                live.append(c.get("command", ""))
+except (AttributeError, TypeError) as e:
+    print(f"settings has malformed hooks structure ({type(e).__name__}) — cannot reconcile")
+    sys.exit(1)
+missing = [m for m in manifest if not any(m in c for c in live)]
+undeclared = sorted({c.split("/")[-1].strip('"') for c in live
+                     if not any(m in c for m in manifest)})
+if missing or undeclared:
+    parts = []
+    if missing:
+        parts.append("declared-but-not-live: " + ", ".join(missing))
+    if undeclared:
+        parts.append("live-but-undeclared: " + ", ".join(undeclared))
+    print("; ".join(parts))
+    sys.exit(1)
+print(f"{len(manifest)} declared / {len(live)} live hooks all reconciled")
+PY
+        )"; then
+            mf_rc=0
+        else
+            mf_rc=$?
+        fi
+        if [[ $mf_rc -eq 0 ]]; then
+            add_row PASS "hook manifest — $mf_out"
+        else
+            add_row WARN "hook manifest — drift: $mf_out"
+        fi
+    fi
+
     echo "=== Environment diagnosis (--doctor) ==="
     local row status msg
     for row in "${rows[@]}"; do
