@@ -169,7 +169,7 @@ bundles the agents/skills/commands — so `/plugin install` gives you the whole 
 | `code-reviewer` | sonnet | read-only | Reviews diffs; defers security to security-reviewer |
 | `security-reviewer` | opus | read-only | OWASP Top 10, secrets, auth, injection — owns security findings |
 
-Model is cost-tiered per role (deep review/design → opus, execution → sonnet, mechanical → haiku) and kept in sync with `agents/master-registry.json` by a CI drift guard. Read-only agents are enforced read-only (no `Write`/`Edit`/`Bash`). Specialize any of them per project with `.agent/` files — see [`docs/specializing-agents.md`](docs/specializing-agents.md).
+Model is cost-tiered per role (planning/design → inherit the session's top model (no `model:` pin), security review → opus, code review/execution → sonnet, mechanical → haiku) and kept in sync with `agents/master-registry.json` by a CI drift guard. Read-only agents are enforced read-only (no `Write`/`Edit`/`Bash`). Specialize any of them per project with `.agent/` files — see [`docs/specializing-agents.md`](docs/specializing-agents.md).
 
 | Skills (`skills/`) | Trigger |
 |---|---|
