@@ -25,6 +25,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Test: `core/tests/quality-gate-completion-test.sh` (21 checks incl. YAML
   path, advisory, anti-loop, malformed fail-safe, non-numeric timeout,
   process-group isolation, timeout→block, loader bounds).
+- **P3-2 — `/spec` upstream-planning discipline + spec-gate enforcer.** New skill
+  `skills/spec/SKILL.md` walks brainstorm → `.agent/plans/<slug>/spec.md` + `plan.md`
+  → ExitPlanMode approval, borrowing the superpowers methodology as CONTENT while the
+  ENFORCEMENT is a tool boundary. New PreToolUse hook `core/hooks/spec-gate.py` is the
+  consumer of the plan-approval flag that `plan-gate.py` already writes (and
+  session-init/close already clear): when no plan is approved this session and a
+  Write/Edit targets substantive impl code (scope covers `src`/`app`/`pages`/`lib`/
+  `server`/`components`, extension-gated), it acts per `AGENT_SPEC_GATE_MODE` —
+  `off` no-op, `dryrun` (default) advisory-only, `block` emits `permissionDecision:
+  "ask"`. The approval flag is the dedup (approve once via ExitPlanMode → every edit
+  passes; the two escapes — ExitPlanMode approval and `AGENT_SPEC_GATE_MODE=off` —
+  are named in the reason). `ask` not `deny`, per the reversible-gate escalation
+  principle. Fail-open (any exception → exit 0, empty stdout); mirrors `tdd-guard.py`.
+  Wired into the `Write|Edit|MultiEdit` chain (after tdd-guard, before supervisor).
+  Adversarial-review hardening (13-agent refute-by-default; 6 confirmed): SKIP dir
+  tokens are now ANCHORED (`(^|/)(types|config|…)/` so `src/subtypes/` no longer
+  inherits the `types/` exemption — a MAJOR false-allow), the flag path is the shared
+  hardcoded `/tmp/agent-plan-approved` with NO env override (a per-consumer override
+  would decouple the reader from plan-gate's writer), the default scope was broadened
+  past `src/` to real app layouts, and matching is case-insensitive (so `src/Pay.TS`
+  can't evade on a case-insensitive FS). Test: `core/tests/spec-gate-test.sh`
+  (42 checks incl. anchored-skip, absolute paths, broadened scope + harness-not-gated,
+  case-insensitive ext, fail-open, and the ask-not-deny + both-escapes assertions).
 - **P3-3 — verification-gate-bypass + linter-tamper guards.**
   `core/hooks/pre-tool-guard.sh` now `ask`s on `git commit/push --no-verify`
   (and `git commit -n`), which skip the repo's own gitleaks+sanitize commit
