@@ -19,3 +19,12 @@ mode = "workspace-write"
 allow_network = false
 
 # Skills directory (optional — set if using ~/.codex/skills layout).
+
+# Model tier profiles (docs/model-routing.md). The unprefixed default model is
+# the workhorse (MID) tier; the LOW and TOP rungs are reached with
+# `codex --profile quick` / `codex --profile deep`.
+# Recent Codex CLI builds reject inline `[profiles.*]` tables as legacy —
+# each profile lives in its own file next to config.toml instead:
+#   ~/.codex/quick.config.toml  (see quick.config.toml.template)
+#   ~/.codex/deep.config.toml   (see deep.config.toml.template)
+# Raise model_reasoning_effort within a rung before promoting a rung up.

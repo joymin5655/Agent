@@ -30,12 +30,16 @@ Who runs on which model — and what enforces it:
 |---|---|---|
 | Planning / design (writing or revising the plan itself) | The main session's top model. Runs in the main loop, or via an agent **without** a `model:` pin (inherit). Never dispatch planning to an agent pinned below the session model. | This rule (frontmatter absence = inherit) |
 | Specialist dispatch (`code-reviewer` → sonnet, `security-reviewer` → opus) | Each agent's own `model:` frontmatter | Runtime applies frontmatter; `validate-plugin` CI drift guard keeps `agents/master-registry.json` in sync |
-| Mechanical fixes (build/type/lint cleanup) | Low-cost tier (haiku-class) | Frontmatter of the dispatched agent, if any |
+| Mechanical fixes (build/type/lint cleanup) | Low-cost tier (haiku-class) | Explicit `model` override on the Agent dispatch call — no low-tier agent is shipped; pass the override per call |
 
 The supervise loop itself never overrides a model. `core/hooks/supervisor.py`
 is a dispatch-suggestion stub — it matches intent to a specialist from the
 registry; it does not read or set `model`. If you add an agent whose role is
 planning or deep design, leave `model:` out of its frontmatter.
+
+This table is the enforced (Claude) instance of the cross-runtime tier policy
+in `docs/model-routing.md` — see that document for the Codex/Gemini columns,
+the verify-judge floor, and the fan-out worker default.
 
 ## Steps
 
