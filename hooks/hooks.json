@@ -54,37 +54,7 @@
         ]
       },
       {
-        "matcher": "mcp__supabase__execute_sql|mcp__supabase__apply_migration|mcp__supabase__deploy_edge_function",
-        "hooks": [
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" secret-content-scan.py" }
-        ]
-      },
-      {
-        "matcher": "mcp__firecrawl__firecrawl_scrape|mcp__firecrawl__firecrawl_crawl|mcp__firecrawl__firecrawl_search|mcp__firecrawl__firecrawl_extract|mcp__firecrawl__firecrawl_map",
-        "hooks": [
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" secret-content-scan.py" }
-        ]
-      },
-      {
-        "matcher": "WebFetch",
-        "hooks": [
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" secret-content-scan.py" }
-        ]
-      },
-      {
-        "matcher": "mcp__claude_ai_Notion__notion-create-pages|mcp__claude_ai_Notion__notion-update-page|mcp__claude_ai_Notion__notion-create-comment",
-        "hooks": [
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" secret-content-scan.py" }
-        ]
-      },
-      {
-        "matcher": "mcp__claude_ai_Google_Drive__create_file|mcp__claude_ai_Google_Drive__copy_file",
-        "hooks": [
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" secret-content-scan.py" }
-        ]
-      },
-      {
-        "matcher": "mcp__stitch__upload_design_md|mcp__stitch__create_design_system_from_design_md",
+        "matcher": "WebFetch|mcp__supabase__execute_sql|mcp__supabase__apply_migration|mcp__supabase__deploy_edge_function|mcp__firecrawl__firecrawl_scrape|mcp__firecrawl__firecrawl_crawl|mcp__firecrawl__firecrawl_search|mcp__firecrawl__firecrawl_extract|mcp__firecrawl__firecrawl_map|mcp__claude_ai_Notion__notion-create-pages|mcp__claude_ai_Notion__notion-update-page|mcp__claude_ai_Notion__notion-create-comment|mcp__claude_ai_Google_Drive__create_file|mcp__claude_ai_Google_Drive__copy_file|mcp__stitch__upload_design_md|mcp__stitch__create_design_system_from_design_md",
         "hooks": [
           { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" secret-content-scan.py" }
         ]
