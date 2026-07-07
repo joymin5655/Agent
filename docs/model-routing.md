@@ -57,7 +57,7 @@ than any doc review cycle).
 | Runtime | Mechanism | Where |
 |---|---|---|
 | Claude Code | Frontmatter pins (specialists), frontmatter *absence* (planning = inherit), per-call `model` override (mechanical/LOW) | `agents/*.md`, `agents/master-registry.json`, CI `validate-plugin` drift guard |
-| Codex CLI | `config.toml` profiles: default = workhorse, `quick` = LOW, `deep` = TOP; `model_reasoning_effort` is the effort dial | `adapters/codex/codex-config.toml.template` |
+| Codex CLI | Named profiles (per-profile config files on recent CLI builds): default = workhorse, `quick` = LOW, `deep` = TOP; `model_reasoning_effort` is the effort dial | `adapters/codex/codex-config.toml.template` + `quick.config.toml.template` / `deep.config.toml.template` |
 | Gemini CLI | `settings.json` default model = workhorse; callers escalate with explicit `-m` | `adapters/gemini/gemini-settings.json.template` |
 
 ## What this policy deliberately does not do

@@ -23,10 +23,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   refute-by-default judge emits plausible false CONFIRMED verdicts and
   silently disables the completion gate. Low-tier sessions must pass an
   explicit `model` override on the judge dispatch.
-- **M-3 — adapter templates carry the tiers.** The Codex template ships
-  `[profiles.quick]` (LOW) / `[profiles.deep]` (TOP) with the effort dial
-  noted; the Gemini template ships a workhorse default model with explicit
-  `-m` escalation. Model IDs are marked as 2026-07 snapshots.
+- **M-3 — adapter templates carry the tiers.** The Codex adapter ships
+  `quick.config.toml.template` (LOW) / `deep.config.toml.template` (TOP) as
+  per-profile config files (recent Codex CLI builds reject inline
+  `[profiles.*]` tables as legacy — verified against a live CLI); the Gemini
+  template ships a workhorse default model with explicit `-m` escalation.
+  Model IDs are marked as 2026-07 snapshots.
 
 ### Changed
 - `skills/supervise/SKILL.md` Model policy: the mechanical-fixes row now names

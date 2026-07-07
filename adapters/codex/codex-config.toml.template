@@ -21,16 +21,10 @@ allow_network = false
 # Skills directory (optional — set if using ~/.codex/skills layout).
 
 # Model tier profiles (docs/model-routing.md). The unprefixed default model is
-# the workhorse (MID) tier; these profiles reach the LOW and TOP rungs with
-# `codex --profile quick` / `codex --profile deep`. Model IDs below are a
-# 2026-07 snapshot — substitute the current light/top models for your account.
+# the workhorse (MID) tier; the LOW and TOP rungs are reached with
+# `codex --profile quick` / `codex --profile deep`.
+# Recent Codex CLI builds reject inline `[profiles.*]` tables as legacy —
+# each profile lives in its own file next to config.toml instead:
+#   ~/.codex/quick.config.toml  (see quick.config.toml.template)
+#   ~/.codex/deep.config.toml   (see deep.config.toml.template)
 # Raise model_reasoning_effort within a rung before promoting a rung up.
-[profiles.quick]        # LOW: mechanical fixes, lookups, fan-out workers
-model = "gpt-5.4-mini"
-model_reasoning_effort = "low"
-
-[profiles.deep]         # TOP: planning, architecture, security review
-model = "gpt-5.5"
-model_reasoning_effort = "high"
-# If your account exposes a max-tier variant, pin it here instead (its
-# dedicated top effort level is exclusive to that tier).

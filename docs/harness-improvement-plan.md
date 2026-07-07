@@ -222,7 +222,7 @@
 |---|---|---|---|---|
 | M-1 ✅ 2026-07-08 | **`docs/model-routing.md` 신설** — 작업 클래스→티어 크로스런타임 정본(3단 사다리+effort 다이얼, 팬아웃=LOW 기본, enforcement map, 비채택 결정 4건 명기). supervise Model policy 표를 "Claude 강제 인스턴스"로 상호 링크 | 티어 정책이 supervise SKILL.md에만 있어 타 런타임으로 번역 불가였음 | ✅ 문서 존재 + supervise SKILL.md가 링크 참조 + 티어표에 3 런타임 열 전부 존재 | S |
 | M-2 ✅ 2026-07-08 | **verify-judge 티어 floor** — `/verify-completion` Layer 2 semantic judge에 워크호스(MID) 미만 금지 명문화: 저티어 세션이면 judge dispatch에 명시 `model` 오버라이드 | refute-by-default judge가 저티어에서 그럴듯한 false CONFIRMED를 내면 완료 게이트가 무음 무력화 — 게이트 중 유일하게 모델 품질에 판정이 직결 | ✅ verify-completion SKILL.md에 floor 문단 + model-routing.md Floors 절 | S |
-| M-3 ✅ 2026-07-08 | **어댑터 템플릿 티어 배선** — codex 템플릿에 `[profiles.quick]`(LOW)·`[profiles.deep]`(TOP) + effort-before-tier-up 주석, gemini 템플릿에 기본 모델=워크호스 + caller `-m` 에스컬레이션 주석 (모델 ID는 2026-07 스냅샷 예시로 명기) | 하네스 모델 정책이 두 런타임으로 전혀 번역 안 되던 갭의 최소 배선 — 설정 파일이 유일한 티어 운반체(런타임 스위칭 훅은 기각) | ✅ 두 템플릿에 티어 블록 존재 + model-routing.md enforcement map과 상호 참조 | S |
+| M-3 ✅ 2026-07-08 | **어댑터 템플릿 티어 배선** — codex `quick.config.toml.template`(LOW)·`deep.config.toml.template`(TOP) 별도 프로파일 파일(최신 CLI가 인라인 `[profiles.*]`를 legacy로 거부 — 라이브 CLI 실증) + effort-before-tier-up 주석, gemini 템플릿에 기본 모델=워크호스 + caller `-m` 에스컬레이션 주석 (모델 ID는 2026-07 스냅샷 예시로 명기) | 하네스 모델 정책이 두 런타임으로 전혀 번역 안 되던 갭의 최소 배선 — 설정 파일이 유일한 티어 운반체(런타임 스위칭 훅은 기각) | ✅ 프로파일 템플릿 2파일 존재 + gemini 템플릿 model 블록 + model-routing.md enforcement map과 상호 참조 | S |
 | M-4 | **doctor 확장: 티어 프로파일 존재 검사** — `setup.sh --doctor`에 로컬 codex config의 quick/deep 프로파일 부재 시 INFO/WARN(템플릿 미적용 감지). I-2 매니페스트 검사와 동일한 WARN-only 관측자 원칙 | 템플릿은 복사 시점 이후 드리프트 감지 수단이 없음 — I-2와 같은 "선언 vs 실제" 대조 계열 | doctor 체크 추가 + 픽스처(프로파일 有/無/config 부재 skip) | S |
 
 ---
