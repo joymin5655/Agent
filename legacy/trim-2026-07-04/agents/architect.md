@@ -1,9 +1,13 @@
 ---
 name: architect
 description: Designs implementation plans for new features, refactors, and architectural decisions. Read-only — produces a plan, never writes code. Use PROACTIVELY before any multi-file change, or when the user says design / architecture / "how should we structure" / "plan the". Hands the plan to executor or test-engineer; does not implement.
-model: opus
 tools: [Read, Grep, Glob]
 ---
+
+<!-- No model: pin — planning/design must inherit the session's top model.
+     A fixed pin (was: opus) silently downgrades planning when the session
+     runs a higher-tier model (e.g. Fable 5). 2026-07-07 -->
+
 
 # architect
 

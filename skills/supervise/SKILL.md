@@ -22,6 +22,21 @@ wave, auditing after each wave, and aborting on risk-area violations.
 | `/supervise <slug> --auto-push` | Each wave commits + pushes + opens PR. User merges. |
 | `/supervise <slug> --auto-merge` | Each wave commits + pushes + admin-merges via `auto-ship.sh`. |
 
+## Model policy
+
+Who runs on which model — and what enforces it:
+
+| Work | Model | Enforced by |
+|---|---|---|
+| Planning / design (writing or revising the plan itself) | The main session's top model. Runs in the main loop, or via an agent **without** a `model:` pin (inherit). Never dispatch planning to an agent pinned below the session model. | This rule (frontmatter absence = inherit) |
+| Specialist dispatch (`code-reviewer` → sonnet, `security-reviewer` → opus) | Each agent's own `model:` frontmatter | Runtime applies frontmatter; `validate-plugin` CI drift guard keeps `agents/master-registry.json` in sync |
+| Mechanical fixes (build/type/lint cleanup) | Low-cost tier (haiku-class) | Frontmatter of the dispatched agent, if any |
+
+The supervise loop itself never overrides a model. `core/hooks/supervisor.py`
+is a dispatch-suggestion stub — it matches intent to a specialist from the
+registry; it does not read or set `model`. If you add an agent whose role is
+planning or deep design, leave `model:` out of its frontmatter.
+
 ## Steps
 
 ### 1. Plan validation

@@ -169,7 +169,8 @@ flowchart LR
 | `code-reviewer` | sonnet | read-only | diff 리뷰; 보안 이슈는 security-reviewer에 위임 |
 | `security-reviewer` | opus | read-only | OWASP Top 10, 시크릿, 인증, 인젝션 — 보안 발견 전담 |
 
-모델은 역할별 비용 티어(깊은 리뷰·설계 → opus, 실행 → sonnet, 기계적 작업 → haiku)로
+모델은 역할별 비용 티어(계획·설계 → 세션 최상위 모델 상속(`model:` 핀 없음), 보안 리뷰 → opus,
+코드 리뷰·실행 → sonnet, 기계적 작업 → haiku)로
 배정되며 `agents/master-registry.json`과의 일치가 CI 드리프트 가드로 검증됩니다.
 read-only 에이전트는 도구 수준에서 강제됩니다(`Write`/`Edit`/`Bash` 없음). 프로젝트별
 특화는 `.agent/` 파일로 — [`docs/specializing-agents.md`](docs/specializing-agents.md) 참조.
