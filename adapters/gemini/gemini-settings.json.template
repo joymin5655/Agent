@@ -5,6 +5,10 @@
       "command": "{{FRAMEWORK_ROOT}}/adapters/gemini/gemini-shell-wrap.sh"
     }
   },
+  "_comment_model": "Default model = workhorse (MID) tier, see docs/model-routing.md. Unprefixed calls stay on the workhorse; callers escalate to the top tier explicitly with -m <model>. ID below is a 2026-07 snapshot. Older Gemini CLI versions use a flat top-level \"model\": \"<id>\" string instead of the nested form.",
+  "model": {
+    "name": "gemini-3-flash"
+  },
   "project_doc": "GEMINI.md",
   "context": {
     "include": [
