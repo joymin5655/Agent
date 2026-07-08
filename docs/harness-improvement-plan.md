@@ -197,9 +197,9 @@
 | ID | 작업 | 근거 | 완료 조건 (기계 검증) | 규모 |
 |---|---|---|---|---|
 | T-1 | **teaching gates** — 모든 deny/ask/block 결정 메시지에 근거(WHY: 어느 규칙·왜)와 수정 단계(FIX: 구체 대안 명령/경로)를 포함. 대상: `pre-tool-guard.sh`·`secret-content-scan.py`·`check-hardcoding.py`·`session-quality-gate.py` | 게이트 거부 메시지가 곧 에이전트 교정 지시 — route-around·인간 인터럽트를 줄이는 최저비용 개선 (캘리브레이션 §2) | 전 deny/ask/block 픽스처의 결정 JSON reason에 WHY/FIX 두 요소 존재 체크를 기존 per-hook 테스트에 추가 | S–M |
-| T-2 | **게이트 레지스트리 + fire-rate + 만료일** — 게이트별 "가정하는 모델 약점 + 검토 예정일" 메타데이터 문서(`docs/gate-registry.md`) + `telemetry-digest.sh` 확장: 기존 jsonl 싱크(security-violations·quality-gate-violations·tdd-guard-dryrun·supervisor)에서 게이트별 발화율/자동통과율 산출 → DEAD(발화 0)·FATIGUE(고빈도 ask) 후보 리포트 | 게이트 만료 원칙("가정은 만료된다") + permission 승인율 93% 고무도장 실측 — 계측 없이는 dead/fatigue 판정 불가. 모든 강도 조정의 선행 조건 | 레지스트리에 전 deny/ask/block 게이트 행 존재(검토일 포함) + digest 픽스처에 DEAD/FATIGUE 후보 라인 검증 | M |
+| T-2 | **게이트 레지스트리 + fire-rate + 만료일** — 게이트별 "가정하는 모델 약점 + 검토 예정일" 메타데이터 문서(`docs/gate-registry.md`) + `telemetry-digest.sh` 확장: 기존 jsonl 싱크(security-violations·quality-gate-violations·tdd-guard-dryrun·supervisor)에서 게이트별 발화율/자동통과율 산출 → DEAD(발화 0)·FATIGUE(고빈도 ask) 후보 리포트. (스코프 주: 외부 하네스들의 "텔레메트리 대시보드"류는 이 레지스트리+digest의 consumer일 뿐 — 별도 항목으로 만들지 않음, 2026-07-08 landscape 조사) | 게이트 만료 원칙("가정은 만료된다") + permission 승인율 93% 고무도장 실측 — 계측 없이는 dead/fatigue 판정 불가. 모든 강도 조정의 선행 조건 | 레지스트리에 전 deny/ask/block 게이트 행 존재(검토일 포함) + digest 픽스처에 DEAD/FATIGUE 후보 라인 검증 | M |
 | T-3 | **스킬 부정 예제** — 출하 스킬 description에 negative-trigger("이럴 땐 발동하지 않음") 예제 추가 | 부정 예제 추가로 스킬 라우팅 정확도 73%→85% 보고(developers.openai.com/blog/skills-shell-tips) | 각 출하 SKILL.md description에 부정 예제 ≥1 존재 (grep 검증) | S |
-| E-1 | **eval 하네스 공개 승격** — P3-5(`completion-verify.py`)+H-3(스킬 A/B)를 공개 `evals/` 디렉터리로 승격: 라벨 테스트셋 + LLM-judge 채점(`docs/scoring-convention.md` 재사용) + **Pass^3**(독립 3회 전부 성공) + CI 회귀 게이트 | 2026 수렴 관행(경량 CI eval 게이트 + 회귀 추적, Pass^k 엄밀성 기준선) — 벤치마크 감사(2026-07-06)가 지목한 최대 갭이자 world-class 구분 신호 | `evals/` 존재 + 라벨셋 ≥10케이스 + CI 잡에서 Pass^3 리포트 생성 + 기준선 대비 회귀 시 FAIL | L |
+| E-1 | **eval 하네스 공개 승격** — P3-5(`completion-verify.py`)+H-3(스킬 A/B)를 공개 `evals/` 디렉터리로 승격: 라벨 테스트셋 + LLM-judge 채점(`docs/scoring-convention.md` 재사용) + **Pass^3**(독립 3회 전부 성공) + CI 회귀 게이트 | 2026 수렴 관행(경량 CI eval 게이트 + 회귀 추적, Pass^k 엄밀성 기준선) — 벤치마크 감사(2026-07-06)가 지목한 최대 갭이자 world-class 구분 신호. 2026-07-08 landscape 조사(`docs/benchmark/landscape.md`)에서도 인기 하네스들의 공통 최강 투자처 = eval로 재확인 — 최우선 유지 | `evals/` 존재 + 라벨셋 ≥10케이스 + CI 잡에서 Pass^3 리포트 생성 + 기준선 대비 회귀 시 FAIL | L |
 
 ### 4.9 O/L/I 시리즈 — 오케스트레이션·루프 승격 + 인프라 (2026-07-08 추가)
 
@@ -224,6 +224,7 @@
 | M-2 ✅ 2026-07-08 | **verify-judge 티어 floor** — `/verify-completion` Layer 2 semantic judge에 워크호스(MID) 미만 금지 명문화: 저티어 세션이면 judge dispatch에 명시 `model` 오버라이드 | refute-by-default judge가 저티어에서 그럴듯한 false CONFIRMED를 내면 완료 게이트가 무음 무력화 — 게이트 중 유일하게 모델 품질에 판정이 직결 | ✅ verify-completion SKILL.md에 floor 문단 + model-routing.md Floors 절 | S |
 | M-3 ✅ 2026-07-08 | **어댑터 템플릿 티어 배선** — codex `quick.config.toml.template`(LOW)·`deep.config.toml.template`(TOP) 별도 프로파일 파일(최신 CLI가 인라인 `[profiles.*]`를 legacy로 거부 — 라이브 CLI 실증) + effort-before-tier-up 주석, gemini 템플릿에 기본 모델=워크호스 + caller `-m` 에스컬레이션 주석 (모델 ID는 2026-07 스냅샷 예시로 명기) | 하네스 모델 정책이 두 런타임으로 전혀 번역 안 되던 갭의 최소 배선 — 설정 파일이 유일한 티어 운반체(런타임 스위칭 훅은 기각) | ✅ 프로파일 템플릿 2파일 존재 + gemini 템플릿 model 블록 + model-routing.md enforcement map과 상호 참조 | S |
 | M-4 | **doctor 확장: 티어 프로파일 존재 검사** — `setup.sh --doctor`에 로컬 codex config의 quick/deep 프로파일 부재 시 INFO/WARN(템플릿 미적용 감지). I-2 매니페스트 검사와 동일한 WARN-only 관측자 원칙 | 템플릿은 복사 시점 이후 드리프트 감지 수단이 없음 — I-2와 같은 "선언 vs 실제" 대조 계열 | doctor 체크 추가 + 픽스처(프로파일 有/無/config 부재 skip) | S |
+| M-5 | **clean-install CI smoke** — bare checkout→scratch config home 설치→`setup.sh --doctor` 0 fail을 단언하는 5번째 CI job(또는 validate-plugin 확장). 2026-07-08 landscape 조사 편입 | 조사상 배포·설치 정합성은 상위 프로젝트 공통 투자처 — marketplace는 비채택(Non-goals)이어도 cold-install 검증은 별개인데 현재 수동뿐(`docs/benchmark/landscape.md`) | 무설정 러너에서 job green + 훅 실행비트 고의 제거 시 job fail | S–M |
 
 ---
 
@@ -293,8 +294,8 @@ P0-1 ~ P0-11 (최초 7건 반나절 + 훅 감사 배치 4건 2026-07-04)  → v0
 1. §3.3 표의 각 검증 명령을 실행해 실측 결과 열과 대조 — 훅 17, 테스트 4, 에이전트 2, 스킬 2.
 2. `bash core/tests/sanitize-audit.sh` — **PASS가 정상.** (P0-7 완료 이후로는 클린 워킹 트리에서 항상 PASS — 과거의 "FAIL이 정상" 예외는 P0-7 해소로 소멸)
 3. `gitleaks detect --no-git --source docs/ --config gitleaks.toml`.
-4. 백로그 항목 수 검증(2026-07-07 캘리브레이션 배치 갱신, 실측): `grep -cE '^\| P[0-3]-[0-9]+' docs/harness-improvement-plan.md` = **29** (P0 11 + P1 8 + P2 5 + P3 5), 각 행에 완료 조건 존재. H/W 시리즈: `grep -cE '^\| [HW]-[0-9]+' docs/harness-improvement-plan.md` = **13** (H 4 + W 9). T/E 시리즈: `grep -cE '^\| [TE]-[0-9]+' docs/harness-improvement-plan.md` = **4** (T 3 + E 1 — §4.8). O/L/I 시리즈: `grep -cE '^\| [OLI]-[0-9]+' docs/harness-improvement-plan.md` = **6** (O 2 + L 2 + I 2 — §4.9). M 시리즈: `grep -cE '^\| M-[0-9]+' docs/harness-improvement-plan.md` = **4** (M-1~M-3 ✅ + M-4 — §4.10). A/G 시리즈: `grep -cE '^\| [AG]-[0-9]+' docs/harness-improvement-plan.md` = **3** (A 2 + G 1; 완료 조건 대신 근거·상태 기재 — §4.6 참고).
-5. 스코어카드(§3.1·§3.2)의 격차 행 ↔ 백로그 ID 상호 링크 고아 0건 (모든 "부분/미비" 행에 P* 링크 존재).
+4. 백로그 항목 수 검증(2026-07-07 캘리브레이션 배치 갱신, 실측): `grep -cE '^\| P[0-3]-[0-9]+' docs/harness-improvement-plan.md` = **29** (P0 11 + P1 8 + P2 5 + P3 5), 각 행에 완료 조건 존재. H/W 시리즈: `grep -cE '^\| [HW]-[0-9]+' docs/harness-improvement-plan.md` = **13** (H 4 + W 9). T/E 시리즈: `grep -cE '^\| [TE]-[0-9]+' docs/harness-improvement-plan.md` = **4** (T 3 + E 1 — §4.8). O/L/I 시리즈: `grep -cE '^\| [OLI]-[0-9]+' docs/harness-improvement-plan.md` = **6** (O 2 + L 2 + I 2 — §4.9). M 시리즈: `grep -cE '^\| M-[0-9]+' docs/harness-improvement-plan.md` = **5** (M-1~M-3 ✅ + M-4·M-5 — §4.10). A/G 시리즈: `grep -cE '^\| [AG]-[0-9]+' docs/harness-improvement-plan.md` = **3** (A 2 + G 1; 완료 조건 대신 근거·상태 기재 — §4.6 참고).
+5. 스코어카드(§3.1·§3.2)의 격차 행 ↔ 백로그 ID 상호 링크 고아 0건 (모든 "부분/미비" 행에 P* 링크 존재). `docs/benchmark/landscape.md`의 Gap→backlog 매핑표 ID도 본 문서에 전부 실존해야 함(고아 0).
 6. AGENTS.md 규약 준수 — 도메인 중립 언어, 커밋 메시지 `docs(plan): add harness improvement plan`.
 
 ## 8. 참고 자료
