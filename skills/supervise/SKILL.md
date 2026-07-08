@@ -28,9 +28,15 @@ Who runs on which model — and what enforces it:
 
 | Work | Model | Enforced by |
 |---|---|---|
-| Planning / design (writing or revising the plan itself) | The main session's top model. Runs in the main loop, or via an agent **without** a `model:` pin (inherit). Never dispatch planning to an agent pinned below the session model. | This rule (frontmatter absence = inherit) |
+| **Judgment** — planning/design, wave dispatch decisions (who does what), gate verdicts & abort/advance, result synthesis | The main session's top model. Runs in the main loop, or via an agent **without** a `model:` pin (inherit). Never dispatch judgment work to an agent pinned below the session model. | This rule — a convention (frontmatter absence = inherit; a call-time choice is not CI-checkable) |
 | Specialist dispatch (`code-reviewer` → sonnet, `security-reviewer` → opus) | Each agent's own `model:` frontmatter | Runtime applies frontmatter; `validate-plugin` CI drift guard keeps `agents/master-registry.json` in sync |
-| Mechanical fixes (build/type/lint cleanup) | Low-cost tier (haiku-class) | Explicit `model` override on the Agent dispatch call — no low-tier agent is shipped; pass the override per call |
+| **Execution dispatch** — implementation waves | Workhorse (MID) tier, via an explicit `model` override on the Agent dispatch (no executor agent is shipped) | Delegation-contract `model` field (O-1) — a convention until O-1's CI guard lands |
+| Mechanical fixes (build/type/lint cleanup), lookups, fan-out workers | Low tier, via an explicit `model` override | Per-call override — a convention |
+
+The orchestrating session keeps judgment and dispatches hands: when a wave is
+execution work, dispatch it at the tier the table names instead of doing it
+inline at the session model. Inline execution at the top tier is the expensive
+default this rule exists to prevent.
 
 The supervise loop itself never overrides a model. `core/hooks/supervisor.py`
 is a dispatch-suggestion stub — it matches intent to a specialist from the
@@ -59,10 +65,15 @@ d. If `--goal-mode`, initialise:
 For each wave i ∈ {1..N}:
 
 a. **Read Wave i section** of the plan.
-b. **Dispatch specialist(s)** based on the wave's content:
+b. **Classify the wave and pick lanes** based on its content:
+   - Judgment work (deciding, synthesizing) stays in the main loop.
+   - Execution work dispatches with an explicit `model` per the Model policy
+     (implementation → workhorse tier, mechanical cleanup → low tier).
    - Wave touches `core/hooks/` or general code → `code-reviewer` after
    - Wave touches auth/secrets → `security-reviewer`
-c. **Execute** the wave's intended changes.
+c. **Execute** the wave's intended changes — through the dispatched execution
+   lane, not inline at the session model (inline is judgment's lane, not
+   execution's).
 d. **Audit**:
    ```bash
    bash core/infra/supervisor-goal-audit.sh <slug> <i>

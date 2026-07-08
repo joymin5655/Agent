@@ -7,7 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.5] — 2026-07-08
+
+### Changed
+- **Model policy: judgment stays up, hands get dispatched.** The supervise
+  Model policy now names all four judgment classes (planning/design, wave
+  dispatch decisions, gate verdicts & abort/advance, result synthesis) as
+  session-top work, and adds an execution-dispatch row: implementation waves
+  dispatch at the workhorse tier and mechanical work at the low tier via an
+  explicit per-call `model` override — inline execution at the session's top
+  model is the expensive default this rule exists to prevent. All of this is
+  documented convention (only specialist pins are CI-enforced); O-1's
+  delegation-contract template gains a required `model` field in its
+  done-condition. `docs/model-routing.md` adds the matching orchestration-
+  judgment row and reworks the Implementation row.
+- **Doctor check 10 now scans every cached plugin, not just this harness.**
+  Any `<marketplace>/<plugin>/` with more than one cached `<version>/` is
+  WARN-listed (a live third-party dual-version cache motivated the
+  generalization — the same stale-cache drift class check 10 was built for).
+  WARN-only, absent cache root still passes. Fixtures: 3 new cases
+  (third-party dual → WARN, multi-plugin single → PASS, stray file at
+  version depth ignored).
+
 ### Added
+- **Floors: long-horizon implementation is not a LOW-tier task.**
+  `docs/model-routing.md` cites an external program-based-verifier benchmark
+  (datacurve-ai/deep-swe, 2026-05 leaderboard, press-reported) showing
+  light-tier models trailing the top tier by ~40+ points on long-horizon SWE
+  work — cost/performance reference data reinforcing that LOW is for bounded
+  mechanical tasks only.
 - **`docs/benchmark/landscape.md`** — survey + self-assessment against the
   most popular agent harnesses on GitHub (2026-07-08 snapshot, API-verified
   stars): two comparison tables (Claude Code ecosystem / general harnesses),
