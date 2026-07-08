@@ -34,7 +34,7 @@ support, shipped eval suite.
 | BMAD-METHOD (50.2k) | prompt-only (workflow gates) | large (agile ceremony) | partial (QA role) | no | manual per-agent | **yes** (IDE-agnostic) | no |
 | wshobson/agents (37.6k) | none (catalog) | small per-agent | n/a | no | hints only | **yes** (6 runtimes) | no |
 | oh-my-claudecode (37.5k) | **yes** (real hooks) | large (eager context) | **yes** (verifier lane) | no | yes (manual 3-tier) | partial (worker CLIs) | no |
-| **agent-harness (this repo)** | **yes** (deny/ask hooks, fail-open) | **small** (2 agents, 4 skills) | **yes** (mandatory separate-context verify) | **yes** (4 CI jobs on itself) | policy + config templates (not runtime-enforced) | **yes** (3 adapters) | **no → E-1** |
+| **agent-harness (this repo)** | **yes** (deny/ask hooks, fail-open) | **small** (2 agents, 4 skills) | **yes** (skill-mandated separate-context verify) | **yes** (4 CI jobs on itself) | policy + config templates (not runtime-enforced) | **yes** (3 adapters) | **no → E-1** |
 
 Cut for space: SuperClaude 23.5k (persona prompt-pack, prompt-only),
 claude-squad 8.1k (parallel-session TUI, a runner not a harness), agent-os
@@ -84,8 +84,11 @@ Consistent thinness:
 ## Where this harness is strong (evidence-linked)
 
 - **Real enforcement with a calibrated ceiling.** 17 registered hook scripts
-  (`setup.sh --doctor` verifies the count); secrets are the only `deny` tier,
-  everything else escalates at most to `ask`, and hooks fail open
+  (`setup.sh --doctor` checks every registered hook resolves and is
+  executable); the `deny` tier is deliberately narrow — destructive fs/git
+  operations, secrets access, and design-constant hardcoding — and the
+  calibration rule bars adding new `deny` tiers: everything else escalates at
+  most to `ask`, and hooks fail open
   (`docs/freedom-enforcement-calibration-2026-07.md` records the calibration
   and its external grounding).
 - **Curated surface.** Exactly 2 shipped agents (`agents/master-registry.json`,
@@ -95,10 +98,11 @@ Consistent thinness:
   (`.github/workflows/ci.yml`: manifest/frontmatter drift, domain-neutrality
   sanitize gate, self supply-chain scan, gitleaks) plus `setup.sh --doctor`
   environment reconciliation and 12+ test scripts in `core/tests/`.
-- **Author≠reviewer as process law.** `/verify-completion` requires a
-  separate-context, refute-by-default verifier; in practice the adversarial
-  review lane has caught MAJOR defects local test batteries missed on several
-  consecutive PRs (see CHANGELOG 0.2.x entries).
+- **Author≠reviewer as skill-mandated discipline.** `/verify-completion`
+  requires a separate-context, refute-by-default verifier (a skill rule, not
+  yet CI-enforced — the mechanical guard is O-1's open done-condition); in
+  practice the adversarial review lane has caught MAJOR defects local test
+  batteries missed on several consecutive PRs (see CHANGELOG 0.2.x entries).
 - **Cross-runtime tier policy.** `docs/model-routing.md` maps work class →
   model tier across three runtimes via documentation and config templates —
   deliberately **not** runtime-enforced (a per-prompt model switcher was

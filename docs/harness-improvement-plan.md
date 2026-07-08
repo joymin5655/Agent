@@ -21,7 +21,7 @@
 
 ## 1. 배경 및 컨텍스트
 
-- **현황**: v0.2.0. 4계층 구조(L1 `core/hooks/` 정본 → L2 `adapters/` → L3 `templates/` → L4 프로젝트), 실행 훅 17개 + 공용 모듈 1개(`hook_config.py`), 에이전트 2종(`code-reviewer`/`security-reviewer`), 스킬 2종(`supervise`/`wrap`), 리뷰어 벤치마크 8/8 검출·오탐 0(`docs/benchmark/results.md`). **2026-07-04 트림**: 에이전트 5→2·스킬 4→2(제거분은 `legacy/trim-2026-07-04/`에 보존), codex-skills는 legacy로 은퇴 — 근거·상세는 §4.6 A-0.
+- **현황**: v0.2.0. 4계층 구조(L1 `core/hooks/` 정본 → L2 `adapters/` → L3 `templates/` → L4 프로젝트), 실행 훅 17개 + 공용 모듈 1개(`hook_config.py`), 에이전트 2종(`code-reviewer`/`security-reviewer`), 스킬 2종(`supervise`/`wrap`), 리뷰어 벤치마크 8/8 검출·오탐 0(`docs/benchmark/results.md`). **2026-07-04 트림**: 에이전트 5→2·스킬 4→2(제거분은 `legacy/trim-2026-07-04/`에 보존), codex-skills는 legacy로 은퇴 — 근거·상세는 §4.6 A-0. (2026-07-08 현재 스킬은 4종 — 이후 `spec`·`verify-completion` 추가.)
 - **점검 동기**: ① 문서↔현실 드리프트 발견(§3.3), ② 외부 프레임워크 3종(§2) 학습 후 현 하네스를 같은 기준으로 재평가할 필요.
 - **범위**: 점검(Part 1) + 우선순위 백로그(Part 2) + 자율 개선 루프 설계(Part 3). **이 문서는 계획만 담는다** — README 정정조차 여기서 하지 않고 P0 항목으로 남긴다.
 
@@ -291,7 +291,7 @@ P0-1 ~ P0-11 (최초 7건 반나절 + 훅 감사 배치 4건 2026-07-04)  → v0
 
 커밋 전 수행(전부 레포 루트 기준):
 
-1. §3.3 표의 각 검증 명령을 실행해 실측 결과 열과 대조 — 훅 17, 테스트 4, 에이전트 2, 스킬 2.
+1. §3.3 표의 각 검증 명령을 실행해 실측 결과 열과 대조 — 훅 17, 테스트 4, 에이전트 2, 스킬 4(2026-07-08 실측: spec·supervise·verify-completion·wrap).
 2. `bash core/tests/sanitize-audit.sh` — **PASS가 정상.** (P0-7 완료 이후로는 클린 워킹 트리에서 항상 PASS — 과거의 "FAIL이 정상" 예외는 P0-7 해소로 소멸)
 3. `gitleaks detect --no-git --source docs/ --config gitleaks.toml`.
 4. 백로그 항목 수 검증(2026-07-07 캘리브레이션 배치 갱신, 실측): `grep -cE '^\| P[0-3]-[0-9]+' docs/harness-improvement-plan.md` = **29** (P0 11 + P1 8 + P2 5 + P3 5), 각 행에 완료 조건 존재. H/W 시리즈: `grep -cE '^\| [HW]-[0-9]+' docs/harness-improvement-plan.md` = **13** (H 4 + W 9). T/E 시리즈: `grep -cE '^\| [TE]-[0-9]+' docs/harness-improvement-plan.md` = **4** (T 3 + E 1 — §4.8). O/L/I 시리즈: `grep -cE '^\| [OLI]-[0-9]+' docs/harness-improvement-plan.md` = **6** (O 2 + L 2 + I 2 — §4.9). M 시리즈: `grep -cE '^\| M-[0-9]+' docs/harness-improvement-plan.md` = **5** (M-1~M-3 ✅ + M-4·M-5 — §4.10). A/G 시리즈: `grep -cE '^\| [AG]-[0-9]+' docs/harness-improvement-plan.md` = **3** (A 2 + G 1; 완료 조건 대신 근거·상태 기재 — §4.6 참고).
