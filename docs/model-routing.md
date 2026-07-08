@@ -4,8 +4,8 @@ One canonical mapping from **work class → model tier**, applied across the
 three supported runtimes (Claude Code, Codex CLI, Gemini CLI). In the Claude
 column, **specialist pins are enforced** (agent frontmatter + the
 `validate-plugin` CI drift guard — see `skills/supervise/SKILL.md` → Model
-policy); the planning-unpinned rule and per-call LOW overrides are documented
-conventions (CI cannot check a call-time value). The Codex and Gemini columns
+policy); the judgment-unpinned rule and per-call MID/LOW dispatch overrides
+are documented conventions (CI cannot check a call-time value). The Codex and Gemini columns
 are **conventions carried by the adapter templates**: those runtimes read
 their own config files; the harness never switches a model at runtime.
 
@@ -69,7 +69,7 @@ than any doc review cycle).
 | Runtime | Mechanism | Where |
 |---|---|---|
 | Claude Code — specialist pins | `model:` frontmatter, **enforced**: CI `validate-plugin` drift guard reconciles registry ↔ frontmatter | `agents/*.md`, `agents/master-registry.json` |
-| Claude Code — planning unpinned / per-call LOW override | Convention, documented not CI-checked (frontmatter *absence* and call-time overrides are not statically verifiable) | `skills/supervise/SKILL.md` Model policy |
+| Claude Code — judgment unpinned / per-call MID (execution dispatch) & LOW overrides | Convention, documented not CI-checked (frontmatter *absence* and call-time overrides are not statically verifiable) | `skills/supervise/SKILL.md` Model policy |
 | Codex CLI | Named profiles (per-profile config files on recent CLI builds): default = workhorse, `quick` = LOW, `deep` = TOP; `model_reasoning_effort` is the effort dial | `adapters/codex/codex-config.toml.template` + `quick.config.toml.template` / `deep.config.toml.template` |
 | Gemini CLI | `settings.json` default model = workhorse; callers escalate with explicit `-m` | `adapters/gemini/gemini-settings.json.template` |
 
