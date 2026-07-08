@@ -188,7 +188,7 @@ read-only 에이전트는 도구 수준에서 강제됩니다(`Write`/`Edit`/`Ba
 |---|---|
 | secret-content-scan · check-hardcoding | PreToolUse (Write/Edit) |
 | pre-tool-guard · r4-mutex · context-mode-guard | PreToolUse |
-| tdd-guard · supervisor | PreToolUse (Write/Edit) |
+| tdd-guard · spec-gate · supervisor | PreToolUse (Write/Edit) |
 | session heartbeat | UserPromptSubmit |
 | plan-gate | PostToolUse (ExitPlanMode/Task/Agent) |
 | session-quality-gate · session-close | Stop |

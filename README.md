@@ -182,7 +182,7 @@ Model is cost-tiered per work class ([`docs/model-routing.md`](docs/model-routin
 |---|---|
 | secret-content-scan · check-hardcoding | PreToolUse (Write/Edit) |
 | pre-tool-guard · r4-mutex · context-mode-guard | PreToolUse |
-| tdd-guard · supervisor | PreToolUse (Write/Edit) |
+| tdd-guard · spec-gate · supervisor | PreToolUse (Write/Edit) |
 | session heartbeat | UserPromptSubmit |
 | plan-gate | PostToolUse (ExitPlanMode/Task/Agent) |
 | session-quality-gate · session-close | Stop |
