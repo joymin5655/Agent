@@ -1,7 +1,7 @@
 # Agent
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-![Version](https://img.shields.io/badge/version-0.2.0-blue.svg)
+![Version](https://img.shields.io/badge/version-0.2.5-blue.svg)
 ![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-7c3aed.svg)
 ![AI-agnostic](https://img.shields.io/badge/AI-Claude%20%7C%20Codex%20%7C%20Gemini-orange.svg)
 
@@ -16,7 +16,7 @@
 프로젝트에 같은 가드레일이 적용됩니다. 규칙은 한 번만 작성하고, 어떤 AI가 실행하든 같은
 **allow / ask / deny** 답을 돌려줍니다.
 
-> 상태: v0.2.0 · 라이선스: **MIT**
+> 상태: v0.2.5 · 라이선스: **MIT**
 
 ---
 
@@ -30,7 +30,7 @@
 | **훅(hook)** | AI 런타임이 어떤 행동 전/후에 자동으로 실행하는 작은 스크립트. **allow**, **ask**, **deny** 중 하나로 답합니다. [`core/hooks/`](core/hooks/)에 17개가 있습니다. |
 | **어댑터(adapter)** | 각 AI CLI의 고유 이벤트 형식과 하네스의 표준 JSON 사이를 번역하는 얇은 계층. 3개가 있습니다([`adapters/`](adapters/)). |
 | **에이전트(agent)** | AI가 일을 위임하는 전문가 — 예: 리뷰만 하고 절대 코드를 쓰지 않는 보안 리뷰어. 2종이 포함됩니다([`agents/`](agents/)). |
-| **스킬(skill)** | AI가 따라가는 재사용 가능한 단계별 워크플로우 — 예: 커밋+PR 자동화 흐름. 2종이 포함됩니다([`skills/`](skills/)). |
+| **스킬(skill)** | AI가 따라가는 재사용 가능한 단계별 워크플로우 — 예: 커밋+PR 자동화 흐름. 4종이 포함됩니다([`skills/`](skills/)). |
 | **플랜 게이트(plan-gate)** | 프롬프트를 분류해서, 위험한 다단계 작업 전에 반드시 계획서를 쓰게 강제하는 훅. |
 | **뮤텍스(mutex)** | 두 AI 세션이 같은 위험 영역(운영 DB, 배포, 결제)을 동시에 건드리지 못하게 하는 잠금 파일. |
 
@@ -89,7 +89,7 @@
 3. **프로젝트 스캐폴드.** 아무 레포 안에서 `/project-init`을 실행하면 `CLAUDE.md`, 규칙, `gitleaks.toml`이 생성됩니다.
 4. *(선택)* 훅이 많은 다른 플러그인이 이미 도는 레포에서는 `/plugin`으로 agent-harness만 그 레포에서 끄세요 — 에이전트는 `agent-harness:*`로 네임스페이스가 분리되어 있어 어느 쪽이든 이름 충돌은 없습니다.
 
-플러그인 번들: **에이전트 2종**, **스킬 2종**, 훅 세트, `/project-init` 명령.
+플러그인 번들: **에이전트 2종**, **스킬 4종**, 훅 세트, `/project-init` 명령.
 
 ### Path B — 셸 설치 (Codex CLI / Gemini CLI / 3개 모두)
 
@@ -169,15 +169,19 @@ flowchart LR
 | `code-reviewer` | sonnet | read-only | diff 리뷰; 보안 이슈는 security-reviewer에 위임 |
 | `security-reviewer` | opus | read-only | OWASP Top 10, 시크릿, 인증, 인젝션 — 보안 발견 전담 |
 
-모델은 역할별 비용 티어(계획·설계 → 세션 최상위 모델 상속(`model:` 핀 없음), 보안 리뷰 → opus,
-코드 리뷰·실행 → sonnet, 기계적 작업 → haiku)로
-배정되며 `agents/master-registry.json`과의 일치가 CI 드리프트 가드로 검증됩니다.
+모델은 작업 클래스별 비용 티어로 배정됩니다([`docs/model-routing.md`](docs/model-routing.md)가
+크로스런타임 정본): 판단(계획·오케스트레이션 결정·결과 종합)은 세션 최상위 모델 상속(`model:` 핀
+없음), 위 리뷰어 2핀은 `agents/master-registry.json`과의 일치가 CI 드리프트 가드로 검증되는
+**유일한 기계 강제 지점**, 구현은 워크호스 티어·기계적 작업은 LOW 티어로 호출 시 명시 `model`
+오버라이드 디스패치 — 문서화된 convention입니다.
 read-only 에이전트는 도구 수준에서 강제됩니다(`Write`/`Edit`/`Bash` 없음). 프로젝트별
 특화는 `.agent/` 파일로 — [`docs/specializing-agents.md`](docs/specializing-agents.md) 참조.
 
 | 스킬 (`skills/`) | 트리거 |
 |---|---|
+| `spec` | 상류 계획 규율 — 위험 작업 전 아이디어→리뷰 가능한 스펙 (spec-gate 훅과 짝) |
 | `supervise` | 계획을 자율 실행에 위임 |
+| `verify-completion` | 완료 주장 독립 재검증 (결정적 체크 + refute-by-default judge) |
 | `wrap` | 안전장치를 갖춘 커밋 + PR 자동화 |
 
 | 훅 — 17개, `hooks/hooks.json` → `core/hooks/` 연결 | 이벤트 |
@@ -202,7 +206,7 @@ Agent/
 ├── CHANGELOG.md
 │
 ├── agents/             # 2 agent definitions + master-registry.json
-├── skills/             # 2 skills (supervise · wrap)
+├── skills/             # 4 skills (spec · supervise · verify-completion · wrap)
 ├── commands/           # 1 slash command (/project-init)
 ├── hooks/              # plugin hook wiring (hooks.json)
 │
@@ -321,7 +325,9 @@ secret-scan 패턴 확장입니다. 전체 스키마와 실제-대-문서 간극
 - [`docs/hook-protocol.md`](docs/hook-protocol.md) — 표준 이벤트 스키마 (커스텀 훅 작성)
 - [`docs/customization.md`](docs/customization.md) — 위험 영역과 프로젝트별 설정
 - [`docs/specializing-agents.md`](docs/specializing-agents.md) — 프로젝트별 에이전트 특화
+- [`docs/model-routing.md`](docs/model-routing.md) — 크로스런타임 모델 티어 정책 (판단 vs 실행, floor)
 - [`docs/benchmark/results.md`](docs/benchmark/results.md) — 리뷰어 자체 벤치마크
+- [`docs/benchmark/landscape.md`](docs/benchmark/landscape.md) — 인기 하네스 대비 서베이 + gap→backlog 매핑
 - [`docs/harness-improvement-plan.md`](docs/harness-improvement-plan.md) — 점검 + 개선 로드맵 *(한국어)*
 - 2026-05 이전 미러 버전에서 이전하려면: [`legacy/v0-mirror-2026-05-12/ARCHIVE-NOTE.md`](legacy/v0-mirror-2026-05-12/ARCHIVE-NOTE.md)
 
