@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **README synced to 0.2.5 reality.** Version badge/status, skill count and
+  table (spec + verify-completion were missing), the model-tier paragraph
+  rewritten to match `docs/model-routing.md` (judgment inherits session-top;
+  reviewer pins are the only machine-enforced part; implementation/mechanical
+  dispatch via per-call override — conventions), and the docs index gains
+  model-routing.md + benchmark/landscape.md.
+
 ## [0.2.5] — 2026-07-08
 
 ### Changed
