@@ -59,19 +59,41 @@ check "exit-1-on-missing-exec-bit" $?
 check "fail-line-names-file" $?
 
 echo
-echo "=== (d) plugin cache: two cached versions -> WARN naming both ==="
+echo "=== (d) plugin cache: two cached versions of this harness -> WARN naming both ==="
 CACHE_FIX="$(mktemp -d)"
 mkdir -p "$CACHE_FIX/somemarket/agent-harness/0.1.0" "$CACHE_FIX/somemarket/agent-harness/0.2.0"
 OUT_D="$(AGENT_PLUGIN_CACHE_ROOT="$CACHE_FIX" bash "$SETUP" --doctor 2>&1)"
-[[ "$OUT_D" == *"[WARN"*"2 cached agent-harness versions"*"0.1.0,0.2.0"* ]]
+[[ "$OUT_D" == *"[WARN"*"somemarket/agent-harness: 2 versions (0.1.0,0.2.0)"* ]]
 check "dual-cache-warn" $?
 
 echo
 echo "=== (e) plugin cache: single version -> PASS ==="
 rm -rf "$CACHE_FIX/somemarket/agent-harness/0.1.0"
 OUT_E="$(AGENT_PLUGIN_CACHE_ROOT="$CACHE_FIX" bash "$SETUP" --doctor 2>&1)"
-[[ "$OUT_E" == *"[PASS"*"single agent-harness version cached (0.2.0)"* ]]
+[[ "$OUT_E" == *"[PASS"*"all 1 cached plugin(s) single-version"* ]]
 check "single-cache-pass" $?
+
+echo
+echo "=== (d2) plugin cache: THIRD-PARTY plugin dual version -> WARN naming that plugin ==="
+mkdir -p "$CACHE_FIX/othermarket/some-plugin/1.0.0" "$CACHE_FIX/othermarket/some-plugin/1.1.0"
+OUT_D2="$(AGENT_PLUGIN_CACHE_ROOT="$CACHE_FIX" bash "$SETUP" --doctor 2>&1)"
+[[ "$OUT_D2" == *"[WARN"*"othermarket/some-plugin: 2 versions (1.0.0,1.1.0)"* ]]
+check "thirdparty-dual-cache-warn" $?
+
+echo
+echo "=== (e2) plugin cache: multiple plugins, each single-version -> PASS with count ==="
+rm -rf "$CACHE_FIX/othermarket/some-plugin/1.0.0"
+OUT_E2="$(AGENT_PLUGIN_CACHE_ROOT="$CACHE_FIX" bash "$SETUP" --doctor 2>&1)"
+[[ "$OUT_E2" == *"[PASS"*"all 2 cached plugin(s) single-version"* ]]
+check "multi-plugin-single-pass" $?
+
+echo
+echo "=== (d3) plugin cache: stray file at version depth ignored, no crash ==="
+touch "$CACHE_FIX/othermarket/some-plugin/README.md"
+OUT_D3="$(AGENT_PLUGIN_CACHE_ROOT="$CACHE_FIX" bash "$SETUP" --doctor 2>&1)"
+RC_D3=$?
+[[ $RC_D3 -eq 0 && "$OUT_D3" == *"all 2 cached plugin(s) single-version"* ]]
+check "stray-file-ignored" $?
 rm -rf "$CACHE_FIX"
 
 echo

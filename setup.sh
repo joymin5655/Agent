@@ -367,23 +367,35 @@ PY
         add_row WARN "~/.agent/plans — missing; mkdir -p ~/.agent/plans"
     fi
 
-    # 10. plugin install cache — more than one cached version of this harness
-    #     means a stale copy can keep exposing retired agents/skills to the
-    #     runtime long after a trim. Runtime-specific path, env-overridable;
-    #     absence (not installed as a plugin) is fine.
+    # 10. plugin install cache — more than one cached version of ANY plugin
+    #     means a stale copy can keep exposing retired agents/skills/commands
+    #     to the runtime long after an update (observed live for this harness
+    #     and for a third-party plugin). Scans every <marketplace>/<plugin>/
+    #     <version>/ triple under the cache root. Runtime-specific path,
+    #     env-overridable; absence is fine. WARN only — observation.
     local cache_root="${AGENT_PLUGIN_CACHE_ROOT:-$HOME/.claude/plugins/cache}"
-    local ver_count=0 ver_names="" vd
-    for vd in "$cache_root"/*/agent-harness/*/; do
-        [[ -d "$vd" ]] || continue
-        ver_count=$((ver_count + 1))
-        ver_names="${ver_names:+$ver_names,}$(basename "$vd")"
+    local plugin_count=0 multi_list="" pd vd ver_count ver_names
+    for pd in "$cache_root"/*/*/; do
+        [[ -d "$pd" ]] || continue
+        ver_count=0
+        ver_names=""
+        for vd in "$pd"*/; do
+            [[ -d "$vd" ]] || continue
+            ver_count=$((ver_count + 1))
+            ver_names="${ver_names:+$ver_names,}$(basename "$vd")"
+        done
+        [[ $ver_count -gt 0 ]] || continue
+        plugin_count=$((plugin_count + 1))
+        if [[ $ver_count -gt 1 ]]; then
+            multi_list="${multi_list:+$multi_list; }$(basename "$(dirname "$pd")")/$(basename "$pd"): $ver_count versions ($ver_names)"
+        fi
     done
-    if [[ $ver_count -gt 1 ]]; then
-        add_row WARN "plugin cache — $ver_count cached agent-harness versions ($ver_names); a stale cache can expose retired agents/skills. Keep only the installed version"
-    elif [[ $ver_count -eq 1 ]]; then
-        add_row PASS "plugin cache — single agent-harness version cached ($ver_names)"
+    if [[ -n "$multi_list" ]]; then
+        add_row WARN "plugin cache — multiple cached versions: $multi_list; a stale cache can expose retired agents/skills. Keep only the installed version of each"
+    elif [[ $plugin_count -gt 0 ]]; then
+        add_row PASS "plugin cache — all $plugin_count cached plugin(s) single-version"
     else
-        add_row PASS "plugin cache — no agent-harness plugin cache under ${cache_root/#$HOME/~} (ok)"
+        add_row PASS "plugin cache — no plugin cache under ${cache_root/#$HOME/~} (ok)"
     fi
 
     # 11. declared global-hook manifest vs live runtime settings. Opt-in: the

@@ -33,9 +33,10 @@ than any doc review cycle).
 | Work class | Tier | Claude Code | Codex CLI | Gemini CLI |
 |---|---|---|---|---|
 | Planning / architecture | TOP | Session's top model — agents **unpinned** (frontmatter absence = inherit) | `--profile deep` | top-tier model, caller-explicit `-m` |
+| Orchestration judgment — work distribution, gate verdicts, result synthesis | TOP | Session's top model, main loop (never dispatched below the session model) | `--profile deep` | top-tier model, caller-explicit `-m` |
 | Security review | TOP | `security-reviewer` pin (opus-class) | `--profile deep` | top-tier model, caller-explicit `-m` |
 | Code review | MID | `code-reviewer` pin (sonnet-class) | mid model, caller-explicit `-m` + high effort | workhorse model |
-| Implementation | MID | Session model, main loop | config default (unprefixed) | workhorse model |
+| Implementation | MID | Dispatched at workhorse tier — explicit `model` override on the Agent dispatch; the session keeps judgment and dispatches hands | config default (unprefixed) | workhorse model |
 | Verification judge | **MID floor** | **never below sonnet-class** — see Floors | mid model, high effort or above | workhorse model or above |
 | Mechanical fixes | LOW | per-call `model` override on the Agent dispatch (no low-tier agent is shipped) | `--profile quick` | lightest model |
 | Lookups / search | LOW | per-call low-tier override | `--profile quick` | lightest model |
@@ -53,6 +54,15 @@ than any doc review cycle).
   anthropic.com/engineering/multi-agent-research-system), which makes worker
   tier the single largest cost lever. Default fan-out workers to LOW and
   promote individually — never promote the whole wave.
+- **Long-horizon implementation is not a LOW-tier task.** An external
+  benchmark with a program-based verifier (github.com/datacurve-ai/deep-swe:
+  113 long-horizon SWE tasks, 0.3% false-accept; leaderboard as of 2026-05,
+  press-reported) shows light-tier models trailing the top tier by ~40+
+  points on this class of work. Cited here as cost/performance reference
+  data, not as a harness design source. LOW is for *bounded* mechanical work
+  — lint/type cleanup, lookups, fan-out scans — where the task either
+  succeeds cheaply or fails visibly. A light model that fails the task saves
+  nothing; its cost saving is negative.
 
 ## Enforcement map
 
