@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`docs/benchmark/landscape.md`** — survey + self-assessment against the
+  most popular agent harnesses on GitHub (2026-07-08 snapshot, API-verified
+  stars): two comparison tables (Claude Code ecosystem / general harnesses),
+  field investments vs field gaps, evidence-linked strengths and weaknesses,
+  explicit non-goals with reversal conditions, and a gap→backlog map. Not a
+  run benchmark — `results.md` remains the only measured comparison.
+- **M-5 (backlog)** — clean-install CI smoke: bare checkout → scratch config
+  home → `setup.sh --doctor` asserts 0 failures. Distribution integrity was a
+  consistent field investment in the survey; the cold-install path is
+  currently only verified by hand.
+
 ## [0.2.4] — 2026-07-08
 
 ### Added
