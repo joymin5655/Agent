@@ -1,7 +1,7 @@
 # Agent
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-![Version](https://img.shields.io/badge/version-0.2.0-blue.svg)
+![Version](https://img.shields.io/badge/version-0.2.5-blue.svg)
 ![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-7c3aed.svg)
 ![AI-agnostic](https://img.shields.io/badge/AI-Claude%20%7C%20Codex%20%7C%20Gemini-orange.svg)
 
@@ -16,7 +16,7 @@ Install it once as a **Claude Code plugin** (or via a shell script for all three
 every project gets the same guardrails. The rules are written once and return the same
 **allow / ask / deny** answer no matter which AI is driving.
 
-> Status: v0.2.0 · License: **MIT**
+> Status: v0.2.5 · License: **MIT**
 
 ---
 
@@ -30,7 +30,7 @@ New to this space? These seven terms are all you need to read the rest of this p
 | **hook** | A small script your AI runtime runs automatically before/after an action. It answers **allow**, **ask**, or **deny**. 17 of them live in [`core/hooks/`](core/hooks/). |
 | **adapter** | A thin translator between one AI CLI's native event format and the harness's canonical JSON. There are 3 ([`adapters/`](adapters/)). |
 | **agent** | A specialist your AI delegates to — e.g. a security reviewer that only reviews and never writes. 2 ship here ([`agents/`](agents/)). |
-| **skill** | A reusable step-by-step workflow the AI follows, e.g. the commit + PR flow. 2 ship here ([`skills/`](skills/)). |
+| **skill** | A reusable step-by-step workflow the AI follows, e.g. the commit + PR flow. 4 ship here ([`skills/`](skills/)). |
 | **plan-gate** | A hook that classifies your prompt and forces a written plan before risky, multi-step work. |
 | **mutex** | A lock file so two AI sessions never touch the same risky area (prod DB, deploys, payments) at once. |
 
@@ -169,11 +169,13 @@ bundles the agents/skills/commands — so `/plugin install` gives you the whole 
 | `code-reviewer` | sonnet | read-only | Reviews diffs; defers security to security-reviewer |
 | `security-reviewer` | opus | read-only | OWASP Top 10, secrets, auth, injection — owns security findings |
 
-Model is cost-tiered per role (planning/design → inherit the session's top model (no `model:` pin), security review → opus, code review/execution → sonnet, mechanical → haiku) and kept in sync with `agents/master-registry.json` by a CI drift guard. Read-only agents are enforced read-only (no `Write`/`Edit`/`Bash`). Specialize any of them per project with `.agent/` files — see [`docs/specializing-agents.md`](docs/specializing-agents.md).
+Model is cost-tiered per work class ([`docs/model-routing.md`](docs/model-routing.md) is the cross-runtime policy): judgment — planning, orchestration decisions, result synthesis — inherits the session's top model (no `model:` pin); the two reviewer pins above are kept in sync with `agents/master-registry.json` by a CI drift guard (the only machine-enforced part); implementation dispatches at the workhorse tier and mechanical work at the low tier via an explicit per-call `model` override — documented conventions. Read-only agents are enforced read-only (no `Write`/`Edit`/`Bash`). Specialize any of them per project with `.agent/` files — see [`docs/specializing-agents.md`](docs/specializing-agents.md).
 
 | Skills (`skills/`) | Trigger |
 |---|---|
+| `spec` | Upstream planning discipline — idea → reviewable spec before risky work (paired with the spec-gate hook) |
 | `supervise` | Delegate a plan to autonomous execution |
+| `verify-completion` | Independently re-verify a completion claim (deterministic checks + refute-by-default judge) |
 | `wrap` | Commit + PR automation with safeguards |
 
 | Hooks — 17, wired via `hooks/hooks.json` → `core/hooks/` | Event |
@@ -317,7 +319,9 @@ see [`docs/specializing-agents.md`](docs/specializing-agents.md).
 - [`docs/hook-protocol.md`](docs/hook-protocol.md) — canonical event schema (write your own hooks)
 - [`docs/customization.md`](docs/customization.md) — risk areas and per-project config
 - [`docs/specializing-agents.md`](docs/specializing-agents.md) — per-project agent injection
+- [`docs/model-routing.md`](docs/model-routing.md) — cross-runtime model-tier policy (judgment vs execution, floors)
 - [`docs/benchmark/results.md`](docs/benchmark/results.md) — reviewer self-benchmark
+- [`docs/benchmark/landscape.md`](docs/benchmark/landscape.md) — survey vs popular harnesses + gap→backlog map
 - [`docs/harness-improvement-plan.md`](docs/harness-improvement-plan.md) — audit + improvement roadmap *(Korean)*
 - Migrating from the pre-2026-05 mirror? See [`legacy/v0-mirror-2026-05-12/ARCHIVE-NOTE.md`](legacy/v0-mirror-2026-05-12/ARCHIVE-NOTE.md).
 
