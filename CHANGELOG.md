@@ -56,6 +56,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reviewer pins are the only machine-enforced part; implementation/mechanical
   dispatch via per-call override — conventions), and the docs index gains
   model-routing.md + benchmark/landscape.md.
+- **Cross-AI parity gate strengthened (P1-6).** `core/tests/adapter-parity.sh` now
+  asserts the three adapters (claude-code / codex / gemini) return the *same
+  normalized decision* for a logically-identical event — and the same full decision
+  JSON — across all three verbs (deny/allow/ask) and both `tool_input` shapes, each
+  driven through a hook that actually reads that shape so a mistranslated field flips
+  the decision: the command shape via `pre-tool-guard.sh`, the file/content shape via
+  `check-hardcoding.py` (deny on hardcoded content, allow on clean) — plus
+  shell-special (quoted) command and content. The prior version only checked a "deny"
+  substring per adapter independently, so two adapters could disagree and still pass.
+  24 parity assertions; exit 1 on any divergence.
+  (Kept the filename: `cross-ai-parity.sh` named in the plan was a phantom P0-1
+  removed, and the docs already reference `adapter-parity.sh`.)
+
+### Security
+- **Codex/Gemini adapter synthetic-mode no longer builds canonical JSON by string
+  interpolation.** `adapters/{codex,gemini}/adapter.sh` constructed the event JSON
+  by interpolating `--command`/`--content` into a `python3 -c` literal
+  (`'''$TOOL_CMD'''`), so a value containing a quote, newline, or `'''` broke the
+  literal — mis-parsing the event (a cross-adapter parity break) and, worse, letting
+  a crafted command inject python and force an `allow`, bypassing the very guard the
+  adapter feeds. The values are now passed via environment variables to a fixed
+  python program (no interpolation), carrying any command/content verbatim.
+  Regression-locked by the new quoted-command parity cases.
 
 ## [0.2.5] — 2026-07-08
 
