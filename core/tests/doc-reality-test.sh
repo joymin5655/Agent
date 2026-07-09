@@ -19,6 +19,7 @@
 #   (j) artifact-count MATCH                              -> PASS (no false-positive)
 #   (h6) 4-space INDENTED code block (non-fence) phantom  -> flagged (contract: not stripped)
 #   (h7) phantom between two >=4-space-indented ``` lines  -> flagged (>=4-indent is NOT a fence)
+#   (h8) phantom evals/ path ref                          -> flagged (evals is a checked segment)
 #   (l) UNTERMINATED (unclosed) fence                     -> flagged (malformed-doc)
 #   (l2) doc ABOUT fences (4-backtick wrapping 3-backtick) -> NOT flagged (CommonMark tracker)
 #   (m) ./-prefixed phantom in prose                      -> flagged (leading-./ normalized)
@@ -162,6 +163,13 @@ T=$(fresh_tree)
 { printf '%s\n' '# doc' '' '    ```' 'Prose phantom core/tests/deep-indent-phantom.sh here.' '    ```' 'End.'; } > "$T/README.md"
 gate "$T"; [[ $RC -eq 1 ]]; check "deep-indent-not-a-fence-flagged" $?
 printf '%s' "$OUT" | grep -qF 'core/tests/deep-indent-phantom.sh'; check "deep-indent-phantom-named" $?
+
+echo
+echo "=== (h8) phantom evals/ path ref -> flagged (evals is a checked top segment) ==="
+T=$(fresh_tree)
+printf '%s\n' 'Run the suite with `evals/ghost-runner.py`.' > "$T/README.md"
+gate "$T"; [[ $RC -eq 1 ]]; check "evals-segment-phantom-flagged" $?
+printf '%s' "$OUT" | grep -qF 'evals/ghost-runner.py'; check "evals-segment-phantom-named" $?
 
 echo
 echo "=== (i) backlog-count MATCH (declares 2, live = 2) -> PASS ==="

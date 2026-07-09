@@ -59,6 +59,8 @@ secrets/
 /CLAUDE.md
 *.lock
 *.jsonl
+# ...but eval datasets are source, not runtime artifacts — JSONL is the eval standard format.
+!evals/datasets/*.jsonl
 *.log
 
 # --- Generated / temporary ----------------------------------------------------

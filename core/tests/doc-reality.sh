@@ -46,7 +46,7 @@
 #
 # Extraction: after fence-stripping, text is tokenized on non-path characters and a token
 #   is a candidate iff it BEGINS with a known in-repo top segment
-#   (core|adapters|skills|agents|templates|rules|docs|hooks|scripts) AND ends in a
+#   (core|adapters|skills|agents|templates|rules|docs|hooks|scripts|evals) AND ends in a
 #   .<ext> filename. These classes therefore never form a candidate (excluded BY
 #   CONSTRUCTION), which is why HEAD calibrates to 0:
 #     * URLs (github.com/…, https://…, youtu.be/…) — do not start with a listed segment.
@@ -70,7 +70,7 @@ PLAN_REL="docs/harness-improvement-plan.md"
 PLAN="$TARGET/$PLAN_REL"
 
 # (A) known in-repo top-level segments — a path ref must start with one of these.
-SEG='core|adapters|skills|agents|templates|rules|docs|hooks|scripts'
+SEG='core|adapters|skills|agents|templates|rules|docs|hooks|scripts|evals'
 
 # self-exemption (EXACT path) — the gate + its test carry example phantom literals.
 SELF_EXEMPT=(
