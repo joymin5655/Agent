@@ -48,6 +48,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   triviality (a real-looking assertion that never exercises the changed code
   path) — that deeper judgment needs a real model and runs via
   `skills/verify-completion` or a pluggable `--verifier`, not in CI.
+- **Unified verification runner — one command runs the whole suite (P1-2).**
+  `core/tests/verify-all.sh` fulfills the README "Verification" one-command
+  promise. It **discovers** the check set dynamically — every `core/tests/*.sh`
+  except the runner and its own test — so the four gates, all thirteen `*-test.sh`
+  batteries, and any script added later are picked up with no edit here (the
+  anti-rot property). It then runs the two evals layers (the exact CI invocation)
+  and gitleaks, reporting PASS / FAIL / **loud SKIP** per check and a final tally;
+  a silently-skipped check reported as pass is exactly the false-green this repo
+  guards against. It is `set -u` (not `-e`) so every check runs even when one
+  fails, isolates each in a subshell, and **refuses to report success on an empty
+  discovery** (zero checks → non-zero exit, not a vacuous green). Battery
+  `core/tests/verify-all-test.sh` (21 checks) proves completeness against the live
+  dir (no hardcoded list), fail-propagation, all-green, list-equals-run, the
+  empty-set floor, and that an absent gitleaks is counted **skipped, never passed**.
+  New `verify` CI job runs the self-test then the full discovered set — the sole
+  CI executor of the ten checks that had no dedicated job, and auto-inclusive of
+  future ones.
 
 ### Changed
 - **README synced to 0.2.5 reality.** Version badge/status, skill count and
