@@ -56,15 +56,21 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -n "$TOOL" ]]; then
-    INPUT_JSON=$(python3 -c "
-import json, sys
-out = {'event': '$EVENT', 'ai': 'gemini', 'tool_name': '$TOOL', 'tool_input': {}}
-if '$TOOL_CMD':     out['tool_input']['command']   = '''$TOOL_CMD'''
-if '$TOOL_FILE':    out['tool_input']['file_path'] = '''$TOOL_FILE'''
-if '$TOOL_CONTENT': out['tool_input']['content']   = '''$TOOL_CONTENT'''
+    # Build canonical JSON from the flag args via ENV, not string interpolation, so a
+    # command/content containing a quote, newline, or ''' cannot break out of the
+    # python literal. The old interpolated form both mis-parsed quoted commands
+    # (breaking cross-adapter parity) and was a guard-bypass vector (a crafted command
+    # could inject python and force an allow).
+    INPUT_JSON=$(_EVENT="$EVENT" _TOOL="$TOOL" _CMD="$TOOL_CMD" _FILE="$TOOL_FILE" _CONTENT="$TOOL_CONTENT" \
+        python3 -c '
+import json, os
+out = {"event": os.environ["_EVENT"], "ai": "gemini", "tool_name": os.environ["_TOOL"], "tool_input": {}}
+if os.environ.get("_CMD"):     out["tool_input"]["command"]   = os.environ["_CMD"]
+if os.environ.get("_FILE"):    out["tool_input"]["file_path"] = os.environ["_FILE"]
+if os.environ.get("_CONTENT"): out["tool_input"]["content"]   = os.environ["_CONTENT"]
 print(json.dumps(out))
-")
-    echo "$INPUT_JSON" | "$HOOK_PATH"
+')
+    printf '%s\n' "$INPUT_JSON" | "$HOOK_PATH"
     exit $?
 fi
 
