@@ -136,3 +136,11 @@ jobs:
         run: python3 evals/run-evals.py
       - name: Verify the eval runner (mislabel detection + regression + dataset defects)
         run: bash core/tests/evals-test.sh
+      - name: Run the semantic track (test-meaningfulness judge, Pass^3 + regression gate)
+        run: |
+          python3 evals/run-evals.py \
+            --dataset evals/datasets/semantic-judge.jsonl \
+            --baseline evals/baseline-semantic.json \
+            --verifier evals/judges/reference-judge.py
+      - name: Verify the reference judge (green-by-construction detection + leak-safety)
+        run: bash core/tests/reference-judge-test.sh
