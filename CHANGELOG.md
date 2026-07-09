@@ -30,6 +30,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   coverage/accuracy regression. New `evals` CI job; runner battery
   `core/tests/evals-test.sh` (28 checks). The LLM-judge semantic layer and the
   skill A/B dataset are later increments.
+- **Eval harness — semantic track, deterministic floor (E-1, batch-2).** A judge
+  that catches *green-by-construction* tests — a cited test that "passes" but
+  asserts nothing real. `evals/judges/reference-judge.py` consumes a claim's
+  `test_sources` and classifies each file **meaningful** iff it holds at least one
+  real, non-constant assertion (line-based bash+python heuristics), emitting the
+  shared verdict schema; it is refute-by-default, reads are bounded, and no path
+  escapes `--root`. It is deliberately biased to **false-REFUTED over
+  false-CONFIRMED** (a completion gate must never bless a hollow test). Graded by
+  the existing runner against `evals/datasets/semantic-judge.jsonl` (17 labeled
+  cases, 8 CONFIRMED / 9 REFUTED) under Pass^3 + `evals/baseline-semantic.json`
+  regression gate; wired as new steps in the `evals` CI job; judge battery
+  `core/tests/reference-judge-test.sh` (52 checks, incl. leak-safety on unsafe
+  `../`/absolute/**symlink** paths and python constant-comparison triviality
+  across decimal/hex/octal/binary/underscore/scientific number forms). This is the **deterministic floor** only: it catches
+  *syntactic* triviality (no real / only constant assertions), not *semantic*
+  triviality (a real-looking assertion that never exercises the changed code
+  path) — that deeper judgment needs a real model and runs via
+  `skills/verify-completion` or a pluggable `--verifier`, not in CI.
 
 ### Changed
 - **README synced to 0.2.5 reality.** Version badge/status, skill count and

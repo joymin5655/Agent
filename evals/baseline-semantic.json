@@ -1,0 +1,4 @@
+{
+  "min_cases": 17,
+  "note": "semantic-judge track coverage floor; fail-closed. Set to the current case count in evals/datasets/semantic-judge.jsonl so a deleted case is caught, not just a drop past a slack floor. The runner also requires correct==total (a perfect grader). Raise this in lockstep when you add cases; a drop below it, or any case graded wrong, is a regression and fails CI. An unreadable/malformed baseline fails the run; set min_cases to 0 to run with no floor."
+}
