@@ -267,6 +267,14 @@ tail is delegated to broader stacks. Full method and raw findings:
 ## Verification
 
 ```bash
+# Run everything in one command (every gate + battery + evals + gitleaks):
+bash core/tests/verify-all.sh
+# → === verify-all: N passed, 0 failed, 0 skipped ===
+```
+
+The individual checks, run on their own:
+
+```bash
 # 1) gitleaks runs clean
 gitleaks detect --no-git --source . --config gitleaks.toml
 
@@ -275,7 +283,7 @@ bash core/tests/sanitize-audit.sh
 
 # 3) cross-AI parity: same event → same decision across all 3 adapters
 bash core/tests/adapter-parity.sh
-# → === Parity results: 6 passed, 0 failed ===
+# → === Parity: 24 passed, 0 failed ===
 
 # 4) config parsing + autosync hook
 bash core/tests/hook-config-test.sh
