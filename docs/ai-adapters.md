@@ -99,7 +99,7 @@ See `adapters/claude-code/README.md` for the full Claude Code-specific quirks.
 
 ## Cross-AI parity guarantee
 
-A test in `core/tests/cross-ai-parity.sh` verifies: given a logically identical input event, all 3 adapters produce identical decision JSON.
+A test in `core/tests/adapter-parity.sh` verifies: given a logically identical input event, all 3 adapters produce identical decision JSON.
 
 Example: `PreToolUse` with `Bash` tool and command `cat secrets/db.env` MUST return `permissionDecision="deny"` from all 3.
 
@@ -114,7 +114,7 @@ If you add a feature to one adapter that breaks parity, fix the other two before
 3. Provide `<ai>-settings.template`.
 4. Provide `<ai>-instructions.template` for project scaffolding.
 5. Write `tests/run.sh` with minimum: Bash safe / Bash unsafe / Write to .env.
-6. Add the AI to `core/tests/cross-ai-parity.sh` matrix.
+6. Add the AI to the `core/tests/adapter-parity.sh` matrix.
 7. Update `setup.sh` to support `--<ai-name>` mode.
 8. Update root `README.md` and this doc.
 

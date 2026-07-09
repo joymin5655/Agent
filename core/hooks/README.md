@@ -53,7 +53,7 @@ The following hooks exist in the prior project but are deferred because they req
 1. Write a reproduce test in `core/tests/<hook-name>-test.sh` (must fail before you implement).
 2. Implement the hook script following the canonical protocol.
 3. Register it in the relevant adapter's `settings.template` under the right matcher.
-4. Run cross-AI parity smoke test: `bash core/tests/cross-ai-parity.sh`.
+4. Run adapter parity smoke test: `bash core/tests/adapter-parity.sh`.
 5. Add the row to this README.
 
 ## Pass-through hooks

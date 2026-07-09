@@ -107,7 +107,7 @@ Use the dedicated path:
   - For shared resources: core/infra/agent-session.sh claim <resource> + direct Bash
   - For secrets inspection: length inventory only (awk -F=), never source/cat
 
-See rules/security-guards.md and docs/hook-protocol.md."
+See rules/policy/security-guards.md and docs/hook-protocol.md."
 
 python3 - "$DENY_MSG" "$DECISION" <<'PY'
 import json, sys
