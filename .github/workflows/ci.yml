@@ -144,3 +144,20 @@ jobs:
             --verifier evals/judges/reference-judge.py
       - name: Verify the reference judge (green-by-construction detection + leak-safety)
         run: bash core/tests/reference-judge-test.sh
+
+  verify:
+    name: verify-all (unified runner — every core/tests check, no silent omission)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Anti-lying self-test first: proves the runner enumerates every core/tests
+      # script (a battery/gate dropped from the runner fails here) before we trust
+      # its all-green. Without this step the completeness guarantee gates nothing.
+      - name: Verify the runner enumerates every check (completeness / fail-propagation)
+        run: bash core/tests/verify-all-test.sh
+      # Then execute the full discovered set. This is the SOLE CI executor of the
+      # checks that have no dedicated job, and auto-includes any future core/tests
+      # script with no edit here. gitleaks is not installed on this runner, so the
+      # runner reports it as a loud SKIP (the dedicated secret-scan job enforces it).
+      - name: Run the full discovered check set
+        run: bash core/tests/verify-all.sh
