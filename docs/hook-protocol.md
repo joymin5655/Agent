@@ -79,7 +79,7 @@ For observation-only events (`PostToolUse`, `SessionStart`, `Stop`) or pass-thro
 - `deny` — block the tool. Reason shown to user (and AI).
 - `ask` — prompt user before proceeding. Reason shown.
 
-**Critical rule** — for pass-through hooks (most observation hooks): **write zero bytes to stdout**. Do NOT write `null`, `{}`, or `print(raw_input)`. Some AI runtimes interpret any stdout as a decision JSON and will fail validation. See `core/tests/pass-through-hook-test.sh` for the reproduce.
+**Critical rule** — for pass-through hooks (most observation hooks): **write zero bytes to stdout**. Do NOT write `null`, `{}`, or `print(raw_input)`. Some AI runtimes interpret any stdout as a decision JSON and will fail validation.
 
 ---
 
@@ -165,7 +165,7 @@ See `adapters/claude-code/settings.json.template` for the canonical registration
 5. Empty `stdout` for pass-through cases (NOT `null`, NOT `{}`).
 6. Document expected `tool_name` matchers in the file's header comment.
 7. Add to `adapters/claude-code/settings.json.template` hook registration if appropriate.
-8. Run cross-AI parity test: `bash core/tests/cross-ai-parity.sh <hook-name>`.
+8. Run the cross-AI parity test: `bash core/tests/adapter-parity.sh`.
 
 ---
 
@@ -183,7 +183,7 @@ See `adapters/claude-code/settings.json.template` for the canonical registration
    - `Bash` PreToolUse with safe command → `allow`
    - `Bash` PreToolUse with `cat secrets/foo` → `deny`
    - `Write` PreToolUse to a path containing `.env` → `deny`
-5. Add to `core/tests/cross-ai-parity.sh` matrix.
+5. Add to the `core/tests/adapter-parity.sh` matrix.
 
 ---
 
