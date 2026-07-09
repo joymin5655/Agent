@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Harness self-audit skill + extracted registry-drift gate (H-2).**
+  `skills/harness-audit/SKILL.md` is an agent-driven, read-only self-audit that
+  sits *on top of* the machine gates: one `verify-all.sh` dry-run, a per-check
+  PASS/FAIL/SKIP table, an explicit citation of the P1-1 doc-reality verdict, and
+  for each failure a root-cause + fix + backlog-follow-up. It interprets the gates;
+  it does not reimplement them. Enabling refactor: the CI `validate-plugin` job's
+  four inline checks (manifest required fields; hooks.json → executable core-hook
+  resolution; agent `name:` frontmatter; registry↔agent model agreement) are
+  extracted to `core/tests/registry-drift.sh` (a standalone, cwd-independent gate
+  with a `REGISTRY_DRIFT_ROOT` test seam) with a non-vacuous fixture battery
+  `core/tests/registry-drift-test.sh` (11 checks — each drift class injected and
+  asserted caught). The gate is auto-discovered by `verify-all.sh`, closing the one
+  machine check the unified runner was missing.
 - **doc-reality gate — the harness gates its own doc drift (P1-1).**
   `core/tests/doc-reality.sh` (+ a 39-case battery) fails CI when a shipped doc
   contradicts the repo: (A) a referenced in-repo path that does not exist —
