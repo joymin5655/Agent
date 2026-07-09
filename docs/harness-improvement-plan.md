@@ -21,7 +21,7 @@
 
 ## 1. 배경 및 컨텍스트
 
-- **현황**: v0.2.0. 4계층 구조(L1 `core/hooks/` 정본 → L2 `adapters/` → L3 `templates/` → L4 프로젝트), 실행 훅 17개 + 공용 모듈 1개(`hook_config.py`), 에이전트 2종(`code-reviewer`/`security-reviewer`), 스킬 2종(`supervise`/`wrap`), 리뷰어 벤치마크 8/8 검출·오탐 0(`docs/benchmark/results.md`). **2026-07-04 트림**: 에이전트 5→2·스킬 4→2(제거분은 `legacy/trim-2026-07-04/`에 보존), codex-skills는 legacy로 은퇴 — 근거·상세는 §4.6 A-0. (2026-07-08 현재 스킬은 4종 — 이후 `spec`·`verify-completion` 추가.)
+- **현황**: v0.2.0. 4계층 구조(L1 `core/hooks/` 정본 → L2 `adapters/` → L3 `templates/` → L4 프로젝트), 실행 훅 17개 + 공용 모듈 1개(`hook_config.py`), 에이전트 2종(`code-reviewer`/`security-reviewer`), 스킬 2종(`supervise`/`wrap`), 리뷰어 벤치마크 8/8 검출·오탐 0(`docs/benchmark/results.md`). **2026-07-04 트림**: 에이전트 5→2·스킬 4→2(제거분은 `legacy/trim-2026-07-04/`에 보존), codex-skills는 legacy로 은퇴 — 근거·상세는 §4.6 A-0. (현재값은 §7.1 산출물 카운트가 정본 — 2026-07-09 기준 훅 파일 19개·스킬 4종(이후 `spec`·`verify-completion` 추가). 위 v0.2.0 수치는 당시 스냅샷.)
 - **점검 동기**: ① 문서↔현실 드리프트 발견(§3.3), ② 외부 프레임워크 3종(§2) 학습 후 현 하네스를 같은 기준으로 재평가할 필요.
 - **범위**: 점검(Part 1) + 우선순위 백로그(Part 2) + 자율 개선 루프 설계(Part 3). **이 문서는 계획만 담는다** — README 정정조차 여기서 하지 않고 P0 항목으로 남긴다.
 
@@ -85,7 +85,7 @@
 | 1 | **팬텀 테스트 참조 15곳** — `README.md:303-308`, `AGENTS.md:51-54·116-118·124`, `docs/architecture.md:127-129`가 `core/tests/adapter-smoke/<ai>/run.sh`, `cross-ai-parity.sh`, `verify-all.sh`, `bootstrap-test.sh`를 지시하나 전부 미존재 **✅ P0-1로 해소(기존 커밋, 2026-07-04 표기 갱신)** | `grep -rn 'adapter-smoke\|cross-ai-parity\|verify-all\|bootstrap-test' README.md AGENTS.md docs/architecture.md` → 0건(`660b5aa`) |
 | 2 | **도메인 잔재** — `AI_BOOTSTRAP.md:35`(Step 5 항목 2)의 Guarded Domains 목록에 이전 프로젝트 특화 항목 포함. 도메인 중립 원칙(`rules/policy/security-guards.md`의 일반 5영역) 위반. 해당 용어는 이 문서에 재기재하지 않는다 — 원문 참조 **✅ P0-2로 해소(2026-07-04)** | `sed -n '35p' AI_BOOTSTRAP.md` |
 | 3 | **훅 수 드리프트** — `README.md:223`, `CHANGELOG.md:36`이 "~25 portable hooks" 표기 **✅ P0-3로 해소(기존 커밋, 2026-07-04 표기 갱신)** | `find core/hooks -maxdepth 1 -type f -perm -u+x ! -name README.md \| wc -l` → **17** (+ 비실행 공용 모듈 `hook_config.py` 1개); 라이브 문서 "~25" 잔존 0건 |
-| 4 | **축소 이력 미기록** — `CHANGELOG.md:40-42`(0.1.0)는 에이전트 10종·스킬 16종·codex-skills를 나열하나 현재 2종/2종. 0.2.0에 Removed 기록 없음 **✅ P0-4로 해소(기존 커밋, 2026-07-04 표기 갱신)** | `ls agents/*.md \| wc -l` → 2, `ls -d skills/*/ \| wc -l` → 2; CHANGELOG Removed 섹션에 10→5(0.2.0)·5→2/4→2(2026-07-04) 트림 이력 존재 |
+| 4 | **축소 이력 미기록** — `CHANGELOG.md:40-42`(0.1.0)는 에이전트 10종·스킬 16종·codex-skills를 나열하나 당시(2026-07-04) 2종/2종. 0.2.0에 Removed 기록 없음 **✅ P0-4로 해소(기존 커밋, 2026-07-04 표기 갱신)** | `ls agents/*.md \| wc -l` → 2, `ls -d skills/*/ \| wc -l` → 2; CHANGELOG Removed 섹션에 10→5(0.2.0)·5→2/4→2(2026-07-04) 트림 이력 존재 |
 | 5 | **supervisor.py 스텁** — 헤더 자체가 "Supervisor stub". `skills/supervise/SKILL.md`의 풍부한 계약 대비 미구현 **✅ P1-4로 해소(2026-07-05)** | `head -5 core/hooks/supervisor.py` → "Supervisor v0.2 (minimal dispatcher). Dispatch, not advise." (`f9af460`+`8d1a789`) |
 | 6 | **plans 경로 이중 진실** — `skills/supervise/SKILL.md`·`core/infra/supervisor-goal-audit.sh`는 `~/.agent/plans`(env `AGENT_PLANS_DIR`), `core/hooks/secret-content-scan.py:60` 주석은 `~/.claude/plans` **✅ P0-5로 해소(2026-07-04)** | `grep -rn '\.claude/plans' core/ skills/ --exclude-dir=legacy` |
 | 7 | **더티 트리** — ` M gitleaks.toml`, `?? .omc/`, `?? CLAUDE.md`(개인 경로 포함 루트 파일, 배포 템플릿 아님) **✅ P0-6으로 해소(기존 커밋, 2026-07-04 표기 갱신)** | `git status --short` → 클린(`.omc/` gitignore 처리, 루트 `CLAUDE.md` untracked) |
@@ -291,7 +291,7 @@ P0-1 ~ P0-11 (최초 7건 반나절 + 훅 감사 배치 4건 2026-07-04)  → v0
 
 커밋 전 수행(전부 레포 루트 기준):
 
-1. §3.3 표의 각 검증 명령을 실행해 실측 결과 열과 대조 — 훅 17, 테스트 4, 에이전트 2, 스킬 4(2026-07-08 실측: spec·supervise·verify-completion·wrap).
+1. **산출물 카운트(SSOT — `doc-reality.sh`의 (C) 체크가 라이브 대조):** `ls core/hooks/*.py core/hooks/*.sh | wc -l` = **19**(`core/hooks`의 .py+.sh 파일; `hook_config.py` 공용 모듈 포함), `ls core/tests/*.sh | wc -l` = **15**, `ls agents/*.md | wc -l` = **2**, `ls skills/*/SKILL.md | wc -l` = **4**(spec·supervise·verify-completion·wrap). §3.3 표의 훅·테스트 수치는 2026-07-04 스냅샷이며, 이후 증가분은 이 줄이 정본이다.
 2. `bash core/tests/sanitize-audit.sh` — **PASS가 정상.** (P0-7 완료 이후로는 클린 워킹 트리에서 항상 PASS — 과거의 "FAIL이 정상" 예외는 P0-7 해소로 소멸)
 3. `gitleaks detect --no-git --source docs/ --config gitleaks.toml`.
 4. 백로그 항목 수 검증(2026-07-07 캘리브레이션 배치 갱신, 실측): `grep -cE '^\| P[0-3]-[0-9]+' docs/harness-improvement-plan.md` = **29** (P0 11 + P1 8 + P2 5 + P3 5), 각 행에 완료 조건 존재. H/W 시리즈: `grep -cE '^\| [HW]-[0-9]+' docs/harness-improvement-plan.md` = **13** (H 4 + W 9). T/E 시리즈: `grep -cE '^\| [TE]-[0-9]+' docs/harness-improvement-plan.md` = **4** (T 3 + E 1 — §4.8). O/L/I 시리즈: `grep -cE '^\| [OLI]-[0-9]+' docs/harness-improvement-plan.md` = **6** (O 2 + L 2 + I 2 — §4.9). M 시리즈: `grep -cE '^\| M-[0-9]+' docs/harness-improvement-plan.md` = **5** (M-1~M-3 ✅ + M-4·M-5 — §4.10). A/G 시리즈: `grep -cE '^\| [AG]-[0-9]+' docs/harness-improvement-plan.md` = **3** (A 2 + G 1; 완료 조건 대신 근거·상태 기재 — §4.6 참고).

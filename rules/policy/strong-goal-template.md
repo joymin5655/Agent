@@ -44,7 +44,7 @@ Use this template when writing a plan, wave, or sub-task goal.
 
 | Weak | Strong |
 |---|---|
-| "Improve performance" | "p95 latency ≤ 200ms on `/api/foo` measured with `core/tests/bench.sh`" |
+| "Improve performance" | "p95 latency ≤ 200ms on `/api/foo` measured with `<your-benchmark>`" |
 | "Add validation" | "Tests for null/empty/oversized inputs pass; existing happy-path tests still pass" |
 | "Fix the bug" | "Test that reproduces the bug fails on `main`; same test passes on the branch" |
 | "Refactor X" | "Tests pass before and after; `git diff --shortstat` shows ≤ N lines net change" |

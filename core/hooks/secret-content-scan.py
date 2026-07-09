@@ -2,7 +2,7 @@
 """
 PreToolUse hook: detect secret bypass patterns in Write/Edit/MultiEdit and MCP tool content.
 
-This is Layer 3 of the framework's secret defense (see rules/security-guards.md).
+This is Layer 3 of the framework's secret defense (see rules/policy/security-guards.md).
 It catches bypass paths that pre-tool-guard.sh (Layer 3 Bash) cannot see:
   - Python `open()` reading from secrets/ or .env*
   - Node `fs.readFileSync()` reading from secrets/ or .env*
@@ -372,7 +372,7 @@ def main() -> None:
         for label, snippet in findings:
             print(f"  - {label}: {snippet}", file=sys.stderr)
         print(
-            "\nSee rules/security-guards.md (Risk Area: secrets).\n"
+            "\nSee rules/policy/security-guards.md (Risk Area: secrets).\n"
             "Place credentials in env-managed `.env.local` or `secrets/` (gitignored) and read via secure server-side code.",
             file=sys.stderr,
         )
