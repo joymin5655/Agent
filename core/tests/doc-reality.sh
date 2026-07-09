@@ -6,7 +6,7 @@
 #       not exist (README/AGENTS once pointed at core/tests/adapter-smoke/<ai>/run.sh,
 #       cross-ai-parity.sh, verify-all.sh, bootstrap-test.sh — all nonexistent).
 #   (B) BACKLOG-COUNT DRIFT — §7 point 4 declares `grep -cE '…' plan` = **N** for each
-#       backlog series (P, H-W, T-E, O-L-I, M, A-G); the live grep must equal the declared
+#       backlog series (P, H-W, T-E, O-L-I, M, A-G, F); the live grep must equal the declared
 #       N (catches a doc that grows the backlog but forgets to update the tally, or vice-versa).
 #   (C) ARTIFACT-COUNT DRIFT— §7 point 1 declares `ls <glob> | wc -l` = **N** for
 #       hooks / tests / agents / skills; the live count must equal the declared N.
@@ -205,6 +205,7 @@ if [[ -f "$PLAN" ]]; then
   check_backlog  "OLI-rows" '^\| [OLI]-[0-9]+'
   check_backlog  "M-rows"   '^\| M-[0-9]+'
   check_backlog  "AG-rows"  '^\| [AG]-[0-9]+'
+  check_backlog  "F-rows"   '^\| F-[0-9]+'
   check_artifact "hooks"  'ls core/hooks/*.py core/hooks/*.sh | wc -l' 'core/hooks/*.py core/hooks/*.sh'
   check_artifact "tests"  'ls core/tests/*.sh | wc -l'                 'core/tests/*.sh'
   check_artifact "agents" 'ls agents/*.md | wc -l'                     'agents/*.md'

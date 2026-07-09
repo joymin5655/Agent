@@ -152,5 +152,53 @@ OUT_H="$(AGENT_HOOK_MANIFEST=/nonexistent/no-manifest bash "$SETUP" --doctor 2>&
 check "manifest-absent-skip" $?
 
 echo
+echo "=== (i) commands scan: phantom script ref -> WARN naming file and ref, exit unaffected ==="
+CMD_FIX="$(mktemp -d)"
+mkdir -p "$CMD_FIX/commands"
+printf 'Run the audit engine:\n\nnode scripts/phantom-engine.js repo --format json\n' > "$CMD_FIX/commands/ghost-cmd.md"
+OUT_I="$(AGENT_COMMANDS_DIR="$CMD_FIX/commands" bash "$SETUP" --doctor 2>&1)"
+[[ "$OUT_I" == *"[WARN"*"ghost-cmd.md -> scripts/phantom-engine.js"* ]]
+check "phantom-ref-warn" $?
+RC_I_OUT="$(AGENT_COMMANDS_DIR="$CMD_FIX/commands" bash "$SETUP" --doctor >/dev/null 2>&1; echo $?)"
+[[ "$RC_I_OUT" -eq 0 ]]
+check "phantom-ref-is-warn-not-fail" $?
+
+echo
+echo "=== (i2) commands scan: ref resolvable from runtime root -> PASS ==="
+mkdir -p "$CMD_FIX/scripts"
+touch "$CMD_FIX/scripts/phantom-engine.js"
+OUT_I2="$(AGENT_COMMANDS_DIR="$CMD_FIX/commands" bash "$SETUP" --doctor 2>&1)"
+[[ "$OUT_I2" == *"[PASS"*"commands scan — 1 command file(s), all script refs resolve"* ]]
+check "resolvable-ref-pass" $?
+
+echo
+echo "=== (i3) commands scan: unexpanded \$VAR ref skipped -> still PASS ==="
+printf 'bash ${CLAUDE_PLUGIN_ROOT}/tools/run.sh to start\n' > "$CMD_FIX/commands/var-cmd.md"
+OUT_I3="$(AGENT_COMMANDS_DIR="$CMD_FIX/commands" bash "$SETUP" --doctor 2>&1)"
+[[ "$OUT_I3" == *"[PASS"*"commands scan — 2 command file(s), all script refs resolve"* ]]
+check "unexpanded-var-skipped" $?
+rm -rf "$CMD_FIX"
+
+echo
+echo "=== (i5) commands scan: control chars in a phantom ref sanitized in output ==="
+ESC_FIX="$(mktemp -d)"
+mkdir -p "$ESC_FIX/commands"
+printf 'node \x1b[2Jscripts/ghost.js run\n' > "$ESC_FIX/commands/esc-cmd.md"
+OUT_I5="$(AGENT_COMMANDS_DIR="$ESC_FIX/commands" bash "$SETUP" --doctor 2>&1)"
+[[ "$OUT_I5" == *"[WARN"*"esc-cmd.md"* ]]
+check "control-char-ref-still-warns" $?
+case "$OUT_I5" in
+  *$'\x1b'*) check "control-char-stripped-from-output" 1 ;;
+  *)         check "control-char-stripped-from-output" 0 ;;
+esac
+rm -rf "$ESC_FIX"
+
+echo
+echo "=== (i4) commands scan: commands dir absent -> check skipped ==="
+OUT_I4="$(AGENT_COMMANDS_DIR=/nonexistent/cmds bash "$SETUP" --doctor 2>&1)"
+[[ "$OUT_I4" == *"commands scan — no commands dir at /nonexistent/cmds (check skipped)"* ]]
+check "commands-dir-absent-skip" $?
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]
