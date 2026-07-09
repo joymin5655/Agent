@@ -116,3 +116,13 @@ jobs:
         run: bash core/tests/supply-chain-scan.sh
       - name: Verify the scanner (fixture detection + clean-tree pass + no false-positive)
         run: bash core/tests/supply-chain-scan-test.sh
+
+  doc-reality:
+    name: doc-reality (no doc drift)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Gate docs against repo reality (paths exist + counts match)
+        run: bash core/tests/doc-reality.sh
+      - name: Verify the gate (fixture detection + clean-tree pass + no false-positive)
+        run: bash core/tests/doc-reality-test.sh

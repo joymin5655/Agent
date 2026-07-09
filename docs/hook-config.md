@@ -183,4 +183,4 @@ loosen — the inherited defense.
 - `core/tests/hook-config-test.sh` — runnable proof of (a) built-in fires,
   (b) config pattern added, (c) config exempt honored, (d) malformed config is
   fail-safe, (e) MCP input is scanned.
-- `rules/security-guards.md` — the secret-defense risk area this layer serves.
+- `rules/policy/security-guards.md` — the secret-defense risk area this layer serves.
