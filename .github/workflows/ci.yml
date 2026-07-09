@@ -126,3 +126,13 @@ jobs:
         run: bash core/tests/doc-reality.sh
       - name: Verify the gate (fixture detection + clean-tree pass + no false-positive)
         run: bash core/tests/doc-reality-test.sh
+
+  evals:
+    name: evals (labeled dataset, Pass^3, regression gate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run the eval suite (Pass^3 + baseline regression gate)
+        run: python3 evals/run-evals.py
+      - name: Verify the eval runner (mislabel detection + regression + dataset defects)
+        run: bash core/tests/evals-test.sh

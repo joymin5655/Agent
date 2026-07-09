@@ -1,0 +1,4 @@
+{
+  "min_cases": 12,
+  "note": "Coverage floor for the completion-verify dataset — set to the current case count so a deleted case is caught, not just a drop past a slack floor. The runner also requires correct==total (a perfect grader). Raise this in lockstep when you add cases; a drop below it, or any case graded wrong, is a regression and fails CI. An unreadable/malformed baseline fails the run (fail-closed); set min_cases to 0 to run with no floor."
+}
