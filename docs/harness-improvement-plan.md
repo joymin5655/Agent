@@ -146,7 +146,7 @@
 | ID | 작업 | 근거 | 완료 조건 (기계 검증) | 규모 |
 |---|---|---|---|---|
 | H-1 | `docs/concepts/team-patterns.md` 신설 — 6 패턴 정의 + `/supervise` wave 구성과의 매핑표. `skills/supervise/SKILL.md` 1단계(플랜 읽기)에 "패턴 선택" 절 추가 | 패턴 어휘 부재로 wave 설계가 매번 즉흥 | 문서 존재 + 6 패턴 각각에 wave 매핑 행 + SKILL.md가 문서 참조 | S–M |
-| H-2 | 하네스 점검·감사 모드 — P1-1 doc-reality 게이트·registry drift·훅 수·sanitize-audit를 묶어 실행하고 보고서를 내는 유지보수 스킬. P1-1은 기계 게이트(CI), H-2는 그 소비자(에이전트 주도 감사) — 중복이 아닌 계층 관계 | 기둥④ 재니터의 실행 진입점 부재 | 드라이런 1회에 검사 항목별 pass/fail 표 출력 + P1-1 결과 인용 | M (P1-1 이후) |
+| H-2 ✅ 2026-07-10 | 하네스 점검·감사 모드 — P1-1 doc-reality 게이트·registry drift·훅 수·sanitize-audit를 묶어 실행하고 보고서를 내는 유지보수 스킬. P1-1은 기계 게이트(CI), H-2는 그 소비자(에이전트 주도 감사) — 중복이 아닌 계층 관계 | 기둥④ 재니터의 실행 진입점 부재 | ✅ 실측(2026-07-10): 읽기전용 스킬 `skills/harness-audit/SKILL.md`(spec SKILL.md 프론트매터·섹션 미러; `verify-all.sh` 1회 드라이런 → 검사 항목별 PASS/FAIL/SKIP 표 + **P1-1 doc-reality 결과 명시 인용** + 비-PASS별 목적·근본원인·수정·백로그 후속 → 종합 건강도). 게이트 재구현 아님(소비자 계층). **부수 리팩터**: CI validate-plugin 인라인 4체크를 `core/tests/registry-drift.sh`(+`registry-drift-test.sh` 픽스처 11체크, 4드리프트 클래스별 비-vacuous 검증)로 추출 → verify-all 자동 편입(machine 체크 공백 폐색). supply-chain-scan·sanitize·doc-reality 통과, verify-all 22체크 green | M (P1-1 이후) |
 | H-3 | 스킬 A/B 테스트 하네스 — 출하 스킬 4종 대상 with-skill vs baseline 병렬 비교 + assertion 채점 + description 트리거 검증. P2-2 grade.sh(측정 대상=에이전트)와 채점 규약(GATE+단일 스칼라)만 공유하는 별도 항목 | 스킬 설명·트리거 효과가 미검증 | 스킬당 assertion ≥3, 리포트에 n·한계 고지 필수 기재 | L (P2-2와 병행) |
 | H-4 | `/project-init` 메타 팩토리 라이트 — 대상 프로젝트 도메인 분석 → `hook-config.yml risk_areas` 초안 + `.agent/` 특화 파일 제안 자동 생성 | 신규 프로젝트마다 risk_areas 수작업 | 샘플 프로젝트 실행 시 risk_areas 5키 초안 + 특화 제안 ≥1 생성, sanitize-audit PASS 유지 | M |
 
@@ -291,7 +291,7 @@ P0-1 ~ P0-11 (최초 7건 반나절 + 훅 감사 배치 4건 2026-07-04)  → v0
 
 커밋 전 수행(전부 레포 루트 기준):
 
-1. **산출물 카운트(SSOT — `doc-reality.sh`의 (C) 체크가 라이브 대조):** `ls core/hooks/*.py core/hooks/*.sh | wc -l` = **19**(`core/hooks`의 .py+.sh 파일; `hook_config.py` 공용 모듈 포함), `ls core/tests/*.sh | wc -l` = **19**, `ls agents/*.md | wc -l` = **2**, `ls skills/*/SKILL.md | wc -l` = **4**(spec·supervise·verify-completion·wrap). §3.3 표의 훅·테스트 수치는 2026-07-04 스냅샷이며, 이후 증가분은 이 줄이 정본이다.
+1. **산출물 카운트(SSOT — `doc-reality.sh`의 (C) 체크가 라이브 대조):** `ls core/hooks/*.py core/hooks/*.sh | wc -l` = **19**(`core/hooks`의 .py+.sh 파일; `hook_config.py` 공용 모듈 포함), `ls core/tests/*.sh | wc -l` = **21**, `ls agents/*.md | wc -l` = **2**, `ls skills/*/SKILL.md | wc -l` = **5**(harness-audit·spec·supervise·verify-completion·wrap). §3.3 표의 훅·테스트 수치는 2026-07-04 스냅샷이며, 이후 증가분은 이 줄이 정본이다.
 2. `bash core/tests/sanitize-audit.sh` — **PASS가 정상.** (P0-7 완료 이후로는 클린 워킹 트리에서 항상 PASS — 과거의 "FAIL이 정상" 예외는 P0-7 해소로 소멸)
 3. `gitleaks detect --no-git --source docs/ --config gitleaks.toml`.
 4. 백로그 항목 수 검증(2026-07-07 캘리브레이션 배치 갱신, 실측): `grep -cE '^\| P[0-3]-[0-9]+' docs/harness-improvement-plan.md` = **29** (P0 11 + P1 8 + P2 5 + P3 5), 각 행에 완료 조건 존재. H/W 시리즈: `grep -cE '^\| [HW]-[0-9]+' docs/harness-improvement-plan.md` = **13** (H 4 + W 9). T/E 시리즈: `grep -cE '^\| [TE]-[0-9]+' docs/harness-improvement-plan.md` = **4** (T 3 + E 1 — §4.8). O/L/I 시리즈: `grep -cE '^\| [OLI]-[0-9]+' docs/harness-improvement-plan.md` = **6** (O 2 + L 2 + I 2 — §4.9). M 시리즈: `grep -cE '^\| M-[0-9]+' docs/harness-improvement-plan.md` = **5** (M-1~M-3 ✅ + M-4·M-5 — §4.10). A/G 시리즈: `grep -cE '^\| [AG]-[0-9]+' docs/harness-improvement-plan.md` = **3** (A 2 + G 1; 완료 조건 대신 근거·상태 기재 — §4.6 참고).
