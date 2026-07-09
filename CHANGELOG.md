@@ -21,6 +21,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `core/tests/registry-drift-test.sh` (11 checks — each drift class injected and
   asserted caught). The gate is auto-discovered by `verify-all.sh`, closing the one
   machine check the unified runner was missing.
+  Same-PR hardening from the 2026-07-10 workflow audit: the skill gains a
+  runtime-layer step (`setup.sh --doctor` + `core/infra/telemetry-digest.sh`,
+  with an unmeasured-is-unmeasured reporting rule) and a negative trigger in
+  its description (T-3 applied early); doctor gains **check 12 — the
+  phantom-command scan** (a runtime `commands/*.md` invoking a script that
+  does not exist on this machine is a live failure path — reported as a
+  WARN-only observation; `AGENT_COMMANDS_DIR` test seam, relative refs
+  resolved against the runtime root, unexpanded `$VAR` refs skipped, and
+  control characters stripped from echoed refs — an escape-sequence display
+  spoofing hardening from this change's security review) with 7 new fixture
+  checks in `setup-doctor-test.sh` (25 checks) — the rule-ification of a
+  real orphaned-command failure found live in that audit.
+  Backlog bookkeeping lands in the same PR: new §4.11 F-series (F-1 opt-in
+  `--interview` deep-interview submode for `/spec`; F-2 repo-native
+  `RECORD.md` execution ledger), the G-2 global-hygiene decision record, and
+  a matching `F-rows` series check in `doc-reality.sh`.
 - **doc-reality gate — the harness gates its own doc drift (P1-1).**
   `core/tests/doc-reality.sh` (+ a 39-case battery) fails CI when a shipped doc
   contradicts the repo: (A) a referenced in-repo path that does not exist —
