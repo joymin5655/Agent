@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **doc-reality gate — the harness gates its own doc drift (P1-1).**
+  `core/tests/doc-reality.sh` (+ a 39-case battery) fails CI when a shipped doc
+  contradicts the repo: (A) a referenced in-repo path that does not exist —
+  scanned across every tracked `*.md` (recursive; nested READMEs and `docs/**`
+  included), minus the forward-looking plan, the backward-looking CHANGELOG, and
+  `legacy/`; fenced code blocks (0–3-space fences, CommonMark-tracked) are
+  illustrative examples and stripped, while an unterminated fence is itself a
+  malformed-doc failure; (B) the six backlog-count series and (C) the four
+  artifact counts declared in the plan §7, cross-checked against the live repo.
+  New CI job. Hardened over four adversarial-review rounds; also completed the
+  phantom-ref cleanup it surfaced (`core/hooks/README.md`,
+  `core/hooks/secret-content-scan.py`, `core/hooks/context-mode-guard.sh`,
+  `rules/policy/strong-goal-template.md`).
+- **Eval harness — labeled dataset + Pass^3 + regression gate (E-1, deterministic
+  layer).** `evals/run-evals.py` grades the completion verifier
+  (`core/infra/completion-verify.py`) against
+  `evals/datasets/completion-verify.jsonl` (12 labeled CONFIRMED/REFUTED cases):
+  each claim must produce its labeled verdict, the suite runs three times (Pass^3)
+  requiring identical results, and `evals/baseline.json` gates on a
+  coverage/accuracy regression. New `evals` CI job; runner battery
+  `core/tests/evals-test.sh` (28 checks). The LLM-judge semantic layer and the
+  skill A/B dataset are later increments.
+
 ### Changed
 - **README synced to 0.2.5 reality.** Version badge/status, skill count and
   table (spec + verify-completion were missing), the model-tier paragraph

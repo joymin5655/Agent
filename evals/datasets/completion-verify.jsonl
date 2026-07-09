@@ -1,0 +1,12 @@
+{"slug":"confirmed-file-present-content","expect":"CONFIRMED","desc":"cited file exists and holds the claimed substring","fixture":{"present.txt":"MARKER-PRESENT"},"claim":{"summary":"file present with content","files":[{"path":"present.txt","contains":"MARKER-PRESENT"}]}}
+{"slug":"confirmed-file-string-form","expect":"CONFIRMED","desc":"a files entry given as a bare string (path only) resolves when the file exists","fixture":{"present.txt":""},"claim":{"summary":"file present, string form","files":["present.txt"]}}
+{"slug":"refuted-file-missing","expect":"REFUTED","desc":"a cited file that does not exist is refuted","claim":{"summary":"missing file","files":["absent.txt"]}}
+{"slug":"refuted-contains-mismatch","expect":"REFUTED","desc":"a file that exists but lacks the claimed substring is refuted","fixture":{"present.txt":"HELLO"},"claim":{"summary":"wrong content","files":[{"path":"present.txt","contains":"GOODBYE"}]}}
+{"slug":"confirmed-test-passes","expect":"CONFIRMED","desc":"a cited test command that exits 0 confirms","claim":{"summary":"passing test","tests":["true"]}}
+{"slug":"refuted-test-fails","expect":"REFUTED","desc":"a cited test command that exits non-zero is refuted","claim":{"summary":"failing test","tests":["false"]}}
+{"slug":"confirmed-assertion-passes","expect":"CONFIRMED","desc":"a cited assertion that holds confirms","claim":{"summary":"passing assertion","assertions":["test 1 -eq 1"]}}
+{"slug":"refuted-assertion-fails","expect":"REFUTED","desc":"a cited assertion that does not hold is refuted","claim":{"summary":"failing assertion","assertions":["test 1 -eq 2"]}}
+{"slug":"refuted-empty-claim","expect":"REFUTED","desc":"a claim that cites no files, tests, or assertions has nothing to verify and is refuted (never a silent pass)","claim":{"summary":"nothing to verify"}}
+{"slug":"refuted-malformed-section-type","expect":"REFUTED","desc":"a section of the wrong type (tests as a string) is refuted, not silently dropped","claim":{"summary":"malformed tests section","tests":"false"}}
+{"slug":"confirmed-mixed-all-pass","expect":"CONFIRMED","desc":"files, tests, and assertions all pass together","fixture":{"a.txt":"AAA"},"claim":{"summary":"all dimensions pass","files":[{"path":"a.txt","contains":"AAA"}],"tests":["true"],"assertions":["test 1 -eq 1"]}}
+{"slug":"confirmed-wrapped-claim","expect":"CONFIRMED","desc":"a claim nested under a top-level 'claim' key is unwrapped and verified","claim":{"claim":{"summary":"wrapped claim","tests":["true"]}}}
