@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # registry-drift-test.sh — prove core/tests/registry-drift.sh is NON-VACUOUS: for
-# each of the four drift classes it is meant to catch, plant exactly that defect in
+# each of the drift classes it is meant to catch, plant exactly that defect in
 # an isolated fixture copy of the repo's registry-relevant files and assert the gate
 # FAILs (exit 1) AND names the defect; and assert a clean fixture PASSes (exit 0).
 #
@@ -8,11 +8,14 @@
 # defect-injection cases require exit 1 + a specific message, the clean case
 # requires exit 0. That two-sided contract is what makes the gate non-vacuous.
 #
-# The four classes (mirroring the CI validate-plugin job the gate extracts):
+# The six classes (1-4 mirror the CI validate-plugin job the gate extracts;
+# 5-6 are the O-1 orchestration-contract guards):
 #   (1) plugin.json missing a required field
 #   (2) hooks.json referencing a non-existent core/hooks file
 #   (3) an agents/*.md missing name: frontmatter
 #   (4) registry model != agent .md model
+#   (5) review/verify agent whose toolset is not read-only (or unbounded)
+#   (6) skills/supervise shipping without a delegation-contract **model**: field
 #
 # Each case gets a FRESH fixture (mktemp -d) so a mutation never leaks into another.
 # The gate is pointed at the fixture via REGISTRY_DRIFT_ROOT.
@@ -115,6 +118,90 @@ PY
 run_gate "$FX"
 [[ $GATE_RC -eq 1 ]]; check "model-drift-fails" $?
 printf '%s\n' "$GATE_OUT" | grep -qF 'model drift'; check "model-drift-named" $?
+
+echo
+echo "=== (5) review/verify agent with a write-capable tool -> FAIL + named ==="
+FX=$(build_fixture)
+python3 - "$FX/agents/code-reviewer.md" <<'PY'
+import re, sys
+p = sys.argv[1]
+s = open(p, encoding="utf-8").read()
+# arm the reviewer with Write — exactly what the read-only guard must catch
+s = re.sub(r"(?m)^tools:.*$", "tools: [Read, Grep, Glob, Write]", s, count=1)
+open(p, "w", encoding="utf-8").write(s)
+PY
+run_gate "$FX"
+[[ $GATE_RC -eq 1 ]]; check "reviewer-write-tool-fails" $?
+printf '%s\n' "$GATE_OUT" | grep -qF 'read-only guard'; check "reviewer-write-tool-named" $?
+printf '%s\n' "$GATE_OUT" | grep -qF 'Write'; check "reviewer-write-tool-names-the-tool" $?
+
+echo
+echo "=== (5b) review/verify agent with NO tools allowlist -> FAIL (all-tools default) ==="
+FX=$(build_fixture)
+python3 - "$FX/agents/security-reviewer.md" <<'PY'
+import re, sys
+p = sys.argv[1]
+s = open(p, encoding="utf-8").read()
+s = re.sub(r"(?m)^tools:.*\n", "", s, count=1)   # drop the allowlist entirely
+open(p, "w", encoding="utf-8").write(s)
+PY
+run_gate "$FX"
+[[ $GATE_RC -eq 1 ]]; check "reviewer-no-allowlist-fails" $?
+printf '%s\n' "$GATE_OUT" | grep -qF 'no tools: allowlist'; check "reviewer-no-allowlist-named" $?
+
+echo
+echo "=== (5c) review/verify agent with a read-only MULTILINE tools list -> PASS ==="
+FX=$(build_fixture)
+printf -- '---\nname: style-verifier\nmodel: sonnet\ntools:\n  - Read\n  - Grep\n---\n# style-verifier\n' > "$FX/agents/style-verifier.md"
+python3 - "$FX/agents/master-registry.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p))
+d["agents"].append({"id": "style-verifier", "model": "sonnet"})
+json.dump(d, open(p, "w"))
+PY
+run_gate "$FX"
+[[ $GATE_RC -eq 0 ]]; check "multiline-readonly-passes" $?
+
+echo
+echo "=== (5d) MULTILINE tools list smuggling a write tool -> FAIL ==="
+FX=$(build_fixture)
+printf -- '---\nname: style-verifier\nmodel: sonnet\ntools:\n  - Read\n  - Edit\n---\n# style-verifier\n' > "$FX/agents/style-verifier.md"
+python3 - "$FX/agents/master-registry.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p))
+d["agents"].append({"id": "style-verifier", "model": "sonnet"})
+json.dump(d, open(p, "w"))
+PY
+run_gate "$FX"
+[[ $GATE_RC -eq 1 ]]; check "multiline-write-tool-fails" $?
+printf '%s\n' "$GATE_OUT" | grep -qF 'Edit'; check "multiline-write-tool-named" $?
+
+echo
+echo "=== (6) skills/supervise present but template missing its model field -> FAIL ==="
+FX=$(build_fixture)
+mkdir -p "$FX/skills/supervise/templates"
+printf '# Delegation contract\n\n- Goal: x\n' > "$FX/skills/supervise/templates/delegation-contract.md"
+run_gate "$FX"
+[[ $GATE_RC -eq 1 ]]; check "template-without-model-fails" $?
+printf '%s\n' "$GATE_OUT" | grep -qF 'no **model**: field'; check "template-without-model-named" $?
+
+echo
+echo "=== (6b) skills/supervise present but template file absent -> FAIL ==="
+FX=$(build_fixture)
+mkdir -p "$FX/skills/supervise"
+run_gate "$FX"
+[[ $GATE_RC -eq 1 ]]; check "template-absent-fails" $?
+printf '%s\n' "$GATE_OUT" | grep -qF 'without templates/delegation-contract.md'; check "template-absent-named" $?
+
+echo
+echo "=== (6c) template with the model field -> PASS (and no-skills fixtures stay exempt) ==="
+FX=$(build_fixture)
+mkdir -p "$FX/skills/supervise/templates"
+printf '# Delegation contract\n\n- **model**: workhorse\n' > "$FX/skills/supervise/templates/delegation-contract.md"
+run_gate "$FX"
+[[ $GATE_RC -eq 0 ]]; check "template-with-model-passes" $?
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="

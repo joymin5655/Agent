@@ -8,6 +8,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Delegation contract + orchestration guards (O-1).**
+  `skills/supervise/templates/delegation-contract.md` is the per-dispatch
+  contract skeleton: the four elements (goal / output format / tools & scope /
+  boundaries), an explicit `**model**:` field (execution waves name their tier
+  instead of inheriting the expensive session default), and three sections
+  absorbed from the 2026-07-10 external-harness comparison — Self-contained
+  (subagents inherit no history; the contract carries every path, decision,
+  and constraint), Constraints re-injection (each wave re-states its relevant
+  constraint slice, not whole rulebooks), and Executable acceptance criteria
+  (verify = a command's exit code by default; prose only with a stated
+  reason). Wave shaping travels with it: fan-out cap 3–5 with a worked
+  split-at-the-cap example, write single-threading (one writer per fileset),
+  and verifier isolation (fresh spawn, end-state only). `/supervise` Step 2
+  now composes every dispatch from the template; `/spec` Step 3 defaults
+  `→ verify:` to an executable check. The guardable half is machine-enforced:
+  `registry-drift.sh` gains check 5 (review/verify agents must carry a
+  read-only toolset — a write-armed or allowlist-less reviewer fails) and
+  check 6 (a tree that ships `skills/supervise` must ship the template with
+  its `**model**:` field), each with injected-defect fixtures in
+  `registry-drift-test.sh` (24 checks — inline and YAML-block `tools:` forms
+  both parsed; a write tool smuggled into either form fails).
 - **Clean-install CI smoke (M-5).** New `clean-install` CI job: installs all
   three runtimes into a scratch `$HOME` non-interactively
   (`AGENT_SETUP_YES=1 bash setup.sh --all`), then asserts the install itself —

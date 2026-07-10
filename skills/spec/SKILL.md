@@ -66,6 +66,9 @@ consumes:
 ```
 
 Every step names its verification. A plan whose steps aren't checkable isn't done.
+Default each `→ verify:` to an **executable check** — a command whose exit code
+decides (`bash core/tests/<battery>.sh`, `grep -q <artifact>`); prose
+verification is allowed only with a stated reason why no command can check it.
 
 ### 4. Route to approval
 
