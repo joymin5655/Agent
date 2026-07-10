@@ -30,7 +30,7 @@ Who runs on which model — and what enforces it:
 |---|---|---|
 | **Judgment** — planning/design, wave dispatch decisions (who does what), gate verdicts & abort/advance, result synthesis | The main session's top model. Runs in the main loop, or via an agent **without** a `model:` pin (inherit). Never dispatch judgment work to an agent pinned below the session model. | This rule — a convention (frontmatter absence = inherit; a call-time choice is not CI-checkable) |
 | Specialist dispatch (`code-reviewer` → sonnet, `security-reviewer` → opus) | Each agent's own `model:` frontmatter | Runtime applies frontmatter; `validate-plugin` CI drift guard keeps `agents/master-registry.json` in sync |
-| **Execution dispatch** — implementation waves | Workhorse (MID) tier, via an explicit `model` override on the Agent dispatch (no executor agent is shipped) | Delegation-contract `model` field (O-1) — a convention until O-1's CI guard lands |
+| **Execution dispatch** — implementation waves | Workhorse (MID) tier, via an explicit `model` override on the Agent dispatch (no executor agent is shipped) | Delegation-contract `model` field (`skills/supervise/templates/delegation-contract.md`). CI guards the guardable half: the template's model field and reviewer/verifier read-only toolsets (registry-drift gate); the call-time override itself stays a convention |
 | Mechanical fixes (build/type/lint cleanup), lookups, fan-out workers | Low tier, via an explicit `model` override | Per-call override — a convention |
 
 The orchestrating session keeps judgment and dispatches hands: when a wave is
@@ -71,6 +71,20 @@ b. **Classify the wave and pick lanes** based on its content:
      (implementation → workhorse tier, mechanical cleanup → low tier).
    - Wave touches `core/hooks/` or general code → `code-reviewer` after
    - Wave touches auth/secrets → `security-reviewer`
+
+   Every dispatch is written as a **delegation contract** —
+   `skills/supervise/templates/delegation-contract.md` (goal / output format /
+   tools & scope / boundaries, plus an explicit `model` field per the Model
+   policy). Four orchestration rules travel with it (details in the template):
+   - **Fan-out cap 3–5** per wave — a wave with more concurrent subtasks
+     splits into consecutive waves (the template shows a worked split).
+   - **Write single-threading** — one writer per fileset; review/verify agents
+     carry read-only toolsets, which the CI registry-drift gate enforces.
+   - **Self-contained contracts** — subagents inherit no conversation history;
+     the contract carries every needed path, decision, and constraint, with
+     the wave's relevant constraint slice re-stated (not whole rulebooks).
+   - **Verifier isolation** — verifiers are fresh spawns with no author
+     context or self-assessment; they grade end-state only.
 c. **Execute** the wave's intended changes — through the dispatched execution
    lane, not inline at the session model (inline is judgment's lane, not
    execution's).
