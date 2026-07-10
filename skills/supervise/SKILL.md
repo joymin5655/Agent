@@ -145,6 +145,15 @@ PRs merged: <list>
 Outstanding: <deferred items from the plan>
 ```
 
+Also write the same facts to `.agent/plans/<slug>/RECORD.md` — the
+**repo-native execution ledger** (waves / PRs / audit verdicts / carried
+items). The ledger is mechanical facts only; session narrative belongs to the
+global recording layer, so the two never duplicate. On `--goal-mode` runs the
+`complete` command drops a RECORD.md stub automatically (the deterministic
+guarantee the file exists — it never overwrites one you already wrote); on
+non-goal runs writing it is this step's discipline. This keeps an execution
+record on runtimes that have no global recording layer at all.
+
 ## Hard rules
 
 - **Never skip the audit step.** A wave isn't done until the audit passes.
