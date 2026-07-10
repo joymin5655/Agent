@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Clean-install CI smoke (M-5).** New `clean-install` CI job: installs all
+  three runtimes into a scratch `$HOME` non-interactively
+  (`AGENT_SETUP_YES=1 bash setup.sh --all`), then asserts the install itself —
+  all three runtime configs exist and the `{{FRAMEWORK_ROOT}}` placeholder was
+  actually templated (anti-vacuous: a no-op or mis-templated install must not
+  go green; this assert step, not the doctor, carries the install
+  verification, since the doctor's checks are repo/env-scoped and tolerate an
+  empty home — a gap this change's adversarial review measured live). The
+  doctor must then report 0 fail against the scratch home, and a built-in
+  mutation probe (a hook stripped of its exec bit must turn the doctor red,
+  else the job fails) keeps the job's green load-bearing. Closes the
+  cold-install gap the landscape survey flagged: "install once, use
+  everywhere" was previously verified only by hand.
 - **Harness self-audit skill + extracted registry-drift gate (H-2).**
   `skills/harness-audit/SKILL.md` is an agent-driven, read-only self-audit that
   sits *on top of* the machine gates: one `verify-all.sh` dry-run, a per-check
