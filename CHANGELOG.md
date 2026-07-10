@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Repo-native execution ledger (F-2).** `supervisor-goal.sh complete` now
+  drops `.agent/plans/<slug>/RECORD.md` — a mechanical execution ledger
+  (waves from the live DB, plus PR / audit-verdict / carried-items slots the
+  supervise skill fills) — so an execution record exists even on runtimes
+  with no global recording layer. Session narrative stays with the global
+  layer; the two never duplicate. Contract: never clobbers a RECORD.md the
+  skill already wrote, and a ledger write failure never blocks completion
+  (fail-safe); `AGENT_PLANS_DIR` is the test seam. `/supervise` Step 5 writes
+  the same facts as its closing discipline on non-goal runs. A traversal-shaped slug (path separators or `..`) is
+  refused fail-safe — the ledger can never land outside the plans root (a
+  hardening from this change's adversarial review). New battery
+  `core/tests/supervisor-goal-record-test.sh` (12 checks, isolated in mktemp
+  git repos). Same-PR bugfix the battery exposed: `cmd_init`'s
+  `objective="${4:-$slug}"` referenced `slug` on the same `local` line —
+  bash 3.2 + `set -u` crashes on every objective-less
+  `init <slug> <waves>` (latent: the documented 4-arg form never hit it);
+  the declaration is now split.
 - **`/spec --interview` — opt-in deep-interview submode (F-1).** For requests
   fuzzy enough that a wrong guess commits the spec to the wrong shape, the
   one-shot "ask if ambiguous" brainstorm gains a structured question loop:
