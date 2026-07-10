@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# registry-drift.sh — the registry/manifest structural gate, extracted verbatim
-# (in behavior) from the .github/workflows/ci.yml `validate-plugin` job so the
-# SAME four checks run locally, in verify-all.sh, and as the H-2 audit's registry
-# item — one source of truth instead of logic living only inside CI YAML.
+# registry-drift.sh — the registry/manifest structural gate. Checks 1–4 are
+# extracted verbatim (in behavior) from the .github/workflows/ci.yml
+# `validate-plugin` job so the SAME checks run locally, in verify-all.sh, and as
+# the H-2 audit's registry item — one source of truth instead of logic living
+# only inside CI YAML. Checks 5–6 are the O-1 orchestration-contract guards.
 #
-# The four drift classes (identical conditions + fail messages to the CI job):
+# The six drift classes (1–4 identical conditions + fail messages to the old CI job):
 #   1. plugin.json / marketplace.json required fields —
 #        plugin.json must carry name/version/description/license;
 #        marketplace.json must have a non-empty plugins[] whose first source is './'.
@@ -15,6 +16,12 @@
 #   4. registry↔agent model drift — for every agents/master-registry.json entry,
 #        agents/<id>.md must exist and its `model:` frontmatter must equal the
 #        registry `model` (the two halves of the routing contract must agree).
+#   5. review/verify agent read-only toolset — every agents/*.md whose name
+#        contains reviewer/verifier must allowlist only Read/Grep/Glob (O-1
+#        write single-threading: the toolset is the mechanical enforcement).
+#   6. delegation-contract model field — when skills/supervise ships in the
+#        tree, templates/delegation-contract.md must exist and carry its
+#        **model**: field (O-1 explicit execution-tier dispatch).
 #
 # This is pillar-② (CI/CD structural enforcement) as a standalone script: the CI
 # job becomes a thin caller, and the check is no longer un-runnable outside GitHub.
@@ -100,6 +107,47 @@ try:
             fail.append(f"model drift: registry '{aid}'={rmodel} but agents/{aid}.md={mdmodel}")
 except Exception as e:
     fail.append(f"master-registry.json unreadable: {e}")
+
+# 5) review/verify agents must carry a read-only toolset (O-1 write
+#    single-threading — the toolset is the one mechanical enforcement point:
+#    a reviewer/verifier that can Write can silently become a second writer).
+#    Applies to every agents/*.md whose frontmatter name contains
+#    'reviewer' or 'verifier'. Read-only = a subset of Read/Grep/Glob;
+#    a MISSING tools: line also fails (absence means all tools, write included).
+READ_ONLY = {"Read", "Grep", "Glob"}
+for a in sorted(pathlib.Path("agents").glob("*.md")):
+    parts = a.read_text(encoding="utf-8").split("---", 2)
+    if len(parts) < 3:
+        continue  # no frontmatter -> already failed check 3
+    fm = parts[1]
+    nm = re.search(r"(?m)^name:\s*(\S+)", fm)
+    if not nm or not re.search(r"(reviewer|verifier)", nm.group(1), re.I):
+        continue
+    tm = re.search(r"(?m)^tools:\s*\[([^\]]*)\]", fm)
+    if tm:
+        tools = {t.strip() for t in tm.group(1).split(",") if t.strip()}
+    else:
+        # YAML block form:  tools:\n  - Read\n  - Grep
+        bm = re.search(r"(?m)^tools:\s*\n((?:[ \t]+-[ \t]+\S+\n?)+)", fm)
+        if not bm:
+            fail.append(f"read-only guard: {a} is a review/verify agent with no tools: allowlist (defaults to ALL tools, write included)")
+            continue
+        tools = set(re.findall(r"-[ \t]+(\S+)", bm.group(1)))
+    extra = tools - READ_ONLY
+    if extra:
+        fail.append(f"read-only guard: {a} is a review/verify agent but carries write-capable tools: {', '.join(sorted(extra))}")
+
+# 6) delegation-contract template must declare its model field (O-1 —
+#    the field is what makes execution-tier dispatch explicit instead of an
+#    expensive inherit-by-default). Scoped: only enforced when the supervise
+#    skill ships in this tree (fixtures without skills/ are exempt).
+sup = pathlib.Path("skills/supervise")
+if sup.is_dir():
+    tpl = sup / "templates" / "delegation-contract.md"
+    if not tpl.is_file():
+        fail.append("delegation contract: skills/supervise ships without templates/delegation-contract.md")
+    elif "**model**:" not in tpl.read_text(encoding="utf-8"):
+        fail.append("delegation contract: templates/delegation-contract.md has no **model**: field")
 
 if fail:
     print("FAIL — registry/manifest drift:")
