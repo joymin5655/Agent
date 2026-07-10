@@ -125,6 +125,10 @@ for t in core/tests/*.sh; do bash "$t" || exit 1; done
 ## Style
 
 - Shell: `set -euo pipefail` at the top of every script. `shellcheck` clean.
+  Counting idiom under strict mode: a zero-match `grep` exits 1, so guard
+  count pipes as `{ grep -E pat file || true; } | wc -l` and count
+  assignments as `n=$(grep -c pat file || true)` — enforced by
+  `core/tests/pipefail-idiom-scan.sh` (W-7).
 - Python: PEP 8, type hints, ruff clean. No `print` for hook stdout — use `json.dumps` with strict schema.
 - Markdown: max 100 chars per line for prose. No trailing whitespace.
 - Comments: only when WHY is non-obvious. Don't narrate WHAT — code says that.

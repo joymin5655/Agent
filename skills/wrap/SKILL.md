@@ -1,6 +1,6 @@
 ---
 name: wrap
-description: Commits staged changes and opens a PR. Runs gitleaks + risk-area guards before committing. Push is user-confirmed by default; --auto-push and --auto-merge are opt-in.
+description: Commits staged changes and opens a PR. Runs gitleaks + risk-area guards before committing. Push is user-confirmed by default; --auto-push and --auto-merge are opt-in. NOT for review or verification (run those before wrapping), and NOT when nothing has changed yet — there is nothing to commit.
 when_to_use: User says "wrap up", "commit and PR", "ship this", or invokes `/wrap`.
 tools: Bash, Read, Grep, Glob
 ---

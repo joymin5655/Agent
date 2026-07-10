@@ -22,6 +22,9 @@
 #   6. delegation-contract model field — when skills/supervise ships in the
 #        tree, templates/delegation-contract.md must exist and carry its
 #        **model**: field (O-1 explicit execution-tier dispatch).
+#   7. skill negative-trigger — every shipped skills/*/SKILL.md description
+#        must contain at least one "NOT " negative example (T-3: negative
+#        examples measurably improve skill-routing accuracy).
 #
 # This is pillar-② (CI/CD structural enforcement) as a standalone script: the CI
 # job becomes a thin caller, and the check is no longer un-runnable outside GitHub.
@@ -149,9 +152,24 @@ if sup.is_dir():
     elif "**model**:" not in tpl.read_text(encoding="utf-8"):
         fail.append("delegation contract: templates/delegation-contract.md has no **model**: field")
 
+# 7) every shipped skill's description carries a negative-trigger (T-3).
+#    The "NOT " token is the machine-checkable contract: a description that
+#    only says when to fire routes worse than one that also says when not to.
+#    Scoped like check 6: fixtures without skills/ are exempt.
+skills_dir = pathlib.Path("skills")
+if skills_dir.is_dir():
+    for sk in sorted(skills_dir.glob("*/SKILL.md")):
+        parts = sk.read_text(encoding="utf-8").split("---", 2)
+        if len(parts) < 3:
+            fail.append(f"negative-trigger: {sk} has no frontmatter")
+            continue
+        dm = re.search(r"(?m)^description:\s*(.+)$", parts[1])
+        if not dm or "NOT " not in dm.group(1):
+            fail.append(f"negative-trigger: {sk} description has no 'NOT ' negative example (T-3)")
+
 if fail:
     print("FAIL — registry/manifest drift:")
     for f in fail: print("  -", f)
     sys.exit(1)
-print("PASS — plugin manifests, hook refs, agent frontmatter, and registry↔agent models agree")
+print("PASS — plugin manifests, hook refs, agent frontmatter, registry↔agent models, and skill negative-triggers agree")
 PY

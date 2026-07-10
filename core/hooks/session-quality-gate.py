@@ -253,9 +253,13 @@ def main() -> None:
     # Completion gate: block on the first Stop with any failure. Second Stop
     # passes (user decided "intentional"). Advisory mode (BLOCK=0) never blocks.
     if enforcing:
+        # Teaching format (T-1): WHY + FIX so the agent can self-correct.
         reason = (
             f"{summary}\n\n"
-            "Response halted by quality gate. Choose one:\n"
+            "Response halted by quality gate.\n"
+            "WHY: completion gate — the session diff still carries quality violations "
+            "or failing completion tests; ending now would ship them silently.\n"
+            "FIX: choose one:\n"
             "  (a) Resolve — fix the failing test(s) / move types to types.ts /\n"
             "      tokenize colors / remove console.log, then complete.\n"
             "  (b) Intentional — state the reason explicitly, then complete\n"

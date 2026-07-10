@@ -8,6 +8,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Teaching gates (T-1).** Every `deny`/`ask`/`block` reason emitted by
+  `pre-tool-guard.sh`, `secret-content-scan.py`, `check-hardcoding.py`, and
+  `session-quality-gate.py` now carries a fixed `WHY:` tag (which rule fired and
+  why) and a `FIX:` tag (the concrete allowed alternative), so a blocked agent
+  can self-correct instead of routing around the gate. Machine-enforced: the
+  per-hook batteries assert `WHY:`/`FIX:` on every non-allow fixture, and a new
+  `core/tests/check-hardcoding-test.sh` (14 checks) gives that hook its first
+  dedicated battery.
+- **Skill negative-triggers (T-3).** All five shipped `skills/*/SKILL.md`
+  descriptions now include at least one `NOT …` negative example (when *not* to
+  fire), enforced as `registry-drift.sh` check 7 with fixtures (no-`NOT` → FAIL,
+  `NOT` present → PASS, no frontmatter → FAIL).
+- **Doctor codex-profile check (M-4).** `setup.sh --doctor` gains check 13:
+  WARN when the `quick`/`deep` tier-profile files are missing beside the local
+  codex config (`CODEX_CONFIG` seam; skipped when no codex config exists) —
+  the same "declared template vs actual" observer family as the plugin-cache
+  and command-scan checks. Fixtures cover present/missing/absent-config.
+
+### Fixed
+- **Guard false-positives (W-7).** `pre-tool-guard.sh` no longer blocks a commit
+  whose *message* merely mentions a destructive command (`git commit -m "fix: guard rm -rf / patterns"`):
+  a preamble strips the inert message payload before the destructive guards
+  (1–4) scan — but only provably-inert shapes (single-quoted, `$`/backtick-free
+  double-quoted, or a **quoted**-delimiter `<<'EOF'` heredoc). An unquoted
+  `<<EOF` body still command-substitutes at shell-eval time, so it stays fully
+  scannable; the secrets guards always scan the full command. A new
+  `core/tests/pipefail-idiom-scan.sh` gate is the W-7(2) regression floor:
+  it flags unguarded zero-match count pipes (`grep … | wc -l`, `n=$(grep -c …)`)
+  in strict-mode runtime scripts, self-checking against a bad/good fixture so
+  it can't rot to always-green; the safe idiom is documented in AGENTS.md.
+- **Graceful-wrap traversal guard.** `supervisor-goal.sh`'s `_emit_graceful_wrap`
+  (the budget-limited stub writer) now refuses a traversal-shaped slug the same
+  way `write_record_stub` does, so a weird plan slug can never place the stub
+  outside its configured dirs (fail-safe skip; regression-tested).
+
 - **Repo-native execution ledger (F-2).** `supervisor-goal.sh complete` now
   drops `.agent/plans/<slug>/RECORD.md` — a mechanical execution ledger
   (waves from the live DB, plus PR / audit-verdict / carried-items slots the

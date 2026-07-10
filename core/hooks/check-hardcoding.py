@@ -42,6 +42,10 @@ EXEMPT_PATHS = {
     "assets/",
     "/fixtures/",
     "/legacy/",
+    # Self + sibling test script (cite the same patterns as fixtures —
+    # same precedent as secret-content-scan.py's self-exemption)
+    "check-hardcoding.py",
+    "check-hardcoding-test.sh",
 }
 
 # Generic hardcoding patterns. Extend via hook-config.yml: hardcoding_patterns[].
@@ -134,7 +138,14 @@ def main():
             print(f"  {w}", file=sys.stderr)
         print("\nExtract constants to a config file and import them. To customize patterns, "
               "edit hook-config.yml: hardcoding_patterns[].", file=sys.stderr)
-        emit_deny("Hardcoding detected in " + file_path.split("/")[-1])
+        # Teaching format (T-1): WHY + FIX so the agent can self-correct.
+        emit_deny(
+            "Hardcoding detected in " + file_path.split("/")[-1] + "\n"
+            "WHY: design-hardcoding guard — inline style/config constants drift from the "
+            "theme and dodge the config review path.\n"
+            "FIX: extract the values to a config/theme file and import them; to customize "
+            "what this guard matches, edit hook-config.yml: hardcoding_patterns[]."
+        )
         sys.exit(0)
 
     sys.exit(0)
