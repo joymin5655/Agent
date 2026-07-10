@@ -1,7 +1,7 @@
 ---
 name: spec
 description: Upstream planning-discipline — brainstorm a feature into spec.md + plan.md under .agent/plans/<slug>/, then route to plan approval. Enforced by the spec-gate tool boundary, not prompt coercion.
-when_to_use: Before starting substantive implementation on a non-trivial feature or change — "spec this", "/spec <slug>", or when spec-gate asks you to plan first before an edit.
+when_to_use: Before starting substantive implementation on a non-trivial feature or change — "spec this", "/spec <slug>", or when spec-gate asks you to plan first before an edit. Add --interview when the request is fuzzy enough that a wrong guess would commit the spec to the wrong shape (structured question loop before writing).
 tools: Bash, Read, Write, Edit, Grep, Glob
 ---
 
@@ -30,6 +30,33 @@ b. Surface the 2-3 plausible approaches and the tradeoff between them; pick one
    and say why. If the request is ambiguous, ask — don't guess.
 c. List what's explicitly **out** of scope (prevents scope creep later).
 
+#### `--interview` — opt-in deep-interview submode
+
+The default brainstorm is a single pass. `/spec <slug> --interview` replaces
+step 1b's one-shot "ask if ambiguous" with a structured question loop for
+requests fuzzy enough that a wrong guess commits the whole spec to the wrong
+shape. It is opt-in by design: simple requests keep the single pass, and the
+enforcement story is untouched — the spec-gate tool boundary neither knows nor
+cares which submode produced the artifacts.
+
+1. **Unknowns table.** List every unknown in the request; mark each
+   **decision-changing (Y/N)** — would different answers produce different
+   specs? N-unknowns are implementation details; leave them to the plan.
+2. **Batch-question the Y rows only** — at most **4 questions per round**,
+   each naming the options and your recommended default.
+3. **Re-score after the answers.** Answers resolve rows and surface new
+   unknowns; add those to the table and mark them Y/N. This is the
+   decision-tree pruning: each round should shrink the Y set.
+4. **Terminate on either condition** (whichever comes first):
+   - the table has **zero open decision-changing unknowns**, or
+   - **3 rounds** have run.
+   Unresolved rows carry into `spec.md` under `## Open questions` — named and
+   deferred beats silently guessed.
+
+The interview's Q/A trail is recorded in `spec.md` under `## Interview log`
+(one line per question: the question, the answer, the decision it settled),
+so the spec shows *why* it has its shape, not just the shape.
+
 ### 2. Write `spec.md`
 
 Pick a short kebab-case `<slug>` and write `.agent/plans/<slug>/spec.md`:
@@ -48,7 +75,16 @@ Pick a short kebab-case `<slug>` and write `.agent/plans/<slug>/spec.md`:
 
 ## Out of scope
 - <explicitly deferred>
+
+## Interview log            <!-- --interview runs only -->
+- Q: <question> → A: <answer> → settled: <the decision it fixed>
+
+## Open questions           <!-- --interview runs only -->
+- <unresolved decision-changing unknown, carried, with its default>
 ```
+
+The last two sections appear only on `--interview` runs; a single-pass spec
+omits them.
 
 ### 3. Write `plan.md`
 
