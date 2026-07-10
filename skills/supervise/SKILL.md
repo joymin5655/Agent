@@ -1,6 +1,6 @@
 ---
 name: supervise
-description: Dispatch a multi-wave plan to specialist agents with audit + risk-area abort. Supports --auto-push, --auto-merge, --goal-mode for budgeted runs.
+description: Dispatch a multi-wave plan to specialist agents with audit + risk-area abort. Supports --auto-push, --auto-merge, --goal-mode for budgeted runs. NOT for writing the plan itself (that is /spec), and NOT for a single small edit with no waves — just make the edit.
 when_to_use: User has a written plan and says "execute", "run the plan", "/supervise <slug>", or "full auto".
 tools: Bash, Read, Write, Edit, Grep, Glob
 ---

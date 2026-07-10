@@ -16,6 +16,7 @@
 #   (4) registry model != agent .md model
 #   (5) review/verify agent whose toolset is not read-only (or unbounded)
 #   (6) skills/supervise shipping without a delegation-contract **model**: field
+#   (7) a shipped SKILL.md description without a "NOT " negative-trigger (T-3)
 #
 # Each case gets a FRESH fixture (mktemp -d) so a mutation never leaks into another.
 # The gate is pointed at the fixture via REGISTRY_DRIFT_ROOT.
@@ -202,6 +203,33 @@ mkdir -p "$FX/skills/supervise/templates"
 printf '# Delegation contract\n\n- **model**: workhorse\n' > "$FX/skills/supervise/templates/delegation-contract.md"
 run_gate "$FX"
 [[ $GATE_RC -eq 0 ]]; check "template-with-model-passes" $?
+
+echo
+echo "=== (7) skill description without a negative-trigger -> FAIL + named ==="
+FX=$(build_fixture)
+mkdir -p "$FX/skills/demo"
+printf -- '---\nname: demo\ndescription: Does a demo thing when asked.\n---\n# demo\n' > "$FX/skills/demo/SKILL.md"
+run_gate "$FX"
+[[ $GATE_RC -eq 1 ]]; check "skill-without-not-fails" $?
+printf '%s\n' "$GATE_OUT" | grep -qF "no 'NOT ' negative example"; check "skill-without-not-named" $?
+printf '%s\n' "$GATE_OUT" | grep -qF 'skills/demo/SKILL.md'; check "skill-without-not-names-the-file" $?
+
+echo
+echo "=== (7b) skill description with a negative-trigger -> PASS ==="
+FX=$(build_fixture)
+mkdir -p "$FX/skills/demo"
+printf -- '---\nname: demo\ndescription: Does a demo thing when asked. NOT for undemolike things.\n---\n# demo\n' > "$FX/skills/demo/SKILL.md"
+run_gate "$FX"
+[[ $GATE_RC -eq 0 ]]; check "skill-with-not-passes" $?
+
+echo
+echo "=== (7c) SKILL.md with no frontmatter at all -> FAIL + named ==="
+FX=$(build_fixture)
+mkdir -p "$FX/skills/demo"
+printf '# demo — no frontmatter here\n' > "$FX/skills/demo/SKILL.md"
+run_gate "$FX"
+[[ $GATE_RC -eq 1 ]]; check "skill-no-frontmatter-fails" $?
+printf '%s\n' "$GATE_OUT" | grep -qF 'has no frontmatter'; check "skill-no-frontmatter-named" $?
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="

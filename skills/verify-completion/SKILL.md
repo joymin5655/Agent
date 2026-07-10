@@ -1,6 +1,6 @@
 ---
 name: verify-completion
-description: Independently re-verify a completion claim in a separate context — mechanical evidence (files/tests/assertions) plus a refute-by-default semantic judge — before a wave or task is allowed to be called "done". Emits the shared verdict schema.
+description: Independently re-verify a completion claim in a separate context — mechanical evidence (files/tests/assertions) plus a refute-by-default semantic judge — before a wave or task is allowed to be called "done". Emits the shared verdict schema. NOT for code-style review (that is a reviewer's lane) and NOT for verifying work you authored in the same context — the verifier must be a fresh spawn.
 when_to_use: A builder/executor has just reported a task or wave complete and you need a second, independent check before accepting it — "verify completion", "is this actually done", "/verify-completion <claim>", or the completion step of /supervise.
 tools: Bash, Read, Grep, Glob
 ---

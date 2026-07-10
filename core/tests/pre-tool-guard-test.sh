@@ -30,6 +30,12 @@
 #     - cat .eslintrc          -> allow        (reading a config is not tampering)
 #     - cat .eslintrc > out     -> allow        (read redirected elsewhere, not the config)
 #     - edit tsconfig.json     -> allow        (deliberately out of scope — no FP)
+#   W-7 (commit-message strip):
+#     - messages that MENTION rm -rf / reset --hard / force push / DROP TABLE
+#       (double-quoted, single-quoted, bundled -am, heredoc idiom) -> allow
+#     - a real command after/inside the message (&&, $(...) substitution) -> deny
+#   T-1 (teaching contract): every deny/ask fixture additionally asserts the
+#     reason carries WHY: and FIX: tags.
 #
 # Usage: bash core/tests/pre-tool-guard-test.sh
 # Exit 0: all pass. Exit 1: one or more failures.
@@ -60,6 +66,18 @@ run_case() {
     echo "  FAIL [$name] expected=$expect got=$got :: $out"
     FAIL=$((FAIL + 1))
   fi
+  # T-1 teaching contract: every deny/ask reason must carry WHY: and FIX: tags
+  # (machine-checkable teaching format — see the hook header). Checked on every
+  # non-allow fixture so a new guard cannot ship without a teaching message.
+  if [[ "$expect" != "allow" ]]; then
+    if [[ "$out" == *"WHY:"* && "$out" == *"FIX:"* ]]; then
+      echo "  ok   [$name/teaching] WHY+FIX present"
+      PASS=$((PASS + 1))
+    else
+      echo "  FAIL [$name/teaching] reason lacks WHY:/FIX: :: $out"
+      FAIL=$((FAIL + 1))
+    fi
+  fi
 }
 
 echo "=== existing rules (regression) ==="
@@ -69,6 +87,41 @@ run_case "reset-hard-deny"      'git reset --hard HEAD~1'                 deny
 run_case "drop-table-ask"       'psql -c "DROP TABLE users"'              ask
 run_case "cat-secrets-deny"     'cat secrets/prod.env'                    deny
 run_case "benign-allow"         'ls -la && echo hello'                    allow
+
+echo
+# W-7: a commit MESSAGE that merely mentions a destructive command must not
+# trip the destructive guards (1-4) — the message payload is stripped before
+# those guards scan. Anything genuinely executable stays scannable: a command
+# after the message, a non-cat substitution inside the message, and every
+# secrets guard (which deliberately scans the FULL command).
+echo "=== W-7: commit-message mentions of destructive commands -> allow ==="
+run_case "msg-mentions-rm-allow"        'git commit -m "fix: guard rm -rf / patterns"'        allow
+run_case "msg-mentions-reset-allow"     'git commit -m "docs: explain git reset --hard"'      allow
+run_case "msg-mentions-forcepush-allow" 'git commit -m "block force push to main"'            allow
+run_case "msg-mentions-drop-allow"      'git commit -m "prevent DROP TABLE injection"'        allow
+run_case "msg-singlequote-rm-allow"     "git commit -m 'note: rm -rf / is blocked'"           allow
+run_case "msg-bundled-am-rm-allow"      'git commit -am "mention rm -rf / in text"'           allow
+HEREDOC_MSG=$(printf 'git commit -m "$(cat <<%sEOF%s\nfeat: prevent git reset --hard misuse\nEOF\n)"' "'" "'")
+run_case "msg-heredoc-mention-allow"    "$HEREDOC_MSG"                                        allow
+run_case "real-rm-after-msg-deny"       'git commit -m "x" && rm -rf /'                       deny
+run_case "msg-subst-rm-deny"            'git commit -m "$(rm -rf /)"'                         deny
+run_case "msg-subst-secrets-deny"       'git commit -m "$(cat secrets/key)"'                  deny
+# UNQUOTED heredoc delimiter: the body still undergoes command substitution at
+# shell-eval time, so a live command inside it must NOT be stripped (only a
+# QUOTED delimiter <<'EOF' is inert). Regression fixture for the reviewer-found
+# bypass. The dangerous token is assembled at runtime so this test file itself
+# stays inert to the live installed guard.
+_RMRF="rm -rf /"
+UNQ_HEREDOC="git commit -m \"\$(cat <<EOF
+\$(${_RMRF})
+EOF
+)\""
+run_case "msg-unquoted-heredoc-subst-deny" "$UNQ_HEREDOC"                                     deny
+QUO_HEREDOC="git commit -m \"\$(cat <<'EOF'
+mentions ${_RMRF} safely
+EOF
+)\""
+run_case "msg-quoted-heredoc-mention-allow" "$QUO_HEREDOC"                                    allow
 
 echo
 # no-verify bypasses the repo's own pre-commit/pre-push gate (gitleaks + sanitize).

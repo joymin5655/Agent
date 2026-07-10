@@ -117,5 +117,22 @@ RC_F=$?
 check "traversal-slug-writes-nothing-outside" $?
 
 echo
+echo "=== (g) traversal slug -> graceful-wrap stub writes nothing outside, run still succeeds ==="
+FX=$(build_fixture)
+GW_DIR="$TMP_ROOT/graceful-wiki"
+mkdir -p "$GW_DIR"
+(
+  cd "$FX"
+  # a budget-limited transition is what fires _emit_graceful_wrap; the goal's
+  # slug carries traversal characters, so the guard must skip the stub write.
+  bash core/infra/supervisor-goal.sh init '..escape' 1 10 >/dev/null
+  AGENT_GRACEFUL_WIKI_DIR="$GW_DIR" bash core/infra/supervisor-goal.sh track-tokens '..escape' 20 >/dev/null
+)
+RC_G=$?
+[[ $RC_G -eq 0 ]]; check "traversal-slug-graceful-does-not-block" $?
+FOUND_G="$(find "$GW_DIR" "$TMP_ROOT" -maxdepth 1 -name '*escape*' 2>/dev/null | { grep -c . || true; })"
+[[ "$FOUND_G" -eq 0 ]]; check "traversal-slug-graceful-writes-nothing" $?
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]

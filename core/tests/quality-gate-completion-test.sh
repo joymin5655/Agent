@@ -81,6 +81,8 @@ EOF
 RCB=$(run_stop "$P" false); OUT=$(cat "$OUTFILE")
 [[ $RCB -eq 0 ]]; check "exit-0-on-fail" $?
 is_block "$OUT" && check "failing-test-blocks" 0 || check "failing-test-blocks" 1
+# T-1 teaching contract: the block reason must carry WHY: and FIX: tags.
+[[ "$OUT" == *"WHY:"* && "$OUT" == *"FIX:"* ]]; check "block-reason-teaching-tags" $?
 
 echo
 echo "=== (c) failing + stop_hook_active -> pass (anti-loop) ==="

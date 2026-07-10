@@ -1,6 +1,6 @@
 ---
 name: spec
-description: Upstream planning-discipline — brainstorm a feature into spec.md + plan.md under .agent/plans/<slug>/, then route to plan approval. Enforced by the spec-gate tool boundary, not prompt coercion.
+description: Upstream planning-discipline — brainstorm a feature into spec.md + plan.md under .agent/plans/<slug>/, then route to plan approval. Enforced by the spec-gate tool boundary, not prompt coercion. NOT for trivial/test/doc-only edits (the gate scopes those out), and NOT for executing an already-approved plan (that is /supervise).
 when_to_use: Before starting substantive implementation on a non-trivial feature or change — "spec this", "/spec <slug>", or when spec-gate asks you to plan first before an edit. Add --interview when the request is fuzzy enough that a wrong guess would commit the spec to the wrong shape (structured question loop before writing).
 tools: Bash, Read, Write, Edit, Grep, Glob
 ---
