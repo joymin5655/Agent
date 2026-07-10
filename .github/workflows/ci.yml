@@ -112,3 +112,49 @@ jobs:
       # runner reports it as a loud SKIP (the dedicated secret-scan job enforces it).
       - name: Run the full discovered check set
         run: bash core/tests/verify-all.sh
+
+  clean-install:
+    name: clean-install smoke (bare checkout → scratch-home install → doctor)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Cold-install proof (M-5): the portable-harness promise is "install once,
+      # use everywhere", but until this job the only cold install was a manual
+      # one. A scratch $HOME stands in for a machine that has never seen the
+      # harness; AGENT_SETUP_YES=1 answers the overwrite prompts so the run is
+      # non-interactive.
+      - name: Install all three runtimes into a scratch config home
+        run: |
+          SCRATCH="$(mktemp -d)"
+          echo "SCRATCH=$SCRATCH" >> "$GITHUB_ENV"
+          HOME="$SCRATCH" AGENT_SETUP_YES=1 bash setup.sh --all
+      # Anti-vacuous: prove the install wrote all three runtime configs and
+      # actually templated them (an install that silently no-ops — or writes
+      # files with the {{FRAMEWORK_ROOT}} placeholder unexpanded — would
+      # otherwise pass this job on the doctor's absence-tolerant checks alone).
+      # This step, not the doctor, is what verifies the fresh install: the
+      # doctor's checks are repo/env-scoped and tolerate an empty home.
+      - name: Assert the install produced and templated all three runtime configs
+        run: |
+          test -f "$SCRATCH/.claude/settings.json"
+          test -f "$SCRATCH/.codex/config.toml"
+          test -f "$SCRATCH/.gemini/settings.json"
+          grep -q "$GITHUB_WORKSPACE" "$SCRATCH/.claude/settings.json"
+          ! grep -q '{{FRAMEWORK_ROOT}}' "$SCRATCH/.claude/settings.json"
+      # The doctor then diagnoses env + repo health from a machine that has
+      # never seen the harness before (absence-tolerant checks must skip/WARN,
+      # never FAIL, on the empty scratch home).
+      - name: Doctor must report 0 fail against the scratch home
+        run: HOME="$SCRATCH" bash setup.sh --doctor
+      # Mutation probe: a hook that lost its executable bit must turn the
+      # doctor red — proves this job's green is load-bearing rather than a
+      # doctor that passes anything (same discipline as the verify-all and
+      # gate fixture batteries).
+      - name: Mutation probe — doctor must fail when a hook loses its exec bit
+        run: |
+          chmod -x core/hooks/pre-tool-guard.sh
+          if HOME="$SCRATCH" bash setup.sh --doctor; then
+            echo "MUTATION NOT CAUGHT: doctor stayed green with a non-executable hook" >&2
+            exit 1
+          fi
+          chmod +x core/hooks/pre-tool-guard.sh
