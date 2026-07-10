@@ -454,6 +454,64 @@ PY
         fi
     fi
 
+    # 12. runtime commands dir — phantom script references. A commands/*.md
+    #     that instructs the model to run a script which does not resolve on
+    #     this machine is a live failure path: the command breaks only at
+    #     invocation time (observed 2026-07-10 — an orphaned command file
+    #     invoking a repo-relative audit script that ships nowhere locally).
+    #     Refs containing unexpanded $VARS are skipped (unresolvable here);
+    #     relative refs resolve against the runtime root (commands/..) and the
+    #     commands dir itself. WARN only — observation, never a blocker; no
+    #     commands dir -> check skipped.
+    local cmd_dir="${AGENT_COMMANDS_DIR:-$HOME/.claude/commands}"
+    if [[ ! -d "$cmd_dir" ]]; then
+        add_row PASS "commands scan — no commands dir at ${cmd_dir/#$HOME/~} (check skipped)"
+    else
+        local pc_out pc_rc
+        if pc_out="$(CMD_DIR="$cmd_dir" python3 - <<'PY' 2>&1
+import glob, os, re, sys
+cmd_dir = os.path.abspath(os.environ["CMD_DIR"])
+runtime_root = os.path.dirname(cmd_dir)
+# \x27/\x22/\x60 = quote/dquote/backtick as regex escapes: bash 3.2 mis-parses
+# unpaired quote or backtick characters inside a $(<<heredoc) command
+# substitution even when the heredoc delimiter is quoted, so the literal
+# characters must not appear in this file.
+ref_re = re.compile(
+    r"""\b(?:node|python3|python|bash|sh)\s+([^\s\x27\x22\x60;|&()<>]+\.(?:js|cjs|mjs|py|sh))\b""")
+phantoms = []
+files = sorted(glob.glob(os.path.join(cmd_dir, "*.md")))
+for f in files:
+    try:
+        text = open(f, encoding="utf-8", errors="replace").read()
+    except OSError:
+        continue
+    for ref in sorted(set(ref_re.findall(text))):
+        if "$" in ref:
+            continue  # unexpanded variable — not resolvable from here
+        p = os.path.expanduser(ref)
+        cands = [p] if os.path.isabs(p) else [
+            os.path.join(runtime_root, p), os.path.join(cmd_dir, p)]
+        if not any(os.path.isfile(c) for c in cands):
+            phantoms.append(f"{os.path.basename(f)} -> {ref}")
+if phantoms:
+    # strip control chars before echoing untrusted md content back to a
+    # terminal (escape-sequence display spoofing hardening)
+    print(re.sub(r"[\x00-\x1f\x7f]", "?", "; ".join(phantoms)))
+    sys.exit(1)
+print(f"{len(files)} command file(s), all script refs resolve")
+PY
+        )"; then
+            pc_rc=0
+        else
+            pc_rc=$?
+        fi
+        if [[ $pc_rc -eq 0 ]]; then
+            add_row PASS "commands scan — $pc_out"
+        else
+            add_row WARN "commands scan — phantom script refs (a command file invokes a script that does not exist on this machine): $pc_out"
+        fi
+    fi
+
     echo "=== Environment diagnosis (--doctor) ==="
     local row status msg
     for row in "${rows[@]}"; do

@@ -1,6 +1,6 @@
 ---
 name: harness-audit
-description: Agent-driven, read-only self-audit of the harness — run the machine integrity layer once as a dry-run, present a per-check pass/fail table, cite the P1-1 doc-reality result, and for any failure give root-cause + fix + backlog follow-up. Consumes the machine gates; it does not reimplement them.
+description: Agent-driven, read-only self-audit of the harness — run the machine integrity layer once as a dry-run, present a per-check pass/fail table, cite the P1-1 doc-reality result, and for any failure give root-cause + fix + backlog follow-up. Consumes the machine gates; it does not reimplement them. NOT for auditing a consumer project's own codebase (use that project's test suite), and NOT for applying fixes — this skill observes and reports only.
 when_to_use: A periodic or on-demand health check of the harness itself — "audit the harness", "/harness-audit", "is the harness passing its own gates", or when you want one interpreted report over the CI/gate layer before a release or after a structural change.
 tools: Bash, Read, Grep, Glob
 ---
@@ -77,7 +77,33 @@ so plainly.
 To enumerate the checks without executing them (useful for a coverage sanity-check
 of the report), `bash core/tests/verify-all.sh --list` prints the labels only.
 
-### 2. Present the table (cite P1-1 explicitly)
+### 2. Run the runtime layer (doctor + telemetry digest)
+
+`verify-all.sh` covers the *repo*; two further read-only probes cover the
+*runtime this repo is installed into* and the *live gate behavior*:
+
+```bash
+bash setup.sh --doctor
+bash core/infra/telemetry-digest.sh
+```
+
+- **`setup.sh --doctor`** — environment diagnosis (tool availability, exec bits,
+  registry/hooks sanity) plus the drift observers: plugin-cache single-version
+  (a stale cached version re-exposing retired agents/skills), declared-hook
+  manifest vs live settings reconciliation, and the phantom-command scan (a
+  runtime `commands/*.md` invoking a script that does not exist on this
+  machine). Doctor WARNs are observations, never blockers — report them in the
+  same diagnosis format as step 4.
+- **`telemetry-digest.sh`** — per-gate fire-rate from the local event sinks;
+  surface any DEAD (never fires) or FATIGUE (high-frequency ask) candidates as
+  calibration follow-ups, not as failures.
+
+Append the doctor summary line (`doctor: N pass, M warn, K fail`) and any
+DEAD/FATIGUE candidates to the report. If either probe's input is absent on
+this machine (no runtime install, empty sinks), say so — an unmeasured layer is
+reported as unmeasured, not as green.
+
+### 3. Present the table (cite P1-1 explicitly)
 
 Read the runner's output and render a per-check table:
 
@@ -99,9 +125,10 @@ Call out the **doc-reality (P1-1)** line by name — its verdict is the headline
 this audit. State the overall tally (N passed / M failed / K skipped) and the
 runner's exit status.
 
-### 3. Diagnose each non-PASS
+### 4. Diagnose each non-PASS
 
-For every FAIL (and every SKIP that matters, e.g. a skipped security scan), write:
+For every FAIL, every doctor WARN, and every SKIP that matters (e.g. a skipped
+security scan), write:
 
 - **Purpose** — what the check guards (one line).
 - **Root cause** — the most likely reason it is failing, read from the check's own
@@ -115,10 +142,10 @@ For every FAIL (and every SKIP that matters, e.g. a skipped security scan), writ
 A SKIP is not a PASS: an absent `gitleaks` is a coverage gap to flag (install it or
 rely on the dedicated CI secret-scan job), not a silent green.
 
-### 4. Summarize health + next actions
+### 5. Summarize health + next actions
 
 Close with an overall verdict — healthy (all gates green) or failing (one or more
-gates red) — and an ordered list of recommended next actions drawn from step 3. If
+gates red) — and an ordered list of recommended next actions drawn from step 4. If
 the harness is failing its own gates, that is the top-line finding.
 
 ## Completion condition
