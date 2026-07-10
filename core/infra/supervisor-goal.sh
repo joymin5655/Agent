@@ -53,7 +53,12 @@ now_iso() { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
 sql_escape() { printf "%s" "$1" | sed "s/'/''/g"; }
 
 cmd_init() {
-    local slug="${1:-}" waves="${2:-}" budget="${3:-}" objective="${4:-${slug}}"
+    # objective's default references slug, so it must be a SEPARATE local
+    # statement: bash 3.2 + set -u treats a same-line reference as unbound,
+    # which made every objective-less `init <slug> <waves>` crash (latent
+    # until the F-2 battery first exercised the 2-arg form).
+    local slug="${1:-}" waves="${2:-}" budget="${3:-}"
+    local objective="${4:-$slug}"
     if [[ -z "$slug" || -z "$waves" ]]; then
         echo "usage: supervisor-goal.sh init <plan-slug> <total-waves> [budget] [objective]" >&2
         exit 2
@@ -182,11 +187,44 @@ cmd_resume() {
     cmd_status "$slug"
 }
 
+# F-2: repo-native execution ledger. On complete, drop a RECORD.md stub into
+# the plan's dir so the execution record exists even on runtimes with no
+# global recording layer. Mechanical ledger only (waves / PRs / audit verdict /
+# carried items) — the session narrative belongs to the global layer, so the
+# two never duplicate. The supervise skill fills the <fill …> slots; this stub
+# is the deterministic guarantee that the file exists. Fail-safe by contract:
+# a ledger write must never block goal completion, and a RECORD.md the skill
+# already wrote is never clobbered.
+write_record_stub() {
+    local slug="$1"
+    # slug is a path component below: refuse separators / traversal so a weird
+    # slug can never place the ledger outside the plans root (fail-safe skip)
+    case "$slug" in */*|*..*) return 0 ;; esac
+    local plans_root="${AGENT_PLANS_DIR:-$REPO_ROOT/.agent/plans}"
+    local rec="$plans_root/$slug/RECORD.md"
+    [[ -f "$rec" ]] && return 0
+    mkdir -p "$plans_root/$slug" 2>/dev/null || return 0
+    local waves total
+    waves=$(sqlite3 "$DB_FILE" "SELECT waves_completed FROM supervisor_goals WHERE plan_slug = '$(sql_escape "$slug")';" 2>/dev/null | jq -r 'length' 2>/dev/null) || waves="?"
+    total=$(sqlite3 "$DB_FILE" "SELECT total_waves FROM supervisor_goals WHERE plan_slug = '$(sql_escape "$slug")';" 2>/dev/null) || total="?"
+    {
+        echo "# ${slug} — execution record"
+        echo ""
+        echo "status: complete ($(now_iso))"
+        echo ""
+        echo "- waves: ${waves:-?}/${total:-?} completed"
+        echo "- prs: <fill — PRs opened/merged by this plan>"
+        echo "- audit verdict: <fill — per-wave audit outcomes>"
+        echo "- carried: <fill — deferred items from the plan>"
+    } > "$rec" 2>/dev/null || return 0
+}
+
 cmd_complete() {
     local slug="${1:-}"
     [[ -z "$slug" ]] && { echo "usage: ... complete <plan-slug>" >&2; exit 2; }
     init_db
     sqlite3 "$DB_FILE" "UPDATE supervisor_goals SET status = 'complete', updated_at_ms = $(now_ms) WHERE plan_slug = '$(sql_escape "$slug")';"
+    write_record_stub "$slug" || true
     cmd_status "$slug"
 }
 
