@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`/spec --interview` — opt-in deep-interview submode (F-1).** For requests
+  fuzzy enough that a wrong guess commits the spec to the wrong shape, the
+  one-shot "ask if ambiguous" brainstorm gains a structured question loop:
+  an unknowns table marking each row decision-changing (Y/N), batched
+  questions over the Y rows only (at most 4 per round, options + recommended
+  default named), re-scoring after each round (answers resolve rows and
+  surface new ones — decision-tree pruning), and two termination conditions
+  (zero open decision-changing unknowns, or 3 rounds — leftovers carry into
+  `spec.md` under `## Open questions`). The Q/A trail lands in
+  `## Interview log`, so the spec shows why it has its shape. Opt-in by
+  design: simple requests keep the single pass, and `spec-gate.py` is
+  untouched — the enforcement boundary neither knows nor cares which submode
+  produced the artifacts.
 - **Delegation contract + orchestration guards (O-1).**
   `skills/supervise/templates/delegation-contract.md` is the per-dispatch
   contract skeleton: the four elements (goal / output format / tools & scope /
