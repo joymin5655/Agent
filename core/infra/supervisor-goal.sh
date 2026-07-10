@@ -321,6 +321,10 @@ SQL
 # Optional second stub in AGENT_GRACEFUL_MEMORY_DIR (e.g., for an auto-memory system).
 _emit_graceful_wrap() {
     local slug="$1"
+    # slug is a filename component below: refuse separators / traversal so a
+    # weird slug can never place the stub outside the configured dirs — same
+    # guard as write_record_stub (fail-safe skip, never blocks the caller)
+    case "$slug" in */*|*..*) return 0 ;; esac
     local date_iso; date_iso="$(date +%Y-%m-%d)"
 
     local wiki_file="$GRACEFUL_WIKI_DIR/${slug}-budget-limited-${date_iso}.md"

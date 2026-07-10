@@ -200,5 +200,30 @@ OUT_I4="$(AGENT_COMMANDS_DIR=/nonexistent/cmds bash "$SETUP" --doctor 2>&1)"
 check "commands-dir-absent-skip" $?
 
 echo
+echo "=== (j) codex tier profiles: both present beside config -> PASS ==="
+CODEX_FIX="$(mktemp -d)"
+touch "$CODEX_FIX/config.toml" "$CODEX_FIX/quick.config.toml" "$CODEX_FIX/deep.config.toml"
+OUT_J="$(CODEX_CONFIG="$CODEX_FIX/config.toml" bash "$SETUP" --doctor 2>&1)"
+[[ "$OUT_J" == *"[PASS"*"codex tier profiles — quick/deep profiles present"* ]]
+check "codex-profiles-present-pass" $?
+
+echo
+echo "=== (j2) codex tier profiles: one missing -> WARN naming it, warn != fail ==="
+rm -f "$CODEX_FIX/deep.config.toml"
+OUT_J2="$(CODEX_CONFIG="$CODEX_FIX/config.toml" bash "$SETUP" --doctor 2>&1)"
+[[ "$OUT_J2" == *"[WARN"*"codex tier profiles — missing deep.config.toml"* ]]
+check "codex-profile-missing-warn" $?
+RC_J2="$(CODEX_CONFIG="$CODEX_FIX/config.toml" bash "$SETUP" --doctor >/dev/null 2>&1; echo $?)"
+[[ "$RC_J2" -eq 0 ]]
+check "codex-profile-missing-is-warn-not-fail" $?
+rm -rf "$CODEX_FIX"
+
+echo
+echo "=== (j3) codex tier profiles: no codex config -> check skipped ==="
+OUT_J3="$(CODEX_CONFIG=/nonexistent/codex/config.toml bash "$SETUP" --doctor 2>&1)"
+[[ "$OUT_J3" == *"codex tier profiles — no codex config at /nonexistent/codex/config.toml (check skipped)"* ]]
+check "codex-config-absent-skip" $?
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]

@@ -72,6 +72,16 @@ run_case() {
     echo "  FAIL [$name] expected=$expect got=$got :: $out"
     FAIL=$((FAIL + 1))
   fi
+  # T-1 teaching contract: every deny reason must carry WHY: and FIX: tags.
+  if [[ "$expect" == "deny" ]]; then
+    if [[ "$out" == *"WHY:"* && "$out" == *"FIX:"* ]]; then
+      echo "  ok   [$name/teaching] WHY+FIX present"
+      PASS=$((PASS + 1))
+    else
+      echo "  FAIL [$name/teaching] reason lacks WHY:/FIX: :: $out"
+      FAIL=$((FAIL + 1))
+    fi
+  fi
 }
 
 echo "=== (a) built-in pattern still fires (no config) ==="
