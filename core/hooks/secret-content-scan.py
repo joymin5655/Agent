@@ -380,7 +380,14 @@ def main() -> None:
         first_label = findings[0][0]
         reason = f"{first_label} in {label_source}"
         log_violation(reason)
-        emit_deny(reason)
+        # Teaching format (T-1): WHY + FIX so the agent can self-correct.
+        emit_deny(
+            f"{reason}\n"
+            "WHY: Risk Area #2 secrets — secret material must never enter tracked files "
+            "or tool payloads; once written it lands in git history and transcripts.\n"
+            "FIX: move the value to env-managed .env.local or secrets/ (gitignored) and "
+            "reference it via environment variables; if the key is real, rotate it."
+        )
 
         sys.exit(0)
 

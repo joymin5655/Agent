@@ -512,6 +512,28 @@ PY
         fi
     fi
 
+    # 13. codex tier profiles — the model-routing ladder expects quick/deep
+    #     profile files NEXT TO the local codex config (recent Codex CLI builds
+    #     reject inline [profiles.*] tables; see docs/model-routing.md). The
+    #     templates have no drift detection after copy time, so this is the
+    #     same "declared vs actual" observer family as checks 11/12. WARN
+    #     only; no codex config -> check skipped (codex not installed here).
+    local codex_cfg="${CODEX_CONFIG:-$HOME/.codex/config.toml}"
+    if [[ ! -f "$codex_cfg" ]]; then
+        add_row PASS "codex tier profiles — no codex config at ${codex_cfg/#$HOME/~} (check skipped)"
+    else
+        local codex_dir prof missing_profiles=""
+        codex_dir="$(dirname "$codex_cfg")"
+        for prof in quick deep; do
+            [[ -f "$codex_dir/$prof.config.toml" ]] || missing_profiles="${missing_profiles:+$missing_profiles, }$prof.config.toml"
+        done
+        if [[ -z "$missing_profiles" ]]; then
+            add_row PASS "codex tier profiles — quick/deep profiles present beside ${codex_cfg/#$HOME/~}"
+        else
+            add_row WARN "codex tier profiles — missing $missing_profiles beside ${codex_cfg/#$HOME/~}; copy adapters/codex/{quick,deep}.config.toml.template (tier ladder: docs/model-routing.md)"
+        fi
+    fi
+
     echo "=== Environment diagnosis (--doctor) ==="
     local row status msg
     for row in "${rows[@]}"; do
