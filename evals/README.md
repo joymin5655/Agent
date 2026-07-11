@@ -18,8 +18,9 @@ Two tracks ship today:
    `evals/judges/reference-judge.py`, a judge that catches
    **green-by-construction** tests (see *Semantic track* below).
 
-The full LLM-judge semantic layer and the skill A/B dataset are later increments
-that plug into the same runner and schema.
+A third track — the **real-LLM judge** (batch-3) — plugs into the same runner and
+schema but runs **locally, never in CI** (it calls a real model). See *Real-LLM
+track* below. The skill A/B dataset is a later increment.
 
 ## Layout
 
@@ -29,10 +30,14 @@ that plug into the same runner and schema.
 | `evals/datasets/semantic-judge.jsonl` | Batch-2 labeled cases for the meaningfulness judge. |
 | `evals/run-evals.py` | The judge-agnostic runner: grades each case, enforces Pass^k, gates on regression. |
 | `evals/judges/reference-judge.py` | Semantic-track judge — flags tests with no real (non-constant) assertion. |
+| `evals/judges/llm-judge.py` | Real-LLM judge (batch-3, out-of-CI) — flags tests that look real but don't exercise the claimed change. |
+| `evals/datasets/llm-judge.jsonl` | Real-LLM track labeled cases — semantic-hard (the deterministic floor can't decide them). |
 | `evals/baseline.json` | Batch-1 coverage floor (`min_cases`) and the regression bar. |
 | `evals/baseline-semantic.json` | Semantic-track coverage floor. |
+| `evals/baseline-llm.json` | Real-LLM track coverage floor (enforced by the LOCAL run, not CI). |
 | `core/tests/evals-test.sh` | Battery that tests the runner itself (mislabel detection, Pass^k, regression). |
 | `core/tests/reference-judge-test.sh` | Battery that tests the judge (trivial→REFUTED, real→CONFIRMED, leak-safety). |
+| `core/tests/llm-judge-test.sh` | Battery that tests the real-LLM adapter with a MOCK backend (no real model). |
 
 ## Run it
 
@@ -122,6 +127,104 @@ judgment needs a real model and runs via `skills/verify-completion` (the semanti
 pass) or a pluggable real `--verifier` — **not deterministically in CI**. The CI
 `evals` job runs only this deterministic floor; treat a CONFIRMED here as "the
 cited tests are not *obviously* hollow", not "the tests are good".
+
+## Real-LLM track (batch-3, out-of-CI)
+
+`evals/judges/llm-judge.py` is the layer **above** the deterministic floor. It
+answers the exact question the floor's honest ceiling names as out of reach:
+a cited test can carry a real, non-constant assertion (so the floor **CONFIRMs**
+it) while being *semantically disconnected* from the claimed change — asserting on
+an unrelated function, on a stale inline copy of the logic, on a mock instead of
+the real code, or a tautology (a value compared to itself). Deciding that needs a
+model that reads the code. The adapter conforms to the same verifier interface
+(`llm-judge.py --root <root> <claim.json>` → shared verdict JSON on stdout), reads
+the cited `test_sources` and claimed `files` (bounded, root-contained), embeds them
+as clearly-delimited **DATA** in a prompt, and asks a real model — reached via a
+subprocess CLI — to judge whether the tests actually exercise the change.
+
+It **runs locally, by choice — never in CI** (CI must never call a model). The
+`evals` CI job is unchanged; only the mock-backed battery
+(`core/tests/llm-judge-test.sh`) rides along in CI via `verify-all.sh`.
+
+### Run it (local)
+
+```bash
+python3 evals/run-evals.py \
+  --dataset evals/datasets/llm-judge.jsonl \
+  --baseline evals/baseline-llm.json \
+  --verifier evals/judges/llm-judge.py \
+  --repeat 1
+```
+
+**Why `--repeat 1`.** A real model is nondeterministic — it can return different
+answers for identical input, especially near the confidence threshold. Grading it
+under Pass^k's *identical-verdict-across-runs* rule would be dishonest: it would
+either fail on harmless flakiness or paper over it. Flakiness here is a property to
+**observe**, not to hide, so the real-LLM track runs a single pass. Pass^3 stays on
+the deterministic tracks, where a grader that disagrees with itself is a real
+defect.
+
+### Backend configuration
+
+| Env | Meaning | Default |
+|---|---|---|
+| `LLM_JUDGE_CMD` | CLI as an **argv prefix** (tokenized with `shlex`, not run through a shell). The prompt is delivered on the CLI's **stdin**. | `claude -p` |
+| `LLM_JUDGE_MODEL` | Optional; when set, `--model <MODEL>` is appended to the argv. | *(unset)* |
+| `LLM_JUDGE_TIMEOUT` | Bounded subprocess timeout, in **seconds**. **Strict integer** — a non-integer (e.g. `2m`) fails closed with a clear error, never silently defaults. | `120` |
+
+### Fail-closed vs. refute-by-default (two different exits)
+
+- **Refute-by-default (a verdict).** Unparseable model output, a missing/mistyped
+  key, empty `test_sources`, an unreadable or root-escaping path, or a confidence
+  below `0.6` → **REFUTED** verdict on stdout, exit 0. A path defect short-circuits
+  to REFUTED *without* spending a model call. Ambiguity never CONFIRMs.
+- **Fail-closed (no verdict).** The CLI is absent, times out, exits nonzero, returns
+  success with empty stdout, or the timeout config is invalid → a clear error to
+  **stderr**, **nonzero exit**, and **nothing on stdout**. An infrastructure failure
+  must not masquerade as a confident label; the runner reads stdout and treats an
+  absent verdict as a crash (correctly graded incorrect) — the visible fail-closed
+  signal. Note this makes the adapter's exit code mean *ran-vs-crashed* (0 = a verdict
+  was produced, CONFIRMED or REFUTED), unlike `reference-judge.py` whose exit code is
+  the gate result — read `verdict` from stdout for the gate decision.
+
+### Prompt-injection containment
+
+Embedded evidence (test/file content) is untrusted. Two layers keep a hostile
+excerpt from escaping its DATA block and posing as a top-level instruction:
+**per-call nonce** markers (the closing marker carries a random suffix the content
+cannot predict or forge) and **defang** (any marker-shaped substring inside content
+is neutralized before embedding). So a test file that embeds a literal closing
+marker cannot break out of the quarantine. The schema-checked parse trusts only the
+three declared JSON keys. This contains delimiter-injection; it does not neutralize
+hostile prose that stays *within* the data block — see the ceiling.
+
+### Honest ceiling
+
+Nondeterminism (a case can flip between runs near the threshold); a residual
+prompt-injection risk (delimiter-breakout is contained by nonce + defang, but a
+model can still be influenced by hostile prose that stays within the data block —
+a mitigation, not a guarantee); and model-availability dependence (no backend →
+fail closed). This track sharpens the floor; it does not replace it.
+
+### The dataset (per-case labels)
+
+`evals/datasets/llm-judge.jsonl` holds 10 semantic-hard cases (5 CONFIRMED /
+5 REFUTED). Each carries a **real** assertion, so the deterministic floor CONFIRMs
+all 10 (5/10 accuracy on this set) — only a model that reads the code separates
+them. Each line's `desc` is its one-line label rationale:
+
+| slug | label | why the label holds |
+|---|---|---|
+| `refuted-unrelated-function` | REFUTED | claim covers `multiply()`; the test only exercises the unrelated `add()` in the same module. |
+| `refuted-stale-inline-copy` | REFUTED | the test redefines `slugify()` inline and asserts on its own copy — never imports the changed module. |
+| `refuted-tautology-variable` | REFUTED | asserts a hardcoded expected value against the same literal; never calls `discount()`. |
+| `refuted-mock-only` | REFUTED | asserts on a `Mock`'s canned return; never calls the real `fetch()`. |
+| `refuted-self-written-fixture` | REFUTED | greps a file the test itself wrote with the expected text; never invokes `report.sh`. |
+| `confirmed-direct-call` | CONFIRMED | imports the claimed `multiply()` and asserts its computed result. |
+| `confirmed-integration-stdout` | CONFIRMED | runs the real `square.py` and asserts on its actual stdout. |
+| `confirmed-indirect-real` | CONFIRMED | drives the changed `eval_expr()` through the real `process()` entrypoint. |
+| `confirmed-error-path` | CONFIRMED | imports the real `parse()` and asserts it raises `ValueError` on bad input. |
+| `confirmed-golden-diff` | CONFIRMED | runs the real `gen.py` and diffs its output against a committed golden file. |
 
 ## Why Pass^k and a baseline
 
