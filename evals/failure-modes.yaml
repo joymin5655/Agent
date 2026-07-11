@@ -1,0 +1,149 @@
+# failure-modes.yaml — the grader's rubric (L-1).
+#
+# The autonomous improvement loop (§5) grades a candidate change not by a single
+# opaque scalar but by a CHECKLIST of NAMED failure modes: for each mode the grader
+# emits a boolean + a cited reason. This exists because "strengthening verification"
+# without naming the failure modes does not stop metric-gaming — a candidate can make
+# the number go up while re-introducing a known hole. Naming the holes makes the
+# grader adversarial in the same way our human reviews are.
+#
+# Every mode here is EMPIRICAL: it was caught by an adversarial review during the
+# 2026-07 harness campaign (the `caught_in` field cites the item + PR). None is
+# hypothetical — this file is the distilled memory of what our own reviews found the
+# local batteries missing, turned into a machine-consumable rubric.
+#
+# Schema (one list entry per mode):
+#   id:               stable kebab-case slug (the grader keys verdicts by this)
+#   name:             short human label
+#   description:      what the defect IS (one or two sentences)
+#   caught_in:        the real occurrence(s) — item + PR — that motivate the mode
+#   detection_signal: the observable a grader/reviewer looks for in a diff/artifact
+#   grader_check:     the boolean QUESTION the grader answers per candidate
+#                     (a candidate "passes" the mode iff the answer is the safe one)
+#
+# Consumers: core/tests/grade.sh (L-1 impl, B4) lists a per-mode verdict; the
+# §5.1 correspondence table (docs/harness-improvement-plan.md) references this file
+# in place of the old single-scalar `harness_score`. core/tests/failure-modes-test.sh
+# validates this file's shape (parse, >=8 modes, unique ids, required fields).
+
+schema_version: "1.0.0"
+
+failure_modes:
+  - id: silent-drop
+    name: Silent drop of wrong-typed input
+    description: >
+      A checked field carries a present-but-wrong-type value (e.g. a string where a
+      list is expected). A truthiness guard keeps it, then a per-item type guard skips
+      the whole section — so it contributes nothing AND raises no refutation, and an
+      unrelated passing dimension yields a false CONFIRMED.
+    caught_in: "P3-5 completion-verify.py (PR #22): claim.get(k) or [] kept a non-list truthy"
+    detection_signal: "a malformed/wrong-type input produces neither an error nor a contribution — it vanishes"
+    grader_check: "does a present-but-wrong-type input to a checked field yield an explicit refutation, not a silent skip?"
+
+  - id: vacuous-green
+    name: A green that cannot go red
+    description: >
+      A check reports success on input that should make it fail — the pass carries no
+      evidence because nothing exercises the property it claims to verify (empty
+      discovery, a test that asserts nothing real, a floor that is vacuously true).
+    caught_in: "P1-2 verify-all empty-set floor (PR #35); E-1 batch-2 green-by-construction (PR #33)"
+    detection_signal: "neutralizing the property under test leaves the check still green"
+    grader_check: "does mutating/neutralizing the checked property flip the check to FAIL (mutation-proof)?"
+
+  - id: vacuous-parity
+    name: Parity test driven through a blind consumer
+    description: >
+      An equality / round-trip test feeds its input through a consumer that does not
+      read the field being compared, so the comparison can never diverge — the parity
+      assertion passes for every input, including a mistranslated one.
+    caught_in: "P1-6 adapter-parity (PR #34): file/content shape driven through a command-only hook"
+    detection_signal: "dropping or corrupting the field under test does not change the decision being compared"
+    grader_check: "is the equality/round-trip test driven through a consumer that actually reads the field under test?"
+
+  - id: glob-scope-miss
+    name: Scanner glob omits a risk-bearing file class
+    description: >
+      A static scanner's file glob covers some file types but not others that carry the
+      same risk (a template copied verbatim into a consumer, a JSON registry, an
+      extensionless auto-fired hook), so the risk passes unscanned.
+    caught_in: "P3-4 supply-chain-scan (PR #23): *.md-only scan missed .template/.json and extensionless hooks"
+    detection_signal: "a file class that can carry the scanned risk is outside the scan's glob set"
+    grader_check: "does the scan's file set cover every class that can carry the risk it scans for?"
+
+  - id: bypass-flag
+    name: Guard circumvented by an equivalent invocation
+    description: >
+      A guard matches one spelling of a dangerous action but a semantically-equivalent
+      spelling slips past — bundled short flags, an alternate config path, quoting — so
+      the guarded action executes unguarded.
+    caught_in: "P3-1/P3-3 pre-tool-guard (PR #21): git commit -nm == -n -m bypassed the -n regex"
+    detection_signal: "the guarded action can be re-expressed in a form the guard's matcher does not recognize"
+    grader_check: "can the guarded action be re-expressed (bundled flags, alt path, quoting) in a form the guard misses?"
+
+  - id: unanchored-skip
+    name: Over-matching exemption / skip pattern
+    description: >
+      An exemption or skip token is matched unanchored, so it also matches a superstring
+      it should not, silently exempting real cases (a skip for `config/` also exempting
+      `src/myconfig/`).
+    caught_in: "P3-2 spec-gate (PR #24): (types|config)/ unanchored exempted src/subtypes/"
+    detection_signal: "an exemption pattern matches a path/token that merely contains the exempt substring"
+    grader_check: "are skip/exemption patterns anchored so they cannot over-match a containing string?"
+
+  - id: infra-as-verdict
+    name: Infrastructure failure emitted as a graded label
+    description: >
+      A verifier that calls an external tool turns a tool/infrastructure failure (empty
+      output, timeout, nonzero exit) into a scoreable verdict instead of failing closed,
+      so a broken backend silently earns or poisons grades.
+    caught_in: "E-1 batch-3 llm-judge (PR #43): exit-0 empty stdout became a trusted REFUTED"
+    detection_signal: "a broken/absent backend produces a verdict the grader trusts, not a visible crash"
+    grader_check: "does an infrastructure failure fail closed (no verdict / nonzero) rather than emit a trusted label?"
+
+  - id: lexical-containment
+    name: Path containment done lexically, defeated by a symlink
+    description: >
+      A root-containment check uses lexical tests (isabs, `..`) only, so a symlink whose
+      target is outside the root passes the check and the read escapes the sandbox.
+    caught_in: "E-1 batch-2 reference-judge (PR #33): _safe_rel lexical check let a symlink escape --root"
+    detection_signal: "a symlink under the root resolves to a target outside it and is still read"
+    grader_check: "is path containment enforced by realpath (not just lexical isabs/.. checks) so symlinks cannot escape?"
+
+  - id: injection-breakout
+    name: Untrusted content escapes its delimiter / quarantine
+    description: >
+      Untrusted input is embedded with a fixed or forgeable boundary (a constant marker,
+      an unquoted heredoc delimiter, string interpolation), letting a crafted payload
+      forge or escape the boundary and be read as trusted structure or instructions.
+    caught_in: "E-1 batch-3 delimiter breakout (PR #43); W-7 unquoted heredoc (PR #42); codex/gemini adapter string-interp (PR #34)"
+    detection_signal: "content embedding the delimiter/marker/quote escapes into the trusted layer"
+    grader_check: "can untrusted content forge or escape its delimiter (fixed markers, unquoted heredoc, interpolation)?"
+
+  - id: loose-coercion
+    name: Strict-typed contract silently coerces bad input
+    description: >
+      A field documented as strict-typed silently coerces a wrong-type or malformed value
+      (int() on a float or numeric string) instead of failing closed, breaking the
+      fail-closed contract the coercion was supposed to uphold.
+    caught_in: "E-1 batch-1 run-evals (PR #32): int(min_cases) coerced 12.9->12 and \"12\"->12"
+    detection_signal: "a malformed config value is silently coerced to a usable one instead of rejected"
+    grader_check: "does a strict-typed field reject wrong-type/malformed input rather than coerce it?"
+
+  - id: stale-ssot
+    name: Declared count / reference drifts from repo reality
+    description: >
+      A shipped doc declares an artifact count or names an in-repo path that no longer
+      matches the live repo, so the doc lies and (if gated) breaks the drift gate.
+    caught_in: "recurring — doc-reality catches (P1-1 PR #31 onward); every batch that adds a test file"
+    detection_signal: "a documented count or path disagrees with `ls`/existence in the live repo"
+    grader_check: "does every declared count/path in shipped docs match the live repo (doc-reality green)?"
+
+  - id: review-false-clean
+    name: Aborted review misread as clean
+    description: >
+      A review or verification agent dies (session limit, API error) and returns an empty
+      or zero-findings result, which is mistaken for a genuine CLEAN — so an unreviewed
+      change is treated as reviewed.
+    caught_in: "recurring — session-limit deaths across the campaign (E-1 batch-3 independent verify, PR #43; H-2 verify, PR #36)"
+    detection_signal: "a clean/zero-findings verdict coincides with an agent error, abort, or empty result"
+    grader_check: "was every review agent's successful completion confirmed (no error/abort/empty) before trusting a clean verdict?"
