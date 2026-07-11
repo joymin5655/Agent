@@ -8,6 +8,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Real-LLM semantic judge (E-1, batch-3) — out-of-CI.** `evals/judges/llm-judge.py`
+  is the layer above the deterministic floor: it catches a cited test that carries a
+  real assertion (so `reference-judge.py` CONFIRMs it) yet never exercises the claimed
+  change — asserting on an unrelated function, a stale inline copy, a mock, or a
+  tautology. It conforms to the same verifier interface
+  (`llm-judge.py --root <root> <claim.json>` → shared verdict JSON), reads the cited
+  `test_sources` and claimed `files` (bounded, realpath-contained), embeds them as
+  delimited DATA in a prompt, and asks a real model via a subprocess CLI
+  (`LLM_JUDGE_CMD`, default `claude -p`; `LLM_JUDGE_MODEL` / `LLM_JUDGE_TIMEOUT`).
+  Refute-by-default (unparseable output, missing/mistyped keys, empty `test_sources`,
+  a root-escaping path, or confidence `< 0.6` → REFUTED) is kept distinct from
+  fail-closed on infrastructure (absent CLI, timeout, nonzero exit, empty stdout, or an
+  invalid strict-integer timeout → clear stderr error, nonzero exit, and no verdict on
+  stdout, so a broken backend never masquerades as a confident label). Prompt-injection
+  is contained, not merely hedged: embedded evidence is wrapped in **per-call nonce**
+  markers (untrusted content cannot forge the closing marker) and any marker-shaped
+  substring in content is **defanged** before embedding, so a test that embeds a literal
+  closing marker cannot break out of the DATA quarantine. Labeled dataset
+  `evals/datasets/llm-judge.jsonl` (10 semantic-hard cases, 5 CONFIRMED / 5 REFUTED —
+  the deterministic floor scores 5/10 on it, by construction) with fail-closed floor
+  `evals/baseline-llm.json` (min_cases 10, enforced by the LOCAL run, not CI). New
+  deterministic battery `core/tests/llm-judge-test.sh` (34 checks) drives the adapter
+  with a MOCK CLI, so it needs no real model and runs offline — auto-discovered by
+  `verify-all.sh`. CI is untouched: it must never call a model, and the track runs
+  locally with `--repeat 1` (Pass^k's identical-verdict rule would be dishonest for a
+  nondeterministic judge — flakiness is to be observed, not hidden). See
+  `evals/README.md` (Real-LLM track). Honest ceiling stated: nondeterminism near the
+  threshold, a residual prompt-injection risk from hostile prose that stays *within* the
+  data block, and model-availability dependence.
 - **Teaching gates (T-1).** Every `deny`/`ask`/`block` reason emitted by
   `pre-tool-guard.sh`, `secret-content-scan.py`, `check-hardcoding.py`, and
   `session-quality-gate.py` now carries a fixed `WHY:` tag (which rule fired and

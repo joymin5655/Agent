@@ -1,0 +1,4 @@
+{
+  "min_cases": 10,
+  "note": "Real-LLM (batch-3) semantic track coverage floor; fail-closed, SAME shape as baseline-semantic.json. Set to the current case count in evals/datasets/llm-judge.jsonl so a deleted case is caught, not just a drop past a slack floor. ENFORCED BY THE LOCAL RUN, NOT CI: this track calls a real model, so CI never runs it (see evals/README.md 'Real-LLM track'). Run it locally with `python3 evals/run-evals.py --dataset evals/datasets/llm-judge.jsonl --baseline evals/baseline-llm.json --verifier evals/judges/llm-judge.py --repeat 1`. The runner requires correct==total; a drop below this floor, or any case graded wrong, is a regression. --repeat 1 is deliberate: a nondeterministic judge under Pass^k's identical-verdict rule would be dishonest — observe flakiness, do not hide it. An unreadable/malformed baseline fails the run; set min_cases to 0 to run with no floor."
+}
