@@ -49,6 +49,7 @@ GATE quality-completion | session-quality-gate.py | block | quality-gate-violati
 GATE spec-gate | spec-gate.py | ask | spec-gate.jsonl | * | 2026-07-10 | Model will start substantive implementation with no approved spec/plan.
 GATE tdd-guard | tdd-guard.py | ask | tdd-guard-dryrun.jsonl | * | 2026-07-10 | Model will write implementation code before a failing test exists.
 GATE hardcoding | check-hardcoding.py | deny | - | * | 2026-07-10 | Model will inline design constants (colors, tick arrays) that belong in a config file.
+GATE plan-scope-allow | plan-scope-allow.py | allow | plan-scope-allow.jsonl | * | 2026-07-11 | Post-plan-approval edit prompts get rubber-stamped (approval fatigue); auto-allow is safe only in-workspace, outside risk areas, while the session plan flag is live. Env-gated (AGENT_PLAN_ALLOW_MODE), default off.
 <!-- gate-registry:end -->
 
 ## Review discipline

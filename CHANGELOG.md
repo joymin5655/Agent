@@ -48,6 +48,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (too-few / missing-field / blank-field / duplicate-id / non-kebab-id / unparseable),
   auto-discovered by `verify-all.sh`. The `grade.sh` implementation that consumes the
   rubric is deferred to a later batch.
+- **`plan-scope-allow.py` — plan-approved auto-allow accelerator.** New PreToolUse
+  (Write/Edit/MultiEdit, last in chain) hook: once the user approves a plan this
+  session (the `plan-gate.py` flag), in-workspace non-risk edits emit
+  `permissionDecision: "allow"` so the native permission prompt stops firing on
+  every step of approved work. First permission-weakening hook in the harness —
+  emits only allow-or-silence (never deny/ask), fail-open direction is silence,
+  risk areas (spec-gate `GUARD_PATTERNS`) + `.agent/hook-config.yml` + `.git/` +
+  out-of-workspace (realpath containment) always pass through, env-gated
+  `AGENT_PLAN_ALLOW_MODE=on` (default off, ships dark), sink
+  `.agent/logs/plan-scope-allow.jsonl`, registered in `docs/gate-registry.md`.
+  Battery `plan-scope-allow-test.sh` (27 checks incl. symlink/`..` escapes,
+  case-evasion, sink discipline). Side fix: README/README.ko hook-count drift
+  (17 → live 19) corrected.
+- **`skills/harness-help/` — router skill** (ask-matt pattern, user-invoked):
+  main flow `/spec` → approval → `/supervise` → `/verify-completion` → `/wrap`,
+  standalone `/harness-audit`, and what to do when a gate interrupts. Sync rule:
+  any skill add/remove updates the router in the same commit.
+- **`docs/skill-authoring.md`** — skill-writing reference distilled from Matt
+  Pocock's `writing-great-skills` (MIT, attributed): invocation axis, one trigger
+  per branch, information hierarchy, leading words, checkable completion
+  criteria, failure modes. Applied as a surgical pass over the five existing
+  SKILL.md files (trigger dedup + explicit completion criteria).
 - **Gate registry + fire-rate digest (T-2).** `docs/gate-registry.md` is the SSOT
   list of every deny/ask/block gate with the model weakness it assumes and a
   `last_reviewed` date (an assumption expires). `telemetry-digest.sh --gates`

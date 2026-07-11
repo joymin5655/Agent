@@ -27,10 +27,10 @@
 | 용어 | 쉬운 뜻 |
 |---|---|
 | **하네스(harness)** | 에이전트 + 훅 + 스킬 + 규칙을 묶어 AI를 감싸는 안전 계층 전체. |
-| **훅(hook)** | AI 런타임이 어떤 행동 전/후에 자동으로 실행하는 작은 스크립트. **allow**, **ask**, **deny** 중 하나로 답합니다. [`core/hooks/`](core/hooks/)에 17개가 있습니다. |
+| **훅(hook)** | AI 런타임이 어떤 행동 전/후에 자동으로 실행하는 작은 스크립트. **allow**, **ask**, **deny** 중 하나로 답합니다. [`core/hooks/`](core/hooks/)에 19개가 있습니다. |
 | **어댑터(adapter)** | 각 AI CLI의 고유 이벤트 형식과 하네스의 표준 JSON 사이를 번역하는 얇은 계층. 3개가 있습니다([`adapters/`](adapters/)). |
 | **에이전트(agent)** | AI가 일을 위임하는 전문가 — 예: 리뷰만 하고 절대 코드를 쓰지 않는 보안 리뷰어. 2종이 포함됩니다([`agents/`](agents/)). |
-| **스킬(skill)** | AI가 따라가는 재사용 가능한 단계별 워크플로우 — 예: 커밋+PR 자동화 흐름. 4종이 포함됩니다([`skills/`](skills/)). |
+| **스킬(skill)** | AI가 따라가는 재사용 가능한 단계별 워크플로우 — 예: 커밋+PR 자동화 흐름. 6종이 포함됩니다([`skills/`](skills/)). |
 | **플랜 게이트(plan-gate)** | 프롬프트를 분류해서, 위험한 다단계 작업 전에 반드시 계획서를 쓰게 강제하는 훅. |
 | **뮤텍스(mutex)** | 두 AI 세션이 같은 위험 영역(운영 DB, 배포, 결제)을 동시에 건드리지 못하게 하는 잠금 파일. |
 
@@ -89,7 +89,7 @@
 3. **프로젝트 스캐폴드.** 아무 레포 안에서 `/project-init`을 실행하면 `CLAUDE.md`, 규칙, `gitleaks.toml`이 생성됩니다.
 4. *(선택)* 훅이 많은 다른 플러그인이 이미 도는 레포에서는 `/plugin`으로 agent-harness만 그 레포에서 끄세요 — 에이전트는 `agent-harness:*`로 네임스페이스가 분리되어 있어 어느 쪽이든 이름 충돌은 없습니다.
 
-플러그인 번들: **에이전트 2종**, **스킬 4종**, 훅 세트, `/project-init` 명령.
+플러그인 번들: **에이전트 2종**, **스킬 6종**, 훅 세트, `/project-init` 명령.
 
 ### Path B — 셸 설치 (Codex CLI / Gemini CLI / 3개 모두)
 
@@ -183,12 +183,14 @@ read-only 에이전트는 도구 수준에서 강제됩니다(`Write`/`Edit`/`Ba
 | `supervise` | 계획을 자율 실행에 위임 |
 | `verify-completion` | 완료 주장 독립 재검증 (결정적 체크 + refute-by-default judge) |
 | `wrap` | 안전장치를 갖춘 커밋 + PR 자동화 |
+| `harness-audit` | 하네스 자체의 읽기전용 건강 점검 (`verify-all.sh` 1회 드라이런 해석) |
+| `harness-help` | 라우터 — 상황에 맞는 스킬과 main flow 안내 |
 
-| 훅 — 17개, `hooks/hooks.json` → `core/hooks/` 연결 | 이벤트 |
+| 훅 — 19개, `hooks/hooks.json` → `core/hooks/` 연결 | 이벤트 |
 |---|---|
 | secret-content-scan · check-hardcoding | PreToolUse (Write/Edit) |
 | pre-tool-guard · r4-mutex · context-mode-guard | PreToolUse |
-| tdd-guard · spec-gate · supervisor | PreToolUse (Write/Edit) |
+| tdd-guard · spec-gate · supervisor · plan-scope-allow | PreToolUse (Write/Edit) |
 | session heartbeat | UserPromptSubmit |
 | plan-gate | PostToolUse (ExitPlanMode/Task/Agent) |
 | session-quality-gate · session-close | Stop |
@@ -206,12 +208,12 @@ Agent/
 ├── CHANGELOG.md
 │
 ├── agents/             # 2 agent definitions + master-registry.json
-├── skills/             # 4 skills (spec · supervise · verify-completion · wrap)
+├── skills/             # 6 skills (spec · supervise · verify-completion · wrap · harness-audit · harness-help)
 ├── commands/           # 1 slash command (/project-init)
 ├── hooks/              # plugin hook wiring (hooks.json)
 │
 ├── core/               # AI-agnostic core — the truth
-│   ├── hooks/          #   17 portable hooks + hook_config.py (shared module)
+│   ├── hooks/          #   19 portable hooks + hook_config.py (shared module)
 │   ├── infra/          #   session coordination · auto-ship · goal mode
 │   ├── git-hooks/      #   pre-commit · pre-push
 │   └── tests/          #   4 test scripts
