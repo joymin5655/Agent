@@ -38,6 +38,9 @@ track* below. The skill A/B dataset is a later increment.
 | `core/tests/evals-test.sh` | Battery that tests the runner itself (mislabel detection, Pass^k, regression). |
 | `core/tests/reference-judge-test.sh` | Battery that tests the judge (trivial→REFUTED, real→CONFIRMED, leak-safety). |
 | `core/tests/llm-judge-test.sh` | Battery that tests the real-LLM adapter with a MOCK backend (no real model). |
+| `evals/datasets/skill-ab.jsonl` | Skill A/B track **seed** (H-3) — labeled trigger + assertion cases for the shipped skills. No runner yet. |
+| `evals/baseline-skill-ab.json` | Skill A/B seed coverage floor (`min_cases`, `min_assertions_per_skill`, shipped-skill list). |
+| `core/tests/skill-ab-dataset-test.sh` | Battery that validates the skill A/B seed's shape (parse, per-skill floors, shipped grounding). |
 
 ## Run it
 
@@ -225,6 +228,45 @@ them. Each line's `desc` is its one-line label rationale:
 | `confirmed-indirect-real` | CONFIRMED | drives the changed `eval_expr()` through the real `process()` entrypoint. |
 | `confirmed-error-path` | CONFIRMED | imports the real `parse()` and asserts it raises `ValueError` on bad input. |
 | `confirmed-golden-diff` | CONFIRMED | runs the real `gen.py` and diffs its output against a committed golden file. |
+
+## Skill A/B track (H-3 — seed only, no runner yet)
+
+`evals/datasets/skill-ab.jsonl` is the **labeled seed** for the skill A/B harness
+(H-3): it measures whether a shipped skill actually earns its keep — does its
+`description` route the right requests (and *not* the wrong ones), and does running
+*with* the skill produce something a baseline (no-skill) pass would not. The scoring
+runner that executes with-skill vs baseline and grades the assertions is a **later
+increment (H-3 본체)**; this batch ships only the dataset it will consume, plus a
+shape-validation battery so the seed can't rot before the runner lands.
+
+Each line is one case with a `kind`:
+
+- **`trigger`** — a `request` string plus `expect` ∈ {`trigger`, `no-trigger`}. The
+  positives come from each skill's `when_to_use`; the negatives from its `NOT`
+  clauses (including cross-skill discriminators — e.g. "execute the approved plan"
+  must route to `supervise`, **not** `spec`). This is how the seed pins
+  description-trigger accuracy in both directions.
+- **`assertion`** — an `assertion` the skill's execution must satisfy, paired with
+  the `baseline_lacks` counterfactual (what a no-skill pass would miss). Every
+  assertion's `rationale` quotes the skill's own shipped `description`, so the seed
+  is grounded in the contract, not invented.
+
+### Honest limitations (n and ceiling — required disclosure)
+
+- **n = 35 cases** across the **5 shipped skills** (`spec`, `supervise`,
+  `verify-completion`, `wrap`, `harness-audit`) — 3 assertions + 2 trigger-positive +
+  2 trigger-negative each. A narrow, hand-labeled probe, **not** a leaderboard.
+- **No execution yet.** The assertions are output-*contract* expectations derived
+  from each skill's description; nothing runs them against a live model in this
+  batch, so the seed asserts *what should be true*, not *what was measured*. The
+  with-skill-vs-baseline measurement arrives with the runner (H-3 본체).
+- **Label source = the skills' own frontmatter.** If a skill's description changes,
+  its trigger labels can drift; the seed is a starting point the runner refines, and
+  `skills-grounded-in-real-SKILL.md` only checks the skill exists, not that the
+  description still matches every label.
+- **CI-safe, model-free.** `core/tests/skill-ab-dataset-test.sh` validates only the
+  seed's *shape* (parse, per-skill floors, shipped grounding, fail-closed count) and
+  is auto-discovered by `verify-all.sh`; it calls no model.
 
 ## Why Pass^k and a baseline
 
