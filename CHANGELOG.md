@@ -8,6 +8,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Failure-mode grader rubric (L-1, doc portion).** `evals/failure-modes.yaml` replaces
+  the autonomous loop's single opaque `harness_score` scalar with a checklist of **12
+  named failure modes**, each distilled from a real adversarial-review catch in this
+  campaign (`caught_in` cites the item + PR): silent-drop, vacuous-green, vacuous-parity,
+  glob-scope-miss, bypass-flag, unanchored-skip, infra-as-verdict, lexical-containment,
+  injection-breakout, loose-coercion, stale-ssot, review-false-clean. Every mode carries
+  a `detection_signal` (the observable a grader looks for) and a `grader_check` (the
+  boolean question whose safe answer the candidate must satisfy). Naming the holes makes
+  the grader adversarial the way a human review is — "strengthening verification" without
+  naming failure modes does not stop metric-gaming (proxy-hacking measured at 73.8%). The
+  §5.1 correspondence table's `val_bpb` row is rewritten to describe per-mode
+  `mode:<id> PASS|FAIL — reason` emission, keeping a rollup `harness_score:` line on
+  **both** the GATE-pass and GATE-fail paths so the §5.2 grep consumer and the results.tsv
+  status enum stay intact (GATE-fail emits `harness_score: 0` = discard, never an empty
+  grep that would misclassify as crash). New battery `core/tests/failure-modes-test.sh`
+  (25 checks) validates the file's shape through the same PyYAML parser the grader will
+  use — schema_version, the ≥8-mode floor, unique kebab-case ids, and every required
+  field non-empty — and proves each guard can go red with six malformed RED fixtures
+  (too-few / missing-field / blank-field / duplicate-id / non-kebab-id / unparseable),
+  auto-discovered by `verify-all.sh`. The `grade.sh` implementation that consumes the
+  rubric is deferred to a later batch.
 - **Real-LLM semantic judge (E-1, batch-3) — out-of-CI.** `evals/judges/llm-judge.py`
   is the layer above the deterministic floor: it catches a cited test that carries a
   real assertion (so `reference-judge.py` CONFIRMs it) yet never exercises the claimed
