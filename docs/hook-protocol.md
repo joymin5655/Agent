@@ -148,9 +148,10 @@ Multiple hooks can listen to the same event. The runtime executes them sequentia
 5. specialist dispatch         (supervisor.py)
 6. workflow guards             (plan-gate, tdd-guard)
 7. observation                 (broadcast, record-*)
+8. allow accelerators          (plan-scope-allow — last, so any earlier deny short-circuits first)
 ```
 
-Any hook returning `deny` short-circuits the chain. Any hook returning `ask` defers to user — chain continues after user confirmation.
+An `allow` decision bypasses the AI's native permission prompt only — it never overrides another hook's `deny`/`ask` (most-restrictive-wins). Any hook returning `deny` short-circuits the chain. Any hook returning `ask` defers to user — chain continues after user confirmation.
 
 See `adapters/claude-code/settings.json.template` for the canonical registration order.
 

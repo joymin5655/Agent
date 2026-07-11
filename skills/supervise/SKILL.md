@@ -1,7 +1,7 @@
 ---
 name: supervise
 description: Dispatch a multi-wave plan to specialist agents with audit + risk-area abort. Supports --auto-push, --auto-merge, --goal-mode for budgeted runs. NOT for writing the plan itself (that is /spec), and NOT for a single small edit with no waves — just make the edit.
-when_to_use: User has a written plan and says "execute", "run the plan", "/supervise <slug>", or "full auto".
+when_to_use: User has a written plan and says "run the plan", "/supervise <slug>", or "full auto".
 tools: Bash, Read, Write, Edit, Grep, Glob
 ---
 
@@ -113,6 +113,9 @@ Stop the supervise loop immediately on any of these:
 4. gitleaks failure at any stage.
 5. Test suite failure.
 6. Type-check / lint failure.
+7. A dispatched review/verify agent died (session limit, API error) — treat the
+   wave's audit as FAIL even if the aggregate reports 0 findings; a dead
+   reviewer is not a clean review (re-dispatch or verify in the main loop).
 
 On safeguard: emit `blocked` broadcast (R13), report state to user.
 
