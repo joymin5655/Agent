@@ -17,6 +17,18 @@
 #     --window <days> only consider records within the last N days (default 30)
 #     --json          machine-readable JSON on stdout instead of the human report
 #
+#   bash core/infra/telemetry-digest.sh --gates [--registry <md>] [--logs-dir <d>]
+#                                       [--window <days>] [--fatigue <N>]
+#                                       [--stale-days <N>] [--json]
+#     Gate-registry mode (T-2). Cross-references docs/gate-registry.md against the
+#     runtime firing logs (.agent/logs/*.jsonl) and reports per gate:
+#       DEAD (0 in-window firings) / FATIGUE (firings >= --fatigue, default 50) /
+#       STALE (last_reviewed + --stale-days, default 90, is past) /
+#       UNINSTRUMENTED (gate emits a decision but writes no log — sink '-').
+#     Still an OBSERVER (exit 0 always). --registry default: docs/gate-registry.md;
+#     --logs-dir default: <repo-root>/.agent/logs. Env seams: AGENT_GATE_REGISTRY,
+#     AGENT_GATE_LOGS_DIR.
+#
 # Rule candidates (heuristics derived ONLY from already-logged actions — never
 # re-reads the registry or re-derives ghost status):
 #   - NO-ACCEPT     a specialist was asked (ask-intent + ask-security) >= 3
@@ -46,9 +58,34 @@ REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 LOG_PATH=""
 WINDOW_DAYS=30
 JSON_MODE=0
+GATES_MODE=0
+REGISTRY_PATH=""
+LOGS_DIR=""
+FATIGUE_THRESHOLD=50
+STALE_DAYS=90
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --gates)
+            GATES_MODE=1
+            shift
+            ;;
+        --registry)
+            REGISTRY_PATH="${2:-}"
+            shift 2
+            ;;
+        --logs-dir)
+            LOGS_DIR="${2:-}"
+            shift 2
+            ;;
+        --fatigue)
+            FATIGUE_THRESHOLD="${2:-50}"
+            shift 2
+            ;;
+        --stale-days)
+            STALE_DAYS="${2:-90}"
+            shift 2
+            ;;
         --window)
             WINDOW_DAYS="${2:-30}"
             shift 2
@@ -59,6 +96,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         -h|--help)
             echo "usage: telemetry-digest.sh [path] [--window <days>] [--json]" >&2
+            echo "       telemetry-digest.sh --gates [--registry <md>] [--logs-dir <d>] [--window <days>] [--fatigue <N>] [--stale-days <N>] [--json]" >&2
             exit 0
             ;;
         *)
@@ -67,6 +105,187 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+if [[ "$GATES_MODE" -eq 1 ]]; then
+    [[ -z "$REGISTRY_PATH" ]] && REGISTRY_PATH="${AGENT_GATE_REGISTRY:-$REPO_ROOT/docs/gate-registry.md}"
+    [[ -z "$LOGS_DIR" ]] && LOGS_DIR="${AGENT_GATE_LOGS_DIR:-$REPO_ROOT/.agent/logs}"
+    python3 - "$REGISTRY_PATH" "$LOGS_DIR" "$WINDOW_DAYS" "$FATIGUE_THRESHOLD" "$STALE_DAYS" "$JSON_MODE" <<'PY'
+import sys, os, json, datetime, collections
+
+registry_path, logs_dir = sys.argv[1], sys.argv[2]
+try:
+    window_days = int(sys.argv[3])
+except Exception:
+    window_days = 30
+try:
+    fatigue = int(sys.argv[4])
+except Exception:
+    fatigue = 50
+try:
+    stale_days = int(sys.argv[5])
+except Exception:
+    stale_days = 90
+json_mode = sys.argv[6] == "1"
+
+now = datetime.datetime.now(datetime.timezone.utc)
+cutoff = now - datetime.timedelta(days=window_days)
+
+
+def parse_ts(value):
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        dt = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except Exception:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=datetime.timezone.utc)
+    return dt
+
+
+# --- parse the registry machine block ---------------------------------------
+gates = []
+registry_error = None
+try:
+    with open(registry_path, encoding="utf-8") as f:
+        text = f.read()
+    in_block = False
+    for line in text.splitlines():
+        s = line.strip()
+        if s == "<!-- gate-registry:begin -->":
+            in_block = True
+            continue
+        if s == "<!-- gate-registry:end -->":
+            in_block = False
+            continue
+        if not in_block or not s.startswith("GATE "):
+            continue
+        parts = [p.strip() for p in s[len("GATE "):].split("|")]
+        if len(parts) < 7:
+            continue
+        gid, hook, decision, sink, match, last_reviewed = parts[:6]
+        assumption = "|".join(parts[6:]).strip() if len(parts) > 6 else parts[6]
+        gates.append({
+            "id": gid, "hook": hook, "decision": decision, "sink": sink,
+            "match": match, "last_reviewed": last_reviewed, "assumption": assumption,
+        })
+except Exception as e:
+    registry_error = str(e)
+
+
+# --- count in-window firings per sink, once per distinct sink ----------------
+def count_sink(sink, match):
+    """Return in-window firing count for (sink, match). match '*' counts every
+    valid JSON-object line; otherwise counts lines whose guard field == match.
+    The sink is confined to logs_dir: a registry line with a '../' traversal
+    resolves outside and is refused (returns None — treated like an absent sink),
+    so a bad registry entry can never make the digest read arbitrary files."""
+    path = os.path.join(logs_dir, sink)
+    real_logs = os.path.realpath(logs_dir)
+    real_path = os.path.realpath(path)
+    if real_path != real_logs and not real_path.startswith(real_logs + os.sep):
+        return None
+    n = 0
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except Exception:
+                    continue
+                if not isinstance(rec, dict):
+                    continue
+                # Test-reproduction records (batteries feeding synthetic events
+                # to a hook) carry reproduce_test:true — they are not real gate
+                # firings, so they must never inflate fire-rate / FATIGUE.
+                if rec.get("reproduce_test") is True:
+                    continue
+                ts = parse_ts(rec.get("ts"))
+                if ts is not None and ts < cutoff:
+                    continue
+                if match == "*" or rec.get("guard") == match:
+                    n += 1
+    except FileNotFoundError:
+        return None            # sink absent — distinct from 0 firings
+    except Exception:
+        return None
+    return n
+
+
+reports = []
+for g in gates:
+    classes = []
+    fired = None
+    if g["sink"] == "-":
+        classes.append("UNINSTRUMENTED")
+    else:
+        fired = count_sink(g["sink"], g["match"])
+        if fired is None:
+            classes.append("DEAD")          # sink never created == never fired
+            fired = 0
+        elif fired == 0:
+            classes.append("DEAD")
+        elif fired >= fatigue:
+            classes.append("FATIGUE")
+    lr = parse_ts(g["last_reviewed"] + "T00:00:00")
+    if lr is not None and (now - lr).days > stale_days:
+        classes.append("STALE")
+    reports.append({
+        "id": g["id"], "hook": g["hook"], "decision": g["decision"],
+        "sink": g["sink"], "fired": fired, "last_reviewed": g["last_reviewed"],
+        "flags": classes, "assumption": g["assumption"],
+    })
+
+flag_counts = collections.Counter(fl for r in reports for fl in r["flags"])
+result = {
+    "registry": registry_path,
+    "registry_error": registry_error,
+    "logs_dir": logs_dir,
+    "window_days": window_days,
+    "fatigue_threshold": fatigue,
+    "stale_days": stale_days,
+    "gates": len(gates),
+    "flag_counts": dict(flag_counts),
+    "reports": reports,
+}
+
+if json_mode:
+    print(json.dumps(result))
+else:
+    print("=== Gate Registry Digest ===")
+    print("registry: {}".format(registry_path))
+    if registry_error:
+        print("  registry error: {} (0 gates parsed)".format(registry_error))
+    print("logs dir: {}".format(logs_dir))
+    print("window: last {} day(s) | fatigue >= {} | stale > {} day(s)".format(
+        window_days, fatigue, stale_days))
+    print("gates: {}".format(len(gates)))
+    print()
+    print("-- per gate (fired-in-window / flags) --")
+    if not reports:
+        print("  (none — registry empty or unparseable)")
+    for r in reports:
+        fired = "n/a" if r["fired"] is None else r["fired"]
+        flags = ", ".join(r["flags"]) if r["flags"] else "ok"
+        print("  {:<20} {:<26} fired={:<5} reviewed={} [{}]".format(
+            r["id"], r["hook"], str(fired), r["last_reviewed"], flags))
+    print()
+    print("-- flag summary --")
+    if not flag_counts:
+        print("  (all gates ok)")
+    for fl in ("DEAD", "FATIGUE", "STALE", "UNINSTRUMENTED"):
+        if flag_counts.get(fl):
+            print("  {}: {}".format(fl, flag_counts[fl]))
+    print()
+    print("gate-digest: {} gate(s), {} DEAD, {} FATIGUE, {} STALE, {} UNINSTRUMENTED".format(
+        len(gates), flag_counts.get("DEAD", 0), flag_counts.get("FATIGUE", 0),
+        flag_counts.get("STALE", 0), flag_counts.get("UNINSTRUMENTED", 0)))
+PY
+    exit 0
+fi
 
 if [[ -z "$LOG_PATH" ]]; then
     LOG_PATH="${AGENT_TELEMETRY_LOG:-$REPO_ROOT/.agent/logs/supervisor.jsonl}"

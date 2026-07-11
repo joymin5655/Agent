@@ -1,7 +1,7 @@
 ---
 name: wrap
 description: Commits staged changes and opens a PR. Runs gitleaks + risk-area guards before committing. Push is user-confirmed by default; --auto-push and --auto-merge are opt-in. NOT for review or verification (run those before wrapping), and NOT when nothing has changed yet — there is nothing to commit.
-when_to_use: User says "wrap up", "commit and PR", "ship this", or invokes `/wrap`.
+when_to_use: User asks to commit and open a PR — "wrap up", "ship this", or `/wrap`.
 tools: Bash, Read, Grep, Glob
 ---
 
@@ -33,6 +33,20 @@ a. **gitleaks** on staged diff:
    ```bash
    gitleaks protect --staged --redact -v --config=gitleaks.toml --no-banner
    ```
+   Before trusting a clean result, confirm the gate is actually *live* with the
+   fire drill (W-3) — it plants a synthetic secret matching the repo's own rule
+   and asserts gitleaks catches it, so a misconfigured allowlist can't give a
+   false all-clear:
+   ```bash
+   bash core/infra/gitleaks-fire-test.sh   # PASS = gate live; FAIL = misconfigured; exit 2 = gitleaks absent (SKIP)
+   ```
+a2. **Remote-URL credential scan** (W-3) — a token baked into the push remote's
+   URL lives in `.git/config`, invisible to the content scanners above:
+   ```bash
+   git remote get-url origin | python3 core/git-hooks/scan-remote-url.py
+   ```
+   Nonzero exit = the remote URL embeds a credential; strip it before pushing.
+   (The pre-push hook also runs this, but checking here fails earlier.)
 b. **Whitelist path scan** — only files inside allowed paths should be
    staged. Allowed paths default to anything except `secrets/`,
    `.env*` (excl. `.env.example`). Override via `hook-config.yml`.
@@ -93,6 +107,10 @@ Push: <yes/no>
 PR: <url or "not opened">
 Next steps: <what user should do>
 ```
+
+The wrap is complete only when this report is emitted with a real commit SHA
+and every step-1 gate actually ran (a skipped gate is reported as skipped,
+never silently omitted).
 
 ## Hard rules
 

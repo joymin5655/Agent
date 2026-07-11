@@ -10,11 +10,15 @@ Side-effect: writes /tmp/agent-plan-approved with timestamp.
 """
 
 import json
+import os
 import pathlib
 import sys
 from datetime import datetime
 
-PLAN_FLAG = pathlib.Path("/tmp/agent-plan-approved")
+# Approval flag path. Overridable via AGENT_PLAN_FLAG so tests can exercise the
+# gate against a throwaway path instead of clobbering the live session flag that
+# spec-gate.py reads. Default is the shared /tmp location spec-gate expects.
+PLAN_FLAG = pathlib.Path(os.environ.get("AGENT_PLAN_FLAG", "/tmp/agent-plan-approved"))
 
 # Agent subagent_type values considered "plan-class"
 PLAN_AGENT_TYPES = {"Plan", "plan", "Explore", "explore", "planner"}

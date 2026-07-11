@@ -2,6 +2,8 @@
 # Git pre-push hook — Layer 6 of secret defense.
 #
 # Triggered by `git push`. Fast checks only (~5s budget):
+#   0. scan-remote-url.py — credential embedded in the remote URL (W-3; a
+#      .git/config secret is invisible to every content scanner)
 #   1. gitleaks on full push range (remote..local) — Layer 1 rerun
 #   2. scan-push-diff.py — bypass-pattern scan on push diff content
 #   3. Risk-area advisory (stderr only — never block)
@@ -62,6 +64,20 @@ done
 if [ -z "$DIFF_FILES" ]; then
   echo "${GREEN}✓ pre-push: no diff to scan${NC}" >&2
   exit 0
+fi
+
+# 0) Remote-URL credential scan (W-3) — a token baked into the remote URL lives
+#    in .git/config, never in a tracked file, so every content scanner misses it.
+URL_SCAN="$ROOT/core/git-hooks/scan-remote-url.py"
+if command -v python3 >/dev/null 2>&1 && [ -f "$URL_SCAN" ]; then
+  REMOTE_URL="$(git remote get-url "$REMOTE" 2>/dev/null || true)"
+  if [ -n "$REMOTE_URL" ]; then
+    if ! printf '%s\n' "$REMOTE_URL" | python3 "$URL_SCAN" 2>&1 >/dev/null; then
+      printf '%s\n' "$REMOTE_URL" | python3 "$URL_SCAN" >&2 || true
+      echo "${RED}✗ remote URL embeds a credential — push blocked.${NC}" >&2
+      fail=1
+    fi
+  fi
 fi
 
 # 1) gitleaks on push range
