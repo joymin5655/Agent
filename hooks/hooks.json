@@ -32,7 +32,8 @@
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" pre-tool-guard.sh" }
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" pre-tool-guard.sh" },
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" loop-write-guard.py" }
         ]
       },
       {

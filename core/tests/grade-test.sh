@@ -91,30 +91,67 @@ printf '%s\n' "$OUT" | grep -qE '^harness_score: 0$'; check "bad-rubric-score-0"
 printf '%s\n' "$OUT" | grep -qiE 'fail-closed'; check "bad-rubric-fail-closed-msg" $?
 
 echo
-echo "=== (f) TARGET-boundary: off-target diff -> harness_score 0 (uses a scratch git repo) ==="
+echo "=== (f) TARGET-boundary in a scratch git repo (clean tree, --base, full-path) ==="
 G="$TMP_ROOT/gitrepo"; mkdir -p "$G"
 (
   cd "$G" && git init -q && git config user.email t@t && git config user.name t
   mkdir -p core/tests evals agents
-  # seed the batteries + a rubric copy so grade.sh runs inside this repo
   for b in "${ALL_BATTERIES[@]}"; do printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "core/tests/$b"; done
   cp "$RUBRIC" evals/failure-modes.yaml
   cp "$GRADE" core/tests/grade.sh
   echo base > agents/reviewer.md && git add -A && git commit -qm base
   echo change > agents/reviewer.md          # on-target edit
   echo drift > core/tests/sneaky.sh          # OFF-target edit
-  git add -A && git commit -qm candidate
+  git add -A && git commit -qm candidate     # tree is CLEAN after commit
 )
-OUT="$(cd "$G" && GRADE_SKIP_GITLEAKS=1 bash core/tests/grade.sh --target '^agents/' 2>&1)"; RC=$?
+BASE="$(cd "$G" && git rev-parse HEAD~1)"
+# off-target committed file -> discard 0, named
+OUT="$(cd "$G" && GRADE_SKIP_GITLEAKS=1 bash core/tests/grade.sh --base "$BASE" --target 'agents/.*' 2>&1)"
 printf '%s\n' "$OUT" | grep -qE '^harness_score: 0$'; check "off-target-score-0" $?
 printf '%s\n' "$OUT" | grep -qE 'TARGET-VIOLATION.*core/tests/sneaky.sh'; check "off-target-named" $?
-# on-target-only edit passes the boundary (score is emitted from the checklist)
-OUT="$(cd "$G" && GRADE_SKIP_GITLEAKS=1 bash core/tests/grade.sh --target '^(agents|core)/' 2>&1)"; RC=$?
+# a full-path regex covering both dirs passes the boundary -> real checklist score
+OUT="$(cd "$G" && GRADE_SKIP_GITLEAKS=1 bash core/tests/grade.sh --base "$BASE" --target '(agents|core)/.*' 2>&1)"
 printf '%s\n' "$OUT" | grep -qE '^harness_score: 11\.0$'; check "on-target-passes-boundary" $?
+# unanchored bypass is closed: a substring-y regex must NOT classify core/tests as on-target
+OUT="$(cd "$G" && GRADE_SKIP_GITLEAKS=1 bash core/tests/grade.sh --base "$BASE" --target 'agents' 2>&1)"
+printf '%s\n' "$OUT" | grep -qE '^harness_score: 0$'; check "unanchored-target-not-fooled" $?
+
+echo
+echo "=== (f2) TARGET fail-closed: --target without --base, dirty tree, and bad base ==="
+OUT="$(cd "$G" && GRADE_SKIP_GITLEAKS=1 bash core/tests/grade.sh --target 'agents/.*' 2>&1)"
+printf '%s\n' "$OUT" | grep -qE 'requires --base'; check "target-without-base-fails-closed" $?
+printf '%s\n' "$OUT" | tail -n1 | grep -qE '^harness_score: 0$'; check "target-without-base-score-0" $?
+# dirty tree: leave an uncommitted edit, then grade with --target -> refuse
+( cd "$G" && echo dirty >> core/tests/sneaky.sh )
+OUT="$(cd "$G" && GRADE_SKIP_GITLEAKS=1 bash core/tests/grade.sh --base "$BASE" --target '(agents|core)/.*' 2>&1)"
+printf '%s\n' "$OUT" | grep -qE 'working tree is dirty'; check "dirty-tree-refused" $?
+printf '%s\n' "$OUT" | tail -n1 | grep -qE '^harness_score: 0$'; check "dirty-tree-score-0" $?
+( cd "$G" && git checkout -q -- core/tests/sneaky.sh )   # clean up
+# git error (bogus base) fails closed, not open
+OUT="$(cd "$G" && GRADE_SKIP_GITLEAKS=1 bash core/tests/grade.sh --base deadbeefbogus --target '(agents|core)/.*' 2>&1)"
+printf '%s\n' "$OUT" | grep -qE 'cannot verify boundary'; check "bad-base-fails-closed" $?
+printf '%s\n' "$OUT" | tail -n1 | grep -qE '^harness_score: 0$'; check "bad-base-score-0" $?
+
+echo
+echo "=== (h) unknown flag fails closed (no silent check-disable) ==="
+D="$(mktemp -d "$TMP_ROOT/hXXXX")"; seed_pass_dir "$D"
+run_grade "$D" --taget 'agents/.*'   # typo
+printf '%s\n' "$OUT" | tail -n1 | grep -qE '^harness_score: 0$'; check "unknown-flag-score-0" $?
+
+echo
+echo "=== (i) duplicate rubric id is graded ONCE, not double-counted ==="
+DUP="$TMP_ROOT/dup.yaml"
+{ echo 'schema_version: "1.0.0"'; echo 'failure_modes:'
+  echo '  - {id: stale-ssot, name: a, description: a, caught_in: a, detection_signal: a, grader_check: a}'
+  echo '  - {id: stale-ssot, name: b, description: b, caught_in: b, detection_signal: b, grader_check: b}'
+} > "$DUP"
+D="$(mktemp -d "$TMP_ROOT/iXXXX")"; seed_pass_dir "$D"
+OUT="$(GRADE_TESTS_DIR="$D" GRADE_RUBRIC="$DUP" GRADE_SKIP_GITLEAKS=1 bash "$GRADE" 2>&1)"
+[[ "$(printf '%s\n' "$OUT" | grep -c '^mode:stale-ssot ')" -eq 1 ]]; check "duplicate-id-graded-once" $?
+printf '%s\n' "$OUT" | grep -qE '^harness_score: 1\.0$'; check "duplicate-id-score-1.0" $?
 
 echo
 echo "=== (g) DRIFT GATE: every rubric mode has a guard-map arm; every mapped battery exists ==="
-# (g1) every mode id in the real rubric resolves to a case arm in grade.sh (no @unknown@)
 D="$(mktemp -d "$TMP_ROOT/gXXXX")"; seed_pass_dir "$D"
 run_grade "$D"
 ! printf '%s\n' "$OUT" | grep -qE 'no guard mapped'; check "no-unmapped-mode" $?
@@ -124,12 +161,32 @@ while IFS= read -r id; do
   grep -qE "^[[:space:]]*${id}\)" "$GRADE" || { echo "    unmapped: $id"; unmapped=$((unmapped + 1)); }
 done < <(GRADE_RUBRIC="$RUBRIC" bash "$GRADE" --list-modes)
 [[ $unmapped -eq 0 ]]; check "every-mode-has-case-arm" $?
-# (g2) every battery named in guard_for exists in the REAL core/tests dir
 missing=0
 while IFS= read -r b; do
   [[ -f "$REAL_TESTS/$b" ]] || { echo "    missing real battery: $b"; missing=$((missing + 1)); }
 done < <(grep -oE 'echo "[a-z0-9-]+\.sh"' "$GRADE" | sed 's/echo "//; s/"//')
 [[ $missing -eq 0 ]]; check "every-mapped-battery-exists" $?
+
+echo
+echo "=== (g2) MAPPING CORRECTNESS: fail each code mode's battery -> exactly that mode red ==="
+# Prove the map is not just present but CORRECT: swapping two mappings (both targets
+# still exist, both arms still present) would pass (g) but must fail here.
+# Pairs mirror grade.sh's guard_for (the test's copy IS the drift tripwire).
+MAP_MODES=(silent-drop vacuous-green vacuous-parity glob-scope-miss bypass-flag unanchored-skip infra-as-verdict lexical-containment injection-breakout loose-coercion stale-ssot)
+MAP_BATT=(completion-verify-test.sh verify-all-test.sh adapter-parity.sh supply-chain-scan-test.sh pre-tool-guard-test.sh spec-gate-test.sh llm-judge-test.sh reference-judge-test.sh pre-tool-guard-test.sh evals-test.sh doc-reality.sh)
+mapfail=0
+idx=0
+n=${#MAP_MODES[@]}
+while [[ $idx -lt $n ]]; do
+  mode="${MAP_MODES[$idx]}"; batt="${MAP_BATT[$idx]}"; idx=$((idx + 1))
+  D="$(mktemp -d "$TMP_ROOT/mXXXX")"; seed_pass_dir "$D"; make_fail "$D/$batt"
+  run_grade "$D"
+  # the mode(s) mapped to $batt must be FAIL; verify OUR mode is among them
+  if ! printf '%s\n' "$OUT" | grep -qE "^mode:${mode} FAIL"; then
+    echo "    map wrong: failing $batt did not flip $mode"; mapfail=$((mapfail + 1))
+  fi
+done
+[[ $mapfail -eq 0 ]]; check "every-mode-maps-to-correct-battery" $?
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
