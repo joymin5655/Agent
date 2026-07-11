@@ -147,7 +147,11 @@ fi
 # Covers many command variants in a single regex (read / hash / archive / encrypt / exfil families).
 # To extend: add command name to the alternation. Project-specific paths can be
 # added via hook-config.yml: risk_areas[id=secrets].paths.
-if echo "$COMMAND" | grep -qE '(cat|tac|nl|head|tail|less|more|awk|sed|grep|egrep|fgrep|rg|ag|bat|hexdump|xxd|od|strings|dd|fold|rev|tee|cp|mv|ln|md5sum|shasum|sha256sum|sha512sum|wc|diff|cmp|gunzip|bunzip2|bzip2|bzcat|xz|xzcat|unxz|lzma|lz4cat|tar|unzip|7z|zip|gpg|openssl|age|rsync|scp)\s+.*secrets/'; then
+# All secrets branches (5-11, 11b) match CASE-INSENSITIVELY (-qiE): on a
+# case-insensitive filesystem (macOS APFS default) `cat SECRETS/key` reads the
+# SAME file as `cat secrets/key`, so a case-sensitive match would be a trivial
+# bypass. The command verbs are lowercase, so -i adds no meaningful false positives.
+if echo "$COMMAND" | grep -qiE '(cat|tac|nl|head|tail|less|more|awk|sed|grep|egrep|fgrep|rg|ag|bat|hexdump|xxd|od|strings|dd|fold|rev|tee|cp|mv|ln|md5sum|shasum|sha256sum|sha512sum|wc|diff|cmp|gunzip|bunzip2|bzip2|bzcat|xz|xzcat|unxz|lzma|lz4cat|tar|unzip|7z|zip|gpg|openssl|age|rsync|scp)\s+.*secrets/'; then
   log_violation secrets "direct secrets/ access blocked"
   emit_deny "Direct secrets/ access blocked (Risk Area #2: secrets).
 WHY: reading secret files into a session exposes plaintext credentials to logs and transcripts.
@@ -156,7 +160,7 @@ FIX: use environment variables read by your server-side code; for inventory, lis
 fi
 
 # 6. Risk Area #2 — curl/wget upload-from-secrets (exfiltration)
-if echo "$COMMAND" | grep -qE '(curl|wget)\s+.*(--data-binary\s+@|--post-file=|--upload-file\s+|-T\s+|-d\s+@|-F\s+\S*=@).*secrets/'; then
+if echo "$COMMAND" | grep -qiE '(curl|wget)\s+.*(--data-binary\s+@|--post-file=|--upload-file\s+|-T\s+|-d\s+@|-F\s+\S*=@).*secrets/'; then
   log_violation secrets "secrets/ remote exfiltration blocked"
   emit_deny "curl/wget upload from secrets/ blocked (Risk Area #2: secrets).
 WHY: uploading a secret file over the network is credential exfiltration.
@@ -165,7 +169,7 @@ FIX: never send secret files anywhere; pass short-lived tokens via environment v
 fi
 
 # 7. Risk Area #2 — xargs indirection (find ... | xargs cat etc.)
-if echo "$COMMAND" | grep -qE 'secrets/.*\|.*xargs|xargs\s+.*\bsecrets/'; then
+if echo "$COMMAND" | grep -qiE 'secrets/.*\|.*xargs|xargs\s+.*\bsecrets/'; then
   log_violation secrets "secrets/ xargs indirection blocked"
   emit_deny "secrets/ xargs indirection blocked (Risk Area #2: secrets).
 WHY: piping secret paths through xargs is equivalent to reading them directly (same as find -exec).
@@ -174,7 +178,7 @@ FIX: for inventory, list key NAMES only via awk -F= on the env file."
 fi
 
 # 8. Risk Area #2 — stdin redirect from secrets/
-if echo "$COMMAND" | grep -qE '<\s*[^>]*secrets/'; then
+if echo "$COMMAND" | grep -qiE '<\s*[^>]*secrets/'; then
   log_violation secrets "stdin redirect from secrets/ blocked"
   emit_deny "stdin redirect from secrets/ blocked (Risk Area #2: secrets).
 WHY: redirecting a secret file into a command reads its plaintext into the session.
@@ -183,7 +187,7 @@ FIX: for inventory, use awk -F= on env files (key names only)."
 fi
 
 # 9. Risk Area #2 — find ... -exec on secrets/
-if echo "$COMMAND" | grep -qE 'find\s+.*secrets/.*-exec'; then
+if echo "$COMMAND" | grep -qiE 'find\s+.*secrets/.*-exec'; then
   log_violation secrets "find secrets/ -exec blocked"
   emit_deny "find secrets/ -exec blocked (Risk Area #2: secrets).
 WHY: -exec runs an arbitrary reader over every secret file found.
@@ -192,7 +196,7 @@ FIX: for inventory, use awk -F= on env files (key names only)."
 fi
 
 # 10. Risk Area #2 — source / .  .env  files (plaintext token echo risk)
-if echo "$COMMAND" | grep -qE '(^|[;&|`(]|\bset\s+-a\s*&&)\s*(\.\s|source\s).*(secrets/|/\.env(\.|$|\s)|\.env\b)'; then
+if echo "$COMMAND" | grep -qiE '(^|[;&|`(]|\bset\s+-a\s*&&)\s*(\.\s|source\s).*(secrets/|/\.env(\.|$|\s)|\.env\b)'; then
   log_violation secrets "source secrets/.env blocked — plaintext token exposure risk"
   emit_deny "source secrets/.env blocked (Risk Area #2: secrets).
 WHY: sourcing an env file can echo tokens in plaintext into the session environment and transcript.
@@ -201,12 +205,48 @@ FIX: let server-side code read env vars at runtime; for inventory, use awk -F= o
 fi
 
 # 11. Risk Area #2 — Python/Node inline secret read (Bash matcher boundary)
-if echo "$COMMAND" | grep -qE '(python|python3|node)\s+(-c|-e)\s+["'"'"'].*(secrets/|/\.env|\.env\b)'; then
+if echo "$COMMAND" | grep -qiE '(python|python3|node)\s+(-c|-e)\s+["'"'"'].*(secrets/|/\.env|\.env\b)'; then
   log_violation secrets "Python/Node inline secret read blocked"
   emit_deny "Python/Node -c/-e reading secrets/.env blocked (Risk Area #2: secrets).
 WHY: an inline one-liner bypasses the file-read guards and prints plaintext credentials.
 FIX: read configuration through the app's own env handling (os.environ / process.env) in proper server-side code."
   exit 0
+fi
+
+# 11b. Risk Area #2 (project-declared paths) — hook-config.yml
+# risk_areas.secrets.paths (P1-8: this field is now ENFORCED at runtime, closing
+# the previously-aspirational config). Additive — the built-in secrets/ guards
+# above always run first and are never weakened. The loader returns only safe
+# literal path tokens (no regex/shell metacharacters), so the alternation built
+# from them cannot inject a pattern. Covers the read/copy/archive/encrypt family
+# plus curl/wget exfiltration for each declared path. hook_config.py sits next to
+# this script; the project root (where .agent/hook-config.yml lives) is resolved
+# the same way log_violation resolves it.
+_HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null)"
+_PROJ_ROOT="${AGENT_PROJECT_DIR:-${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null)}}"
+if [[ -n "$_PROJ_ROOT" && -n "$_HOOK_DIR" ]]; then
+  _EXTRA_SECRET_ALT=$(_HD="$_HOOK_DIR" _PR="$_PROJ_ROOT" python3 - <<'PY' 2>/dev/null || true
+import os, sys
+sys.path.insert(0, os.environ.get("_HD", ""))
+try:
+    import hook_config
+    toks = hook_config.load_risk_area_secret_paths(os.environ.get("_PR", ""))
+except Exception:
+    toks = []
+# tokens are already a safe literal set (^[A-Za-z0-9._/\-]+$); escape the regex
+# dot so a config '.env.prod' matches literally, then join into an ERE group.
+print("|".join(t.replace(".", "[.]") for t in toks))
+PY
+)
+  if [[ -n "$_EXTRA_SECRET_ALT" ]]; then
+    if echo "$COMMAND" | grep -qiE "(cat|tac|nl|head|tail|less|more|awk|sed|grep|egrep|fgrep|rg|ag|bat|hexdump|xxd|od|strings|dd|fold|rev|tee|cp|mv|ln|md5sum|shasum|sha256sum|sha512sum|diff|cmp|gunzip|bunzip2|bzip2|bzcat|xz|xzcat|unxz|lzma|lz4cat|tar|unzip|7z|zip|gpg|openssl|age|rsync|scp|curl|wget|source|\.)\s+.*($_EXTRA_SECRET_ALT)"; then
+      log_violation secrets "project secrets path access blocked"
+      emit_deny "Access to a project-declared secret path blocked (Risk Area #2: secrets).
+WHY: hook-config.yml risk_areas.secrets.paths marks this path as secret; reading/copying/uploading it exposes credentials.
+FIX: read the value via environment variables in server-side code; for inventory, list key NAMES only (awk -F= on the env file)."
+      exit 0
+    fi
+  fi
 fi
 
 # 12. Project-customizable risk area — `data/artifacts/ git add` (optional default).

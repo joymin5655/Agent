@@ -17,8 +17,11 @@ Configuration env vars:
   - AGENT_TDD_CACHE_TTL           cache TTL in seconds (default 600)
 
 Risk-area whitelist:
-  Files matching project risk-area patterns (production data / secrets / deploy / etc.) are
-  exempted — RGR enforcement defers to risk-area hooks. Define in hook-config.yml.
+  Files matching the built-in risk-area patterns (production data / secrets / deploy /
+  billing) are exempted — RGR enforcement defers to the risk-area hooks. These
+  patterns are currently the hardcoded GUARD_PATTERNS below; making them
+  hook-config.yml-overridable (like pre-tool-guard's risk_areas.secrets.paths, P1-8)
+  is a tracked follow-up, not yet wired here.
 
 Decision flow:
   1. Mode check
@@ -53,7 +56,8 @@ CACHE_RELATIVE = os.environ.get(
 )
 
 # Risk-area whitelist — files matching these patterns skip TDD enforcement.
-# Edit this list or override via hook-config.yml: risk_areas[].paths.
+# Built-in defaults; edit this list to change them. (hook-config.yml override for
+# these patterns is a tracked follow-up — not read here yet; see the module docstring.)
 # Each entry: (compiled-regex, category-label).
 GUARD_PATTERNS = [
     (re.compile(r"(^|/)migrations/.+\.sql$"), "production-migration"),
