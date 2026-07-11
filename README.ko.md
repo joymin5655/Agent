@@ -27,7 +27,7 @@
 | 용어 | 쉬운 뜻 |
 |---|---|
 | **하네스(harness)** | 에이전트 + 훅 + 스킬 + 규칙을 묶어 AI를 감싸는 안전 계층 전체. |
-| **훅(hook)** | AI 런타임이 어떤 행동 전/후에 자동으로 실행하는 작은 스크립트. **allow**, **ask**, **deny** 중 하나로 답합니다. [`core/hooks/`](core/hooks/)에 19개가 있습니다. |
+| **훅(hook)** | AI 런타임이 어떤 행동 전/후에 자동으로 실행하는 작은 스크립트. **allow**, **ask**, **deny** 중 하나로 답합니다. [`core/hooks/`](core/hooks/)에 20개가 있습니다. |
 | **어댑터(adapter)** | 각 AI CLI의 고유 이벤트 형식과 하네스의 표준 JSON 사이를 번역하는 얇은 계층. 3개가 있습니다([`adapters/`](adapters/)). |
 | **에이전트(agent)** | AI가 일을 위임하는 전문가 — 예: 리뷰만 하고 절대 코드를 쓰지 않는 보안 리뷰어. 2종이 포함됩니다([`agents/`](agents/)). |
 | **스킬(skill)** | AI가 따라가는 재사용 가능한 단계별 워크플로우 — 예: 커밋+PR 자동화 흐름. 6종이 포함됩니다([`skills/`](skills/)). |
@@ -186,13 +186,13 @@ read-only 에이전트는 도구 수준에서 강제됩니다(`Write`/`Edit`/`Ba
 | `harness-audit` | 하네스 자체의 읽기전용 건강 점검 (`verify-all.sh` 1회 드라이런 해석) |
 | `harness-help` | 라우터 — 상황에 맞는 스킬과 main flow 안내 |
 
-| 훅 — 19개, `hooks/hooks.json` → `core/hooks/` 연결 | 이벤트 |
+| 훅 — 20개, `hooks/hooks.json` → `core/hooks/` 연결 | 이벤트 |
 |---|---|
 | secret-content-scan · check-hardcoding | PreToolUse (Write/Edit) |
 | pre-tool-guard · r4-mutex · context-mode-guard | PreToolUse |
 | tdd-guard · spec-gate · supervisor · plan-scope-allow | PreToolUse (Write/Edit) |
 | session heartbeat | UserPromptSubmit |
-| plan-gate | PostToolUse (ExitPlanMode/Task/Agent) |
+| plan-gate · model-routing-observer | PostToolUse (ExitPlanMode/Task/Agent) |
 | session-quality-gate · session-close | Stop |
 
 명령: **`/project-init`** — 프로젝트 파일(`CLAUDE.md`, 규칙, `gitleaks.toml`) 스캐폴드.
@@ -213,7 +213,7 @@ Agent/
 ├── hooks/              # plugin hook wiring (hooks.json)
 │
 ├── core/               # AI-agnostic core — the truth
-│   ├── hooks/          #   19 portable hooks + hook_config.py (shared module)
+│   ├── hooks/          #   20 portable hooks + hook_config.py (shared module)
 │   ├── infra/          #   session coordination · auto-ship · goal mode
 │   ├── git-hooks/      #   pre-commit · pre-push
 │   └── tests/          #   4 test scripts

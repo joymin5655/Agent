@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`model-routing-observer.py` — measure the model-tier convention.** A 2026-07-11
+  transcript audit confirmed the call-time `model`-override convention is not
+  followed: 7/7 subagent dispatches in the audited session inherited the session
+  top model. New PostToolUse (Task/Agent) pure observer classifies every dispatch
+  as `override` / `pinned_specialist` / `inherit_top` into
+  `.agent/logs/model-routing.jsonl` (analyze:
+  `jq -r .verdict … | sort | uniq -c`) — measured before enforced, per the gate-
+  registry philosophy. Never blocks, emits nothing, exit 0 always. Battery
+  `model-routing-observer-test.sh` (15 checks). Companion policy fixes:
+  `docs/model-routing.md` gains a "Built-in agents (Claude Code)" section
+  (Plan=TOP inherit, Explore=MID default / LOW for bounded lookups — a deliberate
+  exception to fan-out-LOW), and `/verify-completion`'s general-reviewer dispatch
+  now requires an explicit workhorse-tier override.
 - **Skill A/B evaluation dataset (H-3, seed).** `evals/datasets/skill-ab.jsonl` is the
   labeled seed for measuring whether a shipped skill earns its keep: does its
   `description` route the right requests (and not the wrong ones), and does running

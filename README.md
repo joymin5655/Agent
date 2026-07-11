@@ -27,7 +27,7 @@ New to this space? These seven terms are all you need to read the rest of this p
 | Term | Plain meaning |
 |---|---|
 | **harness** | The whole safety layer: agents + hooks + skills + rules, wrapped around your AI. |
-| **hook** | A small script your AI runtime runs automatically before/after an action. It answers **allow**, **ask**, or **deny**. 19 of them live in [`core/hooks/`](core/hooks/). |
+| **hook** | A small script your AI runtime runs automatically before/after an action. It answers **allow**, **ask**, or **deny**. 20 of them live in [`core/hooks/`](core/hooks/). |
 | **adapter** | A thin translator between one AI CLI's native event format and the harness's canonical JSON. There are 3 ([`adapters/`](adapters/)). |
 | **agent** | A specialist your AI delegates to — e.g. a security reviewer that only reviews and never writes. 2 ship here ([`agents/`](agents/)). |
 | **skill** | A reusable step-by-step workflow the AI follows, e.g. the commit + PR flow. 6 ship here ([`skills/`](skills/)). |
@@ -180,13 +180,13 @@ Model is cost-tiered per work class ([`docs/model-routing.md`](docs/model-routin
 | `harness-audit` | Read-only health check of the harness itself (one `verify-all.sh` dry-run, interpreted) |
 | `harness-help` | Router — which skill fits the situation, and the main flow through them |
 
-| Hooks — 19, wired via `hooks/hooks.json` → `core/hooks/` | Event |
+| Hooks — 20, wired via `hooks/hooks.json` → `core/hooks/` | Event |
 |---|---|
 | secret-content-scan · check-hardcoding | PreToolUse (Write/Edit) |
 | pre-tool-guard · r4-mutex · context-mode-guard | PreToolUse |
 | tdd-guard · spec-gate · supervisor · plan-scope-allow | PreToolUse (Write/Edit) |
 | session heartbeat | UserPromptSubmit |
-| plan-gate | PostToolUse (ExitPlanMode/Task/Agent) |
+| plan-gate · model-routing-observer | PostToolUse (ExitPlanMode/Task/Agent) |
 | session-quality-gate · session-close | Stop |
 
 Command: **`/project-init`** scaffolds project-level files (`CLAUDE.md`, rules, `gitleaks.toml`).
@@ -207,7 +207,7 @@ Agent/
 ├── hooks/              # plugin hook wiring (hooks.json)
 │
 ├── core/               # AI-agnostic core — the truth
-│   ├── hooks/          #   19 portable hooks + hook_config.py (shared module)
+│   ├── hooks/          #   20 portable hooks + hook_config.py (shared module)
 │   ├── infra/          #   session coordination · auto-ship · goal mode
 │   ├── git-hooks/      #   pre-commit · pre-push
 │   └── tests/          #   4 test scripts
