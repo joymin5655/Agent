@@ -8,6 +8,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Autonomous-loop grader `core/tests/grade.sh` (P2-2 + L-1 impl).** The loop (§5)
+  now has its grader: it runs the GATE floor (sanitize-audit / adapter-parity /
+  hook-config-test / post-commit-autosync / gitleaks) and then evaluates each named
+  failure mode in `evals/failure-modes.yaml` by RE-RUNNING the battery that encodes
+  it — a mode PASSes iff its guard is still green (the hole stays closed), FAILs iff
+  the candidate re-opened it. Output is the L-1 checklist (`mode:<id> PASS|FAIL —
+  reason`) plus a rollup `harness_score: X.Y` = (#PASS) − 0.5×(#untrustworthy), the
+  mandatory last line on every path so an empty grep is always a real crash. It fails
+  closed to `harness_score: 0` (= discard) on any untrustworthy path — GATE failure,
+  a TARGET-boundary violation (off-target diff), or an unparseable rubric — the
+  operator-chosen baseline verdict. On a clean tree it emits `harness_score: 11.0`
+  (11 code-guarded modes PASS; `review-false-clean` is N/A), superseding the retired
+  single-scalar 8.0. It is a loop-time tool (re-runs batteries; ~1 min) and is
+  excluded from `verify-all` to avoid recursion; `grade-test.sh` (20 checks) drives
+  it hermetically and gates mode↔guard-map drift.
+- **Append-only loop ledger `core/infra/loop-ledger.sh` (P2-3).** The sanctioned
+  writer for `.agent/loop/results.tsv` (untracked run state): a 5-column schema
+  (commit / harness_score / duration_s / status / description≤80), a status enum
+  (keep|discard|crash|timeout), numeric validation that rejects rather than coerces
+  a malformed score/duration, and free-text sanitization. It only ever appends —
+  the header is written once. `loop-ledger-test.sh` (17 checks).
 - **Failure-mode grader rubric (L-1, doc portion).** `evals/failure-modes.yaml` replaces
   the autonomous loop's single opaque `harness_score` scalar with a checklist of **12
   named failure modes**, each distilled from a real adversarial-review catch in this
@@ -108,6 +129,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   codex config (`CODEX_CONFIG` seam; skipped when no codex config exists) —
   the same "declared template vs actual" observer family as the plugin-cache
   and command-scan checks. Fixtures cover present/missing/absent-config.
+- **Loop write-ban `core/hooks/loop-write-guard.py` (L-2).** While an improvement
+  loop is active (env `AGENT_LOOP_ACTIVE=1` or a flag file), a Write/Edit to the
+  grader/verifier surface (`core/tests/`, `evals/`) or a non-append rewrite of the
+  results ledger escalates to `ask` (not deny — the calibration policy reserves deny
+  for secrets) so a human stays on the loop and a run cannot silently rewrite the
+  code that scores it. Outside a loop the guard is fully inert (zero added friction).
+  Containment uses realpath, so a symlink into the guarded dir cannot dodge it.
+  Wired into the `Write|Edit|MultiEdit` PreToolUse chain; `loop-write-guard-test.sh`
+  (14 checks) covers the ask/allow matrix, the symlink-escape case, and WHY/FIX tags.
 
 ### Fixed
 - **Guard false-positives (W-7).** `pre-tool-guard.sh` no longer blocks a commit

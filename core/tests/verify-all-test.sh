@@ -66,6 +66,7 @@ for f in "$REAL_TESTS_DIR"/*.sh; do
   base="$(basename "$f")"
   case "$base" in
     verify-all.sh|verify-all-test.sh) continue ;;
+    grade.sh) continue ;;  # loop-time grader excluded from the runner (see verify-all.sh)
   esac
   if ! printf '%s\n' "$LIST_OUT" | grep -qxF "$base"; then
     echo "    MISSING from --list: $base"
