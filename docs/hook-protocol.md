@@ -147,7 +147,7 @@ Multiple hooks can listen to the same event. The runtime executes them sequentia
 4. sandbox bypass detection    (context-mode-guard if relevant)
 5. specialist dispatch         (supervisor.py)
 6. workflow guards             (plan-gate, tdd-guard)
-7. observation                 (broadcast, record-*)
+7. observation                 (broadcast, record-*, model-routing-observer)
 8. allow accelerators          (plan-scope-allow — last, so any earlier deny short-circuits first)
 ```
 

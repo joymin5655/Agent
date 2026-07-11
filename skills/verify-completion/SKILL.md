@@ -66,7 +66,9 @@ python3 core/infra/completion-verify.py --root "$PWD" .agent/claims/<slug>.yml
 
 Spin up a **fresh** verifier context that has NOT seen the builder's reasoning —
 dispatch `code-reviewer` (or `security-reviewer` if the change touches
-auth/secrets/input handling), or a general reviewer subagent — and give it only:
+auth/secrets/input handling), or a general reviewer subagent — a general
+(unpinned) reviewer must carry an explicit `model` override at the workhorse
+tier, or it silently inherits the session top model — and give it only:
 the claim, the deterministic verdict JSON, and the actual diff/artifacts. Ask it
 to **refute**, not confirm:
 

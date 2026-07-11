@@ -50,6 +50,7 @@ GATE spec-gate | spec-gate.py | ask | spec-gate.jsonl | * | 2026-07-10 | Model w
 GATE tdd-guard | tdd-guard.py | ask | tdd-guard-dryrun.jsonl | * | 2026-07-10 | Model will write implementation code before a failing test exists.
 GATE hardcoding | check-hardcoding.py | deny | - | * | 2026-07-10 | Model will inline design constants (colors, tick arrays) that belong in a config file.
 GATE plan-scope-allow | plan-scope-allow.py | allow | plan-scope-allow.jsonl | * | 2026-07-11 | Post-plan-approval edit prompts get rubber-stamped (approval fatigue); auto-allow is safe only in-workspace, outside risk areas, while the session plan flag is live. Env-gated (AGENT_PLAN_ALLOW_MODE), default off.
+GATE model-routing-observer | model-routing-observer.py | observe | model-routing.jsonl | * | 2026-07-11 | The call-time model-override convention (implementation=MID, fan-out=LOW) is not followed — unpinned dispatches silently inherit the session top model. Measured before enforced: 2026-07-11 audit found 7/7 dispatches at TOP.
 <!-- gate-registry:end -->
 
 ## Review discipline
