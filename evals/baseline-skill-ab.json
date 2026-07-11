@@ -1,0 +1,6 @@
+{
+  "min_cases": 35,
+  "min_assertions_per_skill": 3,
+  "skills": ["spec", "supervise", "verify-completion", "wrap", "harness-audit"],
+  "note": "Skill A/B track coverage floor (SEED — the H-3 runner that scores with-skill vs baseline is a later increment, B8). Fail-closed: min_cases is the current count in evals/datasets/skill-ab.jsonl, so a deleted case is caught, not just a drop past a slack floor. min_assertions_per_skill enforces the H-3 spec bar (>=3 assertions per shipped skill). Every skill listed must be a real shipped skill (skills/<name>/SKILL.md) and must carry >=1 trigger-positive and >=1 trigger-negative case. Raise these in lockstep when you add cases; a drop below either, an unknown skill, or a malformed line is a regression. An unreadable/malformed baseline fails the run."
+}
