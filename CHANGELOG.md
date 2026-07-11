@@ -8,6 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Skill A/B evaluation dataset (H-3, seed).** `evals/datasets/skill-ab.jsonl` is the
+  labeled seed for measuring whether a shipped skill earns its keep: does its
+  `description` route the right requests (and not the wrong ones), and does running
+  *with* the skill produce what a no-skill baseline would miss. **35 cases** across the
+  5 shipped skills (`spec`, `supervise`, `verify-completion`, `wrap`, `harness-audit`) —
+  3 `assertion` cases + 2 trigger-positive + 2 trigger-negative each. Trigger labels are
+  grounded in each skill's own `when_to_use` (positives) and `NOT` clauses (negatives),
+  including cross-skill discriminators (e.g. "execute the approved plan" must route to
+  `supervise`, not `spec`); every assertion's `rationale` quotes the skill's shipped
+  description, so the seed is grounded, not invented. Fail-closed floor
+  `evals/baseline-skill-ab.json` (`min_cases`, `min_assertions_per_skill` = 3, the
+  shipped-skill list). New battery `core/tests/skill-ab-dataset-test.sh` (21 checks)
+  validates only the seed's shape — parse, per-`kind` required fields, unique slugs,
+  unknown-skill rejection, the ≥3-assertions-per-skill floor, ≥1 trigger-positive and
+  ≥1 trigger-negative per skill, and that every named skill is a real shipped
+  `SKILL.md` — with 7 malformed RED fixtures proving each guard goes red; it calls no
+  model and is auto-discovered by `verify-all.sh`. The A/B **runner** that executes
+  with-skill vs baseline and scores the assertions is a later increment (H-3 본체). See
+  `evals/README.md` (Skill A/B track) for the n=35 and honest-ceiling disclosure.
 - **Failure-mode grader rubric (L-1, doc portion).** `evals/failure-modes.yaml` replaces
   the autonomous loop's single opaque `harness_score` scalar with a checklist of **12
   named failure modes**, each distilled from a real adversarial-review catch in this
