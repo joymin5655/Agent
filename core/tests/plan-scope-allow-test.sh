@@ -15,6 +15,11 @@
 # AGENT_PROJECT_DIR to the mktemp workdir; the sink is redirected via
 # AGENT_PLAN_ALLOW_SINK so the repo stays clean.
 #
+# Mode is 3-way since the trust-tier integration: explicit "on" -> active,
+# explicit non-"on" -> dark, UNSET -> trust_tier.py decides (personal only).
+# AGENT_TRUST_FILE is pinned per scenario ($TRUST_FILE, default nonexistent) so
+# the battery never reads the developer's real ~/.agent/trust.list.
+#
 # Usage: bash core/tests/plan-scope-allow-test.sh
 # Exit 0: all pass. Exit 1: one or more failures.
 set -u
@@ -28,6 +33,7 @@ FAIL=0
 WORK="$(mktemp -d)"
 SINK="$WORK/plan-scope-allow.jsonl"
 FLAG="/tmp/agent-plan-approved"
+TRUST_FILE="$WORK/no-trust.list"   # default: nonexistent -> tier fails closed
 
 # Save any live session's real flag; restore on exit.
 FLAG_BACKUP="$WORK/flag.bak"; HAD_FLAG=0
@@ -61,6 +67,7 @@ run() {
     OUT="$(printf '%s' "$json" | ( cd "$WORK" && env -u AGENT_PLAN_ALLOW_MODE \
       AGENT_PROJECT_DIR="$WORK" \
       AGENT_PLAN_ALLOW_SINK="$SINK" \
+      AGENT_TRUST_FILE="$TRUST_FILE" \
       AGENT_SESSION_ID=test \
       python3 "$HOOK" ) 2>/dev/null)"
   else
@@ -68,6 +75,7 @@ run() {
       AGENT_PLAN_ALLOW_MODE="$mode" \
       AGENT_PROJECT_DIR="$WORK" \
       AGENT_PLAN_ALLOW_SINK="$SINK" \
+      AGENT_TRUST_FILE="$TRUST_FILE" \
       AGENT_SESSION_ID=test \
       python3 "$HOOK" ) 2>/dev/null)"
   fi
@@ -107,9 +115,9 @@ sink_lines()     { [[ -f "$SINK" ]] && wc -l < "$SINK" | tr -d ' ' || echo 0; }
 # scenarios
 # ---------------------------------------------------------------------------
 
-echo "=== mode gating: default off, first weakening hook ships dark ==="
+echo "=== mode gating: ships dark without env or earned trust ==="
 expect "a1-mode-off-silent"        off   present Write "$WORK/src/x.ts" silent
-expect "a2-mode-unset-silent"      unset present Write "$WORK/src/x.ts" silent
+expect "a2-unset-no-trust-silent"  unset present Write "$WORK/src/x.ts" silent
 
 echo
 echo "=== flag gating: no approved plan, no acceleration ==="
@@ -133,9 +141,13 @@ expect "d6-billing-silent"         on present Write "$WORK/billing/a.ts"        
 expect "d7-uppercase-evasion"      on present Write "$WORK/SECRETS/k.json"          silent
 
 echo
-echo "=== self-tamper surfaces ==="
-expect "e1-hook-config-silent"     on present Write "$WORK/.agent/hook-config.yml" silent
-expect "e2-git-dir-silent"         on present Write "$WORK/.git/config"            silent
+echo "=== self-tamper surfaces (incl. session-env injection files) ==="
+expect "e1-hook-config-silent"     on present Write "$WORK/.agent/hook-config.yml"       silent
+expect "e2-git-dir-silent"         on present Write "$WORK/.git/config"                  silent
+expect "e3-claude-settings-silent" on present Write "$WORK/.claude/settings.json"        silent
+expect "e4-claude-settings-local"  on present Write "$WORK/.claude/settings.local.json"  silent
+expect "e5-envrc-silent"           on present Write "$WORK/.envrc"                       silent
+expect "e6-mcp-json-silent"        on present Write "$WORK/.mcp.json"                    silent
 
 echo
 echo "=== workspace containment (realpath) ==="
@@ -154,6 +166,27 @@ assert_empty   "g2-missing-filepath-silent"
 run on present '{"event":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls"}}'
 assert_rc_zero "g3-nonedit-tool-rc0"
 assert_empty   "g3-nonedit-tool-silent"
+
+echo
+echo "=== trust-tier delegation: mode UNSET -> personal workspaces only ==="
+PERSONAL_TRUST="$WORK/trust.list"
+printf 'path %s\n' "$WORK" > "$PERSONAL_TRUST"
+TRUST_FILE="$PERSONAL_TRUST"
+expect "i1-unset-personal-allows"        unset present Write "$WORK/src/x.ts" allow
+expect "i2-unset-personal-noflag-silent" unset absent  Write "$WORK/src/x.ts" silent
+expect "i3-explicit-off-beats-personal"  off   present Write "$WORK/src/x.ts" silent
+expect "i4-unset-personal-neverallow"    unset present Write "$WORK/.envrc"   silent
+mkdir -p "$WORK/.agent"
+echo "collab" > "$WORK/.agent/trust-tier"
+expect "i5-repo-downgrade-silent"        unset present Write "$WORK/src/x.ts" silent
+rm -f "$WORK/.agent/trust-tier"
+EMPTY_TRUST="$WORK/empty-trust.list"
+: > "$EMPTY_TRUST"
+TRUST_FILE="$EMPTY_TRUST"
+echo "personal" > "$WORK/.agent/trust-tier"
+expect "i6-repo-marker-cannot-escalate"  unset present Write "$WORK/src/x.ts" silent
+rm -f "$WORK/.agent/trust-tier"
+TRUST_FILE="$WORK/no-trust.list"
 
 echo
 echo "=== telemetry: only real allows hit the sink ==="

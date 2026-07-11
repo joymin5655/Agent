@@ -1,0 +1,20 @@
+# trust.list — user-side trust grants for per-project tier detection.
+#
+# Install location: ~/.agent/trust.list  (NOT inside any repo — the whole
+# point is that this file lives outside every workspace, so plan-scope-allow
+# can never auto-allow an agent editing it; changing trust always faces the
+# native permission prompt. Test seam: AGENT_TRUST_FILE.)
+#
+# A workspace resolves to tier "personal" (earned automation — see
+# docs/customization.md § Trust tiers) when its git remote origin owner
+# matches an `owner` line, or its root sits under a `path` line. Everything
+# else — including no trust file at all — is "collab" (cautious default).
+# A repo-side .agent/trust-tier file can only downgrade to collab.
+#
+# Line format (stdlib parsing, no YAML):
+#   owner <github-owner>     # case-insensitive remote-owner match
+#   path <absolute-dir>      # workspace roots under this prefix
+#
+# Examples — replace with your own:
+# owner your-github-username
+# path /home/you/personal-projects/
