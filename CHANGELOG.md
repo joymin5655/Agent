@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`/reorg-sync` — orphaned path-reference sweeper (W-2).** After a tree moves (drive
+  reorg, folder rename), absolute-path references left in metadata break silently. New
+  `core/infra/reorg-sync.sh` takes an old and a new path prefix (repo-generic — nothing
+  hardcoded) and sweeps five reference classes under a target tree: `shebang` interpreter
+  lines, git worktree `gitdir:` pointers, `crontab` command paths, doc/config `anchor`s,
+  and the path-keyed `native-memory-key` dir (rewritten with the harness's `/ . _` → `-`
+  encoding). Dry-run report by default (`CLASS  file:line  text` rows + per-class
+  summary); `--apply` does a safe literal replacement (Python `str.replace`, no
+  sed/regex hazards). Binary files, symlinks, and the `.git` object store are skipped,
+  while a `.git` worktree *file* is swept; a bare `/` or empty `--old` is refused. New
+  skill `skills/reorg-sync/SKILL.md` wraps it report-then-confirm and notes that
+  out-of-tree targets (`~/.claude` memory dir, the live crontab) are surfaced, not
+  auto-mutated. Battery `core/tests/reorg-sync-test.sh` (27 checks) drives a fixture
+  tree with all five classes plus decoys — asserting detection, dry-run immutability,
+  correct per-class rewrite (incl. the encoding transform), idempotence, the skip set,
+  and five usage-guard rejections; auto-discovered by `verify-all.sh`.
 - **Skill A/B evaluation dataset (H-3, seed).** `evals/datasets/skill-ab.jsonl` is the
   labeled seed for measuring whether a shipped skill earns its keep: does its
   `description` route the right requests (and not the wrong ones), and does running
