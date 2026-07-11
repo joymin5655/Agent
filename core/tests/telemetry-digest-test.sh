@@ -170,5 +170,85 @@ printf '%s' "$OUT_H" | python3 -c "import json,sys; json.loads(sys.stdin.read())
 check "json-output-parses" $?
 
 echo
+echo "=== (i) --gates mode: DEAD / FATIGUE / STALE / UNINSTRUMENTED classification ==="
+# A tiny synthetic registry + logs dir. Four gates, one of each class:
+#   fresh-hot   -> security-violations.jsonl, 3 in-window firings, fatigue=2  -> FATIGUE
+#   fresh-cold  -> security-violations.jsonl, 0 firings                       -> DEAD
+#   old-ok      -> security-violations.jsonl, 1 firing, reviewed 200d ago     -> STALE
+#   no-log      -> sink '-'                                                    -> UNINSTRUMENTED
+GATE_DIR="$TMP_DIR/gates"
+mkdir -p "$GATE_DIR/logs"
+OLD_REVIEW="$(python3 -c 'import datetime; print((datetime.date.today() - datetime.timedelta(days=200)).isoformat())')"
+NEW_REVIEW="$(python3 -c 'import datetime; print(datetime.date.today().isoformat())')"
+cat > "$GATE_DIR/registry.md" <<EOF
+# fixture registry
+<!-- gate-registry:begin -->
+GATE fresh-hot | h.sh | ask | security-violations.jsonl | fresh-hot | $NEW_REVIEW | assumes a hot failure mode.
+GATE fresh-cold | h.sh | deny | security-violations.jsonl | fresh-cold | $NEW_REVIEW | assumes an extinct failure mode.
+GATE old-ok | h.sh | ask | security-violations.jsonl | old-ok | $OLD_REVIEW | assumes a rare but real failure mode.
+GATE no-log | h.py | deny | - | * | $NEW_REVIEW | emits a decision but writes no log.
+<!-- gate-registry:end -->
+EOF
+# firing log: 3 fresh-hot (in-window), 1 old-ok, 1 reproduce_test fresh-hot (must be IGNORED)
+{
+  printf '{"ts":"%s","guard":"fresh-hot","reproduce_test":false}\n' "$NOW_TS"
+  printf '{"ts":"%s","guard":"fresh-hot","reproduce_test":false}\n' "$NOW_TS"
+  printf '{"ts":"%s","guard":"fresh-hot","reproduce_test":false}\n' "$NOW_TS"
+  printf '{"ts":"%s","guard":"fresh-hot","reproduce_test":true}\n'  "$NOW_TS"
+  printf '{"ts":"%s","guard":"old-ok","reproduce_test":false}\n'    "$NOW_TS"
+} > "$GATE_DIR/logs/security-violations.jsonl"
+
+OUT_I="$(bash "$SCRIPT" --gates --registry "$GATE_DIR/registry.md" --logs-dir "$GATE_DIR/logs" --fatigue 2 --stale-days 90 --json 2>&1)"
+RC_I=$?
+[[ $RC_I -eq 0 ]]; check "gates-exit-0" $?
+printf '%s' "$OUT_I" | python3 -c "import json,sys; json.loads(sys.stdin.read())" >/dev/null 2>&1
+check "gates-json-parses" $?
+# fresh-hot fired == 3 (reproduce_test line excluded)
+printf '%s' "$OUT_I" | python3 -c "import json,sys; d=json.load(sys.stdin); r={x['id']:x for x in d['reports']}; sys.exit(0 if r['fresh-hot']['fired']==3 else 1)"
+check "gates-reproduce-test-excluded" $?
+printf '%s' "$OUT_I" | python3 -c "import json,sys; d=json.load(sys.stdin); r={x['id']:x for x in d['reports']}; sys.exit(0 if 'FATIGUE' in r['fresh-hot']['flags'] else 1)"
+check "gates-fatigue-flagged" $?
+printf '%s' "$OUT_I" | python3 -c "import json,sys; d=json.load(sys.stdin); r={x['id']:x for x in d['reports']}; sys.exit(0 if 'DEAD' in r['fresh-cold']['flags'] else 1)"
+check "gates-dead-flagged" $?
+printf '%s' "$OUT_I" | python3 -c "import json,sys; d=json.load(sys.stdin); r={x['id']:x for x in d['reports']}; sys.exit(0 if 'STALE' in r['old-ok']['flags'] else 1)"
+check "gates-stale-flagged" $?
+printf '%s' "$OUT_I" | python3 -c "import json,sys; d=json.load(sys.stdin); r={x['id']:x for x in d['reports']}; sys.exit(0 if r['no-log']['flags']==['UNINSTRUMENTED'] else 1)"
+check "gates-uninstrumented-flagged" $?
+# old-ok is STALE but NOT dead (it fired once) — STALE and DEAD are independent axes
+printf '%s' "$OUT_I" | python3 -c "import json,sys; d=json.load(sys.stdin); r={x['id']:x for x in d['reports']}; sys.exit(0 if 'DEAD' not in r['old-ok']['flags'] else 1)"
+check "gates-stale-not-dead" $?
+
+echo
+echo "=== (j) --gates human mode: summary line + missing registry fail-safe ==="
+OUT_J="$(bash "$SCRIPT" --gates --registry "$GATE_DIR/registry.md" --logs-dir "$GATE_DIR/logs" --fatigue 2 2>&1)"
+[[ "$OUT_J" == *"gate-digest: 4 gate(s)"* ]]; check "gates-human-summary" $?
+# missing registry -> still exit 0, 0 gates, no crash (observer contract)
+OUT_J2="$(bash "$SCRIPT" --gates --registry "$GATE_DIR/nonexistent.md" --logs-dir "$GATE_DIR/logs" 2>&1)"
+RC_J2=$?
+[[ $RC_J2 -eq 0 ]]; check "gates-missing-registry-exit-0" $?
+[[ "$OUT_J2" == *"gate-digest: 0 gate(s)"* || "$OUT_J2" == *"registry error"* ]]; check "gates-missing-registry-reported" $?
+# the SHIPPED registry parses to a non-zero gate count (real-file smoke)
+OUT_J3="$(bash "$SCRIPT" --gates 2>&1)"
+[[ "$OUT_J3" == *"gate-digest: "* ]] && ! [[ "$OUT_J3" == *"gate-digest: 0 gate(s)"* ]]
+check "shipped-registry-parses-nonzero" $?
+
+echo
+echo "=== (k) --gates: a traversal sink is confined to logs-dir (never reads outside) ==="
+# A registry line whose sink escapes logs_dir with ../ must not read that file.
+# Plant a would-be-counted record OUTSIDE logs_dir; the gate must report fired=n/a
+# (DEAD, sink treated as absent), not the outside count.
+TRAV_DIR="$TMP_DIR/trav"
+mkdir -p "$TRAV_DIR/logs"
+printf '{"ts":"%s","guard":"escapee","reproduce_test":false}\n' "$NOW_TS" > "$TRAV_DIR/outside.jsonl"
+cat > "$TRAV_DIR/registry.md" <<EOF
+<!-- gate-registry:begin -->
+GATE escapee | h.sh | deny | ../outside.jsonl | escapee | $NEW_REVIEW | traversal sink.
+<!-- gate-registry:end -->
+EOF
+OUT_K="$(bash "$SCRIPT" --gates --registry "$TRAV_DIR/registry.md" --logs-dir "$TRAV_DIR/logs" --json 2>&1)"
+printf '%s' "$OUT_K" | python3 -c "import json,sys; d=json.load(sys.stdin); r=d['reports'][0]; sys.exit(0 if (r['fired'] in (0,None)) and 'DEAD' in r['flags'] else 1)"
+check "traversal-sink-not-read" $?
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]

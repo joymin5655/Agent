@@ -8,6 +8,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Gate registry + fire-rate digest (T-2).** `docs/gate-registry.md` is the SSOT
+  list of every deny/ask/block gate with the model weakness it assumes and a
+  `last_reviewed` date (an assumption expires). `telemetry-digest.sh --gates`
+  cross-references it against the runtime firing logs and reports per gate:
+  **DEAD** (0 in-window firings), **FATIGUE** (firings ≥ `--fatigue`, default 50),
+  **STALE** (`last_reviewed` + `--stale-days`, default 90, is past), and
+  **UNINSTRUMENTED** (emits a decision but writes no log — reported honestly, not
+  mislabeled DEAD). Test-reproduction records (`reproduce_test:true`) are excluded
+  from fire-rate so batteries can't inflate it. Still an observer (exit 0 always);
+  `telemetry-digest-test.sh` gains a synthetic-registry battery covering all four
+  classes plus the reproduce-test exclusion and missing-registry fail-safe.
+- **Runtime enforcement of `risk_areas.secrets.paths` (P1-8).** `pre-tool-guard.sh`
+  now reads project-declared secret paths from `hook-config.yml` (via a bounded,
+  metacharacter-rejecting `hook_config.load_risk_area_secret_paths` loader) and
+  denies read/copy/exfil access to them — closing a field that shipped as schema
+  but was never read at runtime. Additive: the built-in `secrets/` guards run first
+  and are never weakened; a config value can only add literal paths, never inject a
+  pattern. `risk-area-wiring-test.sh` proves enforcement + loader safety bounds.
+- **Remote-URL credential scan + gitleaks fire drill (W-3).** A token baked into a
+  git remote URL lives in `.git/config`, invisible to every content scanner —
+  `core/git-hooks/scan-remote-url.py` flags an http(s) remote whose userinfo carries
+  a password or a token-shaped value (no false positives on ssh / clean / bare-username
+  URLs), wired as pre-push step 0 and a `/wrap` pre-flight. `core/infra/gitleaks-fire-test.sh`
+  plants a synthetic secret matching the repo's own rule and asserts gitleaks catches
+  it (PASS = gate live, FAIL = misconfigured allowlist, exit 2 = gitleaks absent/SKIP),
+  so a clean result can be trusted. `remote-url-scan-test.sh` covers both.
+- **Tests for plan-gate and tdd-guard (P1-3).** Both hooks previously shipped
+  untested. `plan-gate-test.sh` (7 checks; new `AGENT_PLAN_FLAG` seam so tests never
+  clobber the live approval flag) and `tdd-guard-test.sh` (12 checks; isolated mktemp
+  git repos, RGR red/green/no-test verdicts). tdd-guard's misleading comments claiming
+  hook-config override of its risk-area patterns were corrected to match reality
+  (the override is a tracked follow-up, not yet wired).
+
 - **Real-LLM semantic judge (E-1, batch-3) — out-of-CI.** `evals/judges/llm-judge.py`
   is the layer above the deterministic floor: it catches a cited test that carries a
   real assertion (so `reference-judge.py` CONFIRMs it) yet never exercises the claimed
