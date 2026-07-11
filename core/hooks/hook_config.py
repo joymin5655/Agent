@@ -233,6 +233,88 @@ def load_extensions(repo_root: str) -> dict:
         return _empty()
 
 
+# Bounds for risk_areas.secrets.paths (P1-8). A project extends the secrets
+# path list the Bash guard denies access to; bound the count/length and reject
+# any token that isn't a plain path fragment (no regex/shell metacharacters), so
+# a config value can only ADD literal paths — never inject a regex or a shell op.
+_MAX_RISK_PATHS = 50
+_MAX_RISK_PATH_LEN = 200
+# A safe path token: letters, digits, and the handful of path punctuation chars.
+# Deliberately excludes regex/shell metacharacters (| ( ) [ ] { } $ ` ; & etc.).
+_SAFE_PATH_TOKEN = re.compile(r"^[A-Za-z0-9._/\-]+$")
+
+
+def load_risk_area_secret_paths(repo_root: str) -> list:
+    """Return project-declared secret PATH tokens from `risk_areas.secrets.paths`
+    (P1-8 — the field the Bash guard now enforces at runtime, closing the
+    previously-aspirational config).
+
+    Each glob (`secrets/**`, `.env.production`, `config/keys/*.pem`) is reduced to
+    its literal prefix (glob metacharacters stripped at the first `*`/`?`), so a
+    token is always a plain substring the guard can match a command against. Tokens
+    are bounded in count and length and MUST match `_SAFE_PATH_TOKEN` — anything
+    carrying a regex/shell metacharacter is dropped, so the config can only add
+    literal paths, never inject a pattern. Missing/malformed config -> []. Never raises.
+    """
+    try:
+        if not repo_root or not isinstance(repo_root, str):
+            return []
+        base = os.path.join(repo_root, ".agent")
+        docs = []
+        yml_path = os.path.join(base, "hook-config.yml")
+        json_path = os.path.join(base, "hook-config.json")
+        if os.path.isfile(yml_path):
+            docs.append(_read_yaml(yml_path))
+        if os.path.isfile(json_path):
+            docs.append(_read_json(json_path))
+
+        tokens = []
+        seen = set()
+        for doc in docs:
+            if not isinstance(doc, dict):
+                continue
+            risk = doc.get("risk_areas")
+            if not isinstance(risk, dict):
+                continue
+            secrets = risk.get("secrets")
+            if not isinstance(secrets, dict):
+                continue
+            raw = secrets.get("paths")
+            if not isinstance(raw, list):
+                continue
+            for item in raw:
+                if not isinstance(item, str):
+                    continue
+                # reduce glob to its literal prefix (up to the first * or ?).
+                # Keep a directory glob's trailing slash ('vault/**' -> 'vault/')
+                # so the substring match stays path-anchored — otherwise bare
+                # 'vault' would also block 'myvault2/x', an over-block. A lone
+                # trailing slash from '/**' at root is stripped to avoid an empty
+                # or slash-only token.
+                frag = re.split(r"[*?]", item, 1)[0].strip()
+                if frag == "/" or not frag:
+                    continue
+                if len(frag) > _MAX_RISK_PATH_LEN:
+                    continue
+                if not _SAFE_PATH_TOKEN.match(frag):
+                    continue
+                # A meaningful path fragment: at least 2 chars AND at least one
+                # alphanumeric. This drops a glob that reduces to bare punctuation
+                # (e.g. '.*' -> '.'), which would otherwise match almost any
+                # command and turn a config typo into a blanket block.
+                if len(frag) < 2 or not re.search(r"[A-Za-z0-9]", frag):
+                    continue
+                if frag in seen:
+                    continue
+                seen.add(frag)
+                tokens.append(frag)
+                if len(tokens) >= _MAX_RISK_PATHS:
+                    return tokens
+        return tokens
+    except Exception:
+        return []
+
+
 # Bounds for session.completion_tests (P3-1). A project cannot make the Stop
 # gate run an unbounded number of arbitrarily long commands.
 _MAX_COMPLETION_TESTS = 20
