@@ -11,9 +11,10 @@
 #
 # Output contract (consumed by the loop, §5.2 step 5 — `grep '^harness_score:'`):
 #   - Zero or more `mode:<id> PASS|FAIL|N/A — <reason>` lines (GATE-pass path only).
-#   - EXACTLY ONE final `harness_score: X.Y` line on EVERY path (so an empty grep
-#     is always a genuine crash, never a normal outcome — the §5.1 status enum
-#     stays intact and infra failure is never silently a graded label).
+#   - EXACTLY ONE final `harness_score: X.Y` line on every GRADING invocation (so an
+#     empty grep is always a genuine crash, never a normal outcome — the §5.1 status
+#     enum stays intact and infra failure is never silently a graded label). The
+#     informational `--list-modes` invocation is NOT a grading path and emits no score.
 #
 # Scoring (GATE-pass path):
 #   harness_score = (#PASS modes) − 0.5 × (#OER modes)
@@ -43,9 +44,14 @@
 # B6 pilot — v1 is the deterministic regression grader, honestly bounded.
 #
 # Flags:
-#   --target <regex>   fail closed unless every changed file matches <regex>
-#   --base <ref>       diff base for --target (default: HEAD~1)
-#   --list-modes       print the rubric's mode ids (run order) and exit 0
+#   --target <regex>   restrict the candidate to files whose FULL path matches <regex>
+#                      (anchored, `grep -xE` — e.g. 'agents/.*'); any off-target
+#                      changed file => harness_score 0. Requires a clean working tree
+#                      and --base. An unknown flag also fails closed.
+#   --base <ref>       the mission's start ref; the boundary diff is <ref>..HEAD.
+#                      REQUIRED when --target is given (no silent HEAD~1 default that
+#                      would miss earlier commits of a multi-commit candidate).
+#   --list-modes       print the rubric's mode ids (run order) and exit 0 (no score)
 #
 # Test seams (hermetic, offline):
 #   GRADE_TESTS_DIR       battery source dir (default $REPO_ROOT/core/tests)
@@ -61,24 +67,28 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TESTS_DIR="${GRADE_TESTS_DIR:-$REPO_ROOT/core/tests}"
 RUBRIC="${GRADE_RUBRIC:-$REPO_ROOT/evals/failure-modes.yaml}"
 
-TARGET_RE=""
-BASE_REF="HEAD~1"
-LIST_MODES=0
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --target) TARGET_RE="${2:-}"; shift 2 ;;
-    --base)   BASE_REF="${2:-}"; shift 2 ;;
-    --list-modes) LIST_MODES=1; shift ;;
-    *) printf 'grade.sh: unknown argument: %s\n' "$1" >&2; shift ;;
-  esac
-done
-
 # emit_score_and_exit <score> — print the mandatory final line and exit 0. Every
-# terminating path funnels through here so `harness_score:` is ALWAYS the last line.
+# GRADING path funnels through here so `harness_score:` is ALWAYS the last line.
+# (Defined before arg parsing so an early fail-closed exit can use it.)
 emit_score_and_exit() {
   printf 'harness_score: %s\n' "$1"
   exit 0
 }
+
+TARGET_RE=""
+BASE_REF=""
+TARGET_SET=0
+LIST_MODES=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --target) TARGET_RE="${2:-}"; TARGET_SET=1; shift 2 ;;
+    --base)   BASE_REF="${2:-}"; shift 2 ;;
+    --list-modes) LIST_MODES=1; shift ;;
+    # An unknown flag (e.g. a typo like --taget) must NOT silently disable a check
+    # and proceed — fail closed rather than grade with a misparsed boundary.
+    *) printf 'grade.sh: unknown argument: %s (fail-closed)\n' "$1" >&2; emit_score_and_exit 0 ;;
+  esac
+done
 
 # --- mode -> guard battery map (single source of truth for the grader). Each mode
 # in evals/failure-modes.yaml maps to the battery that encodes its caught_in defect;
@@ -115,7 +125,11 @@ try:
     with open(os.environ["RUBRIC"]) as fh:
         doc = yaml.safe_load(fh)
     modes = doc.get("failure_modes") or []
-    ids = [str(m["id"]).strip() for m in modes if isinstance(m, dict) and m.get("id")]
+    raw = [str(m["id"]).strip() for m in modes if isinstance(m, dict) and m.get("id")]
+    # de-duplicate (preserve first-seen order): a repeated id must not be graded —
+    # and PASS-counted — twice, which would inflate the score.
+    seen = set()
+    ids = [i for i in raw if not (i in seen or seen.add(i))]
 except Exception:
     sys.exit(4)
 if not ids:
@@ -159,17 +173,39 @@ if [[ "${GRADE_SKIP_GITLEAKS:-}" != "1" ]]; then
       emit_score_and_exit 0
     fi
   else
+    # Surface the SKIP on STDOUT too (not only stderr): the loop consumes run.log,
+    # and a silently-absent secret scan reported alongside a clean score is exactly
+    # the vacuous-green/infra-as-verdict trap. A SKIP is visible and is not a pass.
+    printf 'gitleaks: SKIP (not installed) — regression floor has a gap this run\n'
     printf 'GATE: SKIP — gitleaks not installed (not a pass)\n' >&2
   fi
 fi
 
 # --- TARGET-boundary check (§5.1 pillar ③): refuse to score off-target diffs. ---
-if [[ -n "$TARGET_RE" ]]; then
-  changed="$(git -C "$REPO_ROOT" diff --name-only "$BASE_REF" HEAD 2>/dev/null || true)"
+# The batteries execute the WORKING TREE, so the boundary check must cover exactly
+# the bytes that run. We enforce: (1) --base is explicit (HEAD~1 misses earlier
+# commits of a multi-commit candidate); (2) the tree is clean (an uncommitted tamper
+# cannot hide where a committed-range diff can't see it); (3) git failure fails CLOSED
+# (a boundary check that cannot run must not silently pass); (4) full-path anchored
+# match (so 'core/tests/agents-helper.sh' is not mistaken for on-target 'agents/.*').
+if [[ $TARGET_SET -eq 1 ]]; then
+  if [[ -z "$BASE_REF" ]]; then
+    printf 'TARGET-BOUNDARY — --target requires --base <mission-start-ref> (fail-closed)\n' >&2
+    emit_score_and_exit 0
+  fi
+  if ! git -C "$REPO_ROOT" diff --quiet 2>/dev/null || ! git -C "$REPO_ROOT" diff --cached --quiet 2>/dev/null; then
+    printf 'TARGET-BOUNDARY — working tree is dirty; commit the candidate before grading (fail-closed)\n' >&2
+    emit_score_and_exit 0
+  fi
+  changed="$(git -C "$REPO_ROOT" diff --name-only "$BASE_REF" HEAD 2>/dev/null)"
+  if [[ $? -ne 0 ]]; then
+    printf 'TARGET-BOUNDARY — git diff %s..HEAD failed; cannot verify boundary (fail-closed)\n' "$BASE_REF" >&2
+    emit_score_and_exit 0
+  fi
   offtarget=""
   while IFS= read -r f; do
     [[ -z "$f" ]] && continue
-    if ! printf '%s' "$f" | grep -qE "$TARGET_RE"; then
+    if ! printf '%s' "$f" | grep -qxE "$TARGET_RE"; then
       offtarget="$offtarget $f"
     fi
   done <<< "$changed"
@@ -211,7 +247,9 @@ done <<< "$MODE_IDS"
 score="$(pass="$pass" oer="$oer" python3 - <<'PY'
 import os
 p = int(os.environ["pass"]); o = int(os.environ["oer"])
-print(f"{p - 0.5 * o:.1f}")
+# floor at 0.0: a negative rollup is meaningless (it is deep in discard territory
+# anyway) and the append-only ledger validates score as non-negative.
+print(f"{max(0.0, p - 0.5 * o):.1f}")
 PY
 )"
 emit_score_and_exit "$score"

@@ -58,16 +58,22 @@ cmd_append() {
     *) die "--status must be one of keep|discard|crash|timeout (got: '${status}')" ;;
   esac
 
+  # commit must be a sha (hex) or '-'; anything else (esp. an embedded tab) would
+  # forge extra TSV columns — reject rather than sanitize-and-hope (TSV injection).
+  printf '%s' "$commit"   | grep -qE '^([0-9a-fA-F]+|-)$'  || die "--commit must be a hex sha or '-' (got: '${commit}')"
   # harness_score must look numeric; duration must be a non-negative integer —
   # a malformed value is rejected, not silently coerced (loose-coercion lesson).
   printf '%s' "$score"    | grep -qE '^[0-9]+(\.[0-9]+)?$' || die "--score must be numeric (got: '${score}')"
   printf '%s' "$duration" | grep -qE '^[0-9]+$'            || die "--duration must be a non-negative integer (got: '${duration}')"
 
-  # sanitize free text: strip tabs/newlines/CR (they would break the TSV row), cap 80.
-  desc="$(printf '%s' "$desc" | tr '\t\r\n' '   ' | cut -c1-80)"
+  # sanitize free text: strip tabs/newlines/CR (they would break the TSV row), then
+  # cap at 80 CHARACTERS (bash substring is codepoint-aware under a UTF-8 locale, so
+  # Korean/multibyte descriptions are not truncated mid-sequence as `cut -c` may).
+  desc="$(printf '%s' "$desc" | tr '\t\r\n' '   ')"
+  desc="${desc:0:80}"
 
   mkdir -p "$(dirname "$file")" || die "cannot create ledger dir for $file"
-  if [[ ! -e "$file" ]]; then
+  if [[ ! -s "$file" ]]; then   # missing OR empty -> (re)write the header once
     printf '%s\n' "$HEADER" > "$file" || die "cannot write header to $file"
   fi
   printf '%s\t%s\t%s\t%s\t%s\n' "$commit" "$score" "$duration" "$status" "$desc" >> "$file" \

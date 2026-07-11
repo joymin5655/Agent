@@ -105,6 +105,61 @@ mkdir -p "$ROOT/docs"
 run_hook Write "$ROOT/docs/note.md" "hi" AGENT_LOOP_ACTIVE=1
 [[ -z "$OUT" ]]; check "unrelated-file-allowed" $?
 
+# run a Bash event through the hook: sets OUT
+run_bash() {
+  local command="$1"; shift
+  local event
+  event=$(C="$command" python3 -c 'import os,json; print(json.dumps({"event":"PreToolUse","tool_name":"Bash","tool_input":{"command":os.environ["C"]}}))')
+  OUT="$(printf '%s' "$event" | env AGENT_PROJECT_DIR="$ROOT" "$@" python3 "$HOOK" 2>/dev/null || true)"
+}
+
+echo
+echo "=== (l) active loop: Bash WRITE into guarded surface -> ask (the Bash bypass) ==="
+run_bash "sed -i '' 's/FAIL/PASS/' core/tests/grade.sh" AGENT_LOOP_ACTIVE=1
+is_ask; check "bash-sed-i-coretests-ask" $?
+run_bash "echo forged > evals/failure-modes.yaml" AGENT_LOOP_ACTIVE=1
+is_ask; check "bash-redirect-evals-ask" $?
+run_bash "cp /tmp/fake core/tests/pre-tool-guard-test.sh" AGENT_LOOP_ACTIVE=1
+is_ask; check "bash-cp-coretests-ask" $?
+run_bash "rm .agent/loop/results.tsv" AGENT_LOOP_ACTIVE=1
+is_ask; check "bash-rm-ledger-ask" $?
+run_bash "git checkout HEAD -- core/tests/grade.sh" AGENT_LOOP_ACTIVE=1
+is_ask; check "bash-git-checkout-coretests-ask" $?
+run_bash "python3 -c \"open('core/tests/x.sh','w').write('exit 0')\"" AGENT_LOOP_ACTIVE=1
+is_ask; check "bash-python-open-w-ask" $?
+
+echo
+echo "=== (m) active loop: Bash READ / unrelated -> allow (no false-ask) ==="
+run_bash "cat core/tests/grade.sh" AGENT_LOOP_ACTIVE=1
+[[ -z "$OUT" ]]; check "bash-cat-coretests-allowed" $?
+run_bash "grep -r FAIL core/tests/" AGENT_LOOP_ACTIVE=1
+[[ -z "$OUT" ]]; check "bash-grep-coretests-allowed" $?
+run_bash "bash core/tests/grade.sh --base HEAD~1" AGENT_LOOP_ACTIVE=1
+[[ -z "$OUT" ]]; check "bash-run-grade-allowed" $?
+# Bash write to guarded surface is INERT outside a loop
+run_bash "echo x > core/tests/y.sh"    # no AGENT_LOOP_ACTIVE
+[[ -z "$OUT" ]]; check "bash-write-inert-no-loop" $?
+
+echo
+echo "=== (n) self-protection: editing the guard's OWN enforcement code -> ask ==="
+run_hook Write "$ROOT/core/hooks/loop-write-guard.py" "sys.exit(0)" AGENT_LOOP_ACTIVE=1
+is_ask; check "self-edit-guard-ask" $?
+mkdir -p "$ROOT/hooks"
+run_hook Edit "$ROOT/hooks/hooks.json" "{}" AGENT_LOOP_ACTIVE=1
+is_ask; check "edit-hooks-json-ask" $?
+
+echo
+echo "=== (o) MultiEdit into guarded surface -> ask (matcher covers MultiEdit) ==="
+run_hook MultiEdit "$ROOT/core/tests/grade.sh" "patch" AGENT_LOOP_ACTIVE=1
+is_ask; check "multiedit-coretests-ask" $?
+
+echo
+echo "=== (p) fail-closed: non-string ledger content cannot prove append -> ask ==="
+: > "$LEDG"; printf 'header\n' > "$LEDG"
+event='{"event":"PreToolUse","tool_name":"Write","tool_input":{"file_path":"'"$LEDG"'","content":12345}}'
+OUT="$(printf '%s' "$event" | env AGENT_PROJECT_DIR="$ROOT" AGENT_LOOP_ACTIVE=1 python3 "$HOOK" 2>/dev/null || true)"
+is_ask; check "ledger-nonstring-content-ask" $?
+
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]
