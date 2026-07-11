@@ -22,6 +22,19 @@ wave, auditing after each wave, and aborting on risk-area violations.
 | `/supervise <slug> --auto-push` | Each wave commits + pushes + opens PR. User merges. |
 | `/supervise <slug> --auto-merge` | Each wave commits + pushes + admin-merges via `auto-ship.sh`. |
 
+## Permission friction (plan-scope-allow prerequisite)
+
+/supervise does not grant itself permissions. Whether wave edits hit the
+native permission prompt is decided by the `plan-scope-allow` gate
+(`docs/gate-registry.md`), which is active only when `AGENT_PLAN_ALLOW_MODE=on`
+is exported, or — with the env unset — when the workspace resolves to the
+`personal` trust tier (`docs/customization.md` § Trust tiers). In `collab`
+workspaces, expect a prompt per edit; prefer report-first waves there.
+Coverage is Write/Edit/MultiEdit only — Bash/MCP wave commands always keep
+their own gates and prompts (extension is backlog LE-1). Hard safeguards
+(risk-area abort, R4 mutex, gitleaks, test-failure abort) bind in every tier
+and every mode, including full-auto.
+
 ## Model policy
 
 Who runs on which model — and what enforces it:

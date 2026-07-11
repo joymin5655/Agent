@@ -18,16 +18,22 @@ Contract and polarity — this is the harness's first permission-WEAKENING hook:
   short-circuiting deny earlier in the chain runs first.
 - Reader hardcodes the flag path (no env override) — it must stay coupled to
   plan-gate.py's writer, same one-path-one-contract rule as spec-gate.py.
-- Opt-in via env only: AGENT_PLAN_ALLOW_MODE=on (default off — ships dark; flip
-  after telemetry). Deliberately NOT a hook-config.yml key: repo config is
-  additive/stricter-only, and a weakening toggle must not be editable by the
-  agent itself.
+- Activation is 3-way: AGENT_PLAN_ALLOW_MODE=on forces active, any other
+  explicit value forces dark, and UNSET delegates to the per-project trust
+  tier (trust_tier.py — active only for "personal" workspaces, whose grant
+  source is a user-side file outside the workspace; fails closed to collab).
+  Deliberately NOT a hook-config.yml key: repo config is additive/stricter-
+  only, and a weakening toggle must not be editable by the agent itself.
 
 Never-allow screens (hit -> silent, their own guards + native prompt decide):
 spec-gate GUARD_PATTERNS verbatim (migrations/*.sql, secrets/ + .env,
 functions/*/index.ts|js, billing/) plus self-tamper surfaces (.agent/
-hook-config.yml, .git/). Workspace containment is realpath-based (symlink and
-../ escapes resolve outside and go silent).
+hook-config.yml, .git/, .claude/settings*.json, .envrc, .mcp.json — settings
+and .envrc can inject session env such as AGENT_PLAN_ALLOW_MODE itself, and
+.mcp.json can register a durable command-executing MCP server, so
+auto-allowing them would let an approved plan durably self-weaken).
+Workspace containment is realpath-based (symlink and ../ escapes resolve
+outside and go silent).
 
 Telemetry: each emitted allow appends one line to
 .agent/logs/plan-scope-allow.jsonl (override: AGENT_PLAN_ALLOW_SINK).
@@ -56,6 +62,13 @@ NEVER_ALLOW = [
     re.compile(r"(^|/)billing/", re.IGNORECASE),
     re.compile(r"(^|/)\.agent/hook-config\.(yml|json)$", re.IGNORECASE),
     re.compile(r"(^|/)\.git(/|$)", re.IGNORECASE),
+    # Session-env injection / persistence surfaces: editing these can set
+    # AGENT_PLAN_ALLOW_MODE=on for future sessions or register a durable
+    # command-executing MCP server — the self-escalation loop this hook must
+    # never accelerate.
+    re.compile(r"(^|/)\.claude/settings(\.local)?\.json$", re.IGNORECASE),
+    re.compile(r"(^|/)\.envrc$", re.IGNORECASE),
+    re.compile(r"(^|/)\.mcp\.json$", re.IGNORECASE),
 ]
 
 
@@ -98,7 +111,11 @@ def log_allow(root, file_path):
 
 
 def main():
-    if os.environ.get("AGENT_PLAN_ALLOW_MODE", "off").strip().lower() != "on":
+    # 3-way mode gate: explicit "on" -> active, any other explicit value ->
+    # dark, unset/empty -> the per-project trust tier decides (checked below,
+    # once the workspace root is known).
+    mode = os.environ.get("AGENT_PLAN_ALLOW_MODE", "").strip().lower()
+    if mode and mode != "on":
         return
 
     try:
@@ -134,6 +151,17 @@ def main():
     # Re-screen the RESOLVED path too: a symlink may rename a guarded target.
     for pattern in NEVER_ALLOW:
         if pattern.search(real_target):
+            return
+
+    if mode != "on":
+        # Mode unset: only "personal" workspaces activate. detect_tier fails
+        # closed to collab (no trust list, foreign remote, repo downgrade,
+        # any exception) -> stay silent, native prompt keeps asking.
+        try:
+            from trust_tier import detect_tier
+            if detect_tier(root) != "personal":
+                return
+        except Exception:
             return
 
     log_allow(root, file_path)
