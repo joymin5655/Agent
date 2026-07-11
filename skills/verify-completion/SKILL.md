@@ -115,3 +115,9 @@ verify-completion <slug>: CONFIRMED | REFUTED   (score S)
   skill exists to prevent.
 - **A CONFIRMED verdict cites its evidence.** Score, dimension counts, and
   (for the semantic pass) the reason each doubt was resolved.
+- **A dead reviewer is not a clean review.** An aggregated result of `raised: 0`
+  (or `findings: 0`) is NOT clean when any dispatched agent errored or died at
+  its session limit (`agents_error > 0`, session-limit failures, empty agent
+  results) — check the run's journal/agent logs directly and re-run the dead
+  reviews before accepting the aggregate. (Recurred twice in the field: the
+  review never ran but looked passed.)
