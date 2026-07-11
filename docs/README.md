@@ -7,6 +7,7 @@
 | [`hook-protocol.md`](hook-protocol.md) | Writing a new hook OR a new AI adapter (CANONICAL) |
 | [`ai-adapters.md`](ai-adapters.md) | Adding support for a new AI runtime |
 | [`customization.md`](customization.md) | Project-specific risk areas, resources, and policy patterns |
+| [`skill-authoring.md`](skill-authoring.md) | Writing or editing a skill in `skills/` — vocabulary and principles |
 | [`concepts/multi-session-worktree.md`](concepts/multi-session-worktree.md) | When you have multiple AI sessions simultaneously |
 | [`concepts/security-guards-generic.md`](concepts/security-guards-generic.md) | Project Risk Areas — the 5-layer secret/destructive defense |
 | [`concepts/memory-discipline.md`](concepts/memory-discipline.md) | When and how to use AI memory systems |
