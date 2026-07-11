@@ -158,3 +158,8 @@ goal_mode:
 #   credential_key_names:            # plain strings, folded into one extra KEY=value pattern
 #     - "MYSERVICE_TOKEN"
 # LIVE-SCHEMA-EXAMPLE-END
+
+# NOTE (not a config key): plan-scope-allow.py — the plan-approved auto-allow
+# accelerator — is deliberately NOT configurable here. Weakening toggles are
+# env-only so the agent cannot edit them into a repo file:
+#   export AGENT_PLAN_ALLOW_MODE=on    # default off

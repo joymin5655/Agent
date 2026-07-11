@@ -114,6 +114,10 @@ point `spec-gate` allows edits for the rest of the session (the flag is the dedu
 approve once, not per-edit). SessionStart/Stop clear the flag, so each new session
 starts unapproved.
 
+This skill is complete when `spec.md` and `plan.md` both exist under
+`.agent/plans/<slug>/` and the plan has been routed through ExitPlanMode —
+approval itself is the user's move, not yours.
+
 ## Enforcement — the tool boundary, not prompt coercion
 
 `core/hooks/spec-gate.py` runs on every `Write|Edit|MultiEdit`. When no plan is
