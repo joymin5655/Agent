@@ -18,8 +18,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   same-turn read* — and forbids demanding a provider you haven't confirmed exists. Enforced
   by a new SessionStart truth pass, `agent-inventory.py`, which reconciles the **active**
   registry (including consumer overrides CI never sees) against the agent `*.md` providers
-  actually beside it: `real` (id has a sibling `.md`), `ghost` (id has none → quarantined,
-  never demandable), `discovered` (an unwired `.md`). The verdict is written to
+  actually beside it: `real` (id has a sibling provider), `ghost` (id has none → quarantined,
+  never demandable), `discovered` (an unwired provider). **A filename is not evidence** — a
+  provider is a `.md` that carries YAML frontmatter, i.e. actually *defines* an agent. A
+  stray `README.md` in the registry dir is not dispatchable, so it must never be
+  `discovered` (`--sync` would wire it in as a bogus agent), and an id backed by a
+  frontmatter-less `.md` lands in `ghost`, not `real` — the file exists but the runtime
+  cannot dispatch it, and calling that "real" *is* the deadlock. This is also what makes
+  the inventory strictly stronger than `supervisor.py`'s own `is_real_agent()` file-exists
+  check rather than a restatement of it, so `has_provider()`'s AND actually buys something. The verdict is written to
   `.agent/state/agent-inventory.json` (gitignored runtime state — no git churn, no
   drift-guard conflict) and `supervisor.py` consumes the `ghost` set as an extra
   dispatch-time quarantine source (`has_provider`), **fail-open** so a session with no
@@ -27,17 +34,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `AGENT_REGISTRY_AUTOSYNC=1`) additively wires `discovered` providers into the registry,
   copying each `model:` straight from the agent's own frontmatter so the additive write
   can't introduce the model drift `registry-drift.sh` check 4 forbids — it only ever adds,
-  never edits or removes. `AGENTS.md` links the rule from "When in doubt." Battery
-  `core/tests/agent-inventory-test.sh` (6 checks: real/ghost/discovered classification,
-  inventory persistence + ghost-set readback, additive-sync-with-model-copy, fail-open on
-  no registry), auto-discovered by `verify-all.sh`. `supervisor-dispatch-test.sh` gains
-  **case 15 — a ghost that guards a `file_globs` path**, listed ahead of a real guard on
-  the same path. The existing ghost case (7) is a *keyword* ghost declaring no globs, so it
-  could never reach the file-glob matcher — leaving the deadlock's other form untested,
-  and that form is the incident's own example (a retired `edge-fn-dev` guarding
-  `**/functions/**`). The case pins both halves of the contract: the ghost is hinted and
-  skipped (`continue`, **not** `return`, so it cannot swallow the guard behind it), and no
-  emitted `ask` ever names an undispatchable specialist.
+  never edits or removes. Fail-open is end-to-end: the SessionStart path, `supervisor.py`'s
+  `main()`, **and** the manual CLI all exit 0 on a malformed consumer registry — the
+  reconciler must never itself become the thing that breaks a session. `AGENTS.md` links
+  the rule from "When in doubt." Battery `core/tests/agent-inventory-test.sh` (8 checks:
+  real/ghost/discovered classification, provider-needs-frontmatter, inventory persistence +
+  ghost-set readback, additive-sync-with-model-copy, fail-open on no registry, fail-open on
+  a malformed one), auto-discovered by `verify-all.sh`.
+  `supervisor-dispatch-test.sh` gains two cases:
+  **15 — a ghost that guards a `file_globs` path**, listed ahead of a real guard on the same
+  path. The existing ghost case (7) is a *keyword* ghost declaring no globs, so it could
+  never reach the file-glob matcher — leaving the deadlock's other form untested, and that
+  form is the incident's own example (a retired `edge-fn-dev` guarding `**/functions/**`).
+  It pins both halves of the contract: the ghost is hinted and skipped (`continue`, **not**
+  `return`, so it cannot swallow the guard behind it), and no emitted `ask` ever names an
+  undispatchable specialist.
+  **16 — inventory quarantine end-to-end**: a provider `.md` is on disk (so `is_real_agent()`
+  passes) but the reconcile rejected it, and `has_provider()` must quarantine it anyway.
+  This is the one case where the inventory layer adds power over the file-exists check, so
+  it is the case that proves the layer is load-bearing rather than decorative.
 - **`model-routing-observer.py` — measure the model-tier convention.** A 2026-07-11
   transcript audit confirmed the call-time `model`-override convention is not
   followed: 7/7 subagent dispatches in the audited session inherited the session

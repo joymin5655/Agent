@@ -323,6 +323,22 @@ else
   bad "15-never-demanded" "the ask demands an undispatchable specialist: $OUT"
 fi
 
+echo "=== 16. Inventory quarantine: a provider .md exists but the inventory calls it ghost -> no ask ==="
+# The only case where inventory_ghosts() adds power over is_real_agent(): the .md
+# IS on disk (so is_real_agent passes) but the SessionStart reconcile rejected it as
+# not a real provider — e.g. a stray .md with no frontmatter, which the runtime
+# cannot dispatch. has_provider() must AND the two and quarantine it anyway.
+F16="$(make_default_fixture)"
+mkdir -p "$F16/.agent/state"
+printf '{"ts":"2026-07-13T00:00:00+00:00","real":[],"ghost":["code-reviewer"],"discovered":[]}\n' \
+  > "$F16/.agent/state/agent-inventory.json"
+run_hook "$F16" "$(ups_event 'please review this code')"
+assert_no_state     "16-nostate" "$F16"          # intent must NOT be recorded...
+assert_empty_stdout "16-ups-empty"
+assert_stderr_has   "16-hint" 'code-reviewer'    # ...it is hinted as a ghost instead
+run_hook "$F16" "$(pre_event Edit 'src/widget.ts')"
+assert_empty_stdout "16-edit-clear"              # and the follow-up edit is not gated
+
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]

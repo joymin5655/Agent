@@ -156,6 +156,33 @@ print("PASS" if empty and not inv.is_file() else (r, inv.is_file()))
 ' "$D" "$D/agents/nonexistent.json"
 
 # ---------------------------------------------------------------------------
+# 7. A filename is not evidence: only a .md with frontmatter defines an agent.
+#    A stray README.md must not become `discovered` (--sync would wire it in as a
+#    bogus agent), and a registry id backed by a frontmatter-less .md must land in
+#    `ghost`, not `real` — the file exists, but the runtime cannot dispatch it, and
+#    calling it real is exactly the ghost-specialist deadlock.
+D7="$(make_fixture)"
+cat > "$D7/agents/master-registry.json" <<'EOF'
+{"version":1,"agents":[{"id":"hollow","description":"backed by a .md with no frontmatter"}]}
+EOF
+printf 'just prose, no frontmatter\n' > "$D7/agents/hollow.md"
+printf '# Notes\nnot an agent\n'      > "$D7/agents/README.md"
+assert_py "provider needs frontmatter: hollow -> ghost, README -> not discovered" '
+r = m.reconcile(reg)
+print("PASS" if r == {"real": [], "ghost": ["hollow"], "discovered": []} else r)
+' "$D7" "$D7/agents/master-registry.json"
+
+# 8. The CLI must fail open too — the module docstring promises exit 0 everywhere.
+#    A malformed consumer registry (a bare string where an agent object belongs)
+#    used to raise AttributeError out of reconcile(); the reconciler must never be
+#    the thing that breaks the session.
+D8="$(make_fixture)"
+printf '{"version":1,"agents":["not an object"]}' > "$D8/agents/master-registry.json"
+( cd "$D8" && git init -q . 2>/dev/null; python3 "$MOD" >/dev/null 2>&1 )
+if [[ $? -eq 0 ]]; then ok "fail-open: malformed registry -> CLI exits 0"
+else bad "fail-open: malformed registry -> CLI exited nonzero"; fi
+
+# ---------------------------------------------------------------------------
 printf '\nagent-inventory: %d passed, %d failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]] || exit 1
 echo "PASS — agent-inventory reconcile contract holds"

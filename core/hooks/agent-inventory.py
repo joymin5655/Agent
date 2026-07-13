@@ -93,6 +93,24 @@ def frontmatter_model(md_path: pathlib.Path) -> Optional[str]:
     return m.group(1) if m else None
 
 
+def is_provider(md_path: pathlib.Path) -> bool:
+    """A provider is a .md that actually *defines an agent* — i.e. carries YAML
+    frontmatter. Filename alone is not evidence: a README.md or NOTES.md sitting
+    in the registry dir is not a dispatchable agent, and treating it as one would
+    (a) mark a registry id "real" that the runtime cannot dispatch — the very
+    ghost-specialist deadlock this module exists to prevent — and (b) let --sync
+    wire the stray file into the registry as a bogus agent.
+
+    Unreadable or frontmatter-less -> False, which routes the id to `ghost`
+    (quarantined, never demanded). Erring toward ghost is the fail-open direction.
+    """
+    try:
+        text = md_path.read_text(encoding="utf-8")
+    except Exception:
+        return False
+    return text.lstrip().startswith("---") and len(text.split("---", 2)) >= 3
+
+
 def reconcile(registry_path: pathlib.Path) -> Dict[str, List[str]]:
     """Classify the active registry against the provider .md files beside it.
 
@@ -105,7 +123,7 @@ def reconcile(registry_path: pathlib.Path) -> Dict[str, List[str]]:
         a.get("id", "") for a in reg.get("agents", []) if a.get("id")
     ]
     provider_ids = {
-        p.stem for p in reg_dir.glob("*.md") if p.stem
+        p.stem for p in reg_dir.glob("*.md") if p.stem and is_provider(p)
     }
 
     real = sorted(i for i in registry_ids if i in provider_ids)
@@ -223,7 +241,15 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     do_sync = args.sync or os.environ.get("AGENT_REGISTRY_AUTOSYNC") == "1"
     root = repo_root()
-    result = run(root, do_sync)
+    try:
+        result = run(root, do_sync)
+    except Exception as exc:
+        # Fail-open, as the module docstring promises. A malformed consumer
+        # registry (e.g. a bare string where an agent object belongs) must not
+        # make the reconciler the thing that breaks the session.
+        print("agent-inventory: reconcile failed ({}) — no quarantine written".format(exc),
+              file=sys.stderr)
+        return 0
 
     print("agent-inventory @ {}".format(root))
     print("  real       ({}): {}".format(len(result["real"]), ", ".join(result["real"]) or "-"))
