@@ -8,6 +8,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Evidence-first inventory — kill the ghost-specialist deadlock at its root
+  (`rules/policy/evidence-first.md` + `core/hooks/agent-inventory.py`).** A gate that
+  demands a specialist with no in-runtime provider deadlocks the session: the gate blocks
+  the work, and the very thing that would unblock it can't be dispatched (observed live —
+  a stale plugin cache required `ui-ux-director`/`fe-architect`/… agents that exist only in
+  the `legacy/` v0 mirror, not in the active registry). New policy `evidence-first.md`
+  names the underlying failure — *asserting present state from memory instead of a
+  same-turn read* — and forbids demanding a provider you haven't confirmed exists. Enforced
+  by a new SessionStart truth pass, `agent-inventory.py`, which reconciles the **active**
+  registry (including consumer overrides CI never sees) against the agent `*.md` providers
+  actually beside it: `real` (id has a sibling `.md`), `ghost` (id has none → quarantined,
+  never demandable), `discovered` (an unwired `.md`). The verdict is written to
+  `.agent/state/agent-inventory.json` (gitignored runtime state — no git churn, no
+  drift-guard conflict) and `supervisor.py` consumes the `ghost` set as an extra
+  dispatch-time quarantine source (`has_provider`), **fail-open** so a session with no
+  inventory behaves exactly as before. Opt-in hybrid auto-correct (`--sync` /
+  `AGENT_REGISTRY_AUTOSYNC=1`) additively wires `discovered` providers into the registry,
+  copying each `model:` straight from the agent's own frontmatter so the additive write
+  can't introduce the model drift `registry-drift.sh` check 4 forbids — it only ever adds,
+  never edits or removes. `AGENTS.md` links the rule from "When in doubt." Battery
+  `core/tests/agent-inventory-test.sh` (6 checks: real/ghost/discovered classification,
+  inventory persistence + ghost-set readback, additive-sync-with-model-copy, fail-open on
+  no registry), auto-discovered by `verify-all.sh`.
 - **`model-routing-observer.py` — measure the model-tier convention.** A 2026-07-11
   transcript audit confirmed the call-time `model`-override convention is not
   followed: 7/7 subagent dispatches in the audited session inherited the session

@@ -139,6 +139,8 @@ for t in core/tests/*.sh; do bash "$t" || exit 1; done
 
 - Read [`rules/contributing.md`](rules/contributing.md) for coding rules
 - Read [`rules/public-repo.md`](rules/public-repo.md) for repo safety
+- Read [`rules/policy/evidence-first.md`](rules/policy/evidence-first.md) — verify
+  present state before you assert it; never demand a provider you haven't confirmed exists
 - Read [`docs/hook-protocol.md`](docs/hook-protocol.md) for the hook contract
 - Open an issue or ask the human maintainer
 
