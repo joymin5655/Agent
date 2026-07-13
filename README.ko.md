@@ -223,7 +223,7 @@ Agent/
 ├── templates/          # project scaffold templates
 ├── docs/               # architecture · protocol · guides · benchmark
 ├── github/             # PR template + workflow templates
-└── legacy/             # archived v0 mirror (out of scope)
+└── legacy/             # retired snapshots (out of scope)
 ```
 
 ## 왜 "AI 불가지(AI-agnostic)"인가?
@@ -331,7 +331,7 @@ secret-scan 패턴 확장입니다. 전체 스키마와 실제-대-문서 간극
 - [`docs/benchmark/results.md`](docs/benchmark/results.md) — 리뷰어 자체 벤치마크
 - [`docs/benchmark/landscape.md`](docs/benchmark/landscape.md) — 인기 하네스 대비 서베이 + gap→backlog 매핑
 - [`docs/harness-improvement-plan.md`](docs/harness-improvement-plan.md) — 점검 + 개선 로드맵 *(한국어)*
-- 2026-05 이전 미러 버전에서 이전하려면: [`legacy/v0-mirror-2026-05-12/ARCHIVE-NOTE.md`](legacy/v0-mirror-2026-05-12/ARCHIVE-NOTE.md)
+- 2026-05 이전 미러 버전에서 이전하려면: v0 미러는 0.2.9에서 배포 트리를 떠났다(은퇴한 에이전트 프로바이더가 ghost-specialist 트랩이었다). `archive/v0-mirror` 태그에 보존됨: `git show archive/v0-mirror:legacy/v0-mirror-2026-05-12/ARCHIVE-NOTE.md`
 
 ## 기여
 
