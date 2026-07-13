@@ -1,2 +1,0 @@
-@RTK.md
-@karpathy.md

@@ -26,7 +26,7 @@ For any change touching 3+ files or any change to `core/hooks/`, `adapters/`, or
 
 ### 2. Sanitize discipline
 
-This repo MUST stay domain-neutral. The original maintainer ported it from a prior domain-specific project (preserved under `legacy/`). Before committing any file under `core/`, `rules/`, `agents/`, `skills/`, `templates/`, `docs/`, or root:
+This repo MUST stay domain-neutral. The original maintainer ported it from a prior domain-specific project (the v0 mirror of it is preserved on the `archive/v0-mirror` tag, out of the shipped tree; later trim snapshots stay under `legacy/`). Before committing any file under `core/`, `rules/`, `agents/`, `skills/`, `templates/`, `docs/`, or root:
 
 ```bash
 # Run the sanitize audit — must return zero matches outside legacy/

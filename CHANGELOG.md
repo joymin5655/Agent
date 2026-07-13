@@ -374,6 +374,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (Kept the filename: `cross-ai-parity.sh` named in the plan was a phantom P0-1
   removed, and the docs already reference `adapter-parity.sh`.)
 
+### Removed
+- **`legacy/v0-mirror-2026-05-12/` retired from the shipped tree — defence-in-depth
+  for the ghost-specialist deadlock (preserved on tag `archive/v0-mirror`).** The
+  plugin package *is* the git tree (`marketplace.json` declares `"source": "./"` and
+  there is no exclusion manifest — the only things missing from a release are the
+  gitignored ones), so the v0 mirror rode into **every** release: 194 files, 1.3 MB,
+  including **33 retired agent `.md` providers** (`ui-ux-director`, `fe-architect`,
+  `edge-fn-dev`, …) sitting next to **two 64-entry `master-registry.json`** files.
+  That adjacency is exactly the shape `is_real_agent()` trusts — a registry id is
+  "real" iff a sibling `<id>.md` exists — so any copy of that tree into an active
+  registry path resurrects the deadlock the rest of this release exists to kill.
+  `find_registry()` never reaches into `legacy/`, so this was a *latent* trap and dead
+  weight rather than a live path (the live defence is `agent-inventory.py` above);
+  removing it means a retired provider can no longer be resurrected by a stale copy.
+  `legacy/trim-2026-07-04/` stays — its 3 agent `.md` files have **no** sibling
+  registry, so they cannot satisfy the predicate, and keeping `legacy/` alive keeps
+  the five `legacy/`-scoped exclusion rules (`gitleaks.toml`, `sanitize-audit.sh`,
+  `supply-chain-scan.sh`, `doc-reality.sh`, `check-hardcoding.py`) valid and unchanged.
+  Recover anything with `git show archive/v0-mirror:legacy/v0-mirror-2026-05-12/<path>`.
+
 ### Security
 - **Codex/Gemini adapter synthetic-mode no longer builds canonical JSON by string
   interpolation.** `adapters/{codex,gemini}/adapter.sh` constructed the event JSON
