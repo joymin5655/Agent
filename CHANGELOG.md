@@ -30,7 +30,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   never edits or removes. `AGENTS.md` links the rule from "When in doubt." Battery
   `core/tests/agent-inventory-test.sh` (6 checks: real/ghost/discovered classification,
   inventory persistence + ghost-set readback, additive-sync-with-model-copy, fail-open on
-  no registry), auto-discovered by `verify-all.sh`.
+  no registry), auto-discovered by `verify-all.sh`. `supervisor-dispatch-test.sh` gains
+  **case 15 — a ghost that guards a `file_globs` path**, listed ahead of a real guard on
+  the same path. The existing ghost case (7) is a *keyword* ghost declaring no globs, so it
+  could never reach the file-glob matcher — leaving the deadlock's other form untested,
+  and that form is the incident's own example (a retired `edge-fn-dev` guarding
+  `**/functions/**`). The case pins both halves of the contract: the ghost is hinted and
+  skipped (`continue`, **not** `return`, so it cannot swallow the guard behind it), and no
+  emitted `ask` ever names an undispatchable specialist.
 - **`model-routing-observer.py` — measure the model-tier convention.** A 2026-07-11
   transcript audit confirmed the call-time `model`-override convention is not
   followed: 7/7 subagent dispatches in the audited session inherited the session
