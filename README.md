@@ -217,7 +217,7 @@ Agent/
 ├── templates/          # project scaffold templates
 ├── docs/               # architecture · protocol · guides · benchmark
 ├── github/             # PR template + workflow templates
-└── legacy/             # archived v0 mirror (out of scope)
+└── legacy/             # retired snapshots (out of scope)
 ```
 
 ## Why "AI-agnostic"?
@@ -333,7 +333,7 @@ see [`docs/specializing-agents.md`](docs/specializing-agents.md).
 - [`docs/benchmark/results.md`](docs/benchmark/results.md) — reviewer self-benchmark
 - [`docs/benchmark/landscape.md`](docs/benchmark/landscape.md) — survey vs popular harnesses + gap→backlog map
 - [`docs/harness-improvement-plan.md`](docs/harness-improvement-plan.md) — audit + improvement roadmap *(Korean)*
-- Migrating from the pre-2026-05 mirror? See [`legacy/v0-mirror-2026-05-12/ARCHIVE-NOTE.md`](legacy/v0-mirror-2026-05-12/ARCHIVE-NOTE.md).
+- Migrating from the pre-2026-05 mirror? The v0 mirror left the shipped tree in 0.2.9 (its retired agent providers were a ghost-specialist trap). It lives on the `archive/v0-mirror` tag: `git show archive/v0-mirror:legacy/v0-mirror-2026-05-12/ARCHIVE-NOTE.md`.
 
 ## Contributing
 

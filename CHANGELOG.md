@@ -8,6 +8,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Evidence-first inventory — kill the ghost-specialist deadlock at its root
+  (`rules/policy/evidence-first.md` + `core/hooks/agent-inventory.py`).** A gate that
+  demands a specialist with no in-runtime provider deadlocks the session: the gate blocks
+  the work, and the very thing that would unblock it can't be dispatched (observed live —
+  a stale plugin cache required `ui-ux-director`/`fe-architect`/… agents that exist only in
+  the `legacy/` v0 mirror, not in the active registry). New policy `evidence-first.md`
+  names the underlying failure — *asserting present state from memory instead of a
+  same-turn read* — and forbids demanding a provider you haven't confirmed exists. Enforced
+  by a new SessionStart truth pass, `agent-inventory.py`, which reconciles the **active**
+  registry (including consumer overrides CI never sees) against the agent `*.md` providers
+  actually beside it: `real` (id has a sibling provider), `ghost` (id has none → quarantined,
+  never demandable), `discovered` (an unwired provider). **A filename is not evidence** — a
+  provider is a `.md` that carries YAML frontmatter, i.e. actually *defines* an agent. A
+  stray `README.md` in the registry dir is not dispatchable, so it must never be
+  `discovered` (`--sync` would wire it in as a bogus agent), and an id backed by a
+  frontmatter-less `.md` lands in `ghost`, not `real` — the file exists but the runtime
+  cannot dispatch it, and calling that "real" *is* the deadlock. This is also what makes
+  the inventory strictly stronger than `supervisor.py`'s own `is_real_agent()` file-exists
+  check rather than a restatement of it, so `has_provider()`'s AND actually buys something. The verdict is written to
+  `.agent/state/agent-inventory.json` (gitignored runtime state — no git churn, no
+  drift-guard conflict) and `supervisor.py` consumes the `ghost` set as an extra
+  dispatch-time quarantine source (`has_provider`), **fail-open** so a session with no
+  inventory behaves exactly as before. Opt-in hybrid auto-correct (`--sync` /
+  `AGENT_REGISTRY_AUTOSYNC=1`) additively wires `discovered` providers into the registry,
+  copying each `model:` straight from the agent's own frontmatter so the additive write
+  can't introduce the model drift `registry-drift.sh` check 4 forbids — it only ever adds,
+  never edits or removes. Fail-open is end-to-end: the SessionStart path, `supervisor.py`'s
+  `main()`, **and** the manual CLI all exit 0 on a malformed consumer registry — the
+  reconciler must never itself become the thing that breaks a session. `AGENTS.md` links
+  the rule from "When in doubt." Battery `core/tests/agent-inventory-test.sh` (8 checks:
+  real/ghost/discovered classification, provider-needs-frontmatter, inventory persistence +
+  ghost-set readback, additive-sync-with-model-copy, fail-open on no registry, fail-open on
+  a malformed one), auto-discovered by `verify-all.sh`.
+  `supervisor-dispatch-test.sh` gains two cases:
+  **15 — a ghost that guards a `file_globs` path**, listed ahead of a real guard on the same
+  path. The existing ghost case (7) is a *keyword* ghost declaring no globs, so it could
+  never reach the file-glob matcher — leaving the deadlock's other form untested, and that
+  form is the incident's own example (a retired `edge-fn-dev` guarding `**/functions/**`).
+  It pins both halves of the contract: the ghost is hinted and skipped (`continue`, **not**
+  `return`, so it cannot swallow the guard behind it), and no emitted `ask` ever names an
+  undispatchable specialist.
+  **16 — inventory quarantine end-to-end**: a provider `.md` is on disk (so `is_real_agent()`
+  passes) but the reconcile rejected it, and `has_provider()` must quarantine it anyway.
+  This is the one case where the inventory layer adds power over the file-exists check, so
+  it is the case that proves the layer is load-bearing rather than decorative.
 - **`model-routing-observer.py` — measure the model-tier convention.** A 2026-07-11
   transcript audit confirmed the call-time `model`-override convention is not
   followed: 7/7 subagent dispatches in the audited session inherited the session
@@ -350,6 +395,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   24 parity assertions; exit 1 on any divergence.
   (Kept the filename: `cross-ai-parity.sh` named in the plan was a phantom P0-1
   removed, and the docs already reference `adapter-parity.sh`.)
+
+### Removed
+- **`legacy/v0-mirror-2026-05-12/` retired from the shipped tree — defence-in-depth
+  for the ghost-specialist deadlock (preserved on tag `archive/v0-mirror`).** The
+  plugin package *is* the git tree (`marketplace.json` declares `"source": "./"` and
+  there is no exclusion manifest — the only things missing from a release are the
+  gitignored ones), so the v0 mirror rode into **every** release: 194 files, 1.3 MB,
+  including **33 retired agent `.md` providers** (`ui-ux-director`, `fe-architect`,
+  `edge-fn-dev`, …) sitting next to **two 64-entry `master-registry.json`** files.
+  That adjacency is exactly the shape `is_real_agent()` trusts — a registry id is
+  "real" iff a sibling `<id>.md` exists — so any copy of that tree into an active
+  registry path resurrects the deadlock the rest of this release exists to kill.
+  `find_registry()` never reaches into `legacy/`, so this was a *latent* trap and dead
+  weight rather than a live path (the live defence is `agent-inventory.py` above);
+  removing it means a retired provider can no longer be resurrected by a stale copy.
+  `legacy/trim-2026-07-04/` stays — its 3 agent `.md` files have **no** sibling
+  registry, so they cannot satisfy the predicate, and keeping `legacy/` alive keeps
+  the five `legacy/`-scoped exclusion rules (`gitleaks.toml`, `sanitize-audit.sh`,
+  `supply-chain-scan.sh`, `doc-reality.sh`, `check-hardcoding.py`) valid and unchanged.
+  Recover anything with `git show archive/v0-mirror:legacy/v0-mirror-2026-05-12/<path>`.
 
 ### Security
 - **Codex/Gemini adapter synthetic-mode no longer builds canonical JSON by string
