@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Gate-registry DEAD review (2026-07-15) + audit follow-up bookkeeping.** The
+  four gates the T-2 digest flagged DEAD got their review verdicts recorded and
+  `last_reviewed` bumped: project-policy KEEP (conditional-path), r4-mutex KEEP
+  (contention gate, active multi-session ops), context-mode KEEP-CONDITIONAL
+  (tied to the plugin's W-10 review), quality-completion **RETIRE-CANDIDATE**
+  (two audits agree: wired but never fired, sink never created — retirement is
+  a separate reviewed code PR). New backlog row **W-10**: third-party
+  plugin-injection pollution scan (observed live: a plugin's injected
+  `<context_window_protection>` block acting as session-wide instructions,
+  independently flagged by two research subagents — the mirror image of the
+  P3-4 self supply-chain scan). E-1 gains a design-input note: llm-council's
+  anonymous peer-review → chairman pattern as an option for the real-LLM judge
+  track (pattern only, no code import). Docs/bookkeeping only, no behavior.
+
 - **`docs/benchmark/landscape.md` 2026-07-14 spot re-check.** Five-lane web
   re-verification of the 2026-07-08 snapshot: claude-flow renamed **ruflo**
   (2026-02-27, npm/CLI unchanged); Aider marked effectively stalled (last
