@@ -124,6 +124,17 @@ E2="$(bash "$TOOL" --old /proj --new /proj_v2 --root "$T4" --apply 2>&1)"
 echo "$E2" | grep -q 'applied: rewrote 0 file(s)'; check "extend-second-apply-zero" $?
 grep -qx 'path /proj_v2/file.txt' "$T4/a.md"; check "extend-no-compounding" $?
 rm -rf "$T4"
+# NEW extends OLD via '/' continuation — the one shape the boundary anchor does
+# NOT block ('/' is a legal continuation char), so nonce protection alone
+# guarantees idempotency here (mutation round 2, gap D).
+T4B="$(mktemp -d)"
+printf 'path /proj/file.txt\n' > "$T4B/a.md"
+bash "$TOOL" --old /proj --new /proj/inner --root "$T4B" --apply >/dev/null 2>&1
+grep -qx 'path /proj/inner/file.txt' "$T4B/a.md"; check "slash-extend-first-apply-correct" $?
+S2="$(bash "$TOOL" --old /proj --new /proj/inner --root "$T4B" --apply 2>&1)"
+echo "$S2" | grep -q 'applied: rewrote 0 file(s)'; check "slash-extend-second-apply-zero" $?
+grep -qx 'path /proj/inner/file.txt' "$T4B/a.md"; check "slash-extend-no-compounding" $?
+rm -rf "$T4B"
 
 echo
 echo "=== (7) dotted path: '.' collapses in the encoded memory key ==="
@@ -132,6 +143,14 @@ printf 'mem: ~/.claude/projects/-old-2-brain-x/memory/\n' > "$T5/mem.md"
 bash "$TOOL" --old /old/2.brain --new /new/2.brain --root "$T5" --apply >/dev/null 2>&1
 grep -q -- '-new-2-brain-x/memory/' "$T5/mem.md"; check "dotted-key-encoded-and-rewritten" $?
 rm -rf "$T5"
+# underscore path: '_' must also collapse in the encoded key — an OLD like
+# /Volumes/WD_BLACK whose real key is -Volumes-WD-BLACK would otherwise be a
+# silent total miss (mutation round 2, gap B).
+T5B="$(mktemp -d)"
+printf 'mem: ~/.claude/projects/-old-wd-black-proj/memory/\n' > "$T5B/mem.md"
+bash "$TOOL" --old /old/wd_black --new /new/nd_drive --root "$T5B" --apply >/dev/null 2>&1
+grep -q -- '-new-nd-drive-proj/memory/' "$T5B/mem.md"; check "underscore-key-encoded-and-rewritten" $?
+rm -rf "$T5B"
 
 echo
 echo "=== (8) unwritable target: reported, exit 1, rest of sweep continues ==="

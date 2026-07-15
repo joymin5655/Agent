@@ -66,7 +66,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ordinary kebab text — key layer now confined to `claude/projects` context lines),
   plus newline-prefix rejection and `@keyword` cron classification; a battery
   mutation pass (5 mutations) exposed the dotted-path encoding gap now covered by a
-  fixture. Battery `core/tests/reorg-sync-test.sh` grew 27 → **43 checks** (sibling
+  fixture; a second mutation round exposed two more (underscore-in-OLD silent key
+  miss; `/`-continuation compounding where nonce protection is the sole guard) —
+  both fixtured. Battery `core/tests/reorg-sync-test.sh` grew 27 → **47 checks** (sibling
   path/kebab/sibling-key decoys byte-for-byte untouched, NEW-extends-OLD
   convergence, dotted-key encoding, unwritable-target reporting, exec-bit
   preservation, newline guard); auto-discovered by `verify-all.sh`.
