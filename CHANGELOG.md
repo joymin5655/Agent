@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Gate-registry correction: quality-completion RETIRE-CANDIDATE →
+  KEEP-CONDITIONAL (same-day supersede).** The retirement investigation refuted
+  its own premise: `session-quality-gate.py` is also the enforcement layer for
+  the landed **P3-1 `session.completion_tests`** feature, making it a
+  conditional-path gate (fires only where a consumer declares completion tests
+  or the default `src/` style scan matches) — zero in-window firings is an
+  adoption gap, not dead wiring, and the gate is battery-verified in verify-all.
+  Deleting it would have silently unshipped P3-1. Recorded as a correction row
+  rather than rewriting history; real follow-up is W-6 generalization/adoption.
+  Lesson reinforced: a DEAD flag on a conditional-path gate needs a
+  wiring-vs-adoption diagnosis before any retirement verdict.
+
 - **Gate-registry DEAD review (2026-07-15) + audit follow-up bookkeeping.** The
   four gates the T-2 digest flagged DEAD got their review verdicts recorded and
   `last_reviewed` bumped: project-policy KEEP (conditional-path), r4-mutex KEEP
