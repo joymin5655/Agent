@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **`docs/benchmark/landscape.md` 2026-07-14 spot re-check.** Five-lane web
+  re-verification of the 2026-07-08 snapshot: claude-flow renamed **ruflo**
+  (2026-02-27, npm/CLI unchanged); Aider marked effectively stalled (last
+  release 2025-08); new "Field shift" note — Anthropic Dynamic Workflows GA
+  (Pro plan 2026-07-02) erodes orchestration-first third parties but not this
+  harness's governance position; re-check found no surveyed leader closing the
+  prompt-only-enforcement gap. Survey-only change, no behavior.
+
 ### Added
 - **Evidence-first inventory — kill the ghost-specialist deadlock at its root
   (`rules/policy/evidence-first.md` + `core/hooks/agent-inventory.py`).** A gate that
