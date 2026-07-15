@@ -42,6 +42,25 @@ than any doc review cycle).
 | Lookups / search | LOW | per-call low-tier override | `--profile quick` | lightest model |
 | Fan-out workers | **LOW default** | low-tier override; promote individual workers only when a task demands it | `--profile quick` | lightest model |
 
+## Built-in agents (Claude Code)
+
+Claude Code ships unpinned built-in subagents; with no frontmatter they inherit
+the session's top model, which makes them the largest silent TOP-leak (a
+2026-07-11 transcript audit measured 7/7 dispatches at the session top model).
+The tier assignment:
+
+| Built-in | Tier | How |
+|---|---|---|
+| `Plan` (design/architecture) | TOP | No override — inherit is intended; this is judgment work |
+| `Explore` (codebase exploration) | **MID default** | Explicit `model` override on every dispatch. Deliberate exception to the fan-out-LOW default: exploration quality degrades visibly below MID, and a wrong map costs more than the tier saves |
+| `Explore` (simple file/pattern lookups) | LOW | Explicit low-tier override when the task is a bounded search, not comprehension |
+| `general-purpose` and other unpinned types | MID default | Same rule: an unpinned dispatch without an override is a policy violation, not a neutral default |
+
+Synthesis of subagent results stays in the main loop (TOP — orchestration
+judgment). `core/hooks/model-routing-observer.py` records every Task/Agent
+dispatch's verdict (`override` / `pinned_specialist` / `inherit_top`) to
+`.agent/logs/model-routing.jsonl`, so this convention is measured, not assumed.
+
 ## Floors
 
 - **Verify/judge floor: never below the workhorse (MID) tier.** The

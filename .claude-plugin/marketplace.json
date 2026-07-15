@@ -6,7 +6,7 @@
   },
   "metadata": {
     "description": "joymin's personal agent harness — a portable, AI-agnostic agent system packaged as a Claude Code plugin.",
-    "version": "0.2.5"
+    "version": "0.2.9"
   },
   "plugins": [
     {

@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Gate-registry correction: quality-completion RETIRE-CANDIDATE →
+  KEEP-CONDITIONAL (same-day supersede).** The retirement investigation refuted
+  its own premise: `session-quality-gate.py` is also the enforcement layer for
+  the landed **P3-1 `session.completion_tests`** feature, making it a
+  conditional-path gate (fires only where a consumer declares completion tests
+  or the default `src/` style scan matches) — zero in-window firings is an
+  adoption gap, not dead wiring, and the gate is battery-verified in verify-all.
+  Deleting it would have silently unshipped P3-1. Recorded as a correction row
+  rather than rewriting history; real follow-up is W-6 generalization/adoption.
+  Lesson reinforced: a DEAD flag on a conditional-path gate needs a
+  wiring-vs-adoption diagnosis before any retirement verdict.
+
+- **Gate-registry DEAD review (2026-07-15) + audit follow-up bookkeeping.** The
+  four gates the T-2 digest flagged DEAD got their review verdicts recorded and
+  `last_reviewed` bumped: project-policy KEEP (conditional-path), r4-mutex KEEP
+  (contention gate, active multi-session ops), context-mode KEEP-CONDITIONAL
+  (tied to the plugin's W-10 review), quality-completion **RETIRE-CANDIDATE**
+  (two audits agree: wired but never fired, sink never created — retirement is
+  a separate reviewed code PR). New backlog row **W-10**: third-party
+  plugin-injection pollution scan (observed live: a plugin's injected
+  `<context_window_protection>` block acting as session-wide instructions,
+  independently flagged by two research subagents — the mirror image of the
+  P3-4 self supply-chain scan). E-1 gains a design-input note: llm-council's
+  anonymous peer-review → chairman pattern as an option for the real-LLM judge
+  track (pattern only, no code import). Docs/bookkeeping only, no behavior.
+
+- **`docs/benchmark/landscape.md` 2026-07-14 spot re-check.** Five-lane web
+  re-verification of the 2026-07-08 snapshot: claude-flow renamed **ruflo**
+  (2026-02-27, npm/CLI unchanged); Aider marked effectively stalled (last
+  release 2025-08); new "Field shift" note — Anthropic Dynamic Workflows GA
+  (Pro plan 2026-07-02) erodes orchestration-first third parties but not this
+  harness's governance position; re-check found no surveyed leader closing the
+  prompt-only-enforcement gap. Survey-only change, no behavior.
+
 ### Added
 - **`/reorg-sync` — orphaned path-reference sweeper (W-2).** After a tree moves (drive
   reorg, folder rename), absolute-path references left in metadata break silently. New
@@ -15,15 +50,84 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lines, git worktree `gitdir:` pointers, `crontab` command paths, doc/config `anchor`s,
   and the path-keyed `native-memory-key` dir (rewritten with the harness's `/ . _` → `-`
   encoding). Dry-run report by default (`CLASS  file:line  text` rows + per-class
-  summary); `--apply` does a safe literal replacement (Python `str.replace`, no
-  sed/regex hazards). Binary files, symlinks, and the `.git` object store are skipped,
-  while a `.git` worktree *file* is swept; a bare `/` or empty `--old` is refused. New
-  skill `skills/reorg-sync/SKILL.md` wraps it report-then-confirm and notes that
+  summary); `--apply` does a literal replacement **anchored at a path-component
+  boundary**, with atomic per-file writes (temp + rename, permissions preserved) and
+  per-file failure reporting (exit 1, sweep continues). Binary files, symlinks, and
+  the `.git` object store are skipped, while a `.git` worktree *file* is swept; a
+  bare `/`, empty, or newline-carrying prefix is refused. New skill
+  `skills/reorg-sync/SKILL.md` wraps it report-then-confirm and notes that
   out-of-tree targets (`~/.claude` memory dir, the live crontab) are surfaced, not
-  auto-mutated. Battery `core/tests/reorg-sync-test.sh` (27 checks) drives a fixture
-  tree with all five classes plus decoys — asserting detection, dry-run immutability,
-  correct per-class rewrite (incl. the encoding transform), idempotence, the skip set,
-  and five usage-guard rejections; auto-discovered by `verify-all.sh`.
+  auto-mutated. **Adversarial re-review (2026-07-15, 3 lanes — the original review
+  lane died on session limits and was correctly treated as false-clean):** fixed
+  2 CRITICAL (unbounded substring replacement corrupting sibling paths/keys, e.g.
+  `/old/prefixed-thing`, `-…-Agent2`; non-idempotent compounding when NEW extends
+  OLD, `/proj`→`/proj_v2`→`_v2_v2`), 2 MAJOR (non-atomic writes with no error
+  handling → partial-apply + raw traceback; lossy encoded-key collisions with
+  ordinary kebab text — key layer now confined to `claude/projects` context lines),
+  plus newline-prefix rejection and `@keyword` cron classification; a battery
+  mutation pass (5 mutations) exposed the dotted-path encoding gap now covered by a
+  fixture. Battery `core/tests/reorg-sync-test.sh` grew 27 → **43 checks** (sibling
+  path/kebab/sibling-key decoys byte-for-byte untouched, NEW-extends-OLD
+  convergence, dotted-key encoding, unwritable-target reporting, exec-bit
+  preservation, newline guard); auto-discovered by `verify-all.sh`.
+- **Evidence-first inventory — kill the ghost-specialist deadlock at its root
+  (`rules/policy/evidence-first.md` + `core/hooks/agent-inventory.py`).** A gate that
+  demands a specialist with no in-runtime provider deadlocks the session: the gate blocks
+  the work, and the very thing that would unblock it can't be dispatched (observed live —
+  a stale plugin cache required `ui-ux-director`/`fe-architect`/… agents that exist only in
+  the `legacy/` v0 mirror, not in the active registry). New policy `evidence-first.md`
+  names the underlying failure — *asserting present state from memory instead of a
+  same-turn read* — and forbids demanding a provider you haven't confirmed exists. Enforced
+  by a new SessionStart truth pass, `agent-inventory.py`, which reconciles the **active**
+  registry (including consumer overrides CI never sees) against the agent `*.md` providers
+  actually beside it: `real` (id has a sibling provider), `ghost` (id has none → quarantined,
+  never demandable), `discovered` (an unwired provider). **A filename is not evidence** — a
+  provider is a `.md` that carries YAML frontmatter, i.e. actually *defines* an agent. A
+  stray `README.md` in the registry dir is not dispatchable, so it must never be
+  `discovered` (`--sync` would wire it in as a bogus agent), and an id backed by a
+  frontmatter-less `.md` lands in `ghost`, not `real` — the file exists but the runtime
+  cannot dispatch it, and calling that "real" *is* the deadlock. This is also what makes
+  the inventory strictly stronger than `supervisor.py`'s own `is_real_agent()` file-exists
+  check rather than a restatement of it, so `has_provider()`'s AND actually buys something. The verdict is written to
+  `.agent/state/agent-inventory.json` (gitignored runtime state — no git churn, no
+  drift-guard conflict) and `supervisor.py` consumes the `ghost` set as an extra
+  dispatch-time quarantine source (`has_provider`), **fail-open** so a session with no
+  inventory behaves exactly as before. Opt-in hybrid auto-correct (`--sync` /
+  `AGENT_REGISTRY_AUTOSYNC=1`) additively wires `discovered` providers into the registry,
+  copying each `model:` straight from the agent's own frontmatter so the additive write
+  can't introduce the model drift `registry-drift.sh` check 4 forbids — it only ever adds,
+  never edits or removes. Fail-open is end-to-end: the SessionStart path, `supervisor.py`'s
+  `main()`, **and** the manual CLI all exit 0 on a malformed consumer registry — the
+  reconciler must never itself become the thing that breaks a session. `AGENTS.md` links
+  the rule from "When in doubt." Battery `core/tests/agent-inventory-test.sh` (8 checks:
+  real/ghost/discovered classification, provider-needs-frontmatter, inventory persistence +
+  ghost-set readback, additive-sync-with-model-copy, fail-open on no registry, fail-open on
+  a malformed one), auto-discovered by `verify-all.sh`.
+  `supervisor-dispatch-test.sh` gains two cases:
+  **15 — a ghost that guards a `file_globs` path**, listed ahead of a real guard on the same
+  path. The existing ghost case (7) is a *keyword* ghost declaring no globs, so it could
+  never reach the file-glob matcher — leaving the deadlock's other form untested, and that
+  form is the incident's own example (a retired `edge-fn-dev` guarding `**/functions/**`).
+  It pins both halves of the contract: the ghost is hinted and skipped (`continue`, **not**
+  `return`, so it cannot swallow the guard behind it), and no emitted `ask` ever names an
+  undispatchable specialist.
+  **16 — inventory quarantine end-to-end**: a provider `.md` is on disk (so `is_real_agent()`
+  passes) but the reconcile rejected it, and `has_provider()` must quarantine it anyway.
+  This is the one case where the inventory layer adds power over the file-exists check, so
+  it is the case that proves the layer is load-bearing rather than decorative.
+- **`model-routing-observer.py` — measure the model-tier convention.** A 2026-07-11
+  transcript audit confirmed the call-time `model`-override convention is not
+  followed: 7/7 subagent dispatches in the audited session inherited the session
+  top model. New PostToolUse (Task/Agent) pure observer classifies every dispatch
+  as `override` / `pinned_specialist` / `inherit_top` into
+  `.agent/logs/model-routing.jsonl` (analyze:
+  `jq -r .verdict … | sort | uniq -c`) — measured before enforced, per the gate-
+  registry philosophy. Never blocks, emits nothing, exit 0 always. Battery
+  `model-routing-observer-test.sh` (15 checks). Companion policy fixes:
+  `docs/model-routing.md` gains a "Built-in agents (Claude Code)" section
+  (Plan=TOP inherit, Explore=MID default / LOW for bounded lookups — a deliberate
+  exception to fan-out-LOW), and `/verify-completion`'s general-reviewer dispatch
+  now requires an explicit workhorse-tier override.
 - **Skill A/B evaluation dataset (H-3, seed).** `evals/datasets/skill-ab.jsonl` is the
   labeled seed for measuring whether a shipped skill earns its keep: does its
   `description` route the right requests (and not the wrong ones), and does running
@@ -64,6 +168,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (too-few / missing-field / blank-field / duplicate-id / non-kebab-id / unparseable),
   auto-discovered by `verify-all.sh`. The `grade.sh` implementation that consumes the
   rubric is deferred to a later batch.
+- **`plan-scope-allow.py` — plan-approved auto-allow accelerator.** New PreToolUse
+  (Write/Edit/MultiEdit, last in chain) hook: once the user approves a plan this
+  session (the `plan-gate.py` flag), in-workspace non-risk edits emit
+  `permissionDecision: "allow"` so the native permission prompt stops firing on
+  every step of approved work. First permission-weakening hook in the harness —
+  emits only allow-or-silence (never deny/ask), fail-open direction is silence,
+  risk areas (spec-gate `GUARD_PATTERNS`) + `.agent/hook-config.yml` + `.git/` +
+  out-of-workspace (realpath containment) always pass through, env-gated
+  `AGENT_PLAN_ALLOW_MODE=on` (default off, ships dark), sink
+  `.agent/logs/plan-scope-allow.jsonl`, registered in `docs/gate-registry.md`.
+  Battery `plan-scope-allow-test.sh` (27 checks incl. symlink/`..` escapes,
+  case-evasion, sink discipline). Side fix: README/README.ko hook-count drift
+  (17 → live 19) corrected.
+- **`skills/harness-help/` — router skill** (ask-matt pattern, user-invoked):
+  main flow `/spec` → approval → `/supervise` → `/verify-completion` → `/wrap`,
+  standalone `/harness-audit`, and what to do when a gate interrupts. Sync rule:
+  any skill add/remove updates the router in the same commit.
+- **`docs/skill-authoring.md`** — skill-writing reference distilled from Matt
+  Pocock's `writing-great-skills` (MIT, attributed): invocation axis, one trigger
+  per branch, information hierarchy, leading words, checkable completion
+  criteria, failure modes. Applied as a surgical pass over the five existing
+  SKILL.md files (trigger dedup + explicit completion criteria).
 - **Gate registry + fire-rate digest (T-2).** `docs/gate-registry.md` is the SSOT
   list of every deny/ask/block gate with the model weakness it assumes and a
   `last_reviewed` date (an assumption expires). `telemetry-digest.sh --gates`
@@ -331,6 +457,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   24 parity assertions; exit 1 on any divergence.
   (Kept the filename: `cross-ai-parity.sh` named in the plan was a phantom P0-1
   removed, and the docs already reference `adapter-parity.sh`.)
+
+### Removed
+- **`legacy/v0-mirror-2026-05-12/` retired from the shipped tree — defence-in-depth
+  for the ghost-specialist deadlock (preserved on tag `archive/v0-mirror`).** The
+  plugin package *is* the git tree (`marketplace.json` declares `"source": "./"` and
+  there is no exclusion manifest — the only things missing from a release are the
+  gitignored ones), so the v0 mirror rode into **every** release: 194 files, 1.3 MB,
+  including **33 retired agent `.md` providers** (`ui-ux-director`, `fe-architect`,
+  `edge-fn-dev`, …) sitting next to **two 64-entry `master-registry.json`** files.
+  That adjacency is exactly the shape `is_real_agent()` trusts — a registry id is
+  "real" iff a sibling `<id>.md` exists — so any copy of that tree into an active
+  registry path resurrects the deadlock the rest of this release exists to kill.
+  `find_registry()` never reaches into `legacy/`, so this was a *latent* trap and dead
+  weight rather than a live path (the live defence is `agent-inventory.py` above);
+  removing it means a retired provider can no longer be resurrected by a stale copy.
+  `legacy/trim-2026-07-04/` stays — its 3 agent `.md` files have **no** sibling
+  registry, so they cannot satisfy the predicate, and keeping `legacy/` alive keeps
+  the five `legacy/`-scoped exclusion rules (`gitleaks.toml`, `sanitize-audit.sh`,
+  `supply-chain-scan.sh`, `doc-reality.sh`, `check-hardcoding.py`) valid and unchanged.
+  Recover anything with `git show archive/v0-mirror:legacy/v0-mirror-2026-05-12/<path>`.
 
 ### Security
 - **Codex/Gemini adapter synthetic-mode no longer builds canonical JSON by string

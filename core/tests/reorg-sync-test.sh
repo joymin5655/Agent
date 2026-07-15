@@ -36,6 +36,11 @@ make_tree() {
   printf '\x00\x01/old/prefix binary\x00\n' > "$t/blob.bin"                # decoy: binary (skip)
   ln -s "$t/script.py" "$t/link.py"                                        # decoy: symlink (skip)
   printf 'config = /old/prefix/inside-object-store\n' > "$t/realgit/.git/config"  # decoy: .git store (skip)
+  # boundary decoys (2026-07-15 review): none of these are hits.
+  printf 'see /old/prefixed-thing/file.txt\n' > "$t/sibling.md"            # decoy: sibling path (boundary)
+  printf 'slug: kebab-old-prefix-word here\n' > "$t/kebab.md"              # decoy: kebab text = encoded key shape, no consumer ctx
+  printf 'mem2: ~/.claude/projects/-old-prefix2/memory/\n' > "$t/memsib.md" # decoy: sibling project's memory key
+  chmod +x "$t/script.py"                                                  # shebang target is executable
   echo "$t"
 }
 
@@ -53,6 +58,10 @@ grep -q "$OLD" "$T/script.py"; check "dry-left-file-unchanged" $?
 echo "$DRY" | grep -q 'inside-object-store'; [[ $? -ne 0 ]]; check "dry-skips-git-object-store" $?
 # the binary decoy must be skipped
 echo "$DRY" | grep -q 'blob.bin'; [[ $? -ne 0 ]]; check "dry-skips-binary" $?
+# boundary decoys must NOT be reported (sibling path / kebab text / sibling key)
+echo "$DRY" | grep -q 'sibling.md'; [[ $? -ne 0 ]]; check "dry-skips-sibling-path" $?
+echo "$DRY" | grep -q 'kebab.md'; [[ $? -ne 0 ]]; check "dry-skips-kebab-text" $?
+echo "$DRY" | grep -q 'memsib.md'; [[ $? -ne 0 ]]; check "dry-skips-sibling-memory-key" $?
 rm -rf "$T"
 
 echo
@@ -66,11 +75,19 @@ grep -q '/new/loc/scripts/backup.sh' "$T/jobs.crontab"; check "apply-crontab" $?
 grep -q '/new/loc/docs/README.md' "$T/notes.md"; check "apply-anchor" $?
 # native-memory-key: encoded /old/prefix (-old-prefix) -> encoded /new/loc (-new-loc)
 grep -q '~/.claude/projects/-new-loc-x/memory/' "$T/mem.md"; check "apply-native-memory-key-encoded" $?
-# no OLD refs remain anywhere in-tree (except the skipped classes)
-! grep -rIq "$OLD" "$T" --exclude-dir=.git; check "apply-no-old-refs-remain" $?
+# no OLD refs remain anywhere in-tree (except the skipped classes and the
+# sibling decoy, which by boundary semantics legitimately keeps its longer path)
+! grep -rIq "$OLD" "$T" --exclude-dir=.git --exclude=sibling.md; check "apply-no-old-refs-remain" $?
 # decoys untouched: clean file and the git object store still original
 grep -qx 'nothing to see here' "$T/clean.txt"; check "apply-clean-untouched" $?
 grep -q "$OLD" "$T/realgit/.git/config"; check "apply-skips-git-object-store" $?
+# boundary decoys untouched byte-for-byte (sibling corruption was CRITICAL-1)
+grep -qx 'see /old/prefixed-thing/file.txt' "$T/sibling.md"; check "apply-sibling-path-untouched" $?
+grep -qx 'slug: kebab-old-prefix-word here' "$T/kebab.md"; check "apply-kebab-text-untouched" $?
+grep -qx 'mem2: ~/.claude/projects/-old-prefix2/memory/' "$T/memsib.md"; check "apply-sibling-memory-key-untouched" $?
+# a deeper cwd's key ('-' continuation) DID rewrite — covered by mem.md (-old-prefix-x)
+# shebang target kept its exec bit through the atomic rewrite
+[[ -x "$T/script.py" ]]; check "apply-preserves-exec-bit" $?
 
 echo
 echo "=== (3) idempotence: a second apply changes nothing ==="
@@ -94,7 +111,48 @@ bash "$TOOL" --old "$OLD" --new "$NEW" >/dev/null 2>&1; [[ $? -ne 0 ]]; check "g
 bash "$TOOL" --old "$OLD" --root "$T3" >/dev/null 2>&1; [[ $? -ne 0 ]]; check "guard-rejects-missing-new" $?
 bash "$TOOL" --old "$OLD" --new "$NEW" --root "$T3/nope" >/dev/null 2>&1; [[ $? -ne 0 ]]; check "guard-rejects-nonexistent-root" $?
 bash "$TOOL" --old "$OLD" --new "$NEW" --root "$T3" --bogus >/dev/null 2>&1; [[ $? -ne 0 ]]; check "guard-rejects-unknown-flag" $?
+bash "$TOOL" --old "$OLD" --new $'/x\ny' --root "$T3" >/dev/null 2>&1; [[ $? -ne 0 ]]; check "guard-rejects-newline-in-new" $?
 rm -rf "$T3"
+
+echo
+echo "=== (6) NEW-extends-OLD: apply converges, second run is a no-op (CRITICAL-2) ==="
+T4="$(mktemp -d)"
+printf 'path /proj/file.txt\n' > "$T4/a.md"
+bash "$TOOL" --old /proj --new /proj_v2 --root "$T4" --apply >/dev/null 2>&1
+grep -qx 'path /proj_v2/file.txt' "$T4/a.md"; check "extend-first-apply-correct" $?
+E2="$(bash "$TOOL" --old /proj --new /proj_v2 --root "$T4" --apply 2>&1)"
+echo "$E2" | grep -q 'applied: rewrote 0 file(s)'; check "extend-second-apply-zero" $?
+grep -qx 'path /proj_v2/file.txt' "$T4/a.md"; check "extend-no-compounding" $?
+rm -rf "$T4"
+
+echo
+echo "=== (7) dotted path: '.' collapses in the encoded memory key ==="
+T5="$(mktemp -d)"
+printf 'mem: ~/.claude/projects/-old-2-brain-x/memory/\n' > "$T5/mem.md"
+bash "$TOOL" --old /old/2.brain --new /new/2.brain --root "$T5" --apply >/dev/null 2>&1
+grep -q -- '-new-2-brain-x/memory/' "$T5/mem.md"; check "dotted-key-encoded-and-rewritten" $?
+rm -rf "$T5"
+
+echo
+echo "=== (8) unwritable target: reported, exit 1, rest of sweep continues ==="
+T6="$(mktemp -d)"
+mkdir -p "$T6/ro"
+printf 'see /old/prefix/a\n' > "$T6/ro/locked.md"
+printf 'see /old/prefix/b\n' > "$T6/ok.md"
+chmod 555 "$T6/ro"
+RO_OUT="$(bash "$TOOL" --old "$OLD" --new "$NEW" --root "$T6" --apply 2>&1)"; RO_RC=$?
+[[ "$RO_RC" -ne 0 ]]; check "rofail-exit-nonzero" $?
+echo "$RO_OUT" | grep -q 'applied-with-errors'; check "rofail-reported" $?
+grep -q '/new/loc/b' "$T6/ok.md"; check "rofail-others-still-rewritten" $?
+chmod 755 "$T6/ro"; rm -rf "$T6"
+
+echo
+echo "=== (9) @keyword cron schedule classified as crontab ==="
+T7="$(mktemp -d)"
+printf '@daily /old/prefix/scripts/nightly.sh\n' > "$T7/jobs.crontab"
+K="$(bash "$TOOL" --old "$OLD" --new "$NEW" --root "$T7" 2>&1)"
+echo "$K" | grep -q '^  crontab '; check "at-keyword-cron-classified" $?
+rm -rf "$T7"
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="

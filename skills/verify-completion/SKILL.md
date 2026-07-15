@@ -66,7 +66,9 @@ python3 core/infra/completion-verify.py --root "$PWD" .agent/claims/<slug>.yml
 
 Spin up a **fresh** verifier context that has NOT seen the builder's reasoning —
 dispatch `code-reviewer` (or `security-reviewer` if the change touches
-auth/secrets/input handling), or a general reviewer subagent — and give it only:
+auth/secrets/input handling), or a general reviewer subagent — a general
+(unpinned) reviewer must carry an explicit `model` override at the workhorse
+tier, or it silently inherits the session top model — and give it only:
 the claim, the deterministic verdict JSON, and the actual diff/artifacts. Ask it
 to **refute**, not confirm:
 
@@ -115,3 +117,9 @@ verify-completion <slug>: CONFIRMED | REFUTED   (score S)
   skill exists to prevent.
 - **A CONFIRMED verdict cites its evidence.** Score, dimension counts, and
   (for the semantic pass) the reason each doubt was resolved.
+- **A dead reviewer is not a clean review.** An aggregated result of `raised: 0`
+  (or `findings: 0`) is NOT clean when any dispatched agent errored or died at
+  its session limit (`agents_error > 0`, session-limit failures, empty agent
+  results) — check the run's journal/agent logs directly and re-run the dead
+  reviews before accepting the aggregate. (Recurred twice in the field: the
+  review never ran but looked passed.)

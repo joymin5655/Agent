@@ -32,7 +32,10 @@ bash "${CLAUDE_PLUGIN_ROOT:-.}/core/infra/reorg-sync.sh" \
 ```
 
 Read the `CLASS  file:line  <text>` rows and the per-class summary with the user.
-The tool refuses a bare `/` or empty `--old` (that would match everything).
+The tool refuses a bare `/` or empty `--old` (that would match everything) and any
+`--old`/`--new` containing a newline (line-injection hazard). Note the report echoes
+matched lines — review it before pasting into shared channels/CI logs, since a line
+that references `<old>` can also carry unrelated sensitive content.
 
 ### 2. Confirm, then apply
 
@@ -43,10 +46,14 @@ bash "${CLAUDE_PLUGIN_ROOT:-.}/core/infra/reorg-sync.sh" \
   --old <old-prefix> --new <new-prefix> --root <tree> --apply
 ```
 
-Replacement is a safe literal substitution (no regex/sed hazards); binary files and
-the `.git` object store are skipped. The native-memory key is rewritten with the
-harness's `/ . _` → `-` encoding, so the moved project's memory dir reference tracks
-its new path.
+Replacement is a literal substitution **anchored at a path-component boundary** (no
+regex/sed hazards, and no sibling bleed — `<old>ed-thing` or `<old>_v2` is a
+different path and is never touched). Writes are atomic (temp + rename, permissions
+preserved); a file that cannot be rewritten is reported on stderr and the sweep
+continues, exiting 1 so the failure is visible. Binary files and the `.git` object
+store are skipped. The native-memory key is rewritten with the harness's `/ . _` →
+`-` encoding, confined to lines that carry the `claude/projects` consumer context —
+ordinary kebab-case text is never touched.
 
 ### 3. Out-of-tree targets (report, don't auto-touch)
 
@@ -57,5 +64,8 @@ the swept tree) and the live user crontab is a system resource — this skill re
 
 ## Notes
 
-- Idempotent: a second `--apply` run with the same prefixes finds nothing to change.
+- Idempotent: a second `--apply` run with the same prefixes finds nothing to change —
+  including when NEW extends OLD (`/proj` → `/proj_v2`), where existing NEW
+  occurrences are protected from re-substitution.
 - Scope is `--root`; run once per tree that may hold references (repo, dotfiles, notes).
+- Cron `@keyword` schedules (`@daily`, `@reboot`) classify as `crontab` like numeric rows.
