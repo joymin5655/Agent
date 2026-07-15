@@ -13,12 +13,15 @@ informational and visible in the AI transcript.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import shutil
 import sys
 import pathlib
 import subprocess
+import types
+from typing import Optional
 
 
 def repo_root() -> pathlib.Path:
@@ -82,6 +85,57 @@ def check_env() -> None:
         pass
 
 
+def _load_inventory_module() -> Optional[types.ModuleType]:
+    """Load the hyphen-named agent-inventory.py sibling (not importable by name)."""
+    path = pathlib.Path(__file__).with_name("agent-inventory.py")
+    if not path.is_file():
+        return None
+    try:
+        spec = importlib.util.spec_from_file_location("agent_inventory", path)
+        if spec is None or spec.loader is None:
+            return None
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+    except Exception:
+        return None
+
+
+def reconcile_inventory(root: pathlib.Path) -> None:
+    """Session-start truth pass: quarantine ghost specialists, persist inventory.
+
+    Fail-open: any error here is swallowed — reconciling the registry must never
+    block a session. Auto-sync of discovered providers is opt-in
+    (AGENT_REGISTRY_AUTOSYNC=1); the default is verify-and-quarantine only.
+    """
+    mod = _load_inventory_module()
+    if mod is None:
+        return
+    try:
+        do_sync = os.environ.get("AGENT_REGISTRY_AUTOSYNC") == "1"
+        result = mod.run(root, do_sync)
+    except Exception:
+        return
+    ghost = result.get("ghost") or []
+    if ghost:
+        print(
+            "[agent-harness] WARN: {} registry specialist(s) have no provider "
+            "and were quarantined (nothing will demand them): {}".format(
+                len(ghost), ", ".join(ghost)
+            ),
+            file=sys.stderr,
+        )
+    discovered = result.get("discovered") or []
+    if discovered and not os.environ.get("AGENT_REGISTRY_AUTOSYNC") == "1":
+        print(
+            "[agent-harness] note: {} unwired provider .md file(s) found: {} "
+            "(run `python3 core/hooks/agent-inventory.py --sync` to register)".format(
+                len(discovered), ", ".join(discovered)
+            ),
+            file=sys.stderr,
+        )
+
+
 def main() -> None:
     check_env()
 
@@ -113,6 +167,10 @@ def main() -> None:
         f"[Agent session init] {len(agent_list)} agents loaded: {', '.join(names)}{suffix}",
         file=sys.stderr,
     )
+
+    # Evidence-first: reconcile the registry against real providers, quarantine
+    # ghosts, and persist .agent/state/agent-inventory.json for supervisor.py.
+    reconcile_inventory(root)
 
 
 if __name__ == "__main__":

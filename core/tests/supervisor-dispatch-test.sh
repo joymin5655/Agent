@@ -88,6 +88,50 @@ EOF
   echo "$d"
 }
 
+# make_ghost_glob_fixture — a ghost that GUARDS A PATH, listed ahead of a real
+# agent guarding the same path. The keyword ghost above can never reach the
+# file-glob matcher (it declares no globs), yet a path-guarding specialist is
+# exactly the shape the live deadlock took (a retired `edge-fn-dev` guarding
+# **/functions/**). Ghost-first is deliberate: it pins the skip as `continue`,
+# not `return` — a ghost must not swallow the real guard behind it.
+make_ghost_glob_fixture() {
+  local d; d="$(mktemp -d)"
+  (
+    cd "$d" || exit 1
+    git init -q
+    git config user.email "t@example.com"
+    git config user.name "supervisor test"
+    mkdir -p agents
+  )
+  cat > "$d/agents/master-registry.json" <<'EOF'
+{
+  "version": 1,
+  "agents": [
+    {
+      "id": "edge-fn-dev",
+      "description": "retired path-guarding specialist — no provider ships for it",
+      "matches": { "keywords": [], "tools": ["Write", "Edit"], "file_globs": ["**/functions/**"] },
+      "aliases": [],
+      "model": "sonnet",
+      "memory_scope": "local"
+    },
+    {
+      "id": "security-reviewer",
+      "description": "real specialist guarding the same path",
+      "matches": { "keywords": [], "tools": ["Write", "Edit"], "file_globs": ["**/functions/**"] },
+      "aliases": [],
+      "model": "opus",
+      "memory_scope": "local"
+    }
+  ]
+}
+EOF
+  # Only the real one gets a provider; edge-fn-dev deliberately gets none.
+  cp "$REPO_ROOT/agents/security-reviewer.md" "$d/agents/"
+  FIXTURES+=("$d")
+  echo "$d"
+}
+
 # make_bare_fixture — git repo with NO registry at all
 make_bare_fixture() {
   local d; d="$(mktemp -d)"
@@ -265,6 +309,35 @@ assert_state_exists "14-native-intent" "$F14" "code-reviewer"
 run_hook "$F14" '{"hook_event_name":"PreToolUse","tool_name":"Edit","tool_input":{"file_path":"src/widget.ts"}}'
 assert_stdout_has "14-native-ask" '"permissionDecision": "ask"'
 assert_stdout_has "14-native-ask" 'code-reviewer'
+
+echo "=== 15. Ghost guarding a file_glob -> hinted + skipped, real guard behind it still asks ==="
+F15="$(make_ghost_glob_fixture)"
+run_hook "$F15" "$(pre_event Write 'supabase/functions/hello.ts')"
+assert_stderr_has "15-ghost-hint"  'edge-fn-dev'                    # ghost is named, not demanded
+assert_jsonl_has  "15-ghost-log"   "$F15" '"action": "ghost"'
+assert_stdout_has "15-no-deadlock" '"permissionDecision": "ask"'    # continue, not return...
+assert_stdout_has "15-real-guard"  'security-reviewer'              # ...so the real guard survives
+if [[ "$OUT" != *"edge-fn-dev"* ]]; then
+  ok "15-never-demanded (no ask names the ghost)"
+else
+  bad "15-never-demanded" "the ask demands an undispatchable specialist: $OUT"
+fi
+
+echo "=== 16. Inventory quarantine: a provider .md exists but the inventory calls it ghost -> no ask ==="
+# The only case where inventory_ghosts() adds power over is_real_agent(): the .md
+# IS on disk (so is_real_agent passes) but the SessionStart reconcile rejected it as
+# not a real provider — e.g. a stray .md with no frontmatter, which the runtime
+# cannot dispatch. has_provider() must AND the two and quarantine it anyway.
+F16="$(make_default_fixture)"
+mkdir -p "$F16/.agent/state"
+printf '{"ts":"2026-07-13T00:00:00+00:00","real":[],"ghost":["code-reviewer"],"discovered":[]}\n' \
+  > "$F16/.agent/state/agent-inventory.json"
+run_hook "$F16" "$(ups_event 'please review this code')"
+assert_no_state     "16-nostate" "$F16"          # intent must NOT be recorded...
+assert_empty_stdout "16-ups-empty"
+assert_stderr_has   "16-hint" 'code-reviewer'    # ...it is hinted as a ghost instead
+run_hook "$F16" "$(pre_event Edit 'src/widget.ts')"
+assert_empty_stdout "16-edit-clear"              # and the follow-up edit is not gated
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="

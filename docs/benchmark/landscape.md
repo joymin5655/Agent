@@ -5,7 +5,10 @@ GitHub, **not** a run benchmark. The only measured comparison in this repo is
 [`results.md`](results.md) (blind reviewer benchmark vs one bundled reviewer);
 everything below is positioning based on public documentation. Star counts
 were pulled from the GitHub REST API on **2026-07-08** and drift constantly —
-see [Review cadence](#review-cadence).
+see [Review cadence](#review-cadence). A **2026-07-14 spot re-check** (five
+parallel research lanes, gh api + README only) landed the corrections marked
+"2026-07-14" below; the full audit lives outside this repo (personal drive
+audit report).
 
 ## Method and caveats
 
@@ -30,7 +33,7 @@ support, shipped eval suite.
 |---|---|---|---|---|---|---|---|
 | superpowers (248.7k) | prompt-only | medium (skill pack) | partial (review skills) | no | no | Claude Code | no |
 | gstack (120.3k) | partial (warn-level skills) | large (120+ skills) | **yes** (cross-model review) | partial | yes (profiles) | partial (codex/gemini bridges) | partial (model judge) |
-| claude-flow (63.5k) | partial (pre/post hooks) | large (~87 MCP tools) | partial | no | multi-provider | MCP-based | claimed, unverified |
+| claude-flow (63.5k) — renamed **ruflo** 2026-02-27; npm/CLI still `claude-flow` (2026-07-14) | partial (pre/post hooks) | large (~87 MCP tools) | partial | no | multi-provider | MCP-based | claimed, unverified |
 | BMAD-METHOD (50.2k) | prompt-only (workflow gates) | large (agile ceremony) | partial (QA role) | no | manual per-agent | **yes** (IDE-agnostic) | no |
 | wshobson/agents (37.6k) | none (catalog) | small per-agent | n/a | no | hints only | **yes** (6 runtimes) | no |
 | oh-my-claudecode (37.5k) | **yes** (real hooks) | large (eager context) | **yes** (verifier lane) | no | yes (manual 3-tier) | partial (worker CLIs) | no |
@@ -49,11 +52,23 @@ environment; a plugin-layer harness inherits its host's).
 |---|---|---|---|---|---|
 | OpenHands (79.9k) | confirmation modes + security analyzer | **yes** (Docker) | partial | manual (any model) | **yes** (SWE-bench native) |
 | goose (50.8k) | permission modes | process-level | no | **yes** (lead/worker split) | thin |
-| Aider (47.2k) | git auto-commit (trivial revert) | no (host) | no (single agent) | **yes** (architect/editor) | community leaderboards |
+| Aider (47.2k) — effectively stalled: last release 2025-08, last push 2026-05 (2026-07-14) | git auto-commit (trivial revert) | no (host) | no (single agent) | **yes** (architect/editor) | community leaderboards |
 | SWE-agent (19.7k) | cost caps | **yes** | no | config routing | **yes** (SWE-bench DNA) |
 
 LangGraph (36.7k) is excluded: a graph orchestration *library* you build a
 harness with, not a harness.
+
+### Field shift — native orchestration (2026-07-14)
+
+Anthropic's **Dynamic Workflows** went GA (2026-05-28, extended to the Pro
+plan 2026-07-02): the host runtime now writes and executes orchestration
+scripts natively (up to 1,000 subagents). This erodes the reason-to-exist of
+orchestration-first third parties (claude-flow/ruflo class). It does **not**
+collide with this harness's position — enforcement, curation, and
+self-verification are governance concerns the native orchestrator does not
+own. The 2026-07-14 re-check also found no top-bucket project that has closed
+the "prompt-only enforcement" gap (real deny/ask hooks + self-verify CI +
+author≠reviewer isolation remain absent from all six surveyed leaders).
 
 ## What the field invests in vs where it is thin
 

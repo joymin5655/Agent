@@ -15,9 +15,21 @@ set -u
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 HOOK="$REPO_ROOT/core/hooks/secret-content-scan.py"
-CONFIG_DIR="$REPO_ROOT/.agent"
+
+# The config the hook reads lives at $AGENT_PROJECT_DIR/.agent/. Point that at a
+# throwaway project fixture, never at REPO_ROOT: this test writes hostile configs
+# (a ReDoS regex, an exempt-the-universe path), and an earlier version wrote them
+# into the harness's OWN .agent/. Its EXIT trap cleaned up on a normal exit, but a
+# hard kill left the fixtures behind as untracked debris — which then tripped the
+# guard that refused to clobber them, so the test blocked itself on every later run.
+# A temp fixture makes that whole failure mode unreachable: nothing to collide with,
+# nothing to preserve, no guard needed. Same mktemp -d pattern every other battery
+# in core/tests uses.
+PROJECT_DIR="$(mktemp -d)"
+CONFIG_DIR="$PROJECT_DIR/.agent"
 CONFIG_JSON="$CONFIG_DIR/hook-config.json"
 CONFIG_YML="$CONFIG_DIR/hook-config.yml"
+mkdir -p "$CONFIG_DIR"
 
 PASS=0
 FAIL=0
@@ -26,43 +38,14 @@ FAIL=0
 SK_TOKEN="sk-$(printf 'A%.0s' $(seq 1 45))"          # sk- + 45 'A' → built-in API key pattern
 MYCO_TOKEN="myco_secret_$(printf 'B%.0s' $(seq 1 24))"  # matches the custom config regex
 
-# Track whether the repo already had an .agent/hook-config.{json,yml} so we
-# never clobber a real one. We only create/remove our own temp files.
-PREEXISTING_CONFIG=0
-[[ -f "$CONFIG_JSON" ]] && PREEXISTING_CONFIG=1
-PREEXISTING_YML=0
-[[ -f "$CONFIG_YML" ]] && PREEXISTING_YML=1
-HAD_AGENT_DIR=0
-[[ -d "$CONFIG_DIR" ]] && HAD_AGENT_DIR=1
-
-cleanup() {
-  if [[ "$PREEXISTING_CONFIG" -eq 0 && -f "$CONFIG_JSON" ]]; then
-    rm -f "$CONFIG_JSON"
-  fi
-  if [[ "$PREEXISTING_YML" -eq 0 && -f "$CONFIG_YML" ]]; then
-    rm -f "$CONFIG_YML"
-  fi
-  if [[ "$HAD_AGENT_DIR" -eq 0 && -d "$CONFIG_DIR" ]]; then
-    rmdir "$CONFIG_DIR" 2>/dev/null || true
-  fi
-}
+cleanup() { [[ -n "${PROJECT_DIR:-}" && -d "$PROJECT_DIR" ]] && rm -rf "$PROJECT_DIR"; }
 trap cleanup EXIT
-
-if [[ "$PREEXISTING_CONFIG" -eq 1 ]]; then
-  echo "FAIL — a real $CONFIG_JSON exists; refusing to overwrite. Aborting test."
-  exit 1
-fi
-if [[ "$PREEXISTING_YML" -eq 1 ]]; then
-  echo "FAIL — a real $CONFIG_YML exists; refusing to overwrite. Aborting test."
-  exit 1
-fi
-mkdir -p "$CONFIG_DIR"
 
 # run_case <name> <event-json> <expect: deny|allow>
 run_case() {
   local name="$1" event="$2" expect="$3"
   local out
-  out=$(printf '%s' "$event" | AGENT_PROJECT_DIR="$REPO_ROOT" python3 "$HOOK" 2>/dev/null || true)
+  out=$(printf '%s' "$event" | AGENT_PROJECT_DIR="$PROJECT_DIR" python3 "$HOOK" 2>/dev/null || true)
   local got="allow"
   [[ "$out" == *'"permissionDecision": "deny"'* || "$out" == *'"permissionDecision":"deny"'* ]] && got="deny"
   if [[ "$got" == "$expect" ]]; then
@@ -162,7 +145,7 @@ EOF
 # Pathological input: ~40 'a' chars + a non-matching 'X' (built at runtime).
 REDOS_INPUT="$(printf 'a%.0s' $(seq 1 40))X"
 REDOS_EVENT="{\"event\":\"PreToolUse\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"app/note.txt\",\"content\":\"${REDOS_INPUT}\"}}"
-printf '%s' "$REDOS_EVENT" | timeout 8 env AGENT_PROJECT_DIR="$REPO_ROOT" python3 "$HOOK" >/dev/null 2>&1
+printf '%s' "$REDOS_EVENT" | timeout 8 env AGENT_PROJECT_DIR="$PROJECT_DIR" python3 "$HOOK" >/dev/null 2>&1
 REDOS_RC=$?
 if [[ "$REDOS_RC" -ne 124 ]]; then
   echo "  ok   [redos-time-bounded] hook completed (rc=$REDOS_RC, not 124)"
@@ -192,11 +175,13 @@ else
     | sed -e '/LIVE-SCHEMA-EXAMPLE-BEGIN/d' -e '/LIVE-SCHEMA-EXAMPLE-END/d' -e 's/^# \{0,1\}//' \
     > "$CONFIG_YML"
 
-  LOAD_OUT=$(python3 - "$REPO_ROOT" <<'PY'
+  # argv[1] = REPO_ROOT (where hook_config.py lives) — argv[2] = the project whose
+  # .agent/ holds the config under test. Distinct roles, so distinct arguments.
+  LOAD_OUT=$(python3 - "$REPO_ROOT" "$PROJECT_DIR" <<'PY'
 import sys
 sys.path.insert(0, sys.argv[1] + "/core/hooks")
 import hook_config
-print(hook_config.load_extensions(sys.argv[1]))
+print(hook_config.load_extensions(sys.argv[2]))
 PY
   )
 

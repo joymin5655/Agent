@@ -1,7 +1,7 @@
 ---
 name: supervise
 description: Dispatch a multi-wave plan to specialist agents with audit + risk-area abort. Supports --auto-push, --auto-merge, --goal-mode for budgeted runs. NOT for writing the plan itself (that is /spec), and NOT for a single small edit with no waves — just make the edit.
-when_to_use: User has a written plan and says "execute", "run the plan", "/supervise <slug>", or "full auto".
+when_to_use: User has a written plan and says "run the plan", "/supervise <slug>", or "full auto".
 tools: Bash, Read, Write, Edit, Grep, Glob
 ---
 
@@ -21,6 +21,19 @@ wave, auditing after each wave, and aborting on risk-area violations.
 | `/supervise <slug> --goal-mode` | Tracks state in SQLite via `core/infra/supervisor-goal.sh`. Resumable across sessions. |
 | `/supervise <slug> --auto-push` | Each wave commits + pushes + opens PR. User merges. |
 | `/supervise <slug> --auto-merge` | Each wave commits + pushes + admin-merges via `auto-ship.sh`. |
+
+## Permission friction (plan-scope-allow prerequisite)
+
+/supervise does not grant itself permissions. Whether wave edits hit the
+native permission prompt is decided by the `plan-scope-allow` gate
+(`docs/gate-registry.md`), which is active only when `AGENT_PLAN_ALLOW_MODE=on`
+is exported, or — with the env unset — when the workspace resolves to the
+`personal` trust tier (`docs/customization.md` § Trust tiers). In `collab`
+workspaces, expect a prompt per edit; prefer report-first waves there.
+Coverage is Write/Edit/MultiEdit only — Bash/MCP wave commands always keep
+their own gates and prompts (extension is backlog LE-1). Hard safeguards
+(risk-area abort, R4 mutex, gitleaks, test-failure abort) bind in every tier
+and every mode, including full-auto.
 
 ## Model policy
 
@@ -113,6 +126,9 @@ Stop the supervise loop immediately on any of these:
 4. gitleaks failure at any stage.
 5. Test suite failure.
 6. Type-check / lint failure.
+7. A dispatched review/verify agent died (session limit, API error) — treat the
+   wave's audit as FAIL even if the aggregate reports 0 findings; a dead
+   reviewer is not a clean review (re-dispatch or verify in the main loop).
 
 On safeguard: emit `blocked` broadcast (R13), report state to user.
 

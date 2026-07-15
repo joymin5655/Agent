@@ -16,11 +16,13 @@ AI-agnostic hook implementations. Each script reads a canonical event JSON from 
 | `context-mode-guard.sh` | PreToolUse (`*`) | Block Context-Mode plugin sandbox bypass of R4 / secrets |
 | `tdd-guard.py` | PreToolUse (Write/Edit) | Block new prod code unless a failing test exists in the same area |
 | `spec-gate.py` | PreToolUse (Write/Edit/MultiEdit) | Gate substantive impl edits when no plan is approved this session — `ask` unless the plan-approval flag exists (written by `plan-gate.py`). Escape: `/spec` writes spec.md+plan.md then approve via ExitPlanMode, or `AGENT_SPEC_GATE_MODE=off`; modes off/dryrun/block (default dryrun) |
+| `plan-scope-allow.py` | PreToolUse (Write/Edit/MultiEdit, last in chain) | Auto-allow accelerator — once a plan is approved this session, in-workspace non-risk edits skip the native permission prompt. Emits only `allow` or nothing (never deny/ask); risk areas, `.agent/hook-config.yml`, `.git/`, and out-of-workspace paths always pass through. Env-gated: `AGENT_PLAN_ALLOW_MODE=on` (default off) |
 | `circuit-breaker.py` | PostToolUse (Bash) | Detect repeated Bash failures + advise strategy change |
 | `check-hardcoding.py` | PreToolUse (Write/Edit) | Detect hardcoded color arrays / gradients / UI metadata |
 | `session-init.py` | SessionStart | Surface project agent inventory + cleanup per-session flags |
 | `session-close.sh` | Stop | Session cleanup + broadcast done + optional macOS notification |
 | `plan-gate.py` | PostToolUse (Agent + ExitPlanMode) | Set plan-approval flag after plan-class agent or ExitPlanMode |
+| `model-routing-observer.py` | PostToolUse (Task/Agent) | Pure observer — classify each subagent dispatch's model choice (override / pinned_specialist / inherit_top) into `.agent/logs/model-routing.jsonl`; measures the docs/model-routing.md call-time convention before any enforcement |
 | `supervisor.py` | UserPromptSubmit + PreToolUse (Write/Edit/MultiEdit) + PostToolUse (Task/Agent) | v0.2 minimal dispatcher — records a registry-keyword intent, `ask`s on the next edit (once), resolves on specialist dispatch; independent security file-glob matcher; ghost→executor fallback; `AGENT_SUPERVISOR_MODE=observe` downgrades to stderr |
 
 ## Roadmap — v0.2.0 ports

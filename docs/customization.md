@@ -138,3 +138,63 @@ mutex resources) and edit its hardcoded patterns directly. Keep your
 `hook-config.yml`'s `risk_areas:`/`resources:` blocks as a record of intent
 even though nothing reads them yet — it keeps `rules/policy/security-guards.md`
 and your fork in sync when the dynamic loader lands.
+
+---
+
+## Trust tiers — personal vs collab projects
+
+`core/hooks/trust_tier.py` resolves a per-project trust tier that maps onto
+the loop-engineering readiness ladder
+([`concepts/loop-engineering.md`](concepts/loop-engineering.md)):
+
+| Tier | Readiness posture | Behavior (v1 consumer: `plan-scope-allow.py`) |
+|---|---|---|
+| `personal` | ~L2/L3 — your own project, earned automation | Plan-approved sessions auto-allow in-workspace, non-risk Write/Edit (no native prompt); `--auto-push` workflows are reasonable |
+| `collab` | ~L0/L1 — external/shared project, report-first | Ships dark: every edit keeps the native permission prompt; prefer report-only waves and user-confirmed pushes |
+
+**Hard safeguards are tier-independent.** Risk-area aborts, R4 mutex, gitleaks,
+and test-failure aborts bind identically in both tiers — a tier only adjusts
+*prompt friction*, never *safety gates*.
+
+### How a workspace earns `personal`
+
+Detection order (first hit wins; everything unknown fails closed to `collab`):
+
+1. **Repo-side downgrade** — a `.agent/trust-tier` file containing `collab`
+   forces collab. Content `personal` is **ignored**: a repo file can only
+   tighten, never escalate (same additive/stricter-only rule as all repo
+   config).
+2. **Owner match** — `git remote get-url origin`'s owner segment
+   (case-insensitive; https/scp/ssh URL forms) appears as an `owner` line in
+   the user-side trust list. A parseable remote owner decides alone: a
+   foreign owner resolves to `collab` **even under a trusted path** — an
+   external clone sitting in your personal projects directory is still
+   collaboration.
+3. **Path match** — reached only when there is no parseable remote owner:
+   the workspace root sits under a `path` line (realpath prefix; covers
+   personal directories with no remote).
+4. Otherwise — `collab`. No trust list, unparseable lines, unknown remotes,
+   no remote, and any error all land here.
+
+### The trust list is user-side by design
+
+`~/.agent/trust.list` (template: `templates/trust.list.template`; test seam:
+`AGENT_TRUST_FILE`) lives **outside every workspace**. `plan-scope-allow.py`
+never auto-allows writes outside the workspace root, so an agent trying to
+edit the trust list always faces the native permission prompt — the
+env-only-weakening principle is preserved by mechanism, not convention.
+
+Line format (stdlib parsing, no YAML):
+
+```
+# comments and blank lines ignored
+owner your-github-username
+path /home/you/personal-projects/
+```
+
+**Accepted risk (documented):** a Bash-capable agent could spoof
+`git remote add origin` to a trusted owner. Bash is already a full-power
+surface with its own gates; the threat model here is *durable repo-file
+self-weakening*, the same accepted-risk class as the `/tmp/agent-plan-approved`
+flag. Tier consumption by `auto-ship.sh`/`supervise` (blocking `--auto-merge`
+in collab) is backlog LE-2.

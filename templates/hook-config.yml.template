@@ -158,3 +158,14 @@ goal_mode:
 #   credential_key_names:            # plain strings, folded into one extra KEY=value pattern
 #     - "MYSERVICE_TOKEN"
 # LIVE-SCHEMA-EXAMPLE-END
+
+# NOTE (not a config key): plan-scope-allow.py — the plan-approved auto-allow
+# accelerator — is deliberately NOT configurable here. Weakening sources must
+# stay outside anything the agent can edit in-repo. Activation is 3-way:
+#   export AGENT_PLAN_ALLOW_MODE=on    # force active
+#   export AGENT_PLAN_ALLOW_MODE=off   # force dark (any non-"on" value)
+#   (unset)                            # per-project trust tier decides:
+#     active only for "personal" workspaces per the USER-SIDE
+#     ~/.agent/trust.list (templates/trust.list.template — outside every
+#     workspace, so editing it always prompts). A repo-side .agent/trust-tier
+#     file can only DOWNGRADE to collab. See docs/customization.md § Trust tiers.

@@ -85,6 +85,25 @@ def is_real_agent(registry_path: pathlib.Path, agent_id: str) -> bool:
     return (registry_path.parent / (agent_id + ".md")).is_file()
 
 
+def inventory_ghosts(root: pathlib.Path) -> set:
+    """Ghost ids quarantined by the last agent-inventory reconcile (SessionStart).
+
+    Fail-open: absent/broken inventory -> empty set, so a session without one
+    behaves exactly as before this file consumed it (existing tests unaffected).
+    """
+    try:
+        p = root / ".agent" / "state" / "agent-inventory.json"
+        data = json.loads(p.read_text(encoding="utf-8"))
+        return set(data.get("ghost") or [])
+    except Exception:
+        return set()
+
+
+def has_provider(root: pathlib.Path, registry_path: pathlib.Path, agent_id: str) -> bool:
+    """Demandable iff a real sibling .md exists AND it isn't inventory-quarantined."""
+    return is_real_agent(registry_path, agent_id) and agent_id not in inventory_ghosts(root)
+
+
 def agent_by_id(reg: dict, agent_id: str):
     for a in reg.get("agents", []):
         if a.get("id") == agent_id:
@@ -228,7 +247,7 @@ def handle_ups(root: pathlib.Path, data: dict) -> bytes:
         return b""
     agent_id, keyword = hit
 
-    if not is_real_agent(registry_path, agent_id):
+    if not has_provider(root, registry_path, agent_id):
         # Ghost: never ask, never record intent — advisory stderr + log only.
         print(ghost_hint(agent_id), file=sys.stderr)
         log_event(root, "UserPromptSubmit", "", action="ghost",
@@ -293,7 +312,7 @@ def handle_pre(root: pathlib.Path, data: dict) -> bytes:
             if not any(fnmatch.fnmatch(file_path, g) for g in globs):
                 continue
             agent_id = agent.get("id", "")
-            if not is_real_agent(registry_path, agent_id):
+            if not has_provider(root, registry_path, agent_id):
                 print(ghost_hint(agent_id), file=sys.stderr)
                 log_event(root, "PreToolUse", tool, action="ghost", specialist=agent_id)
                 continue

@@ -27,10 +27,10 @@ New to this space? These seven terms are all you need to read the rest of this p
 | Term | Plain meaning |
 |---|---|
 | **harness** | The whole safety layer: agents + hooks + skills + rules, wrapped around your AI. |
-| **hook** | A small script your AI runtime runs automatically before/after an action. It answers **allow**, **ask**, or **deny**. 17 of them live in [`core/hooks/`](core/hooks/). |
+| **hook** | A small script your AI runtime runs automatically before/after an action. It answers **allow**, **ask**, or **deny**. 20 of them live in [`core/hooks/`](core/hooks/). |
 | **adapter** | A thin translator between one AI CLI's native event format and the harness's canonical JSON. There are 3 ([`adapters/`](adapters/)). |
 | **agent** | A specialist your AI delegates to — e.g. a security reviewer that only reviews and never writes. 2 ship here ([`agents/`](agents/)). |
-| **skill** | A reusable step-by-step workflow the AI follows, e.g. the commit + PR flow. 4 ship here ([`skills/`](skills/)). |
+| **skill** | A reusable step-by-step workflow the AI follows, e.g. the commit + PR flow. 6 ship here ([`skills/`](skills/)). |
 | **plan-gate** | A hook that classifies your prompt and forces a written plan before risky, multi-step work. |
 | **mutex** | A lock file so two AI sessions never touch the same risky area (prod DB, deploys, payments) at once. |
 
@@ -89,7 +89,7 @@ Then:
 3. **Scaffold a project.** Inside any repo, run `/project-init` to generate `CLAUDE.md`, rules, and `gitleaks.toml`.
 4. *(Optional)* In a repo that already runs another hook-heavy plugin, disable agent-harness there via `/plugin` — agents stay namespaced as `agent-harness:*`, so there's no collision either way.
 
-The plugin bundles: **2 agents**, **4 skills**, the hook set, and the `/project-init` command.
+The plugin bundles: **2 agents**, **6 skills**, the hook set, and the `/project-init` command.
 
 ### Path B — shell install (Codex CLI / Gemini CLI / all three)
 
@@ -177,14 +177,16 @@ Model is cost-tiered per work class ([`docs/model-routing.md`](docs/model-routin
 | `supervise` | Delegate a plan to autonomous execution |
 | `verify-completion` | Independently re-verify a completion claim (deterministic checks + refute-by-default judge) |
 | `wrap` | Commit + PR automation with safeguards |
+| `harness-audit` | Read-only health check of the harness itself (one `verify-all.sh` dry-run, interpreted) |
+| `harness-help` | Router — which skill fits the situation, and the main flow through them |
 
-| Hooks — 17, wired via `hooks/hooks.json` → `core/hooks/` | Event |
+| Hooks — 20, wired via `hooks/hooks.json` → `core/hooks/` | Event |
 |---|---|
 | secret-content-scan · check-hardcoding | PreToolUse (Write/Edit) |
 | pre-tool-guard · r4-mutex · context-mode-guard | PreToolUse |
-| tdd-guard · spec-gate · supervisor | PreToolUse (Write/Edit) |
+| tdd-guard · spec-gate · supervisor · plan-scope-allow | PreToolUse (Write/Edit) |
 | session heartbeat | UserPromptSubmit |
-| plan-gate | PostToolUse (ExitPlanMode/Task/Agent) |
+| plan-gate · model-routing-observer | PostToolUse (ExitPlanMode/Task/Agent) |
 | session-quality-gate · session-close | Stop |
 
 Command: **`/project-init`** scaffolds project-level files (`CLAUDE.md`, rules, `gitleaks.toml`).
@@ -200,12 +202,12 @@ Agent/
 ├── CHANGELOG.md
 │
 ├── agents/             # 2 agent definitions + master-registry.json
-├── skills/             # 4 skills (spec · supervise · verify-completion · wrap)
+├── skills/             # 6 skills (spec · supervise · verify-completion · wrap · harness-audit · harness-help)
 ├── commands/           # 1 slash command (/project-init)
 ├── hooks/              # plugin hook wiring (hooks.json)
 │
 ├── core/               # AI-agnostic core — the truth
-│   ├── hooks/          #   17 portable hooks + hook_config.py (shared module)
+│   ├── hooks/          #   20 portable hooks + hook_config.py (shared module)
 │   ├── infra/          #   session coordination · auto-ship · goal mode
 │   ├── git-hooks/      #   pre-commit · pre-push
 │   └── tests/          #   4 test scripts
@@ -215,7 +217,7 @@ Agent/
 ├── templates/          # project scaffold templates
 ├── docs/               # architecture · protocol · guides · benchmark
 ├── github/             # PR template + workflow templates
-└── legacy/             # archived v0 mirror (out of scope)
+└── legacy/             # retired snapshots (out of scope)
 ```
 
 ## Why "AI-agnostic"?
@@ -331,7 +333,7 @@ see [`docs/specializing-agents.md`](docs/specializing-agents.md).
 - [`docs/benchmark/results.md`](docs/benchmark/results.md) — reviewer self-benchmark
 - [`docs/benchmark/landscape.md`](docs/benchmark/landscape.md) — survey vs popular harnesses + gap→backlog map
 - [`docs/harness-improvement-plan.md`](docs/harness-improvement-plan.md) — audit + improvement roadmap *(Korean)*
-- Migrating from the pre-2026-05 mirror? See [`legacy/v0-mirror-2026-05-12/ARCHIVE-NOTE.md`](legacy/v0-mirror-2026-05-12/ARCHIVE-NOTE.md).
+- Migrating from the pre-2026-05 mirror? The v0 mirror left the shipped tree in 0.2.9 (its retired agent providers were a ghost-specialist trap). It lives on the `archive/v0-mirror` tag: `git show archive/v0-mirror:legacy/v0-mirror-2026-05-12/ARCHIVE-NOTE.md`.
 
 ## Contributing
 
