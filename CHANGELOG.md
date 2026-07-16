@@ -7,7 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- **`legacy/trim-2026-07-04/` removed from the shipped tree — the last `legacy/`
+  payload is gone (preserved on tag `archive/legacy-trim-2026-07`).** The plugin
+  package *is* the git tree (no exclusion manifest), so these 44K of retired
+  agents/skills rode into every release. The six `legacy/`-scoped exclusion
+  rules (`gitleaks.toml`, `sanitize-audit.sh`, `supply-chain-scan.sh`,
+  `doc-reality.sh`, `check-hardcoding.py`, `secret-content-scan.py`) stay
+  unchanged: CHANGELOG entries
+  still reference historical `legacy/…` paths, and doc-reality needs the
+  exclusion to keep ignoring them. Recover anything with
+  `git show archive/legacy-trim-2026-07:legacy/trim-2026-07-04/<path>`.
+  (Benchmark input: netwaif/multi-agent-starter ships a deliberately minimal
+  generated tree — our tree-is-the-package model makes git removal + archive
+  tag the only diet mechanism.)
+
 ### Changed
+- **`setup.sh` installs now end in post-install validation.** Every install
+  path auto-runs the existing read-only `--doctor` diagnosis and the script
+  exits non-zero on FAIL rows, so a broken install fails loudly at install
+  time instead of at first use (`AGENT_SETUP_NO_DOCTOR=1` skips — test seam /
+  air-gapped bootstrap). Install paths also self-heal lost exec bits on
+  `core/hooks/*` and `adapters/*/adapter.sh` before validating, so
+  exec-bit-hostile distribution paths (ZIP download) don't hard-fail a check
+  the script never remediated. Pattern adopted from multi-agent-starter's
+  generate→`validate.py` PASS/FAIL pairing, reusing our existing doctor
+  instead of a new validator.
+- **`apply_template()` is now idempotent (checksum update mode).** A target
+  byte-identical to the fresh render reports `up-to-date` with no prompt;
+  only a target that actually differs (user-customized, or template changed)
+  asks before overwriting. Re-running setup over an existing install is now a
+  quiet no-op update pass instead of a prompt per file — the equivalent of
+  multi-agent-starter's update mode ("overwrite system files, preserve user
+  data") for our template set.
 - **Gate-registry correction: quality-completion RETIRE-CANDIDATE →
   KEEP-CONDITIONAL (same-day supersede).** The retirement investigation refuted
   its own premise: `session-quality-gate.py` is also the enforcement layer for

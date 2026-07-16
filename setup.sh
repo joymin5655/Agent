@@ -64,16 +64,34 @@ confirm() {
     [[ "$ans" =~ ^[Yy] ]]
 }
 
+# Render src -> dst with {{FRAMEWORK_ROOT}} substituted. Idempotent: a dst
+# byte-identical to the fresh render is reported up-to-date with no prompt, so
+# re-running setup is a no-op update pass; only a dst that actually differs
+# (user-customized, or the template changed) asks before overwriting.
 apply_template() {
-    local src="$1" dst="$2"
+    local src="$1" dst="$2" rendered
+    rendered="$(mktemp)"
+    # No RETURN trap here: a RETURN trap set inside a function outlives it in
+    # bash 5 and re-fires on every later function return, where the local
+    # $rendered no longer exists (unbound under set -u). Explicit rm -f on
+    # each exit path instead; a sed failure under set -e leaks one temp file,
+    # which is acceptable.
+    sed "s|{{FRAMEWORK_ROOT}}|$FRAMEWORK_ROOT|g" "$src" > "$rendered"
     if [[ -f "$dst" ]]; then
-        if ! confirm "  $dst exists. Overwrite?"; then
+        if cmp -s "$rendered" "$dst"; then
+            echo "  up-to-date: $dst"
+            rm -f "$rendered"
+            return
+        fi
+        if ! confirm "  $dst exists and differs. Overwrite?"; then
             echo "  ... skipped: $dst"
+            rm -f "$rendered"
             return
         fi
     fi
     mkdir -p "$(dirname "$dst")"
-    sed "s|{{FRAMEWORK_ROOT}}|$FRAMEWORK_ROOT|g" "$src" > "$dst"
+    cat "$rendered" > "$dst"
+    rm -f "$rendered"
     echo "  installed: $dst"
 }
 
@@ -564,8 +582,30 @@ fi
 [[ $DO_GEMINI -eq 1 ]] && install_gemini
 [[ $DO_PROJECT -eq 1 ]] && install_project
 
+# Self-heal exec bits before validating: distribution paths that drop POSIX
+# exec bits (ZIP download, some copy tools) would otherwise hard-fail doctor
+# checks 5/6 with no in-script remediation. hook_config.py stays a library
+# module (same exemption as doctor check 5).
+for f in "$FRAMEWORK_ROOT"/core/hooks/*.sh "$FRAMEWORK_ROOT"/core/hooks/*.py \
+         "$FRAMEWORK_ROOT"/adapters/*/adapter.sh; do
+    [[ -f "$f" && "$(basename "$f")" != "hook_config.py" && ! -x "$f" ]] && chmod +x "$f"
+done
+
+# Post-install validation: every install path ends in the same read-only
+# diagnosis a user would run by hand (--doctor), so a broken install fails
+# loudly at install time instead of at first use. AGENT_SETUP_NO_DOCTOR=1
+# skips it (test seam / air-gapped bootstrap).
 echo
-echo "=== Setup complete ==="
+if [[ "${AGENT_SETUP_NO_DOCTOR:-0}" == "1" ]]; then
+    echo "=== Setup complete (post-install validation skipped: AGENT_SETUP_NO_DOCTOR=1) ==="
+elif doctor; then
+    echo
+    echo "=== Setup complete — post-install validation PASS ==="
+else
+    echo
+    echo "=== Setup finished, but post-install validation FAILED (see doctor output above) ===" >&2
+    exit 1
+fi
 echo "Next steps:"
 echo "  - Verify hooks work: bash $FRAMEWORK_ROOT/core/tests/sanitize-audit.sh"
 echo "  - Test adapters: bash $FRAMEWORK_ROOT/core/tests/adapter-parity.sh"
