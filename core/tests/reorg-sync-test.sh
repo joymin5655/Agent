@@ -207,5 +207,19 @@ grep -q '/mnt/vol/논문자료 end' "$T8/space.md"; check "space-line-cjk-siblin
 rm -rf "$T8"
 
 echo
+echo "=== (11) left boundary: OLD as the tail of an unrelated longer path (MINOR) ==="
+T9="$(mktemp -d)"
+# OLD=/proj/x must NOT match inside /other/tree/proj/x (a different absolute path)
+printf 'unrelated /other/tree/proj/x/file.txt\nreal /proj/x/file.txt\n' > "$T9/left.md"
+bash "$TOOL" --old /proj/x --new /moved/y --root "$T9" --apply >/dev/null 2>&1
+grep -q '/other/tree/proj/x/file.txt' "$T9/left.md"; check "left-tail-of-longer-path-untouched" $?
+grep -q '/moved/y/file.txt' "$T9/left.md"; check "left-real-ref-rewritten" $?
+# path-start delimiters DO still match on the left (=, :, quote, space, BOL)
+printf 'A=/proj/x\nlist=/a:/proj/x\nq="/proj/x"\n/proj/x at BOL\n' > "$T9/leftok.md"
+bash "$TOOL" --old /proj/x --new /moved/y --root "$T9" --apply >/dev/null 2>&1
+[[ "$(grep -c '/moved/y' "$T9/leftok.md")" -eq 4 ]]; check "left-delimiter-starts-still-match" $?
+rm -rf "$T9"
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]
