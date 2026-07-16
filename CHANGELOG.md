@@ -43,6 +43,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   prompt-only-enforcement gap. Survey-only change, no behavior.
 
 ### Added
+- **`/reorg-sync` — orphaned path-reference sweeper (W-2).** After a tree moves (drive
+  reorg, folder rename), absolute-path references left in metadata break silently. New
+  `core/infra/reorg-sync.sh` takes an old and a new path prefix (repo-generic — nothing
+  hardcoded) and sweeps five reference classes under a target tree: `shebang` interpreter
+  lines, git worktree `gitdir:` pointers, `crontab` command paths, doc/config `anchor`s,
+  and the path-keyed `native-memory-key` dir (rewritten with the harness's `/ . _` → `-`
+  encoding). Dry-run report by default (`CLASS  file:line  text` rows + per-class
+  summary); `--apply` does a literal replacement **anchored at a path-component
+  boundary**, with atomic per-file writes (temp + rename, permissions preserved) and
+  per-file failure reporting (exit 1, sweep continues). Binary files, symlinks, and
+  the `.git` object store are skipped, while a `.git` worktree *file* is swept; a
+  bare `/`, empty, or newline-carrying prefix is refused. New skill
+  `skills/reorg-sync/SKILL.md` wraps it report-then-confirm and notes that
+  out-of-tree targets (`~/.claude` memory dir, the live crontab) are surfaced, not
+  auto-mutated. **Adversarial re-review (2026-07-15, 3 lanes — the original review
+  lane died on session limits and was correctly treated as false-clean):** fixed
+  2 CRITICAL (unbounded substring replacement corrupting sibling paths/keys, e.g.
+  `/old/prefixed-thing`, `-…-Agent2`; non-idempotent compounding when NEW extends
+  OLD, `/proj`→`/proj_v2`→`_v2_v2`), 2 MAJOR (non-atomic writes with no error
+  handling → partial-apply + raw traceback; lossy encoded-key collisions with
+  ordinary kebab text — key layer now confined to `claude/projects` context lines),
+  plus newline-prefix rejection and `@keyword` cron classification; a battery
+  mutation pass (5 mutations) exposed the dotted-path encoding gap now covered by a
+  fixture; a second mutation round exposed two more (underscore-in-OLD silent key
+  miss; `/`-continuation compounding where nonce protection is the sole guard) —
+  both fixtured. **Round 3 (2026-07-16)** — the security lane's re-review found the
+  boundary blocklist was ASCII-only, so CJK and punctuation siblings still bled
+  (live on this drive's Korean top-level folders, e.g. `/x/논문` corrupting
+  `/x/논문자료`): replaced the blocklist with a **Unicode-aware whitelist** boundary
+  (`/`, line/string end, whitespace, or an explicit delimiter — everything else,
+  any-script word char or `. - + @ ~ %`, is a continuation) and made the encoded-key
+  boundary Unicode `\w`-based. Battery `core/tests/reorg-sync-test.sh` grew 27 → **72
+  checks** (sibling
+  path/kebab/sibling-key decoys byte-for-byte untouched, NEW-extends-OLD
+  convergence (both `_` and `/` continuations), dotted/underscore-key encoding,
+  CJK + punctuation sibling protection, delimiter- and space-terminated real-ref
+  rewrite, unwritable-target reporting, exec-bit preservation, newline guard);
+  auto-discovered by `verify-all.sh`. **Rounds 4–6 (2026-07-16, adversarial
+  workflow panels):** panel 2 caught the NUL-nonce mask corrupting a nested sibling
+  and a lossy key-layer normalization — nonce retired for a positional
+  **protected-span guard**, key layer made exact-only; panel 3 caught
+  NEW-extends-OLD compounding through the guard and key+path co-resident
+  undercounting; panel 4 (19 agents, 11 CONFIRMED collapsing to 3 root defects,
+  independently confirmed by live-manual byte-level probes) caught the guard's
+  "starts-inside" test no-op'ing 100% of promote-up reorgs (NEW a boundary-prefix
+  of OLD, `/old/sub`→`/old` — report said `anchor=1`, apply rewrote 0) plus
+  report/apply divergence in both directions (N same-line refs counted 1;
+  span-guard safe-misses counted as hits). Fixed by **full-containment** span
+  testing and a single shared per-occurrence match set (`live_matches`) that both
+  the dry-run report and `--apply` consume — counts now equal substitutions by
+  construction. Battery 72 → **94 checks**.
 - **Evidence-first inventory — kill the ghost-specialist deadlock at its root
   (`rules/policy/evidence-first.md` + `core/hooks/agent-inventory.py`).** A gate that
   demands a specialist with no in-runtime provider deadlocks the session: the gate blocks
