@@ -61,6 +61,27 @@ judgment). `core/hooks/model-routing-observer.py` records every Task/Agent
 dispatch's verdict (`override` / `pinned_specialist` / `inherit_top`) to
 `.agent/logs/model-routing.jsonl`, so this convention is measured, not assumed.
 
+## Intelligence placement — the advisor pattern
+
+Three placements of TOP-tier intelligence exist, chosen by task shape
+(economics and published measurements: `docs/concepts/cost-effective-harnesses.md`):
+
+| Placement | When | This harness's instance |
+|---|---|---|
+| **Orchestrator** | Judgment concentrates upfront (plan, decompose, delegate) | The main-loop judgment rows above; `/supervise` wave dispatch |
+| **Advisor** | Judgment is *scattered* across an exploratory task — each result reshapes what's worth trying next | `/supervise` audit-after-wave: a TOP-judgment checkpoint re-ranking MID execution mid-run |
+| **Verifier / judge** | Judgment concentrates at review | `/verify-completion` refute-by-default judge (MID floor, below) |
+
+The advisor rule worth encoding: **checkpoints stay TOP-tier and recur
+mid-run.** A single upfront TOP ranking is not where advisor value
+concentrates — measured on an exploratory ML-engineering task, the frontier
+model's initial ranking was *anti-correlated* with outcomes, while recurring
+mid-run checkpoints captured ~90% of frontier-solo quality at ~34% of the
+cost (details in the concept doc). Cheap executors hill-climb marginal gains;
+the checkpoint's job is stepping back and re-prioritizing. This stays a
+documented convention — no new agent, no new mechanism, consistent with the
+no-runtime-switching decision below.
+
 ## Floors
 
 - **Verify/judge floor: never below the workhorse (MID) tier.** The
@@ -73,6 +94,25 @@ dispatch's verdict (`override` / `pinned_specialist` / `inherit_top`) to
   anthropic.com/engineering/multi-agent-research-system), which makes worker
   tier the single largest cost lever. Default fan-out workers to LOW and
   promote individually — never promote the whole wave.
+- **Coordination-cost floor — when not to delegate.** Every handoff carries a
+  roughly fixed cost: boundary tokens are billed at least twice (the lead
+  writes a brief the worker reads; the worker writes a report the lead
+  reads), and non-communicating parallel workers duplicate reads. Below a
+  threshold task size this inverts the economics — on a small research task,
+  solo TOP was measured *cheaper* than TOP-orchestrator-plus-cheap-workers
+  (+60% markup for no benefit), while the same split on a large task hit 96%
+  of the score at 46% of the cost
+  (`docs/concepts/cost-effective-harnesses.md`). Delegate only when the
+  delegated volume dwarfs the handoff; a dispatch whose payload is comparable
+  to its own brief+report boundary has negative savings — do the work inline
+  or fold it into an adjacent dispatch.
+- **Prompt-cache preservation — reuse workers.** Each worker maintains its
+  own prompt cache. Route repeat calls at the same context to the *same*
+  worker (continue the live subagent with a follow-up message) instead of
+  fresh-spawning per request — a fresh spawn re-pays the full context write
+  uncached, and a low cache hit rate can erase the entire benefit of a
+  cheaper per-token worker. Standing exception: **verifiers are always fresh
+  spawns** — the verifier-isolation floor beats the cache saving.
 - **Long-horizon implementation is not a LOW-tier task.** An external
   benchmark with a program-based verifier (github.com/datacurve-ai/deep-swe:
   113 long-horizon SWE tasks, 0.3% false-accept; leaderboard as of 2026-05,
@@ -88,7 +128,7 @@ dispatch's verdict (`override` / `pinned_specialist` / `inherit_top`) to
 | Runtime | Mechanism | Where |
 |---|---|---|
 | Claude Code — specialist pins | `model:` frontmatter, **enforced**: CI `validate-plugin` drift guard reconciles registry ↔ frontmatter | `agents/*.md`, `agents/master-registry.json` |
-| Claude Code — judgment unpinned / per-call MID (execution dispatch) & LOW overrides | Convention, documented not CI-checked (frontmatter *absence* and call-time overrides are not statically verifiable) | `skills/supervise/SKILL.md` Model policy |
+| Claude Code — judgment unpinned / per-call MID (execution dispatch) & LOW overrides; coordination-cost check and worker-reuse (cache) | Convention, documented not CI-checked (frontmatter *absence*, call-time overrides, and call-time reuse-vs-spawn choices are not statically verifiable) | `skills/supervise/SKILL.md` Model policy |
 | Codex CLI | Named profiles (per-profile config files on recent CLI builds): default = workhorse, `quick` = LOW, `deep` = TOP; `model_reasoning_effort` is the effort dial | `adapters/codex/codex-config.toml.template` + `quick.config.toml.template` / `deep.config.toml.template` |
 | Gemini CLI | `settings.json` default model = workhorse; callers escalate with explicit `-m` | `adapters/gemini/gemini-settings.json.template` |
 

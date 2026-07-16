@@ -50,9 +50,19 @@ is not ready to send.
 - **Fan-out cap 3–5** concurrent workers per wave. A wave with more concurrent
   subtasks splits into consecutive waves — coordination costs grow faster than
   the parallelism pays past that width.
+- **Handoff must pay for itself**: the contract+report boundary is billed
+  twice in each direction (lead writes / worker reads; worker writes / lead
+  reads). Do not dispatch a task whose delegated volume is comparable to its
+  own boundary — fold it into an adjacent contract or do it inline. This is
+  the economic grounding of the fan-out cap above; the coordination-cost
+  floor lives in `docs/model-routing.md` → Floors.
 - **Write single-threading**: one writer per fileset. Review and verify agents
   carry read-only toolsets (Read/Grep/Glob) — that toolset, guarded by the CI
   registry-drift gate, is the mechanical enforcement point.
+- **Worker reuse over fresh spawns**: consecutive subtasks over the same
+  fileset or context continue the *same* worker so its prompt cache
+  accumulates — a fresh spawn per request re-pays the full context write
+  uncached. Verifiers are always fresh (isolation beats cache).
 - **Verifier isolation**: verifiers are fresh spawns given this contract's
   goal and the end-state only — no author context, no author self-assessment.
   They grade what exists, not what the author says exists.

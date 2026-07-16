@@ -51,6 +51,15 @@ execution work, dispatch it at the tier the table names instead of doing it
 inline at the session model. Inline execution at the top tier is the expensive
 default this rule exists to prevent.
 
+Two placement corollaries (economics: `docs/model-routing.md` → Intelligence
+placement & Floors): the audit-after-wave step is this harness's **advisor
+checkpoint** — TOP judgment re-ranking MID execution mid-run, which is where
+advisor value concentrates (not in a single upfront ranking). And a
+**coordination-cost check** applies before dispatching: a wave whose delegated
+volume would not clearly offset its own contract+report boundary (billed twice
+in each direction) is not a wave — fold it into an adjacent wave or make the
+edit directly.
+
 The supervise loop itself never overrides a model. `core/hooks/supervisor.py`
 is a dispatch-suggestion stub — it matches intent to a specialist from the
 registry; it does not read or set `model`. If you add an agent whose role is
@@ -88,7 +97,7 @@ b. **Classify the wave and pick lanes** based on its content:
    Every dispatch is written as a **delegation contract** —
    `skills/supervise/templates/delegation-contract.md` (goal / output format /
    tools & scope / boundaries, plus an explicit `model` field per the Model
-   policy). Four orchestration rules travel with it (details in the template):
+   policy). Five orchestration rules travel with it (details in the template):
    - **Fan-out cap 3–5** per wave — a wave with more concurrent subtasks
      splits into consecutive waves (the template shows a worked split).
    - **Write single-threading** — one writer per fileset; review/verify agents
@@ -98,6 +107,10 @@ b. **Classify the wave and pick lanes** based on its content:
      the wave's relevant constraint slice re-stated (not whole rulebooks).
    - **Verifier isolation** — verifiers are fresh spawns with no author
      context or self-assessment; they grade end-state only.
+   - **Worker reuse (cache)** — consecutive subtasks over the same fileset or
+     context continue the *same* worker rather than fresh-spawning each one
+     (a fresh spawn re-pays the full context write uncached). Verifier
+     isolation is the standing exception: verifiers are always fresh.
 c. **Execute** the wave's intended changes — through the dispatched execution
    lane, not inline at the session model (inline is judgment's lane, not
    execution's).
