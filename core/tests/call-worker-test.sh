@@ -45,7 +45,7 @@ cat > "$REGISTRY" <<'JSON'
   },
   "backends": {
     "codex":  { "connection": "cli", "cmd": ["codex", "exec"], "timeout_s": 30 },
-    "gemini": { "connection": "cli", "cmd": ["gemini", "-p"], "timeout_s": 30 }
+    "gemini": { "connection": "cli", "cmd": ["gemini", "-p", ""], "timeout_s": 30 }
   }
 }
 JSON
