@@ -113,7 +113,14 @@ old_key, new_key = enc(old), enc(new)
 # space + more (e.g. `/old/data 2024` when OLD=`/old/data`) is treated as the
 # component `data` followed by text — the dry-run surfaces it before apply.
 _BOUNDARY = r"""(?=/|$|[\s"'`:,;=|<>(){}\[\]])"""
-path_pat = re.compile(re.escape(old) + _BOUNDARY)
+# LEFT boundary (2026-07-16 code-review fix): a path match must also START at a
+# path boundary, or OLD would match as the *tail* of a longer, unrelated
+# absolute path — e.g. OLD=/proj/x wrongly hitting /other/tree/proj/x. Unlike
+# the right side, a preceding '/' is NOT a boundary (it would mean OLD is a
+# sub-path of a different absolute path); block it along with any path-body char
+# (word chars in any script, '. - ~ + @ %'). Vacuously true at string start.
+_LEFT = r"(?<![\w./~+@%\-])"
+path_pat = re.compile(_LEFT + re.escape(old) + _BOUNDARY)
 # The encoded key alphabet is '-' plus surviving component chars (only / . _ are
 # folded away), so a key boundary is "not a Unicode word char" on both sides.
 # '-' continuation stays legal (a deeper cwd's key '-old-prefix-sub' must still
