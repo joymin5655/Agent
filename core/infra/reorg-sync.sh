@@ -96,19 +96,32 @@ def enc(p):
 old_key, new_key = enc(old), enc(new)
 
 # Boundary-anchored matchers (2026-07-15 adversarial-review fix — unbounded
-# substring replacement corrupted sibling paths and broke idempotency).
+# substring replacement corrupted sibling paths and broke idempotency;
+# 2026-07-16 fix — the first attempt used an ASCII-only blocklist that still
+# leaked CJK and punctuation siblings, live on this drive's Korean top-level
+# folders).
 #
-# A PATH hit must end at a path-component boundary: the next char may not be a
-# path-word char. Blocks sibling bleed (/old/prefixed-thing, /old/prefix_v2,
-# /old/prefix.txt) while '/sub' continuation still matches.
-path_pat = re.compile(re.escape(old) + r"(?![A-Za-z0-9._\-])")
-# An ENCODED-KEY hit must be a standalone key token: not embedded in a longer
-# alphanumeric run on either side. '-' continuation stays legal — a deeper cwd's
-# key ('-old-prefix-sub') must still rewrite — but '-old-prefix2' (a sibling
-# project's key) and 'kebab-old-prefix' (ordinary kebab text) must not. The key
-# layer additionally only ever runs on lines carrying the documented consumer
-# context, KEY_CTX.
-key_pat = re.compile(r"(?<![A-Za-z0-9])" + re.escape(old_key) + r"(?![A-Za-z0-9])")
+# A filename component can hold almost any character (every Unicode letter and
+# digit, '.', '-', '_', '+', '@', '~', '%', ...), so a blocklist of "continuation
+# chars" is always incomplete. We instead WHITELIST the boundary: a PATH hit is a
+# real reference only when the next char is '/', a line/string end, whitespace,
+# or an unambiguous path DELIMITER (quote, structural punctuation). Anything else
+# — any word char in any script, '.', '-', '+', '@', '~', '%' — is treated as a
+# continuation (a sibling name) and skipped, failing toward a dry-run-visible
+# MISS rather than silent sibling corruption. '/sub' continuation still matches.
+# Residual (documented): a directory whose name is the moved prefix + a literal
+# space + more (e.g. `/old/data 2024` when OLD=`/old/data`) is treated as the
+# component `data` followed by text — the dry-run surfaces it before apply.
+_BOUNDARY = r"""(?=/|$|[\s"'`:,;=|<>(){}\[\]])"""
+path_pat = re.compile(re.escape(old) + _BOUNDARY)
+# The encoded key alphabet is '-' plus surviving component chars (only / . _ are
+# folded away), so a key boundary is "not a Unicode word char" on both sides.
+# '-' continuation stays legal (a deeper cwd's key '-old-prefix-sub' must still
+# rewrite), but a sibling project's key ('-old-prefix2', '…-논문자료') and ordinary
+# kebab text ('kebab-old-prefix') must not. \w is Unicode by default for str
+# patterns, so this covers CJK. The key layer additionally only ever runs on
+# lines carrying the documented consumer context, KEY_CTX.
+key_pat = re.compile(r"(?<!\w)" + re.escape(old_key) + r"(?!\w)")
 KEY_CTX = "claude/projects"
 
 # NUL can never occur in swept text (binary files are skipped on b"\x00"), so it
