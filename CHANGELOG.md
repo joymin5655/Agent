@@ -74,7 +74,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/x/논문자료`): replaced the blocklist with a **Unicode-aware whitelist** boundary
   (`/`, line/string end, whitespace, or an explicit delimiter — everything else,
   any-script word char or `. - + @ ~ %`, is a continuation) and made the encoded-key
-  boundary Unicode `\w`-based. Battery `core/tests/reorg-sync-test.sh` grew 27 → **62
+  boundary Unicode `\w`-based. Battery `core/tests/reorg-sync-test.sh` grew 27 → **72
   checks** (sibling
   path/kebab/sibling-key decoys byte-for-byte untouched, NEW-extends-OLD
   convergence (both `_` and `/` continuations), dotted/underscore-key encoding,

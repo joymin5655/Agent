@@ -121,28 +121,40 @@ _BOUNDARY = r"""(?=/|$|[\s"'`:,;=|<>(){}\[\]])"""
 # (word chars in any script, '. - ~ + @ %'). Vacuously true at string start.
 _LEFT = r"(?<![\w./~+@%\-])"
 path_pat = re.compile(_LEFT + re.escape(old) + _BOUNDARY)
-# The encoded key alphabet is '-' plus surviving component chars (only / . _ are
-# folded away), so a key boundary is "not a Unicode word char" on both sides.
-# '-' continuation stays legal (a deeper cwd's key '-old-prefix-sub' must still
-# rewrite), but a sibling project's key ('-old-prefix2', '…-논문자료') and ordinary
-# kebab text ('kebab-old-prefix') must not. \w is Unicode by default for str
-# patterns, so this covers CJK. The key layer additionally only ever runs on
-# lines carrying the documented consumer context, KEY_CTX.
-key_pat = re.compile(r"(?<!\w)" + re.escape(old_key) + r"(?!\w)")
+new_pat = re.compile(_LEFT + re.escape(new) + _BOUNDARY)
+# The encoded key alphabet is '-' (into which only / . _ fold) plus every
+# surviving component char — so chars like ~ + @ % and CJK punctuation
+# (e.g. U+30FB '・') stay INSIDE a component yet are non-\w. A \w-based key
+# boundary therefore leaked sibling keys ('-x-논문・백업', '-x-논문~백업') — the
+# 2026-07-16 workflow panel confirmed this silently corrupted a different
+# project's memory key. Fix: WHITELIST the key boundary the same way the path
+# layer does, with the one difference that '-' IS a key boundary (it is the key's
+# own component separator, so a deeper key '-x-논문-sub' must still rewrite).
+# Left side: preceded by a boundary/delimiter, '/', or string start — never a
+# component-body char (blocks a longer key that merely ends with old_key).
+_KEY_R = r"""(?=[-/]|$|[\s"'`:,;=|<>(){}\[\]])"""
+_KEY_L = r"""(?<![^\s"'`:,;=|<>(){}\[\]/])"""
+key_pat = re.compile(_KEY_L + re.escape(old_key) + _KEY_R)
+new_key_pat = re.compile(_KEY_L + re.escape(new_key) + _KEY_R)
 KEY_CTX = "claude/projects"
 
 # NUL can never occur in swept text (binary files are skipped on b"\x00"), so it
-# is a safe protection nonce: when NEW itself still matches the pattern (NEW
-# extends OLD, e.g. /proj -> /proj_v2), mask existing NEW occurrences before
-# substituting so a re-run is a no-op instead of compounding (_v2_v2).
+# is a safe protection nonce: when NEW itself still matches the OLD pattern (NEW
+# extends OLD, e.g. /proj -> /proj/inner or /proj -> /proj_v2), mask existing
+# *complete* NEW references before substituting so a re-run is a no-op instead of
+# compounding. The mask is BOUNDARY-ANCHORED (repl_pat), NOT a blind substring:
+# a blind text.replace(NEW, …) would also eat the NEW-shaped PREFIX of a genuine
+# OLD reference like /proj/innerX, silently dropping a hit the dry-run reported
+# (2026-07-16 workflow panel). Restoring the nonce afterward leaves protected
+# references byte-identical.
 NONCE = "\x00"
 
-def sub_protected(pat, repl, text):
-    if pat.search(repl):
-        text = text.replace(repl, NONCE)
-        text = pat.sub(lambda m: repl, text)
-        return text.replace(NONCE, repl)
-    return pat.sub(lambda m: repl, text)
+def sub_protected(pat, repl, repl_pat, text):
+    if not pat.search(repl):
+        return pat.sub(lambda m: repl, text)
+    text = repl_pat.sub(lambda m: NONCE, text)
+    text = pat.sub(lambda m: repl, text)
+    return text.replace(NONCE, repl)
 
 # classify a single line's hit for reporting. Order matters: most specific first.
 def classify(line):
@@ -204,9 +216,9 @@ for dirpath, dirnames, filenames in os.walk(root):
             out = []
             for ln in text.splitlines(keepends=True):
                 if KEY_CTX in ln and key_pat.search(ln):
-                    ln = sub_protected(key_pat, new_key, ln)
+                    ln = sub_protected(key_pat, new_key, new_key_pat, ln)
                 out.append(ln)
-            updated = sub_protected(path_pat, new, "".join(out))
+            updated = sub_protected(path_pat, new, new_pat, "".join(out))
             if updated != text:
                 # atomic write: temp + rename, preserving the original mode
                 # (a shebang target must stay executable). A file we cannot
