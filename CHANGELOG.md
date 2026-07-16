@@ -11,9 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`legacy/trim-2026-07-04/` removed from the shipped tree — the last `legacy/`
   payload is gone (preserved on tag `archive/legacy-trim-2026-07`).** The plugin
   package *is* the git tree (no exclusion manifest), so these 44K of retired
-  agents/skills rode into every release. The five `legacy/`-scoped exclusion
+  agents/skills rode into every release. The six `legacy/`-scoped exclusion
   rules (`gitleaks.toml`, `sanitize-audit.sh`, `supply-chain-scan.sh`,
-  `doc-reality.sh`, `check-hardcoding.py`) stay unchanged: CHANGELOG entries
+  `doc-reality.sh`, `check-hardcoding.py`, `secret-content-scan.py`) stay
+  unchanged: CHANGELOG entries
   still reference historical `legacy/…` paths, and doc-reality needs the
   exclusion to keep ignoring them. Recover anything with
   `git show archive/legacy-trim-2026-07:legacy/trim-2026-07-04/<path>`.
@@ -26,7 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   path auto-runs the existing read-only `--doctor` diagnosis and the script
   exits non-zero on FAIL rows, so a broken install fails loudly at install
   time instead of at first use (`AGENT_SETUP_NO_DOCTOR=1` skips — test seam /
-  air-gapped bootstrap). Pattern adopted from multi-agent-starter's
+  air-gapped bootstrap). Install paths also self-heal lost exec bits on
+  `core/hooks/*` and `adapters/*/adapter.sh` before validating, so
+  exec-bit-hostile distribution paths (ZIP download) don't hard-fail a check
+  the script never remediated. Pattern adopted from multi-agent-starter's
   generate→`validate.py` PASS/FAIL pairing, reusing our existing doctor
   instead of a new validator.
 - **`apply_template()` is now idempotent (checksum update mode).** A target

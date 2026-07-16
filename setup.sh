@@ -71,22 +71,20 @@ confirm() {
 apply_template() {
     local src="$1" dst="$2" rendered
     rendered="$(mktemp)"
+    trap 'rm -f "$rendered"' RETURN
     sed "s|{{FRAMEWORK_ROOT}}|$FRAMEWORK_ROOT|g" "$src" > "$rendered"
     if [[ -f "$dst" ]]; then
         if cmp -s "$rendered" "$dst"; then
             echo "  up-to-date: $dst"
-            rm -f "$rendered"
             return
         fi
         if ! confirm "  $dst exists and differs. Overwrite?"; then
             echo "  ... skipped: $dst"
-            rm -f "$rendered"
             return
         fi
     fi
     mkdir -p "$(dirname "$dst")"
     cat "$rendered" > "$dst"
-    rm -f "$rendered"
     echo "  installed: $dst"
 }
 
@@ -576,6 +574,15 @@ fi
 [[ $DO_CODEX -eq 1 ]]  && install_codex
 [[ $DO_GEMINI -eq 1 ]] && install_gemini
 [[ $DO_PROJECT -eq 1 ]] && install_project
+
+# Self-heal exec bits before validating: distribution paths that drop POSIX
+# exec bits (ZIP download, some copy tools) would otherwise hard-fail doctor
+# checks 5/6 with no in-script remediation. hook_config.py stays a library
+# module (same exemption as doctor check 5).
+for f in "$FRAMEWORK_ROOT"/core/hooks/*.sh "$FRAMEWORK_ROOT"/core/hooks/*.py \
+         "$FRAMEWORK_ROOT"/adapters/*/adapter.sh; do
+    [[ -f "$f" && "$(basename "$f")" != "hook_config.py" && ! -x "$f" ]] && chmod +x "$f"
+done
 
 # Post-install validation: every install path ends in the same read-only
 # diagnosis a user would run by hand (--doctor), so a broken install fails
