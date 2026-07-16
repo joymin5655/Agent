@@ -60,9 +60,15 @@ the sweep continues, exiting 1 so the failure is visible. Binary files and the
 `.git` object store are skipped. The native-memory key is rewritten with the
 harness's `/ . _` → `-` encoding (Unicode-boundaried), confined to lines that carry
 the `claude/projects` consumer context — ordinary kebab-case text is never touched.
-One documented residual: a directory whose name is the moved prefix + a literal
-space + more (`/old/data 2024` for OLD `/old/data`) is read as the component plus
-text; the dry-run surfaces it before any apply.
+Because that fold is lossy, **only the exact key (the moved dir's own, `cwd == OLD`)
+is rewritten**: a `-`-continuation key like `-old-prefix-sub` is left untouched,
+since after the fold it is indistinguishable from a dash/dot/underscore *sibling*
+(`enc('/old/prefix/sub')` == `enc('/old/prefix-sub')`). Skipping a deeper key is a
+safe miss (the orphaned dir simply stays, as before this tool) rather than risk
+corrupting an unrelated project's key. One documented residual: a directory whose
+name is the moved prefix + a literal space + more (`/old/data 2024` for OLD
+`/old/data`) is read as the component plus text; the dry-run surfaces it before any
+apply.
 
 **Coverage caveat (report honestly):** only references that end at a boundary
 (`/`, whitespace, a delimiter, or line/string end) are detected — a reference
@@ -83,8 +89,13 @@ the swept tree) and the live user crontab is a system resource — this skill re
 
 ## Notes
 
-- Idempotent: a second `--apply` run with the same prefixes finds nothing to change —
-  including when NEW extends OLD (`/proj` → `/proj_v2`), where existing NEW
-  occurrences are protected from re-substitution.
+- Idempotent: a second `--apply` run with the same prefixes finds nothing to change,
+  including when NEW extends OLD (`/proj` → `/proj_v2`, `/proj` → `/proj/inner`). This
+  is enforced by a negative lookahead — an OLD whose continuation already spells NEW
+  is read as *already migrated* and skipped — not by masking (an earlier NUL-nonce
+  mask self-corrupted a nested mid-path sibling and was retired 2026-07-16). The cost
+  is a deliberate safe miss: a *fresh* OLD ref that coincidentally continues exactly
+  as NEW does (`/proj/inner/...` when NEW=`/proj/inner`) is treated as migrated and
+  left alone — never corrupted. Confirm with `grep -rF '<old>'` after apply.
 - Scope is `--root`; run once per tree that may hold references (repo, dotfiles, notes).
 - Cron `@keyword` schedules (`@daily`, `@reboot`) classify as `crontab` like numeric rows.
