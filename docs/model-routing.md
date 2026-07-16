@@ -97,6 +97,32 @@ dispatch's verdict (`override` / `pinned_specialist` / `inherit_top`) to
 | Codex CLI | Named profiles (per-profile config files on recent CLI builds): default = workhorse, `quick` = LOW, `deep` = TOP; `model_reasoning_effort` is the effort dial | `adapters/codex/codex-config.toml.template` + `quick.config.toml.template` / `deep.config.toml.template` |
 | Gemini CLI | `settings.json` default model = workhorse; callers escalate with explicit `-m` | `adapters/gemini/gemini-settings.json.template` |
 
+## Cross-vendor second-opinion lane
+
+A Claude session can dispatch Codex (primary) or Gemini (fallback) as a
+review/verification **second opinion** — a different vendor's model judging
+the same diff or claim, so a shared blind spot doesn't survive review.
+
+- **SSOT (machine-readable): `core/infra/backends.json`** — role → backend →
+  CLI argv. Roles shipped: `second-opinion-review` (codex → gemini fallback),
+  `second-opinion-verify` (codex, no fallback). Model names deliberately never
+  appear in the registry or the dispatcher: each vendor's adapter profile owns
+  its tier (the rows above — `codex --profile deep` is the TOP-tier reasoning
+  profile), so tier policy stays in one place.
+- **Dispatcher: `core/infra/call-worker.sh <role> < prompt.md`** — captures
+  the reply to `.agent/workers/<ts>-<role>.md` and prints the path. External
+  calls cost money: without `AGENT_WORKER_YES=1` it refuses (exit 3). The
+  gate is env-only by design — a headless caller cannot answer an interactive
+  confirm; the session that owns the user relationship asks first, then sets
+  the env per invocation. A missing CLI names the missing tool (exit 127), a
+  fallback records why the primary was skipped, a hung worker is killed at
+  `timeout_s` (exit 124).
+- **Consumption**: `/verify-completion --second-opinion` attaches the capture
+  as evidence input to the semantic judge; the gate logic itself is unchanged
+  (a second opinion informs the verdict, it never replaces the judge).
+- **Tests**: `core/tests/call-worker-test.sh` — PATH-stubbed backends, ten
+  contract paths, zero paid calls in CI.
+
 ## What this policy deliberately does not do
 
 - **No runtime model-switching hooks.** A per-prompt classifier that picks a
