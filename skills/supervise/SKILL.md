@@ -35,6 +35,25 @@ their own gates and prompts (extension is backlog LE-1). Hard safeguards
 (risk-area abort, R4 mutex, gitleaks, test-failure abort) bind in every tier
 and every mode, including full-auto.
 
+### Dispatch pre-flight (before any edit wave leaves the main loop)
+
+A dispatched subagent cannot answer a native permission prompt, and a
+**background** dispatch auto-denies any tool call that would prompt — so an
+edit wave dispatched without cleared permissions doesn't fail loudly, it
+silently loses its Edit/Write calls and reports garbage. Before dispatching
+an execution (file-editing) wave, confirm at least one of:
+
+1. The plan-approval flag exists — `[[ -f /tmp/agent-plan-approved ]]`
+   (written on ExitPlanMode approval; wiped at every SessionStart), which
+   arms the `plan-scope-allow` gate above, **or**
+2. The project's `.claude/settings.local.json` carries `Edit`/`Write`/
+   `MultiEdit` in `permissions.allow` (project-layer rules are the reliable
+   layer — subagents do not dependably inherit user-level allows).
+
+If neither holds: dispatch the wave **foreground** (prompts then reach the
+user) or stop and tell the user which of the two to set up. Never send an
+edit wave to a background dispatch on an unverified permission surface.
+
 ## Model policy
 
 Who runs on which model — and what enforces it:
@@ -81,9 +100,15 @@ a. **Read Wave i section** of the plan.
 b. **Classify the wave and pick lanes** based on its content:
    - Judgment work (deciding, synthesizing) stays in the main loop.
    - Execution work dispatches with an explicit `model` per the Model policy
-     (implementation → workhorse tier, mechanical cleanup → low tier).
+     (implementation → workhorse tier, mechanical cleanup → low tier), after
+     the dispatch pre-flight above clears the permission surface.
    - Wave touches `core/hooks/` or general code → `code-reviewer` after
    - Wave touches auth/secrets → `security-reviewer`
+   - **Never route an execution wave to `code-reviewer` or
+     `security-reviewer`** — both carry read-only toolsets (Read/Grep/Glob,
+     CI-enforced); they cannot edit a file at all. `core/hooks/supervisor.py`
+     suggestions name specialists for the *review* lane, not the execution
+     lane.
 
    Every dispatch is written as a **delegation contract** —
    `skills/supervise/templates/delegation-contract.md` (goal / output format /
