@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Cross-vendor second-opinion lane** (`core/infra/backends.json` +
+  `core/infra/call-worker.sh`): a Claude session can now dispatch Codex
+  (primary) or Gemini (fallback) as a review/verification second opinion.
+  The registry is the machine-readable role→backend SSOT; model names never
+  appear in it — adapter profiles own the tier (`docs/model-routing.md`
+  § Cross-vendor second-opinion lane). The dispatcher refuses without
+  `AGENT_WORKER_YES=1` (paid-call gate, env-only because a headless caller
+  can't answer prompts), names a missing CLI (exit 127), preserves fallback
+  reasons in the capture header, and kills hung workers at `timeout_s`
+  (exit 124). Captures land in `.agent/workers/<ts>-<role>.md`.
+  `verify-completion` documents an optional `--second-opinion` flag (evidence
+  input only — gate logic unchanged). Tests:
+  `core/tests/call-worker-test.sh`, ten contract paths on PATH-stubbed
+  backends, zero paid calls in CI. (Benchmark input:
+  netwaif/multi-agent-starter's `backends.json` + `call_worker.sh` role
+  registry — design borrowed, no code.)
+
 ### Removed
 - **`legacy/trim-2026-07-04/` removed from the shipped tree — the last `legacy/`
   payload is gone (preserved on tag `archive/legacy-trim-2026-07`).** The plugin

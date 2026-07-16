@@ -36,6 +36,7 @@ secrets/
 .agent/locks/
 .agent/logs/
 .agent/state/
+.agent/workers/
 .claude/locks/
 .claude/logs/
 .claude/state.local/
