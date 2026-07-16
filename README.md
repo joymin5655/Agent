@@ -216,8 +216,7 @@ Agent/
 ├── rules/              # generic policy docs
 ├── templates/          # project scaffold templates
 ├── docs/               # architecture · protocol · guides · benchmark
-├── github/             # PR template + workflow templates
-└── legacy/             # retired snapshots (out of scope)
+└── github/             # PR template + workflow templates
 ```
 
 ## Why "AI-agnostic"?
