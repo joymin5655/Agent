@@ -298,5 +298,37 @@ grep -q -- '-Volumes-x-old-prefix2/memory/' "$T12/k.md"; check "panelB-dash-sibl
 rm -rf "$T12"
 
 echo
+echo "=== (15) panel3: NEW embeds OLD after a non-'/' delimiter + co-resident key/path report (2026-07-16) ==="
+T13="$(mktemp -d)"
+# MAJOR: NEW reintroduces OLD after a boundary delimiter (':' , space, '=') that
+# _LEFT does not block. The leading-only lookahead missed the inner OLD and grew
+# ':/a' per apply (/a:/a -> /a:/a:/a -> ...). Protected-span guard must make every
+# apply after the first a no-op.
+for pair in "/a:/a" "/a /a" "/a=/a"; do
+  d="$(mktemp -d)"; printf 'ref /a/x\n' > "$d/f"
+  bash "$TOOL" --old /a --new "$pair" --root "$d" --apply >/dev/null 2>&1
+  A1="$(cat "$d/f")"
+  bash "$TOOL" --old /a --new "$pair" --root "$d" --apply >/dev/null 2>&1
+  A2="$(cat "$d/f")"
+  bash "$TOOL" --old /a --new "$pair" --root "$d" --apply >/dev/null 2>&1
+  A3="$(cat "$d/f")"
+  [[ "$A1" == "$A2" && "$A2" == "$A3" && "$A1" == "ref ${pair}/x" ]]
+  check "panel3-delim-idempotent[${pair}]" $?
+  rm -rf "$d"
+done
+# MINOR: a line carrying BOTH a native-memory-key ref and a co-resident plain path
+# ref must be reported as 2 refs across 2 classes (native-memory-key=1 AND anchor=1),
+# because --apply rewrites both — the old single-class report undercounted it.
+printf 'both ~/.claude/projects/-old-prefix/memory and /old/prefix/docs\n' > "$T13/mix.md"
+MX="$(bash "$TOOL" --old /old/prefix --new /new/loc --root "$T13" 2>&1)"
+echo "$MX" | grep -q 'summary: 2 reference(s) across 2 class(es)'; check "panel3-coresident-count-2" $?
+echo "$MX" | grep -q 'anchor=1, native-memory-key=1'; check "panel3-coresident-both-classes" $?
+bash "$TOOL" --old /old/prefix --new /new/loc --root "$T13" --apply >/dev/null 2>&1
+grep -q 'projects/-new-loc/memory and /new/loc/docs' "$T13/mix.md"; check "panel3-coresident-both-rewritten" $?
+M2="$(bash "$TOOL" --old /old/prefix --new /new/loc --root "$T13" --apply 2>&1)"
+echo "$M2" | grep -q 'rewrote 0 file(s)'; check "panel3-coresident-idempotent" $?
+rm -rf "$T13"
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]
