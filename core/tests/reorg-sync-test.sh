@@ -31,7 +31,7 @@ make_tree() {
   printf 'gitdir: /old/prefix/repo/.git/worktrees/wt1\n' > "$t/sub/.git"   # worktree-gitfile
   printf '0 3 * * * /old/prefix/scripts/backup.sh\n' > "$t/jobs.crontab"   # crontab
   printf 'see /old/prefix/docs/README.md\n' > "$t/notes.md"                # anchor
-  printf 'mem: ~/.claude/projects/-old-prefix-x/memory/\n' > "$t/mem.md"   # native-memory-key
+  printf 'mem: ~/.claude/projects/-old-prefix/memory/\n' > "$t/mem.md"     # native-memory-key (EXACT key: cwd==OLD)
   printf 'nothing to see here\n' > "$t/clean.txt"                          # decoy: no match
   printf '\x00\x01/old/prefix binary\x00\n' > "$t/blob.bin"                # decoy: binary (skip)
   ln -s "$t/script.py" "$t/link.py"                                        # decoy: symlink (skip)
@@ -73,8 +73,8 @@ grep -qx '#!/new/loc/bin/python3' "$T/script.py"; check "apply-shebang" $?
 grep -q 'gitdir: /new/loc/repo/.git/worktrees/wt1' "$T/sub/.git"; check "apply-worktree-gitfile" $?
 grep -q '/new/loc/scripts/backup.sh' "$T/jobs.crontab"; check "apply-crontab" $?
 grep -q '/new/loc/docs/README.md' "$T/notes.md"; check "apply-anchor" $?
-# native-memory-key: encoded /old/prefix (-old-prefix) -> encoded /new/loc (-new-loc)
-grep -q '~/.claude/projects/-new-loc-x/memory/' "$T/mem.md"; check "apply-native-memory-key-encoded" $?
+# native-memory-key: EXACT encoded /old/prefix (-old-prefix) -> encoded /new/loc (-new-loc)
+grep -q '~/.claude/projects/-new-loc/memory/' "$T/mem.md"; check "apply-native-memory-key-encoded" $?
 # no OLD refs remain anywhere in-tree (except the skipped classes and the
 # sibling decoy, which by boundary semantics legitimately keeps its longer path)
 ! grep -rIq "$OLD" "$T" --exclude-dir=.git --exclude=sibling.md; check "apply-no-old-refs-remain" $?
@@ -85,7 +85,9 @@ grep -q "$OLD" "$T/realgit/.git/config"; check "apply-skips-git-object-store" $?
 grep -qx 'see /old/prefixed-thing/file.txt' "$T/sibling.md"; check "apply-sibling-path-untouched" $?
 grep -qx 'slug: kebab-old-prefix-word here' "$T/kebab.md"; check "apply-kebab-text-untouched" $?
 grep -qx 'mem2: ~/.claude/projects/-old-prefix2/memory/' "$T/memsib.md"; check "apply-sibling-memory-key-untouched" $?
-# a deeper cwd's key ('-' continuation) DID rewrite — covered by mem.md (-old-prefix-x)
+# only the EXACT key rewrites (mem.md -old-prefix). A '-'-continuation key is a
+# safe skip because it is indistinguishable from a dash/dot/underscore sibling
+# after the /._->- fold (2026-07-16 workflow MAJOR-B) — covered in §12/§14.
 # shebang target kept its exec bit through the atomic rewrite
 [[ -x "$T/script.py" ]]; check "apply-preserves-exec-bit" $?
 
@@ -125,8 +127,9 @@ echo "$E2" | grep -q 'applied: rewrote 0 file(s)'; check "extend-second-apply-ze
 grep -qx 'path /proj_v2/file.txt' "$T4/a.md"; check "extend-no-compounding" $?
 rm -rf "$T4"
 # NEW extends OLD via '/' continuation — the one shape the boundary anchor does
-# NOT block ('/' is a legal continuation char), so nonce protection alone
-# guarantees idempotency here (mutation round 2, gap D).
+# NOT block ('/' is a legal continuation char), so the negative lookahead (skip an
+# OLD whose continuation already spells NEW) is what guarantees idempotency here
+# (mutation round 2, gap D; nonce mask retired 2026-07-16 after it self-corrupted).
 T4B="$(mktemp -d)"
 printf 'path /proj/file.txt\n' > "$T4B/a.md"
 bash "$TOOL" --old /proj --new /proj/inner --root "$T4B" --apply >/dev/null 2>&1
@@ -139,17 +142,17 @@ rm -rf "$T4B"
 echo
 echo "=== (7) dotted path: '.' collapses in the encoded memory key ==="
 T5="$(mktemp -d)"
-printf 'mem: ~/.claude/projects/-old-2-brain-x/memory/\n' > "$T5/mem.md"
+printf 'mem: ~/.claude/projects/-old-2-brain/memory/\n' > "$T5/mem.md"
 bash "$TOOL" --old /old/2.brain --new /new/2.brain --root "$T5" --apply >/dev/null 2>&1
-grep -q -- '-new-2-brain-x/memory/' "$T5/mem.md"; check "dotted-key-encoded-and-rewritten" $?
+grep -q -- '-new-2-brain/memory/' "$T5/mem.md"; check "dotted-key-encoded-and-rewritten" $?
 rm -rf "$T5"
 # underscore path: '_' must also collapse in the encoded key — an OLD like
 # /mnt/wd_black whose real key is -mnt-wd-black would otherwise be a
 # silent total miss (mutation round 2, gap B).
 T5B="$(mktemp -d)"
-printf 'mem: ~/.claude/projects/-old-wd-black-proj/memory/\n' > "$T5B/mem.md"
+printf 'mem: ~/.claude/projects/-old-wd-black/memory/\n' > "$T5B/mem.md"
 bash "$TOOL" --old /old/wd_black --new /new/nd_drive --root "$T5B" --apply >/dev/null 2>&1
-grep -q -- '-new-nd-drive-proj/memory/' "$T5B/mem.md"; check "underscore-key-encoded-and-rewritten" $?
+grep -q -- '-new-nd-drive/memory/' "$T5B/mem.md"; check "underscore-key-encoded-and-rewritten" $?
 rm -rf "$T5B"
 
 echo
@@ -178,12 +181,12 @@ echo "=== (10) non-ASCII + punctuation sibling boundaries (MAJOR-R) ==="
 T8="$(mktemp -d)"
 # CJK: OLD=/old/논문, sibling /old/논문자료 must survive; real ref is rewritten.
 printf 'ref /old/논문/paper.md and sib /old/논문자료/x.md\n' > "$T8/cjk.md"
-# CJK memory key: -old-논문 rewrites, sibling -old-논문자료 must survive.
-printf 'k ~/.claude/projects/-old-논문-x/memory/ sib ~/.claude/projects/-old-논문자료-y/memory/\n' > "$T8/cjkkey.md"
+# CJK memory key: EXACT -old-논문 rewrites, CJK sibling -old-논문자료 must survive.
+printf 'k ~/.claude/projects/-old-논문/memory/ sib ~/.claude/projects/-old-논문자료-y/memory/\n' > "$T8/cjkkey.md"
 bash "$TOOL" --old /old/논문 --new /new/기사 --root "$T8" --apply >/dev/null 2>&1
 grep -q '/new/기사/paper.md' "$T8/cjk.md"; check "cjk-real-ref-rewritten" $?
 grep -q '/old/논문자료/x.md' "$T8/cjk.md"; check "cjk-sibling-path-untouched" $?
-grep -q -- '-new-기사-x/memory/' "$T8/cjkkey.md"; check "cjk-key-rewritten" $?
+grep -q -- '-new-기사/memory/' "$T8/cjkkey.md"; check "cjk-key-rewritten" $?
 grep -q -- '-old-논문자료-y/memory/' "$T8/cjkkey.md"; check "cjk-sibling-key-untouched" $?
 # punctuation siblings: OLD=/old/prefix must not eat +build / @2x / ~1 / %20
 printf 'p /old/prefix+build /old/prefix@2x /old/prefix~1 /old/prefix%%20 and /old/prefix/real\n' > "$T8/punct.md"
@@ -221,10 +224,13 @@ bash "$TOOL" --old /proj/x --new /moved/y --root "$T9" --apply >/dev/null 2>&1
 rm -rf "$T9"
 
 echo
-echo "=== (12) key-layer whitelist: punctuation/CJK-punct sibling keys survive (workflow MAJOR) ==="
+echo "=== (12) key-layer: only the EXACT key rewrites; every continuation survives (workflow MAJOR) ==="
 T10="$(mktemp -d)"
-# sibling keys continue old_key with a char that survives the /._->- encoding
-# (~ + @ %, and CJK middle-dot U+30FB '・') — must NOT be rewritten; exact + deeper rewrite.
+# The /._->- fold is lossy, so a '-'-continuation key is ambiguous: '-x-논문-sub'
+# is enc('/x/논문/sub') (deeper, would-be rewrite) AND enc('/x/논문-sub') (a dash
+# sibling, must NOT). We resolve conservatively — rewrite ONLY the exact key, and
+# leave EVERY continuation (dash-deeper, dash-sibling, and the punctuation/CJK-punct
+# siblings ~ + @ ・) untouched. A skipped deeper key is a safe miss, not corruption.
 printf 'ex ~/.claude/projects/-x-논문/memory\n'   > "$T10/keys.md"
 printf 'dp ~/.claude/projects/-x-논문-sub/memory\n' >> "$T10/keys.md"
 printf 's1 ~/.claude/projects/-x-논문・백업/memory\n' >> "$T10/keys.md"
@@ -233,7 +239,7 @@ printf 's3 ~/.claude/projects/-x-논문+백업/memory\n' >> "$T10/keys.md"
 printf 's4 ~/.claude/projects/-x-논문@백업/memory\n' >> "$T10/keys.md"
 bash "$TOOL" --old /x/논문 --new /y/기사 --root "$T10" --apply >/dev/null 2>&1
 grep -q -- '-y-기사/memory' "$T10/keys.md"; check "key-exact-rewritten" $?
-grep -q -- '-y-기사-sub/memory' "$T10/keys.md"; check "key-deeper-rewritten" $?
+grep -q -- '-x-논문-sub/memory' "$T10/keys.md"; check "key-dash-continuation-skipped" $?
 grep -q -- '-x-논문・백업/memory' "$T10/keys.md"; check "key-cjkpunct-sibling-untouched" $?
 grep -q -- '-x-논문~백업/memory' "$T10/keys.md"; check "key-tilde-sibling-untouched" $?
 grep -q -- '-x-논문+백업/memory' "$T10/keys.md"; check "key-plus-sibling-untouched" $?
@@ -241,19 +247,55 @@ grep -q -- '-x-논문@백업/memory' "$T10/keys.md"; check "key-at-sibling-untou
 rm -rf "$T10"
 
 echo
-echo "=== (13) NONCE boundary-aware: NEW-shaped prefix of a real OLD ref is not eaten (workflow MAJOR) ==="
+echo "=== (13) NEW-extends-OLD via '/': fresh OLD refs whose text begins with NEW are still rewritten (workflow MAJOR) ==="
 T11="$(mktemp -d)"
-# OLD=/proj, NEW=/proj/inner. /proj/innerX and /proj/innermost are real OLD refs
-# whose text begins with NEW — the blind-substring mask used to silently drop them.
+# OLD=/proj, NEW=/proj/inner. /proj/innerX and /proj/innermost are FRESH OLD refs
+# whose text merely begins with NEW's prefix — the negative lookahead only skips a
+# continuation that spells NEW *at a boundary* (/proj/inner then '/'|end), so these
+# (inner then 'X'|'most', no boundary) still rewrite. The single true migrated ref
+# /proj/x -> /proj/inner/x is what re-apply must leave alone.
 printf '/proj/innerX/file\n/proj/innermost\n/proj/x\n' > "$T11/f"
 bash "$TOOL" --old /proj --new /proj/inner --root "$T11" --apply >/dev/null 2>&1
-grep -qx '/proj/inner/innerX/file' "$T11/f"; check "nonce-newprefix-innerX-rewritten" $?
-grep -qx '/proj/inner/innermost' "$T11/f"; check "nonce-newprefix-innermost-rewritten" $?
-grep -qx '/proj/inner/x' "$T11/f"; check "nonce-plain-ref-rewritten" $?
-# and it stays idempotent (the real NEW ref /proj/inner/x is protected on re-apply)
+grep -qx '/proj/inner/innerX/file' "$T11/f"; check "newprefix-innerX-rewritten" $?
+grep -qx '/proj/inner/innermost' "$T11/f"; check "newprefix-innermost-rewritten" $?
+grep -qx '/proj/inner/x' "$T11/f"; check "newprefix-plain-ref-rewritten" $?
+# idempotent: on re-apply the migrated /proj/inner/x reads as "already NEW" (the
+# lookahead sees /proj followed by /inner<boundary>) and is left alone.
 N2="$(bash "$TOOL" --old /proj --new /proj/inner --root "$T11" --apply 2>&1)"
-echo "$N2" | grep -q 'applied: rewrote 0 file(s)'; check "nonce-newprefix-idempotent" $?
+echo "$N2" | grep -q 'applied: rewrote 0 file(s)'; check "newprefix-idempotent" $?
 rm -rf "$T11"
+
+echo
+echo "=== (14) workflow panel regressions: NONCE self-corruption + dash-key sibling (2026-07-16) ==="
+T12="$(mktemp -d)"
+# MAJOR-A: a subdir literally named like OLD's last component, nested under NEW.
+# The old NUL-nonce mask flipped the trailing component's left-neighbor to a
+# boundary and grew /proj/inner/proj unboundedly. Correct: unchanged & stable
+# (leading reads as already-migrated NEW; trailing is a mid-path sibling).
+printf '/proj/inner/proj\n' > "$T12/a"
+bash "$TOOL" --old /proj --new /proj/inner --root "$T12" --apply >/dev/null 2>&1
+A1="$(cat "$T12/a")"
+bash "$TOOL" --old /proj --new /proj/inner --root "$T12" --apply >/dev/null 2>&1
+A2="$(cat "$T12/a")"
+[[ "$A1" == '/proj/inner/proj' && "$A2" == '/proj/inner/proj' ]]; check "panelA-nested-sibling-stable" $?
+# MAJOR-A2: the pathological /a -> /a/a on /a/a/a — nonce grew it without bound.
+printf '/a/a/a\n' > "$T12/b"
+bash "$TOOL" --old /a --new /a/a --root "$T12" --apply >/dev/null 2>&1
+B1="$(cat "$T12/b")"
+bash "$TOOL" --old /a --new /a/a --root "$T12" --apply >/dev/null 2>&1
+B2="$(cat "$T12/b")"
+[[ "$B1" == '/a/a/a' && "$B2" == '/a/a/a' ]]; check "panelA-single-char-stable" $?
+# MAJOR-B: a dash-named sibling key (enc('/Volumes/x/old-prefix2')) is byte-identical
+# to a deeper key after the fold, so exact-only must leave it — while the exact key
+# on the same file rewrites and the dry-run reports exactly one key hit.
+printf 'ex  ~/.claude/projects/-Volumes-x-old/memory/\n'         > "$T12/k.md"
+printf 'sib ~/.claude/projects/-Volumes-x-old-prefix2/memory/\n' >> "$T12/k.md"
+KD="$(bash "$TOOL" --old /Volumes/x/old --new /Volumes/y/new --root "$T12" 2>&1)"
+echo "$KD" | grep -q 'native-memory-key=1'; check "panelB-dryrun-reports-exact-only" $?
+bash "$TOOL" --old /Volumes/x/old --new /Volumes/y/new --root "$T12" --apply >/dev/null 2>&1
+grep -q -- '-Volumes-y-new/memory/' "$T12/k.md"; check "panelB-exact-key-rewritten" $?
+grep -q -- '-Volumes-x-old-prefix2/memory/' "$T12/k.md"; check "panelB-dash-sibling-key-untouched" $?
+rm -rf "$T12"
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
