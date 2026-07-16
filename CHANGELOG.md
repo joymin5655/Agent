@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`backends.json`: gemini headless invocation was wrong** — `gemini -p`
+  requires an argument (`Not enough arguments following: p` on CLI 0.44.x);
+  the prompt rides stdin, so the registry now ships `["gemini", "-p", ""]`
+  ("-p is appended to input on stdin" per the CLI's own help). Found by the
+  first real-call smoke of the second-opinion lane — the PATH-stub battery
+  can't catch a vendor's argv contract, which is exactly why the smoke run
+  is part of the lane's rollout checklist.
+
 ### Added
 - **Cross-vendor second-opinion lane** (`core/infra/backends.json` +
   `core/infra/call-worker.sh`): a Claude session can now dispatch Codex
