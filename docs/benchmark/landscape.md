@@ -70,6 +70,43 @@ own. The 2026-07-14 re-check also found no top-bucket project that has closed
 the "prompt-only enforcement" gap (real deny/ask hooks + self-verify CI +
 author≠reviewer isolation remain absent from all six surveyed leaders).
 
+### Spot re-check — 2026-07-16 (dispatch + knowledge tooling)
+
+Two projects benchmarked in depth this session; three adoptions shipped.
+
+- **netwaif/multi-agent-starter** (★76, v3.3.0, pushed 2026-07-13) — a small
+  deterministic harness *generator*: role→backend worker dispatch
+  (`backends.json` + `call_worker.sh`), generate→`validate.py` PASS/FAIL
+  pairing, file-as-memory. Low stars, but three of its patterns closed real
+  gaps here (design borrowed, no code): (1) the **cross-vendor
+  second-opinion lane** — `core/infra/backends.json` +
+  `core/infra/call-worker.sh` (v0.4.0); before it, the adapters only
+  translated hooks *into* Codex/Gemini, and no path existed for a Claude
+  session to call them as workers; (2) **install→validate pairing** —
+  `setup.sh` now ends every install in the read-only `--doctor` diagnosis
+  (v0.3.0); (3) **checksum update mode** — idempotent `apply_template()`.
+  Its deliberately minimal generated tree also prompted the `legacy/` diet
+  (tree-is-the-package makes git removal + archive tag the only mechanism).
+- **inkeep/open-knowledge** (★2,936, v0.33.0-beta.5, GPL-3.0, pushed
+  2026-07-16) — a productized LLM wiki (external-sources → research →
+  articles consolidation, near-isomorphic to the personal vault's raw→wiki
+  distillation). Sandbox trial 2026-07-16: default `ok init` wrote **11
+  user-global/project targets** (MCP registrations across four editors +
+  global skills — the config-pollution class this drive's rules forbid);
+  the contained recipe `--scope project --no-skills` verified clean.
+  Verdict: **conditional adoption** in the vault, re-evaluate ~2026-10
+  (daily-commit beta). GPL boundary: tool use and pattern reference only —
+  no code into this repo. Pattern candidate logged: **skill-symlink SSOT**
+  ("write once, install everywhere") as an alternative to `setup.sh`'s
+  copy-drift.
+- Session observation, same date: the execution-dispatch **permission
+  surface was implicit** — a background subagent auto-denies prompting
+  calls, and the shipped specialists are read-only, so supervise edit waves
+  could silently lose their writes. Closed by the `/supervise` dispatch
+  pre-flight (`skills/supervise/SKILL.md`). The model-override convention
+  stays measured-not-enforced (7/7 TOP-inherit in the 2026-07-11 audit;
+  observer hook only).
+
 ## What the field invests in vs where it is thin
 
 Consistent investments across the popular projects:

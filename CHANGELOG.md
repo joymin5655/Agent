@@ -41,6 +41,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tag the only diet mechanism.)
 
 ### Changed
+- **Benchmark landscape: 2026-07-16 spot re-check recorded**
+  (`docs/benchmark/landscape.md`): netwaif/multi-agent-starter v3.3.0 (three
+  patterns adopted — cross-vendor lane, install→validate pairing, checksum
+  update mode), inkeep/open-knowledge v0.33.0-beta.5 (sandbox trial, 11-target
+  init pollution measured, conditional-adoption verdict with `--scope project
+  --no-skills` containment, GPL boundary noted, skill-symlink SSOT logged as
+  a pattern candidate), and the implicit execution-dispatch permission
+  surface closed by the `/supervise` pre-flight.
 - **`/supervise` gained a dispatch pre-flight for edit waves.** Root-cause of
   "the supervisor can't edit files": a dispatched subagent cannot answer a
   native permission prompt, and a background dispatch auto-denies any call
