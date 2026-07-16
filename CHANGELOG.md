@@ -80,7 +80,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   convergence (both `_` and `/` continuations), dotted/underscore-key encoding,
   CJK + punctuation sibling protection, delimiter- and space-terminated real-ref
   rewrite, unwritable-target reporting, exec-bit preservation, newline guard);
-  auto-discovered by `verify-all.sh`.
+  auto-discovered by `verify-all.sh`. **Rounds 4–6 (2026-07-16, adversarial
+  workflow panels):** panel 2 caught the NUL-nonce mask corrupting a nested sibling
+  and a lossy key-layer normalization — nonce retired for a positional
+  **protected-span guard**, key layer made exact-only; panel 3 caught
+  NEW-extends-OLD compounding through the guard and key+path co-resident
+  undercounting; panel 4 (19 agents, 11 CONFIRMED collapsing to 3 root defects,
+  independently confirmed by live-manual byte-level probes) caught the guard's
+  "starts-inside" test no-op'ing 100% of promote-up reorgs (NEW a boundary-prefix
+  of OLD, `/old/sub`→`/old` — report said `anchor=1`, apply rewrote 0) plus
+  report/apply divergence in both directions (N same-line refs counted 1;
+  span-guard safe-misses counted as hits). Fixed by **full-containment** span
+  testing and a single shared per-occurrence match set (`live_matches`) that both
+  the dry-run report and `--apply` consume — counts now equal substitutions by
+  construction. Battery 72 → **94 checks**.
 - **Evidence-first inventory — kill the ghost-specialist deadlock at its root
   (`rules/policy/evidence-first.md` + `core/hooks/agent-inventory.py`).** A gate that
   demands a specialist with no in-runtime provider deadlocks the session: the gate blocks
