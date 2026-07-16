@@ -82,6 +82,20 @@ to **refute**, not confirm:
 Default each open question to **REFUTED**. A confirmation needs a reason; a
 refutation is the resting state.
 
+**Optional flag `--second-opinion`** — attach a cross-vendor opinion as
+additional evidence input to this pass. Ask the user for cost approval, then:
+
+```bash
+AGENT_WORKER_YES=1 bash core/infra/call-worker.sh second-opinion-verify \
+    < <claim + diff/artifacts>          # prints .agent/workers/<ts>-…md
+```
+
+Hand the captured file to the semantic verifier alongside the claim and diff.
+The gate logic is unchanged: a second opinion is one more input the judge
+weighs — it never replaces the judge, and a missing/failed worker call never
+converts to a pass (dispatcher contract: `docs/model-routing.md`
+§ Cross-vendor second-opinion lane).
+
 **Judge tier floor: never below the workhorse (sonnet-class) tier**
 (`docs/model-routing.md`). This judge is a completion gate — a low-tier judge
 produces plausible-sounding false CONFIRMED verdicts and silently disables the
