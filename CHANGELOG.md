@@ -68,10 +68,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mutation pass (5 mutations) exposed the dotted-path encoding gap now covered by a
   fixture; a second mutation round exposed two more (underscore-in-OLD silent key
   miss; `/`-continuation compounding where nonce protection is the sole guard) —
-  both fixtured. Battery `core/tests/reorg-sync-test.sh` grew 27 → **47 checks** (sibling
+  both fixtured. **Round 3 (2026-07-16)** — the security lane's re-review found the
+  boundary blocklist was ASCII-only, so CJK and punctuation siblings still bled
+  (live on this drive's Korean top-level folders, e.g. `/x/논문` corrupting
+  `/x/논문자료`): replaced the blocklist with a **Unicode-aware whitelist** boundary
+  (`/`, line/string end, whitespace, or an explicit delimiter — everything else,
+  any-script word char or `. - + @ ~ %`, is a continuation) and made the encoded-key
+  boundary Unicode `\w`-based. Battery `core/tests/reorg-sync-test.sh` grew 27 → **59
+  checks** (sibling
   path/kebab/sibling-key decoys byte-for-byte untouched, NEW-extends-OLD
-  convergence, dotted-key encoding, unwritable-target reporting, exec-bit
-  preservation, newline guard); auto-discovered by `verify-all.sh`.
+  convergence (both `_` and `/` continuations), dotted/underscore-key encoding,
+  CJK + punctuation sibling protection, delimiter- and space-terminated real-ref
+  rewrite, unwritable-target reporting, exec-bit preservation, newline guard);
+  auto-discovered by `verify-all.sh`.
 - **Evidence-first inventory — kill the ghost-specialist deadlock at its root
   (`rules/policy/evidence-first.md` + `core/hooks/agent-inventory.py`).** A gate that
   demands a specialist with no in-runtime provider deadlocks the session: the gate blocks
