@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **M-6 — cost-effective-harness concept doc.**
+  `docs/concepts/cost-effective-harnesses.md` distills the 2026-07 happytlog
+  article + ClaudeDevs thread (intelligence-placement patterns
+  orchestrator/advisor/verifier, the advisor checkpoint finding — mid-run
+  re-ranking beats upfront frontier advice, measured anti-correlation —
+  coordination-cost economics with the small-task inversion, prompt-cache
+  worker-reuse), plus a dated 4-guidance audit table mapping each point to
+  harness state. Backlog rows M-6/M-7 (✅, this PR) and M-8 (open — delegation
+  economics telemetry: spawn-vs-reuse ratio, per-wave delegated volume) added
+  to `docs/harness-improvement-plan.md` §4.10 with the M-series count
+  declaration updated 5→8; article added to §8 references. (Recovered from
+  stranded branch `claude/cost-effective-harness-article`, commit `7aaa587`,
+  2026-07-16 — authored pre-0.5.x but never merged; landed here unchanged.)
+
+### Changed
+- **M-7 — delegation-economics policy wiring.** `docs/model-routing.md` gains
+  an *Intelligence placement — the advisor pattern* section (three TOP
+  placements by task shape; advisor rule: checkpoints stay TOP and recur
+  mid-run — a single upfront TOP ranking is measured anti-correlated; no new
+  mechanism, stays a documented convention) and two new Floors: a
+  **coordination-cost floor** (boundary tokens billed ≥2×; below a threshold
+  task size solo TOP is cheaper than orchestration — delegate only when
+  delegated volume dwarfs the handoff) and **prompt-cache preservation**
+  (route repeat calls to the *same* worker; fresh spawn re-pays the context
+  write; verifiers always fresh — isolation beats cache). Supervise
+  `SKILL.md` Model policy gains the placement corollaries paragraph and Step
+  2b's orchestration rules go four→five (**Worker reuse (cache)**);
+  `delegation-contract.md` Wave shaping gains *Handoff must pay for itself*
+  and *Worker reuse over fresh spawns* bullets. Enforcement map labels the
+  new rules honestly as conventions (call-time choices are not statically
+  verifiable). `docs/README.md` index gains `model-routing.md` (pre-existing
+  omission) and the new concept doc. Docs only, no behavior. (Same recovered
+  commit as M-6 above.)
+
 ## [0.5.6] - 2026-07-28
 
 ### Added
