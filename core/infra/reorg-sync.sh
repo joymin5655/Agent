@@ -120,41 +120,38 @@ _BOUNDARY = r"""(?=/|$|[\s"'`:,;=|<>(){}\[\]])"""
 # sub-path of a different absolute path); block it along with any path-body char
 # (word chars in any script, '. - ~ + @ %'). Vacuously true at string start.
 _LEFT = r"(?<![\w./~+@%\-])"
-path_pat = re.compile(_LEFT + re.escape(old) + _BOUNDARY)
-new_pat = re.compile(_LEFT + re.escape(new) + _BOUNDARY)
-# The encoded key alphabet is '-' (into which only / . _ fold) plus every
-# surviving component char — so chars like ~ + @ % and CJK punctuation
-# (e.g. U+30FB '・') stay INSIDE a component yet are non-\w. A \w-based key
-# boundary therefore leaked sibling keys ('-x-논문・백업', '-x-논문~백업') — the
-# 2026-07-16 workflow panel confirmed this silently corrupted a different
-# project's memory key. Fix: WHITELIST the key boundary the same way the path
-# layer does, with the one difference that '-' IS a key boundary (it is the key's
-# own component separator, so a deeper key '-x-논문-sub' must still rewrite).
-# Left side: preceded by a boundary/delimiter, '/', or string start — never a
-# component-body char (blocks a longer key that merely ends with old_key).
-_KEY_R = r"""(?=[-/]|$|[\s"'`:,;=|<>(){}\[\]])"""
+# Idempotency when NEW extends OLD (NEW == OLD + ext). An already-migrated
+# reference (…NEW…) is indistinguishable from a fresh OLD ref that happens to be
+# followed by ext, so a naive re-apply compounds (/proj -> /proj/inner grows
+# /proj/inner/inner…). The earlier NUL-nonce mask "fixed" this but CORRUPTED a
+# mid-path sibling: masking a complete NEW occurrence to one char flipped the
+# left-neighbor of the *following* component from a body char to a boundary,
+# exposing it to rewrite (2026-07-16 workflow panel, unbounded growth on
+# '/proj/inner/proj'). Correct fix: no mask — a negative lookahead refuses to
+# rewrite an OLD whose continuation already spells NEW (treat it as migrated).
+# Idempotent and never corrupts; the cost is a safe MISS of a fresh ref that
+# coincidentally continues exactly as NEW does. Only needed when ext begins with
+# a boundary char (a plain-suffix rename like /proj -> /proj_v2 is already
+# idempotent because '_' is not a boundary).
+_neg = ""
+if new.startswith(old) and len(new) > len(old):
+    _neg = r"(?!" + re.escape(new[len(old):]) + _BOUNDARY + r")"
+path_pat = re.compile(_LEFT + re.escape(old) + _BOUNDARY + _neg)
+# The native-memory key is enc(cwd) with '/', '.', '_' ALL folded to '-'. That
+# fold is lossy: a deeper key (enc('/old/p/sub') = '-old-p-sub') and a
+# dash/dot/underscore SIBLING (enc('/old/p-sub') = the same '-old-p-sub') are
+# byte-identical, so '-' after old_key cannot be a safe deeper-component boundary
+# — treating it as one corrupted an unrelated project's key (2026-07-16 workflow
+# panel). We therefore rewrite ONLY the EXACT key (cwd == OLD): the key boundary
+# is the path whitelist WITHOUT '-'. A deeper key is left alone (a safe miss: the
+# orphaned dir just stays, as before this tool) and every sibling is protected.
+# The Unicode-\w-aware left whitelist blocks a longer key that merely ends with
+# old_key. Self-extension can't re-match (new_key adds '-', not a key boundary),
+# so the key layer is idempotent with no nonce.
+_KEY_R = r"""(?=/|$|[\s"'`:,;=|<>(){}\[\]])"""
 _KEY_L = r"""(?<![^\s"'`:,;=|<>(){}\[\]/])"""
 key_pat = re.compile(_KEY_L + re.escape(old_key) + _KEY_R)
-new_key_pat = re.compile(_KEY_L + re.escape(new_key) + _KEY_R)
 KEY_CTX = "claude/projects"
-
-# NUL can never occur in swept text (binary files are skipped on b"\x00"), so it
-# is a safe protection nonce: when NEW itself still matches the OLD pattern (NEW
-# extends OLD, e.g. /proj -> /proj/inner or /proj -> /proj_v2), mask existing
-# *complete* NEW references before substituting so a re-run is a no-op instead of
-# compounding. The mask is BOUNDARY-ANCHORED (repl_pat), NOT a blind substring:
-# a blind text.replace(NEW, …) would also eat the NEW-shaped PREFIX of a genuine
-# OLD reference like /proj/innerX, silently dropping a hit the dry-run reported
-# (2026-07-16 workflow panel). Restoring the nonce afterward leaves protected
-# references byte-identical.
-NONCE = "\x00"
-
-def sub_protected(pat, repl, repl_pat, text):
-    if not pat.search(repl):
-        return pat.sub(lambda m: repl, text)
-    text = repl_pat.sub(lambda m: NONCE, text)
-    text = pat.sub(lambda m: repl, text)
-    return text.replace(NONCE, repl)
 
 # classify a single line's hit for reporting. Order matters: most specific first.
 def classify(line):
@@ -216,9 +213,9 @@ for dirpath, dirnames, filenames in os.walk(root):
             out = []
             for ln in text.splitlines(keepends=True):
                 if KEY_CTX in ln and key_pat.search(ln):
-                    ln = sub_protected(key_pat, new_key, new_key_pat, ln)
+                    ln = key_pat.sub(lambda m: new_key, ln)
                 out.append(ln)
-            updated = sub_protected(path_pat, new, new_pat, "".join(out))
+            updated = path_pat.sub(lambda m: new, "".join(out))
             if updated != text:
                 # atomic write: temp + rename, preserving the original mode
                 # (a shebang target must stay executable). A file we cannot
