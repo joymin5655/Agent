@@ -47,10 +47,13 @@ bash "${CLAUDE_PLUGIN_ROOT:-.}/core/infra/reorg-sync.sh" \
 ```
 
 Replacement is a literal substitution **anchored at a path-component boundary via a
-Unicode-aware whitelist** — a match counts only when the next character is `/`, a
-line/string end, whitespace, or an unambiguous delimiter (quote, `: , ; = | < > ( )
-[ ] { }`). Any other following character — a word char in *any* script (so CJK
-siblings like `.../논문` vs `.../논문자료` are safe), or `. - + @ ~ %` — marks a
+Unicode-aware whitelist on both sides** — a match counts only when the next
+character is `/`, a line/string end, whitespace, or an unambiguous delimiter (quote,
+`: , ; = | < > ( ) [ ] { }`), AND the preceding character is not a path-body char
+(so `<old>` is not matched as the tail of an unrelated longer absolute path — e.g.
+`/proj/x` never hits `/other/tree/proj/x`; a preceding `/` is deliberately *not* a
+boundary). Any following character that is a word char in *any* script (so CJK
+siblings like `.../논문` vs `.../논문자료` are safe), or `. - + @ ~ %`, marks a
 longer sibling name and is left untouched. Writes are atomic (temp + rename,
 permissions preserved); a file that cannot be rewritten is reported on stderr and
 the sweep continues, exiting 1 so the failure is visible. Binary files and the
@@ -60,6 +63,16 @@ the `claude/projects` consumer context — ordinary kebab-case text is never tou
 One documented residual: a directory whose name is the moved prefix + a literal
 space + more (`/old/data 2024` for OLD `/old/data`) is read as the component plus
 text; the dry-run surfaces it before any apply.
+
+**Coverage caveat (report honestly):** only references that end at a boundary
+(`/`, whitespace, a delimiter, or line/string end) are detected — a reference
+whose prefix is followed by `.`, `-`, or another word character (`see /old/prefix.`,
+`val=/old/prefix-based`) is *intentionally* skipped, because it is indistinguishable
+from a sibling name, and it will **not appear in the dry-run report**. This is safe
+(a missed old path breaks loudly later, it is never silently corrupted), but it
+means "dry-run reports nothing more" does not guarantee "every textual mention was
+swept." After apply, a `grep -rF '<old>'` over the tree is the way to confirm no
+intentional-skip tails remain that you actually wanted rewritten.
 
 ### 3. Out-of-tree targets (report, don't auto-touch)
 
