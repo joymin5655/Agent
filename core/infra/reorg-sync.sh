@@ -154,45 +154,46 @@ key_pat = re.compile(_KEY_L + re.escape(old_key) + _KEY_R)
 new_key_span_pat = re.compile(_KEY_L + re.escape(new_key) + _KEY_R)
 KEY_CTX = "claude/projects"
 
-def sub_outside(pat, span_pat, repl, text):
-    # Rewrite every pat match to repl EXCEPT one that sits inside a boundary-anchored
-    # literal-repl (already-migrated NEW / new_key) span. Spans are positional on the
-    # original buffer — the scan never mutates text, so adjacent boundaries are intact.
-    spans = [(m.start(), m.end()) for m in span_pat.finditer(text)]
-    if not spans:
-        return pat.sub(lambda m: repl, text)
-    def _r(m):
-        p = m.start()
-        for s, e in spans:
-            if s <= p < e:
-                return m.group(0)
-        return repl
-    return pat.sub(_r, text)
+def _contained(m, spans):
+    # True iff match m is FULLY inside a boundary-anchored literal-NEW span
+    # (already-migrated). FULL containment — not merely "starts inside" — so a longer
+    # OLD that starts at a NEW-span start but OVERRUNS it (a genuine fresh ref, e.g.
+    # OLD=/old/sub when NEW=/old spans only '/old') is NOT suppressed and still
+    # rewrites. The earlier "starts inside" test (s <= start < e) silently no-op'd
+    # EVERY ref of a promote-up reorg — NEW a boundary-prefix of OLD, /old/sub->/old —
+    # because each OLD match began at a NEW-span start (2026-07-16 workflow MAJOR).
+    return any(s <= m.start() and m.end() <= e for s, e in spans)
 
-# classify a single line's reference hits for reporting. A line can carry BOTH a
-# native-memory-key ref AND a co-resident plain-path ref, and --apply rewrites both,
-# so classification is NON-exclusive across those two axes (2026-07-16 workflow
-# MINOR: a key+path line was undercounted as one native-memory-key hit while --apply
-# made two substitutions — report/apply divergence). The path axis
-# (shebang/worktree-gitfile/crontab/anchor) is one mutually-exclusive class for the
-# single path ref; native-memory-key is tallied independently.
-def classify(line):
-    hits = []
-    if KEY_CTX in line and key_pat.search(line):
-        hits.append("native-memory-key")
-    if path_pat.search(line) is not None:
-        stripped = line.lstrip()
-        if stripped.startswith("#!"):
-            hits.append("shebang")
-        elif stripped.startswith("gitdir:"):
-            hits.append("worktree-gitfile")
-        # cron row: 5 schedule fields (num/*/,-/ ranges) or an @keyword schedule,
-        # then a command that includes <old>
-        elif re.match(r"^\s*([\d*/,\-]+(\s+[\d*/,\-]+){4}|@[A-Za-z]+)\s+\S", line):
-            hits.append("crontab")
-        else:
-            hits.append("anchor")
-    return hits
+def live_matches(pat, span_pat, s):
+    # The pat matches --apply will ACTUALLY rewrite: every match not contained in an
+    # already-migrated literal-NEW span. This is the SINGLE SOURCE OF TRUTH that both
+    # the dry-run report and --apply consume, so the reported per-class count equals
+    # the substitutions performed exactly — no report/apply divergence (2026-07-16
+    # workflow: the old report path used a bare .search that neither counted per-match
+    # nor modelled the span guard, diverging from apply in both directions).
+    spans = [(m.start(), m.end()) for m in span_pat.finditer(s)]
+    return [m for m in pat.finditer(s) if not _contained(m, spans)]
+
+def sub_outside(pat, span_pat, repl, s):
+    # rewrite exactly the live_matches (same predicate) — no text mutation during the
+    # scan, so an adjacent component's boundary is never disturbed.
+    spans = [(m.start(), m.end()) for m in span_pat.finditer(s)]
+    if not spans:
+        return pat.sub(lambda m: repl, s)
+    return pat.sub(lambda m: m.group(0) if _contained(m, spans) else repl, s)
+
+# the path axis is ONE mutually-exclusive class for a line's plain-path refs (the
+# native-memory-key axis is counted independently, per-match, in the sweep below).
+def path_axis_class(line):
+    stripped = line.lstrip()
+    if stripped.startswith("#!"):
+        return "shebang"
+    if stripped.startswith("gitdir:"):
+        return "worktree-gitfile"
+    # cron row: 5 schedule fields (num/*/,-/ ranges) or an @keyword schedule, then cmd
+    if re.match(r"^\s*([\d*/,\-]+(\s+[\d*/,\-]+){4}|@[A-Za-z]+)\s+\S", line):
+        return "crontab"
+    return "anchor"
 
 counts = {"shebang": 0, "worktree-gitfile": 0, "crontab": 0, "anchor": 0, "native-memory-key": 0}
 changed_files = 0
@@ -224,21 +225,35 @@ for dirpath, dirnames, filenames in os.walk(root):
             continue
         rel = os.path.relpath(fp, root)
         file_hit = False
-        for i, line in enumerate(text.splitlines(), 1):
-            for cls in classify(line):
-                counts[cls] += 1
+        out = []
+        # ONE pass drives both the report and --apply from live_matches, so the
+        # per-class counts can never diverge from the substitutions performed. The
+        # native-memory-key axis (dash-form key) and the path axis (slash-form) are
+        # disjoint and counted independently, PER MATCH — a line with N same-class
+        # refs contributes N, and a ref the span guard skips contributes 0.
+        for i, ln in enumerate(text.splitlines(keepends=True), 1):
+            disp = ln.rstrip("\n").strip()[:120]
+            kmatch = live_matches(key_pat, new_key_span_pat, ln) if KEY_CTX in ln else []
+            pmatch = live_matches(path_pat, new_span_pat, ln)
+            if kmatch:
+                counts["native-memory-key"] += len(kmatch)
                 file_hit = True
-                report.append("%-17s %s:%d  %s" % (cls, rel, i, line.strip()[:120]))
-        if apply and file_hit:
-            # native-memory key first (more specific, and only on lines that
-            # carry the consumer context), then the plain path everywhere. Both use
-            # the protected-span guard so a re-apply is a no-op (never compounds).
-            out = []
-            for ln in text.splitlines(keepends=True):
-                if KEY_CTX in ln and key_pat.search(ln):
+                report.append("%-17s %s:%d  %s" % ("native-memory-key", rel, i, disp))
+            if pmatch:
+                cls = path_axis_class(ln)
+                counts[cls] += len(pmatch)
+                file_hit = True
+                report.append("%-17s %s:%d  %s" % (cls, rel, i, disp))
+            if apply:
+                # key (dash-form) then path (slash-form): disjoint char sets, so the
+                # order is immaterial and each substitutes exactly its live_matches.
+                if kmatch:
                     ln = sub_outside(key_pat, new_key_span_pat, new_key, ln)
-                out.append(ln)
-            updated = sub_outside(path_pat, new_span_pat, new, "".join(out))
+                if pmatch:
+                    ln = sub_outside(path_pat, new_span_pat, new, ln)
+            out.append(ln)
+        if apply and file_hit:
+            updated = "".join(out)
             if updated != text:
                 # atomic write: temp + rename, preserving the original mode
                 # (a shebang target must stay executable). A file we cannot

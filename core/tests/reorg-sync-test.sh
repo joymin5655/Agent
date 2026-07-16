@@ -330,5 +330,45 @@ echo "$M2" | grep -q 'rewrote 0 file(s)'; check "panel3-coresident-idempotent" $
 rm -rf "$T13"
 
 echo
+echo "=== (16) panel4: promote-up (NEW prefix of OLD) + report/apply single-source-of-truth (2026-07-16) ==="
+T14="$(mktemp -d)"
+# MAJOR: promote-up reorg — NEW is a boundary-prefix of OLD (/old/sub -> /old). The
+# start-inside-only span guard swallowed EVERY OLD ref (rewrote 0 while report said
+# anchor). Full containment must let the longer OLD (overrunning the NEW span)
+# rewrite. Both refs migrate; report count == substitutions; idempotent.
+printf 'ref /old/sub/backup.sh and dir /old/sub\n' > "$T14/pu"
+PU="$(bash "$TOOL" --old /old/sub --new /old --root "$T14" 2>&1)"
+echo "$PU" | grep -q 'summary: 2 reference(s) across 1 class(es)'; check "panel4-promoteup-reports-2" $?
+bash "$TOOL" --old /old/sub --new /old --root "$T14" --apply >/dev/null 2>&1
+grep -qx 'ref /old/backup.sh and dir /old' "$T14/pu"; check "panel4-promoteup-both-rewritten" $?
+PU2="$(bash "$TOOL" --old /old/sub --new /old --root "$T14" --apply 2>&1)"
+echo "$PU2" | grep -q 'rewrote 0 file(s)'; check "panel4-promoteup-idempotent" $?
+# deeper flatten /a/b/c -> /a/b
+printf 'p /a/b/c/x\n' > "$T14/fl"
+bash "$TOOL" --old /a/b/c --new /a/b --root "$T14" --apply >/dev/null 2>&1
+grep -qx 'p /a/b/x' "$T14/fl"; check "panel4-flatten-rewritten" $?
+# MINOR (report==apply, overcount side): a fresh OLD sitting inside a literal-NEW
+# span is a documented safe-miss; the dry-run must NOT count it (was reported
+# anchor=1 while apply did 0 — divergence). Now honestly 0/0.
+printf 'ref /data/data/backup.sh\n' > "$T14/dv"
+DV="$(bash "$TOOL" --old /data --new /data/data --root "$T14" 2>&1)"
+echo "$DV" | grep -q 'summary: 0 reference(s) across 0 class(es)'; check "panel4-safemiss-not-counted" $?
+DVA="$(bash "$TOOL" --old /data --new /data/data --root "$T14" --apply 2>&1)"
+echo "$DVA" | grep -q 'rewrote 0 file(s)'; check "panel4-safemiss-apply-0" $?
+grep -qx 'ref /data/data/backup.sh' "$T14/dv"; check "panel4-safemiss-unchanged" $?
+# MINOR/MAJOR (undercount side): N same-class refs on one line must count N, not 1.
+printf 'see /old/prefix/a and /old/prefix/b end\n' > "$T14/mc"
+MC="$(bash "$TOOL" --old /old/prefix --new /new/loc --root "$T14" 2>&1)"
+echo "$MC" | grep -q 'summary: 2 reference(s) across 1 class(es)'; check "panel4-multiref-counts-2" $?
+bash "$TOOL" --old /old/prefix --new /new/loc --root "$T14" --apply >/dev/null 2>&1
+grep -qx 'see /new/loc/a and /new/loc/b end' "$T14/mc"; check "panel4-multiref-both-rewritten" $?
+# half-migration guard: promote-up with a co-resident memory key — key AND path both
+# migrate (never a half-migrated tree where the key moved but the paths did not).
+printf 'k ~/.claude/projects/-old-sub/memory and p /old/sub/x\n' > "$T14/hm"
+bash "$TOOL" --old /old/sub --new /old --root "$T14" --apply >/dev/null 2>&1
+grep -q 'projects/-old/memory and p /old/x' "$T14/hm"; check "panel4-promoteup-key-and-path" $?
+rm -rf "$T14"
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]
