@@ -13,7 +13,7 @@
     },
     "gemini": {
       "connection": "cli",
-      "cmd": ["gemini", "-p"],
+      "cmd": ["gemini", "-p", ""],
       "timeout_s": 300
     }
   }
