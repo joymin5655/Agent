@@ -90,12 +90,20 @@ the swept tree) and the live user crontab is a system resource — this skill re
 ## Notes
 
 - Idempotent: a second `--apply` run with the same prefixes finds nothing to change,
-  including when NEW extends OLD (`/proj` → `/proj_v2`, `/proj` → `/proj/inner`). This
-  is enforced by a negative lookahead — an OLD whose continuation already spells NEW
-  is read as *already migrated* and skipped — not by masking (an earlier NUL-nonce
-  mask self-corrupted a nested mid-path sibling and was retired 2026-07-16). The cost
-  is a deliberate safe miss: a *fresh* OLD ref that coincidentally continues exactly
-  as NEW does (`/proj/inner/...` when NEW=`/proj/inner`) is treated as migrated and
+  including every shape where NEW contains OLD — as a prefix (`/proj` → `/proj_v2`,
+  `/proj` → `/proj/inner`) OR after a delimiter (`/a` → `/a:/a`). Enforced by a
+  **protected-span guard**: apply computes the boundary-anchored literal-NEW spans
+  positionally on the buffer and refuses to rewrite any OLD inside one (already-
+  migrated text). No text is mutated during the scan, so an adjacent component's
+  boundary is never disturbed — the flaw that sank an earlier NUL-nonce mask (which
+  corrupted a nested sibling) and a leading-only negative lookahead (which missed the
+  copy of OLD that NEW reintroduces after a delimiter, compounding `/a:/a:/a…`); both
+  were retired 2026-07-16. The cost is a deliberate safe miss: a *fresh* OLD ref that
+  coincidentally sits inside a literal-NEW-shaped span is treated as migrated and
   left alone — never corrupted. Confirm with `grep -rF '<old>'` after apply.
+- Report fidelity: the dry-run summary counts every substitution `--apply` will make.
+  A single line carrying BOTH a native-memory-key ref and a co-resident plain path
+  ref is reported as two hits (one `native-memory-key`, one `anchor`) because apply
+  rewrites both — the per-class counts never undercount the scope of the change.
 - Scope is `--root`; run once per tree that may hold references (repo, dotfiles, notes).
 - Cron `@keyword` schedules (`@daily`, `@reboot`) classify as `crontab` like numeric rows.
