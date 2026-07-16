@@ -42,6 +42,11 @@ than any doc review cycle).
 | Lookups / search | LOW | per-call low-tier override | `--profile quick` | lightest model |
 | Fan-out workers | **LOW default** | low-tier override; promote individual workers only when a task demands it | `--profile quick` | lightest model |
 
+Implementation dispatches additionally require a cleared permission surface
+before leaving the main loop: a background subagent auto-denies any tool call
+that would prompt, and the shipped specialists are read-only — see
+`skills/supervise/SKILL.md` § Dispatch pre-flight.
+
 ## Built-in agents (Claude Code)
 
 Claude Code ships unpinned built-in subagents; with no frontmatter they inherit

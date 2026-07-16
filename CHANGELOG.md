@@ -23,6 +23,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tag the only diet mechanism.)
 
 ### Changed
+- **`/supervise` gained a dispatch pre-flight for edit waves.** Root-cause of
+  "the supervisor can't edit files": a dispatched subagent cannot answer a
+  native permission prompt, and a background dispatch auto-denies any call
+  that would prompt — so an edit wave sent out without a cleared permission
+  surface silently loses its Edit/Write calls. The skill now requires either
+  the plan-approval flag (`/tmp/agent-plan-approved`, arms `plan-scope-allow`)
+  or project-layer `Edit`/`Write` allow rules before dispatching an edit wave,
+  and falls back to foreground dispatch otherwise. Also made explicit:
+  execution waves must never route to `code-reviewer`/`security-reviewer`
+  (read-only toolsets, CI-enforced) — `supervisor.py` suggestions name the
+  review lane, not the execution lane. Cross-referenced from
+  `docs/model-routing.md`.
 - **`setup.sh` installs now end in post-install validation.** Every install
   path auto-runs the existing read-only `--doctor` diagnosis and the script
   exits non-zero on FAIL rows, so a broken install fails loudly at install
