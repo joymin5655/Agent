@@ -46,14 +46,20 @@ bash "${CLAUDE_PLUGIN_ROOT:-.}/core/infra/reorg-sync.sh" \
   --old <old-prefix> --new <new-prefix> --root <tree> --apply
 ```
 
-Replacement is a literal substitution **anchored at a path-component boundary** (no
-regex/sed hazards, and no sibling bleed — `<old>ed-thing` or `<old>_v2` is a
-different path and is never touched). Writes are atomic (temp + rename, permissions
-preserved); a file that cannot be rewritten is reported on stderr and the sweep
-continues, exiting 1 so the failure is visible. Binary files and the `.git` object
-store are skipped. The native-memory key is rewritten with the harness's `/ . _` →
-`-` encoding, confined to lines that carry the `claude/projects` consumer context —
-ordinary kebab-case text is never touched.
+Replacement is a literal substitution **anchored at a path-component boundary via a
+Unicode-aware whitelist** — a match counts only when the next character is `/`, a
+line/string end, whitespace, or an unambiguous delimiter (quote, `: , ; = | < > ( )
+[ ] { }`). Any other following character — a word char in *any* script (so CJK
+siblings like `.../논문` vs `.../논문자료` are safe), or `. - + @ ~ %` — marks a
+longer sibling name and is left untouched. Writes are atomic (temp + rename,
+permissions preserved); a file that cannot be rewritten is reported on stderr and
+the sweep continues, exiting 1 so the failure is visible. Binary files and the
+`.git` object store are skipped. The native-memory key is rewritten with the
+harness's `/ . _` → `-` encoding (Unicode-boundaried), confined to lines that carry
+the `claude/projects` consumer context — ordinary kebab-case text is never touched.
+One documented residual: a directory whose name is the moved prefix + a literal
+space + more (`/old/data 2024` for OLD `/old/data`) is read as the component plus
+text; the dry-run surfaces it before any apply.
 
 ### 3. Out-of-tree targets (report, don't auto-touch)
 

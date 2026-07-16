@@ -144,7 +144,7 @@ bash "$TOOL" --old /old/2.brain --new /new/2.brain --root "$T5" --apply >/dev/nu
 grep -q -- '-new-2-brain-x/memory/' "$T5/mem.md"; check "dotted-key-encoded-and-rewritten" $?
 rm -rf "$T5"
 # underscore path: '_' must also collapse in the encoded key — an OLD like
-# /Volumes/WD_BLACK whose real key is -Volumes-WD-BLACK would otherwise be a
+# /mnt/wd_black whose real key is -mnt-wd-black would otherwise be a
 # silent total miss (mutation round 2, gap B).
 T5B="$(mktemp -d)"
 printf 'mem: ~/.claude/projects/-old-wd-black-proj/memory/\n' > "$T5B/mem.md"
@@ -172,6 +172,39 @@ printf '@daily /old/prefix/scripts/nightly.sh\n' > "$T7/jobs.crontab"
 K="$(bash "$TOOL" --old "$OLD" --new "$NEW" --root "$T7" 2>&1)"
 echo "$K" | grep -q '^  crontab '; check "at-keyword-cron-classified" $?
 rm -rf "$T7"
+
+echo
+echo "=== (10) non-ASCII + punctuation sibling boundaries (MAJOR-R) ==="
+T8="$(mktemp -d)"
+# CJK: OLD=/old/논문, sibling /old/논문자료 must survive; real ref is rewritten.
+printf 'ref /old/논문/paper.md and sib /old/논문자료/x.md\n' > "$T8/cjk.md"
+# CJK memory key: -old-논문 rewrites, sibling -old-논문자료 must survive.
+printf 'k ~/.claude/projects/-old-논문-x/memory/ sib ~/.claude/projects/-old-논문자료-y/memory/\n' > "$T8/cjkkey.md"
+bash "$TOOL" --old /old/논문 --new /new/기사 --root "$T8" --apply >/dev/null 2>&1
+grep -q '/new/기사/paper.md' "$T8/cjk.md"; check "cjk-real-ref-rewritten" $?
+grep -q '/old/논문자료/x.md' "$T8/cjk.md"; check "cjk-sibling-path-untouched" $?
+grep -q -- '-new-기사-x/memory/' "$T8/cjkkey.md"; check "cjk-key-rewritten" $?
+grep -q -- '-old-논문자료-y/memory/' "$T8/cjkkey.md"; check "cjk-sibling-key-untouched" $?
+# punctuation siblings: OLD=/old/prefix must not eat +build / @2x / ~1 / %20
+printf 'p /old/prefix+build /old/prefix@2x /old/prefix~1 /old/prefix%%20 and /old/prefix/real\n' > "$T8/punct.md"
+bash "$TOOL" --old /old/prefix --new /new/loc --root "$T8" --apply >/dev/null 2>&1
+grep -q '/old/prefix+build' "$T8/punct.md"; check "punct-plus-sibling-untouched" $?
+grep -q '/old/prefix@2x' "$T8/punct.md"; check "punct-at-sibling-untouched" $?
+grep -q '/old/prefix~1' "$T8/punct.md"; check "punct-tilde-sibling-untouched" $?
+grep -q '/new/loc/real' "$T8/punct.md"; check "punct-real-ref-rewritten" $?
+# delimiter boundaries DO match: quoted and colon-terminated real refs
+printf 'json "%s" and path %s:/x\n' '/old/prefix' '/old/prefix' > "$T8/delim.md"
+bash "$TOOL" --old /old/prefix --new /new/loc --root "$T8" --apply >/dev/null 2>&1
+grep -q '"/new/loc"' "$T8/delim.md"; check "delim-quoted-ref-rewritten" $?
+grep -q '/new/loc:/x' "$T8/delim.md"; check "delim-colon-ref-rewritten" $?
+# whitespace IS a boundary: a space-terminated real ref is rewritten while the
+# CJK sibling on the same line survives (the reviewer MAJOR-R repro shape, on a
+# domain-neutral mount path).
+printf 'a /mnt/vol/논문 and /mnt/vol/논문자료 end\n' > "$T8/space.md"
+bash "$TOOL" --old /mnt/vol/논문 --new /mnt/new/기사 --root "$T8" --apply >/dev/null 2>&1
+grep -q '/mnt/new/기사 and' "$T8/space.md"; check "space-terminated-ref-rewritten" $?
+grep -q '/mnt/vol/논문자료 end' "$T8/space.md"; check "space-line-cjk-sibling-untouched" $?
+rm -rf "$T8"
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
