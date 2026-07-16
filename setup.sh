@@ -71,20 +71,27 @@ confirm() {
 apply_template() {
     local src="$1" dst="$2" rendered
     rendered="$(mktemp)"
-    trap 'rm -f "$rendered"' RETURN
+    # No RETURN trap here: a RETURN trap set inside a function outlives it in
+    # bash 5 and re-fires on every later function return, where the local
+    # $rendered no longer exists (unbound under set -u). Explicit rm -f on
+    # each exit path instead; a sed failure under set -e leaks one temp file,
+    # which is acceptable.
     sed "s|{{FRAMEWORK_ROOT}}|$FRAMEWORK_ROOT|g" "$src" > "$rendered"
     if [[ -f "$dst" ]]; then
         if cmp -s "$rendered" "$dst"; then
             echo "  up-to-date: $dst"
+            rm -f "$rendered"
             return
         fi
         if ! confirm "  $dst exists and differs. Overwrite?"; then
             echo "  ... skipped: $dst"
+            rm -f "$rendered"
             return
         fi
     fi
     mkdir -p "$(dirname "$dst")"
     cat "$rendered" > "$dst"
+    rm -f "$rendered"
     echo "  installed: $dst"
 }
 
