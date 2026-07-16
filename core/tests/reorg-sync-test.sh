@@ -221,5 +221,40 @@ bash "$TOOL" --old /proj/x --new /moved/y --root "$T9" --apply >/dev/null 2>&1
 rm -rf "$T9"
 
 echo
+echo "=== (12) key-layer whitelist: punctuation/CJK-punct sibling keys survive (workflow MAJOR) ==="
+T10="$(mktemp -d)"
+# sibling keys continue old_key with a char that survives the /._->- encoding
+# (~ + @ %, and CJK middle-dot U+30FB '・') — must NOT be rewritten; exact + deeper rewrite.
+printf 'ex ~/.claude/projects/-x-논문/memory\n'   > "$T10/keys.md"
+printf 'dp ~/.claude/projects/-x-논문-sub/memory\n' >> "$T10/keys.md"
+printf 's1 ~/.claude/projects/-x-논문・백업/memory\n' >> "$T10/keys.md"
+printf 's2 ~/.claude/projects/-x-논문~백업/memory\n' >> "$T10/keys.md"
+printf 's3 ~/.claude/projects/-x-논문+백업/memory\n' >> "$T10/keys.md"
+printf 's4 ~/.claude/projects/-x-논문@백업/memory\n' >> "$T10/keys.md"
+bash "$TOOL" --old /x/논문 --new /y/기사 --root "$T10" --apply >/dev/null 2>&1
+grep -q -- '-y-기사/memory' "$T10/keys.md"; check "key-exact-rewritten" $?
+grep -q -- '-y-기사-sub/memory' "$T10/keys.md"; check "key-deeper-rewritten" $?
+grep -q -- '-x-논문・백업/memory' "$T10/keys.md"; check "key-cjkpunct-sibling-untouched" $?
+grep -q -- '-x-논문~백업/memory' "$T10/keys.md"; check "key-tilde-sibling-untouched" $?
+grep -q -- '-x-논문+백업/memory' "$T10/keys.md"; check "key-plus-sibling-untouched" $?
+grep -q -- '-x-논문@백업/memory' "$T10/keys.md"; check "key-at-sibling-untouched" $?
+rm -rf "$T10"
+
+echo
+echo "=== (13) NONCE boundary-aware: NEW-shaped prefix of a real OLD ref is not eaten (workflow MAJOR) ==="
+T11="$(mktemp -d)"
+# OLD=/proj, NEW=/proj/inner. /proj/innerX and /proj/innermost are real OLD refs
+# whose text begins with NEW — the blind-substring mask used to silently drop them.
+printf '/proj/innerX/file\n/proj/innermost\n/proj/x\n' > "$T11/f"
+bash "$TOOL" --old /proj --new /proj/inner --root "$T11" --apply >/dev/null 2>&1
+grep -qx '/proj/inner/innerX/file' "$T11/f"; check "nonce-newprefix-innerX-rewritten" $?
+grep -qx '/proj/inner/innermost' "$T11/f"; check "nonce-newprefix-innermost-rewritten" $?
+grep -qx '/proj/inner/x' "$T11/f"; check "nonce-plain-ref-rewritten" $?
+# and it stays idempotent (the real NEW ref /proj/inner/x is protected on re-apply)
+N2="$(bash "$TOOL" --old /proj --new /proj/inner --root "$T11" --apply 2>&1)"
+echo "$N2" | grep -q 'applied: rewrote 0 file(s)'; check "nonce-newprefix-idempotent" $?
+rm -rf "$T11"
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]
