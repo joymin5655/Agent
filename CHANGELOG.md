@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **/supervise Step 0 "Intake restatement"** — before plan validation, the
+  supervisor now restates the user's chat prompt into a machine-checkable
+  record (`skills/supervise/templates/prompt-restatement.md`: Original ask
+  verbatim / Interpreted goal / Assumptions / Out of scope / Success criteria
+  / Open questions), persisted to `.agent/plans/<slug>/RESTATEMENT.md`.
+  Non-full-auto runs surface unresolved Open questions before Wave 1.
+  Completion (Step 5) now offers `/manager-audit <slug>`, the meta-audit that
+  grades this restatement along with routing waste, relative token spend, and
+  role compliance.
+
 ### Fixed
 - **`backends.json`: gemini headless invocation was wrong** — `gemini -p`
   requires an argument (`Not enough arguments following: p` on CLI 0.44.x);

@@ -81,6 +81,24 @@ the verify-judge floor, and the fan-out worker default.
 
 ## Steps
 
+### 0. Intake restatement
+
+Before touching the plan, restate the ask so dispatch decisions trace to a
+machine-checkable record rather than to chat prose:
+
+a. Fill `skills/supervise/templates/prompt-restatement.md` from the user's
+   invocation text and the plan's objective — all six sections (Original ask
+   verbatim / Interpreted goal / Assumptions / Out of scope / Success
+   criteria / Open questions).
+b. Persist it to `.agent/plans/<slug>/RESTATEMENT.md`. (RECORD.md stays a
+   mechanical completion ledger — intake interpretation never goes there.)
+c. If **Open questions** is non-empty and the run is not full-auto, surface
+   them to the user before Wave 1. Full-auto runs note the resolution chosen
+   under Assumptions instead.
+
+`/manager-audit` grades this file (lane `restatement-quality`) — a wave
+serving a goal absent from **Interpreted goal** is flagged as scope drift.
+
 ### 1. Plan validation
 
 a. Read `~/.agent/plans/<slug>.md`.
@@ -194,6 +212,11 @@ global recording layer, so the two never duplicate. On `--goal-mode` runs the
 guarantee the file exists — it never overwrites one you already wrote); on
 non-goal runs writing it is this step's discipline. This keeps an execution
 record on runtimes that have no global recording layer at all.
+
+Finally, offer to run `/manager-audit <slug>` — the meta-audit over this run
+(restatement quality, model-routing waste, relative token spend, role
+compliance). It reads the logs this run already produced; it never blocks
+completion.
 
 ## Hard rules
 
