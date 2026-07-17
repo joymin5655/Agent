@@ -8,6 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`/manager-audit` — meta-audit of the supervisor (v0.5.0)**. Four lanes
+  answering what the supervisor cannot be trusted to answer about itself:
+  `restatement-quality` (intake restatement exists, six sections filled,
+  measurable criteria, scope-drift candidates), `routing-waste` (TOP-inherit
+  leaks, verify/judge MID-floor violations, fan-out not at LOW),
+  `token-spend` (relative dispatch cost = tokens × tier multiplier — LOW 0.15
+  / MID 1 / TOP 3.5, midpoints of the docs/model-routing.md relative ranges;
+  still no price constants in the repo), and `role-compliance` (every wave
+  audited, never-auto-retry honored, RECORD.md written, review lane after
+  code waves). Split mirrors harness-audit: deterministic machine layer
+  `core/infra/manager-audit.sh` (env-seamed, always exit 0, findings JSON)
+  + interpreting skill `skills/manager-audit/SKILL.md` that judges semantic
+  candidates and writes concrete patch **proposals** to
+  `.agent/plans/<slug>/PROPOSALS.md` for one-click user approval. Proposals
+  target conventions/templates/docs only — runtime model-switching stays
+  rejected (docs/model-routing.md). Battery:
+  `core/tests/manager-audit-test.sh` (28 checks, fixture-injected seams,
+  including review-driven regressions: dangling-flag termination, BSD-grep
+  whitespace sections, non-ASCII wave titles, remediated-FAIL non-flagging,
+  mixed-tier fan-out evidence, unsafe-slug rejection).
 - **/supervise Step 0 "Intake restatement"** — before plan validation, the
   supervisor now restates the user's chat prompt into a machine-checkable
   record (`skills/supervise/templates/prompt-restatement.md`: Original ask

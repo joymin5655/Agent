@@ -89,7 +89,7 @@ Then:
 3. **Scaffold a project.** Inside any repo, run `/project-init` to generate `CLAUDE.md`, rules, and `gitleaks.toml`.
 4. *(Optional)* In a repo that already runs another hook-heavy plugin, disable agent-harness there via `/plugin` — agents stay namespaced as `agent-harness:*`, so there's no collision either way.
 
-The plugin bundles: **2 agents**, **6 skills**, the hook set, and the `/project-init` command.
+The plugin bundles: **2 agents**, **7 skills**, the hook set, and the `/project-init` command.
 
 ### Path B — shell install (Codex CLI / Gemini CLI / all three)
 
@@ -178,6 +178,7 @@ Model is cost-tiered per work class ([`docs/model-routing.md`](docs/model-routin
 | `verify-completion` | Independently re-verify a completion claim (deterministic checks + refute-by-default judge) |
 | `wrap` | Commit + PR automation with safeguards |
 | `harness-audit` | Read-only health check of the harness itself (one `verify-all.sh` dry-run, interpreted) |
+| `manager-audit` | Meta-audit of a `/supervise` run — restatement quality, model-routing waste, relative token spend, role compliance; findings become patch proposals for user approval |
 | `harness-help` | Router — which skill fits the situation, and the main flow through them |
 
 | Hooks — 20, wired via `hooks/hooks.json` → `core/hooks/` | Event |
@@ -202,7 +203,7 @@ Agent/
 ├── CHANGELOG.md
 │
 ├── agents/             # 2 agent definitions + master-registry.json
-├── skills/             # 6 skills (spec · supervise · verify-completion · wrap · harness-audit · harness-help)
+├── skills/             # 7 skills (spec · supervise · verify-completion · wrap · harness-audit · manager-audit · harness-help)
 ├── commands/           # 1 slash command (/project-init)
 ├── hooks/              # plugin hook wiring (hooks.json)
 │

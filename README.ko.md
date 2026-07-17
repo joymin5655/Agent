@@ -89,7 +89,7 @@
 3. **프로젝트 스캐폴드.** 아무 레포 안에서 `/project-init`을 실행하면 `CLAUDE.md`, 규칙, `gitleaks.toml`이 생성됩니다.
 4. *(선택)* 훅이 많은 다른 플러그인이 이미 도는 레포에서는 `/plugin`으로 agent-harness만 그 레포에서 끄세요 — 에이전트는 `agent-harness:*`로 네임스페이스가 분리되어 있어 어느 쪽이든 이름 충돌은 없습니다.
 
-플러그인 번들: **에이전트 2종**, **스킬 6종**, 훅 세트, `/project-init` 명령.
+플러그인 번들: **에이전트 2종**, **스킬 7종**, 훅 세트, `/project-init` 명령.
 
 ### Path B — 셸 설치 (Codex CLI / Gemini CLI / 3개 모두)
 
@@ -184,6 +184,7 @@ read-only 에이전트는 도구 수준에서 강제됩니다(`Write`/`Edit`/`Ba
 | `verify-completion` | 완료 주장 독립 재검증 (결정적 체크 + refute-by-default judge) |
 | `wrap` | 안전장치를 갖춘 커밋 + PR 자동화 |
 | `harness-audit` | 하네스 자체의 읽기전용 건강 점검 (`verify-all.sh` 1회 드라이런 해석) |
+| `manager-audit` | `/supervise` 런의 메타 감사 — 재구성 품질·모델 라우팅 낭비·상대 토큰 지출·역할 준수; 발견은 사용자 승인용 패치 제안으로 |
 | `harness-help` | 라우터 — 상황에 맞는 스킬과 main flow 안내 |
 
 | 훅 — 20개, `hooks/hooks.json` → `core/hooks/` 연결 | 이벤트 |
@@ -208,7 +209,7 @@ Agent/
 ├── CHANGELOG.md
 │
 ├── agents/             # 2 agent definitions + master-registry.json
-├── skills/             # 6 skills (spec · supervise · verify-completion · wrap · harness-audit · harness-help)
+├── skills/             # 7 skills (spec · supervise · verify-completion · wrap · harness-audit · manager-audit · harness-help)
 ├── commands/           # 1 slash command (/project-init)
 ├── hooks/              # plugin hook wiring (hooks.json)
 │
