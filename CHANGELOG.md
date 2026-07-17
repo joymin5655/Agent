@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **model-routing-observer spend signal** — each dispatch record in
+  `.agent/logs/model-routing.jsonl` now carries `prompt_chars` (always) and
+  `total_tokens` (best-effort probe of `tool_response` usage, `null` when the
+  runtime surfaces none). Pure-observer contract unchanged (silent stdout,
+  exit 0 always). This is the measurement seam for the manager-audit lane
+  (relative dispatch-cost ranking — tiers and token counts only, no price
+  constants, per docs/model-routing.md).
+
 ### Removed
 - **Gemini backend retired from `backends.json`** — `second-opinion-review`
   now ships codex-only (`fallback: null`), and the `gemini` backend entry is

@@ -11,6 +11,9 @@
 #   inherit_top       — neither: the dispatch inherits the session's top model
 #                       (the leak this observer exists to measure)
 #
+# Spend signal: every record carries prompt_chars (len of tool_input.prompt)
+# and total_tokens (tool_response usage probe; null when absent).
+#
 # Seams: AGENT_MODEL_ROUTING_SINK (sink path), AGENT_REGISTRY_PATH (fixture
 # registry), AGENT_SESSION_ID.
 #
@@ -98,6 +101,22 @@ last="$(tail -1 "$SINK")"
 for field in '"subagent_type": "general-purpose"' '"model": "opus"' '"session_id": "test"' '"ts"'; do
   if [[ "$last" == *"$field"* ]]; then ok "b-field-present [$field]"; else bad "b-field" "missing $field in $last"; fi
 done
+
+echo
+echo "=== spend signal: prompt_chars + total_tokens ==="
+run '{"event":"PostToolUse","tool_name":"Task","tool_input":{"subagent_type":"Explore","prompt":"12345"},"tool_response":{"usage":{"total_tokens":777}}}'
+last="$(tail -1 "$SINK")"
+if [[ "$last" == *'"prompt_chars": 5'* ]]; then ok "e1-prompt-chars-counted"; else bad "e1-prompt-chars" "$last"; fi
+if [[ "$last" == *'"total_tokens": 777'* ]]; then ok "e2-usage-total-tokens-captured"; else bad "e2-usage-tokens" "$last"; fi
+run '{"event":"PostToolUse","tool_name":"Task","tool_input":{"subagent_type":"Explore","prompt":"x"},"tool_response":{"totalTokens":42}}'
+last="$(tail -1 "$SINK")"
+if [[ "$last" == *'"total_tokens": 42'* ]]; then ok "e3-camelcase-usage-captured"; else bad "e3-camelcase" "$last"; fi
+run "$(evt Task Explore)"
+last="$(tail -1 "$SINK")"
+if [[ "$last" == *'"total_tokens": null'* ]]; then ok "e4-no-usage-is-null"; else bad "e4-no-usage" "$last"; fi
+run '{"event":"PostToolUse","tool_name":"Task","tool_input":{"subagent_type":"Explore"},"tool_response":"plain text"}'
+last="$(tail -1 "$SINK")"
+if [[ "$last" == *'"prompt_chars": 0'* && "$last" == *'"total_tokens": null'* ]]; then ok "e5-missing-prompt-nonobj-response-safe"; else bad "e5-safety" "$last"; fi
 
 echo
 echo "=== non-targets and fail-open silence ==="
