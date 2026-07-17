@@ -50,7 +50,7 @@ GATE spec-gate | spec-gate.py | ask | spec-gate.jsonl | * | 2026-07-10 | Model w
 GATE tdd-guard | tdd-guard.py | ask | tdd-guard-dryrun.jsonl | * | 2026-07-10 | Model will write implementation code before a failing test exists.
 GATE hardcoding | check-hardcoding.py | deny | - | * | 2026-07-10 | Model will inline design constants (colors, tick arrays) that belong in a config file.
 GATE plan-scope-allow | plan-scope-allow.py | allow | plan-scope-allow.jsonl | * | 2026-07-11 | Post-plan-approval edit prompts get rubber-stamped (approval fatigue); auto-allow is safe only in-workspace, outside risk areas, while the session plan flag is live. Activation 3-way: AGENT_PLAN_ALLOW_MODE=on forces active, explicit non-"on" forces dark, unset delegates to the per-project trust tier (trust_tier.py — personal only, granted solely by user-side ~/.agent/trust.list outside every workspace; fail-closed collab).
-GATE model-routing-observer | model-routing-observer.py | observe | model-routing.jsonl | * | 2026-07-11 | The call-time model-override convention (implementation=MID, fan-out=LOW) is not followed — unpinned dispatches silently inherit the session top model. Measured before enforced: 2026-07-11 audit found 7/7 dispatches at TOP.
+GATE model-routing-observer | model-routing-observer.py | observe | model-routing.jsonl | * | 2026-07-11 | The call-time model-override convention (implementation=MID, fan-out=LOW) is not followed — unpinned dispatches silently inherit the session top model. Measured before enforced: 2026-07-11 audit found 7/7 dispatches at TOP. 2026-07-17: records gained a spend signal (prompt_chars, best-effort total_tokens) so manager-audit can rank relative dispatch cost.
 <!-- gate-registry:end -->
 
 ## Review discipline
