@@ -65,6 +65,10 @@ Synthesis of subagent results stays in the main loop (TOP — orchestration
 judgment). `core/hooks/model-routing-observer.py` records every Task/Agent
 dispatch's verdict (`override` / `pinned_specialist` / `inherit_top`) to
 `.agent/logs/model-routing.jsonl`, so this convention is measured, not assumed.
+`core/infra/manager-audit.sh` (consumed by `/manager-audit`) audits those
+records after a supervise run — TOP-inherit leaks, floor violations, and a
+relative spend ranking whose tier multipliers (LOW 0.15 / MID 1 / TOP 3.5)
+are midpoints of the relative ranges above, never prices.
 
 ## Floors
 
@@ -134,7 +138,9 @@ shared blind spot doesn't survive review.
 
 - **No runtime model-switching hooks.** A per-prompt classifier that picks a
   model was evaluated and rejected (config-coupled, opaque, and it moves a
-  human-auditable decision into a hook).
+  human-auditable decision into a hook). `/manager-audit` stays on the right
+  side of this line: it detects violations after the fact and writes patch
+  *proposals* for user approval — it never switches anything at runtime.
 - **No automatic tier escalation.** Promotion is a caller decision, made
   per-task, visible in the invocation.
 - **No dedicated low-tier agents.** The LOW rung is reached with a per-call
