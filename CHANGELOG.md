@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **v0.5.1 version bump — re-cut of stale 0.5.0 caches.** PR #73 changed
+  shipped content (manager-audit `--since`, Explore-MID fan-out exception,
+  Step 0 run-start timestamp) without bumping the version, so installed
+  0.5.0 caches were cut at the earlier commit and silently missed those
+  fixes. The plugin distribution is the git tree keyed by version — a
+  content change without a bump leaves every existing install stale.
+
 ### Added
 - **`/manager-audit` — meta-audit of the supervisor (v0.5.0)**. Four lanes
   answering what the supervisor cannot be trusted to answer about itself:
