@@ -28,6 +28,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   including review-driven regressions: dangling-flag termination, BSD-grep
   whitespace sections, non-ASCII wave titles, remediated-FAIL non-flagging,
   mixed-tier fan-out evidence, unsafe-slug rejection).
+- **/supervise Step 0 "Intake restatement"** — before plan validation, the
+  supervisor now restates the user's chat prompt into a machine-checkable
+  record (`skills/supervise/templates/prompt-restatement.md`: Original ask
+  verbatim / Interpreted goal / Assumptions / Out of scope / Success criteria
+  / Open questions), persisted to `.agent/plans/<slug>/RESTATEMENT.md`.
+  Non-full-auto runs surface unresolved Open questions before Wave 1.
+  Completion (Step 5) now offers `/manager-audit <slug>`, the meta-audit that
+  grades this restatement along with routing waste, relative token spend, and
+  role compliance.
+- **model-routing-observer spend signal** — each dispatch record in
+  `.agent/logs/model-routing.jsonl` now carries `prompt_chars` (always) and
+  `total_tokens` (best-effort probe of `tool_response` usage, `null` when the
+  runtime surfaces none). Pure-observer contract unchanged (silent stdout,
+  exit 0 always). This is the measurement seam for the manager-audit lane
+  (relative dispatch-cost ranking — tiers and token counts only, no price
+  constants, per docs/model-routing.md).
+
+### Removed
+- **Gemini backend retired from `backends.json`** — `second-opinion-review`
+  now ships codex-only (`fallback: null`), and the `gemini` backend entry is
+  gone. Real-call verification (2026-07-17) showed the path fails by default
+  for individual installs: gemini-cli 0.44–0.46 `oauth-personal` is
+  deprecated upstream (`IneligibleTierError` → Antigravity migration), and
+  the API-key path demands paid prepay credits. A shipped fallback that
+  cannot work out of the box misleads worse than no fallback. The
+  dispatcher's fallback mechanism is unchanged and stays stub-tested; to
+  re-enable, add a backend entry and point a role's `fallback` at it (the
+  removed entry lives in git history).
 
 ### Fixed
 - **`backends.json`: gemini headless invocation was wrong** — `gemini -p`
