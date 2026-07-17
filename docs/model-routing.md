@@ -99,16 +99,23 @@ dispatch's verdict (`override` / `pinned_specialist` / `inherit_top`) to
 
 ## Cross-vendor second-opinion lane
 
-A Claude session can dispatch Codex (primary) or Gemini (fallback) as a
-review/verification **second opinion** — a different vendor's model judging
-the same diff or claim, so a shared blind spot doesn't survive review.
+A Claude session can dispatch Codex as a review/verification **second
+opinion** — a different vendor's model judging the same diff or claim, so a
+shared blind spot doesn't survive review.
 
 - **SSOT (machine-readable): `core/infra/backends.json`** — role → backend →
-  CLI argv. Roles shipped: `second-opinion-review` (codex → gemini fallback),
-  `second-opinion-verify` (codex, no fallback). Model names deliberately never
+  CLI argv. Roles shipped: `second-opinion-review` and `second-opinion-verify`
+  (both codex, no fallback). Model names deliberately never
   appear in the registry or the dispatcher: each vendor's adapter profile owns
   its tier (the rows above — `codex --profile deep` is the TOP-tier reasoning
   profile), so tier policy stays in one place.
+- **Gemini backend retired (2026-07-17).** It shipped as the review fallback,
+  but upstream deprecated `oauth-personal` for individuals (gemini-cli 0.44–0.46
+  throws `IneligibleTierError`, pointing at Antigravity) and the API-key path
+  requires paid prepay credits — a fallback that fails by default for
+  individual installs misleads. The dispatcher's fallback mechanism is intact
+  and stub-tested; to re-enable a fallback, add a backend entry and point a
+  role's `fallback` at it (the removed entry is in git history, PR #66/#68).
 - **Dispatcher: `core/infra/call-worker.sh <role> < prompt.md`** — captures
   the reply to `.agent/workers/<ts>-<role>.md` and prints the path. External
   calls cost money: without `AGENT_WORKER_YES=1` it refuses (exit 3). The
