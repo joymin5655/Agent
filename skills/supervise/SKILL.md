@@ -89,7 +89,9 @@ machine-checkable record rather than to chat prose:
 a. Fill `skills/supervise/templates/prompt-restatement.md` from the user's
    invocation text and the plan's objective — all six sections (Original ask
    verbatim / Interpreted goal / Assumptions / Out of scope / Success
-   criteria / Open questions).
+   criteria / Open questions), plus the `Run started:` UTC timestamp line
+   (the routing log accumulates across sessions; this is the audit window's
+   start).
 b. Persist it to `.agent/plans/<slug>/RESTATEMENT.md`. (RECORD.md stays a
    mechanical completion ledger — intake interpretation never goes there.)
 c. If **Open questions** is non-empty and the run is not full-auto, surface
@@ -215,8 +217,9 @@ record on runtimes that have no global recording layer at all.
 
 Finally, offer to run `/manager-audit <slug>` — the meta-audit over this run
 (restatement quality, model-routing waste, relative token spend, role
-compliance). It reads the logs this run already produced; it never blocks
-completion.
+compliance), passing `--since <Run started ts from RESTATEMENT.md>` so the
+audit scopes to this run's dispatches. It reads the logs this run already
+produced; it never blocks completion.
 
 ## Hard rules
 
