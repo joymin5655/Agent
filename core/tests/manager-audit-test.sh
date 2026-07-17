@@ -106,6 +106,8 @@ cat > "$LOGS/routing.jsonl" <<'EOF'
 {"gate":"model-routing-observer","subagent_type":"mixed-worker","model":"sonnet","verdict":"override","prompt_chars":20,"total_tokens":50,"session_id":"s1","ts":"2026-07-17T01:25:00Z"}
 {"gate":"model-routing-observer","subagent_type":"mixed-worker","model":"opus","verdict":"override","prompt_chars":20,"total_tokens":50,"session_id":"s1","ts":"2026-07-17T01:26:00Z"}
 {"gate":"model-routing-observer","subagent_type":"mixed-worker","model":"opus","verdict":"override","prompt_chars":20,"total_tokens":50,"session_id":"s1","ts":"2026-07-17T01:27:00Z"}
+{"gate":"model-routing-observer","subagent_type":"Explore","model":"sonnet","verdict":"override","prompt_chars":30,"total_tokens":60,"session_id":"s1","ts":"2026-07-17T01:28:00Z"}
+{"gate":"model-routing-observer","subagent_type":"Explore","model":"sonnet","verdict":"override","prompt_chars":30,"total_tokens":60,"session_id":"s1","ts":"2026-07-17T01:29:00Z"}
 EOF
 
 # goal-audit log: wave 1 audited PASS for good; wave 2 missing.
@@ -188,6 +190,15 @@ if has_finding routing-waste fanout-not-low WARN; then ok "w4-fanout-not-low-WAR
 if jq -e '.findings[] | select(.check=="fanout-not-low") | .evidence | select(contains("mixed-worker")) | contains("MID/TOP")' <<< "$OUT" >/dev/null 2>&1; then
     ok "w5-mixed-tier-batch-reported-accurately"
 else bad "w5-mixed-tier" "$(jq -c '.findings[] | select(.check=="fanout-not-low")' <<< "$OUT")"; fi
+# Explore-at-MID is a documented fan-out exception (docs/model-routing.md) — never flagged
+if ! jq -e '.findings[] | select(.check=="fanout-not-low") | .evidence | contains("Explore")' <<< "$OUT" >/dev/null 2>&1; then
+    ok "w7-explore-mid-exception-not-flagged"
+else bad "w7-explore-mid" "$(jq -c '.findings[] | select(.check=="fanout-not-low")' <<< "$OUT")"; fi
+# --since scopes the routing window: records before the ts drop out
+run good --session s1 --since 2026-07-17T01:25:00Z
+if ! has_finding routing-waste top-inherit-leak WARN; then
+    ok "w8-since-window-excludes-old-records"
+else bad "w8-since" "$(jq -c '.findings[] | select(.check=="top-inherit-leak")' <<< "$OUT")"; fi
 # arg-parse regression: trailing --session with no value must terminate, not loop
 ( env AGENT_MODEL_ROUTING_SINK="$LOGS/routing.jsonl" AGENT_GOAL_AUDIT_LOG="$LOGS/goal-audit.jsonl" \
       AGENT_PLANS_DIR="$PLANS" AGENT_PLAN_ARTIFACTS_DIR="$ARTS" AGENT_GOAL_DB="$WORK/absent.db" \

@@ -27,7 +27,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `core/tests/manager-audit-test.sh` (28 checks, fixture-injected seams,
   including review-driven regressions: dangling-flag termination, BSD-grep
   whitespace sections, non-ASCII wave titles, remediated-FAIL non-flagging,
-  mixed-tier fan-out evidence, unsafe-slug rejection).
+  mixed-tier fan-out evidence, unsafe-slug rejection). First real-run smoke
+  (2026-07-17) produced two user-approved fixes: the fan-out lane now honors
+  the documented Explore-at-MID exception, and `--since <ISO-ts>` scopes the
+  audit window to one run (Step 0 records the run-start timestamp in
+  RESTATEMENT.md for exactly this) — battery now 30 checks.
 - **/supervise Step 0 "Intake restatement"** — before plan validation, the
   supervisor now restates the user's chat prompt into a machine-checkable
   record (`skills/supervise/templates/prompt-restatement.md`: Original ask

@@ -18,7 +18,9 @@
 #                         honored, RECORD.md written, goal-mode DB consistent,
 #                         review lane dispatched after code waves
 #
-# Usage: bash core/infra/manager-audit.sh <plan-slug> [--json] [--session <id>]
+# Usage: bash core/infra/manager-audit.sh <plan-slug> [--json] [--session <id>] [--since <ISO-ts>]
+#   --since scopes routing records to one run (the observer log accumulates
+#   across sessions; /supervise Step 0 records the run start ts to pass here)
 #
 # Findings: {lane, check, severity(FAIL|WARN|INFO|PASS), evidence, proposal_hint}.
 # proposal_hint targets conventions/templates/docs only — this script never
@@ -43,18 +45,22 @@ SLUG="${1:-}"
 shift || true
 JSON_OUT=false
 SESSION_FILTER=""
+SINCE_FILTER=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --json) JSON_OUT=true; shift ;;
         --session)
             if [[ $# -ge 2 ]]; then SESSION_FILTER="$2"; shift 2
             else echo "ERROR: --session needs a value" >&2; shift; fi ;;
+        --since)
+            if [[ $# -ge 2 ]]; then SINCE_FILTER="$2"; shift 2
+            else echo "ERROR: --since needs an ISO timestamp" >&2; shift; fi ;;
         *) echo "ERROR: unknown arg: $1" >&2; exit 0 ;;
     esac
 done
 
 if [[ -z "$SLUG" ]]; then
-    echo "usage: manager-audit.sh <plan-slug> [--json] [--session <id>]" >&2
+    echo "usage: manager-audit.sh <plan-slug> [--json] [--session <id>] [--since <ISO-ts>]" >&2
     exit 0
 fi
 # slug reaches filesystem paths and a sqlite WHERE clause — keep it to a safe charset
@@ -147,6 +153,7 @@ if [[ -f "$ROUTING_LOG" ]]; then
         '[$s | split(",")[] | select(contains("=")) | split("=") | {(.[0]): .[1]}] | add // {}')
     RECORDS=$(jq -cs \
         --arg session "$SESSION_FILTER" \
+        --arg since "$SINCE_FILTER" \
         --argjson reg "$REG_JSON" \
         --argjson aliases "$ALIAS_JSON" '
         def tier_of($m):
@@ -159,6 +166,7 @@ if [[ -f "$ROUTING_LOG" ]]; then
         [ .[]
           | select(.gate == "model-routing-observer")
           | select($session == "" or .session_id == $session)
+          | select($since == "" or ((.ts // "") >= $since))
           | .resolved_model = (if .model != "" then .model
                                elif .verdict == "pinned_specialist"
                                then ($reg[(.subagent_type | split(":") | last)] // "")
@@ -194,7 +202,10 @@ if [[ "$(jq 'length' <<< "$RECORDS")" -gt 0 ]]; then
         add routing-waste fanout-not-low WARN \
             "$grp" \
             "fan-out worker batches default to LOW tier (docs/model-routing.md) — add model: low to the batch contract"
-    done < <(jq -r '[.[] | select(.verdict != "pinned_specialist")]
+    done < <(jq -r '[.[] | select(.verdict != "pinned_specialist")
+          # Explore at MID is a documented exception to the fan-out-LOW default
+          # (docs/model-routing.md § Built-in agents) — never a fan-out finding
+          | select((.subagent_type == "Explore" and .tier == "MID") | not)]
         | group_by(.subagent_type) | .[]
         | select(length >= 3 and ([.[] | select(.tier != "LOW")] | length) == length)
         | "\(length)× \(.[0].subagent_type) at \([.[].tier] | unique | join("/")) — looks like a fan-out batch not at LOW"' <<< "$RECORDS")

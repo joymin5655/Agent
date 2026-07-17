@@ -1,5 +1,8 @@
 # Intake restatement — <slug>
 
+Run started: <UTC ISO timestamp — /manager-audit scopes its routing-log
+window to this run via `--since <this value>`>
+
 One restatement per supervise run, written BEFORE plan validation and wave
 classification. The user's chat prompt is optimized for a human reader;
 dispatch decisions need a machine-checkable restatement. Every downstream
