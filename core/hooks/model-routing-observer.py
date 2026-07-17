@@ -14,6 +14,13 @@ convention measurable: one JSONL record per subagent dispatch, classified as
   inherit_top       — neither: the dispatch inherits the session's top model.
                       This is the leak the observer exists to count.
 
+Each record also carries a spend signal for downstream audits
+(core/infra/manager-audit.sh):
+
+  prompt_chars — len(tool_input.prompt); always present, deterministic proxy
+  total_tokens — best-effort probe of tool_response usage; null when the
+                 runtime doesn't surface usage on PostToolUse
+
 Pure observer: emits nothing on stdout, never blocks, always exits 0; any
 exception is swallowed (a broken observer must not tax dispatches). Analyze
 with jq, e.g.:
@@ -56,6 +63,21 @@ def classify(subagent_type, model):
     return "inherit_top"
 
 
+def total_tokens(event):
+    """Best-effort usage probe; None when the runtime surfaces no usage."""
+    response = event.get("tool_response")
+    if not isinstance(response, dict):
+        return None
+    for holder in (response.get("usage"), response):
+        if not isinstance(holder, dict):
+            continue
+        for key in ("total_tokens", "totalTokens"):
+            value = holder.get(key)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                return int(value)
+    return None
+
+
 def main():
     try:
         event = json.loads(sys.stdin.read())
@@ -69,6 +91,8 @@ def main():
         return
     model = tool_input.get("model", "")
     model = model if isinstance(model, str) else ""
+    prompt = tool_input.get("prompt", "")
+    prompt = prompt if isinstance(prompt, str) else ""
 
     sink = os.environ.get("AGENT_MODEL_ROUTING_SINK") or os.path.join(
         os.getcwd(), ".agent", "logs", "model-routing.jsonl"
@@ -79,6 +103,8 @@ def main():
         "subagent_type": subagent_type,
         "model": model,
         "verdict": classify(subagent_type, model),
+        "prompt_chars": len(prompt),
+        "total_tokens": total_tokens(event),
         "session_id": os.environ.get("AGENT_SESSION_ID", ""),
     }
     os.makedirs(os.path.dirname(sink), exist_ok=True)
