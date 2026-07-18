@@ -44,6 +44,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # history needed to diff the PR/push commit range (--range scan)
       - name: Grep tracked files for prior-project tokens (excluding legacy/ and the audit tool)
         run: |
           # legacy/ is the intentional archive; the audit script and this workflow
@@ -57,6 +59,27 @@ jobs:
           echo "sanitize gate clean"
       - name: Full token-set audit (superset — same script devs run locally)
         run: bash core/tests/sanitize-audit.sh
+      - name: Range taint scan (catch add-then-remove across PR/push commits, not just HEAD)
+        run: |
+          # The HEAD audit above misses a token added in one commit and removed in a
+          # later one (HEAD ends clean). Scan the added lines of every commit in the
+          # incoming range so that add-then-remove taint is caught before/at merge.
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            RANGE="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            before="${{ github.event.before }}"
+            case "$before" in *[!0]*) RANGE="$before..${{ github.sha }}" ;; *) RANGE="" ;; esac
+          else
+            RANGE=""
+          fi
+          if [ -z "$RANGE" ]; then
+            echo "no commit range for event '${{ github.event_name }}' — skipping range scan"
+            exit 0
+          fi
+          echo "range taint scan over $RANGE"
+          bash core/tests/sanitize-audit.sh --range "$RANGE"
+      - name: Verify the sanitize gate (fixture detection — pairs the gate with its test)
+        run: bash core/tests/sanitize-audit-test.sh
 
   supply-chain-scan:
     name: supply-chain scan (no self-injection directives)
