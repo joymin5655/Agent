@@ -68,7 +68,11 @@ dispatch's verdict (`override` / `pinned_specialist` / `inherit_top`) to
 `core/infra/manager-audit.sh` (consumed by `/manager-audit`) audits those
 records after a supervise run — TOP-inherit leaks, floor violations, and a
 relative spend ranking whose tier multipliers (LOW 0.15 / MID 1 / TOP 3.5)
-are midpoints of the relative ranges above, never prices.
+are midpoints of the relative ranges above, never prices. Its `--global`
+mode drops the plan-slug and run scope to sweep the *whole* routing log for
+the same leaks that happen outside any supervise run — ad-hoc `Explore` /
+execution dispatches that silently inherit the session top model — so the
+convention is measured for one-off work too, not only inside `/supervise`.
 
 ## Floors
 
