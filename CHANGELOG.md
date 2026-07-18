@@ -16,6 +16,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   content change without a bump leaves every existing install stale.
 
 ### Added
+- **`manager-audit --global` — slug-less routing sweep.** The audit's
+  routing-waste + token-spend lanes previously required a `<plan-slug>`, so
+  ad-hoc `Explore` / execution dispatches outside any `/supervise` run — the
+  common case for TOP-inherit leaks — were never swept. `--global` drops the
+  slug and run scope, skips the slug-scoped lanes (restatement-quality,
+  role-compliance), and reports inherit-top / floor / fan-out leaks across the
+  whole `model-routing.jsonl`. Still after-the-fact, still WARN-only, still
+  exit 0 (no runtime switching). Covered by 8 new cases in
+  `manager-audit-test.sh`.
 - **`/manager-audit` — meta-audit of the supervisor (v0.5.0)**. Four lanes
   answering what the supervisor cannot be trusted to answer about itself:
   `restatement-quality` (intake restatement exists, six sections filled,

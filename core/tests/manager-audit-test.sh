@@ -241,6 +241,46 @@ run good
 if ! has_finding role-compliance review-lane-missing WARN; then ok "c5-code-reviewer-trace-found"; else bad "c5" "flagged despite reviewer record"; fi
 
 echo
+echo "=== mode: --global (slug-less cross-session sweep) ==="
+grun() { # grun [extra args...] -> OUT, RC  (no slug; always --json)
+    OUT="$(env \
+        AGENT_MODEL_ROUTING_SINK="$LOGS/routing.jsonl" \
+        AGENT_GOAL_AUDIT_LOG="$LOGS/goal-audit.jsonl" \
+        AGENT_PLANS_DIR="$PLANS" \
+        AGENT_PLAN_ARTIFACTS_DIR="$ARTS" \
+        AGENT_GOAL_DB="$WORK/absent.db" \
+        AGENT_REGISTRY_PATH="$REG" \
+        bash "$SCRIPT" --global --json "$@" 2>/dev/null)"
+    RC=$?
+}
+grun
+if [[ "$RC" -eq 0 ]]; then ok "g1-global-exit-0"; else bad "g1-global" "rc=$RC"; fi
+if jq -e '.plan_slug == "(global sweep)"' <<< "$OUT" >/dev/null 2>&1; then
+    ok "g2-global-label"; else bad "g2-global-label" "$(jq -c '.plan_slug' <<< "$OUT")"; fi
+# routing-waste runs slug-independently; the leak is still caught
+if has_finding routing-waste top-inherit-leak WARN; then ok "g3-inherit-leak-swept"; else bad "g3-global-leak" "$OUT"; fi
+# cross-session: catches s2 "other-session" that the session-filtered lane (w2) excludes
+if jq -e '.findings[] | select(.check=="top-inherit-leak") | .evidence | contains("Explore") and contains("other-session")' <<< "$OUT" >/dev/null 2>&1; then
+    ok "g4-cross-session-sweep"; else bad "g4-cross-session" "$(jq -c '.findings[] | select(.check=="top-inherit-leak")' <<< "$OUT")"; fi
+# but still excludes non-observer gate noise
+if ! jq -e '.findings[] | select(.check=="top-inherit-leak") | .evidence | contains("noise")' <<< "$OUT" >/dev/null 2>&1; then
+    ok "g5-non-observer-gate-excluded"; else bad "g5-gate-noise" "$(jq -c '.findings[] | select(.check=="top-inherit-leak")' <<< "$OUT")"; fi
+# token-spend also runs in global mode (slug-independent)
+if has_finding token-spend top-spend-sources INFO; then ok "g6-token-spend-runs"; else bad "g6-token-spend" "$OUT"; fi
+# slug-scoped lanes MUST NOT run without a slug
+if ! jq -e '[.findings[] | select(.lane=="restatement-quality" or .lane=="role-compliance")] | length > 0' <<< "$OUT" >/dev/null 2>&1; then
+    ok "g7-slug-scoped-lanes-skipped"; else bad "g7-slug-scoped" "$(jq -c '[.findings[].lane]|unique' <<< "$OUT")"; fi
+# --global with a stray slug is a usage error (clean, non-crashing)
+grun-slug() {
+    OUT="$(env AGENT_MODEL_ROUTING_SINK="$LOGS/routing.jsonl" AGENT_GOAL_AUDIT_LOG="$LOGS/goal-audit.jsonl" \
+        AGENT_PLANS_DIR="$PLANS" AGENT_PLAN_ARTIFACTS_DIR="$ARTS" AGENT_GOAL_DB="$WORK/absent.db" \
+        AGENT_REGISTRY_PATH="$REG" bash "$SCRIPT" someslug --global --json 2>/dev/null)"
+    RC=$?
+}
+grun-slug
+if [[ "$RC" -ne 0 || -z "$OUT" ]]; then ok "g8-slug-with-global-rejected"; else bad "g8-slug-with-global" "rc=$RC accepted both"; fi
+
+echo
 echo "=== human output mode ==="
 HOUT="$(env \
     AGENT_MODEL_ROUTING_SINK="$LOGS/routing.jsonl" \

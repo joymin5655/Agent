@@ -19,8 +19,12 @@
 #                         review lane dispatched after code waves
 #
 # Usage: bash core/infra/manager-audit.sh <plan-slug> [--json] [--session <id>] [--since <ISO-ts>]
+#    or: bash core/infra/manager-audit.sh --global [--json]
 #   --since scopes routing records to one run (the observer log accumulates
 #   across sessions; /supervise Step 0 records the run start ts to pass here)
+#   --global takes NO slug and skips the slug-scoped lanes (restatement-quality,
+#   role-compliance); it sweeps the entire routing log for inherit_top / floor /
+#   fan-out leaks that happened outside any /supervise run (ad-hoc dispatches).
 #
 # Findings: {lane, check, severity(FAIL|WARN|INFO|PASS), evidence, proposal_hint}.
 # proposal_hint targets conventions/templates/docs only — this script never
@@ -41,14 +45,17 @@ GOAL_DB="${AGENT_GOAL_DB:-$REPO_ROOT/.agent/locks/goal-state.db}"
 REGISTRY="${AGENT_REGISTRY_PATH:-$REPO_ROOT/agents/master-registry.json}"
 TIER_ALIASES="${AGENT_TIER_ALIASES:-}"
 
-SLUG="${1:-}"
-shift || true
 JSON_OUT=false
 SESSION_FILTER=""
 SINCE_FILTER=""
+GLOBAL=false
+# first arg is the plan-slug UNLESS it's a flag — --global takes no slug
+SLUG=""
+if [[ $# -gt 0 && "$1" != --* ]]; then SLUG="$1"; shift; fi
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --json) JSON_OUT=true; shift ;;
+        --global) GLOBAL=true; shift ;;
         --session)
             if [[ $# -ge 2 ]]; then SESSION_FILTER="$2"; shift 2
             else echo "ERROR: --session needs a value" >&2; shift; fi ;;
@@ -59,12 +66,23 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [[ -z "$SLUG" ]]; then
+# --global sweeps the WHOLE routing log (no slug, no run scope) for leaks that
+# happen OUTSIDE a /supervise run — ad-hoc Explore/execution dispatches that
+# silently inherit the session top model. Only the slug-independent lanes
+# (routing-waste, token-spend) run; still after-the-fact, still WARN-only.
+if [[ "$GLOBAL" != true && -z "$SLUG" ]]; then
     echo "usage: manager-audit.sh <plan-slug> [--json] [--session <id>] [--since <ISO-ts>]" >&2
+    echo "   or: manager-audit.sh --global [--json]   # sweep all routing logs, no slug" >&2
+    exit 0
+fi
+# --global is slug-less by contract; a stray slug alongside it is ambiguous
+# (which run did you mean?) — reject cleanly rather than silently ignore it.
+if [[ "$GLOBAL" == true && -n "$SLUG" ]]; then
+    echo "ERROR: --global takes no plan-slug (got: $SLUG)" >&2
     exit 0
 fi
 # slug reaches filesystem paths and a sqlite WHERE clause — keep it to a safe charset
-if [[ ! "$SLUG" =~ ^[A-Za-z0-9._-]+$ ]]; then
+if [[ -n "$SLUG" && ! "$SLUG" =~ ^[A-Za-z0-9._-]+$ ]]; then
     echo "ERROR: slug must match [A-Za-z0-9._-]+ (got: $SLUG)" >&2
     exit 0
 fi
@@ -83,7 +101,8 @@ lane_pass_if_clean() { # lane_pass_if_clean <lane>
     [[ "$n" -eq 0 ]] && add "$1" "lane-clean" "PASS" "no findings" ""
 }
 
-# ---------- lane: restatement-quality ----------
+# ---------- lane: restatement-quality ---------- (slug-scoped: skipped in --global)
+if [[ "$GLOBAL" != true ]]; then
 RESTATEMENT="$ARTIFACTS_DIR/$SLUG/RESTATEMENT.md"
 SECTIONS=("Original ask" "Interpreted goal" "Assumptions" "Out of scope" "Success criteria" "Open questions")
 if [[ ! -f "$RESTATEMENT" ]]; then
@@ -143,6 +162,7 @@ else
     fi
 fi
 lane_pass_if_clean restatement-quality
+fi   # end restatement-quality (slug-scoped)
 
 # ---------- shared: routing records enriched with tier + relative score ----------
 RECORDS='[]'
@@ -236,7 +256,8 @@ if [[ "$(jq 'length' <<< "$RECORDS")" -gt 0 ]]; then
 fi
 lane_pass_if_clean token-spend
 
-# ---------- lane: role-compliance ----------
+# ---------- lane: role-compliance ---------- (slug-scoped: skipped in --global)
+if [[ "$GLOBAL" != true ]]; then
 PLAN_FILE="$PLANS_DIR/$SLUG.md"
 if [[ ! -f "$PLAN_FILE" ]]; then
     add role-compliance plan-missing WARN \
@@ -288,13 +309,15 @@ else
     fi
 fi
 lane_pass_if_clean role-compliance
+fi   # end role-compliance (slug-scoped)
 
 # ---------- output ----------
+LABEL="${SLUG:-(global sweep)}"
 if [[ "$JSON_OUT" == true ]]; then
-    jq --arg slug "$SLUG" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    jq --arg slug "$LABEL" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
         '{ts: $ts, plan_slug: $slug, findings: .}' <<< "$FINDINGS"
 else
-    echo "manager-audit: $SLUG"
+    echo "manager-audit: $LABEL"
     echo
     jq -r 'group_by(.lane)[] | "── " + .[0].lane + " ──",
         (.[] | "  [" + .severity + "] " + .check + " — " + .evidence
