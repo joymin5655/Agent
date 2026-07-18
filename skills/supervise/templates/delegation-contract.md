@@ -13,7 +13,9 @@ quality lever in multi-agent work — fill every section or state why it is empt
 - **Tools & scope**: <tool allowlist + the fileset this worker may touch.
   One writer per fileset — never two writers on the same files in one wave>
 - **Boundaries**: <what is out of scope, what must not be touched, when to
-  stop and report instead of proceeding>
+  stop and report instead of proceeding. Also state the anti-wrap-up rule for
+  long runs: do not end the turn early, summarize, or propose a session
+  handoff on account of context limits — continuity is the harness's job>
 
 ## Model
 
@@ -44,6 +46,11 @@ decides, e.g. `bash core/tests/<battery>.sh` exits 0, or a `grep -q` on a
 required artifact. Prose criteria are allowed only with a stated reason why no
 command can check the outcome. A dispatch whose completion cannot be checked
 is not ready to send.
+
+The worker's progress and done claims follow the same rule: each claim cites a
+tool result from its own session (path, exit code, diff) — self-assessment
+without evidence is not a status report. Prompt-side rules for frontier-model
+dispatches: `docs/concepts/fable-5-prompting.md`.
 
 ## Wave shaping — fan-out cap and lanes
 

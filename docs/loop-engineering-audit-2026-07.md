@@ -45,3 +45,27 @@
 - 판정표 경로 전수는 작성 시점 repo 실측 (`core/hooks/plan-scope-allow.py`, `core/infra/supervisor-goal.sh`, `core/tests/registry-drift.sh` 등 존재 확인).
 - 외부 기준의 원문은 세션 스크래치에 보존 후 증류 — repo에는 체크리스트(개념 문서)만 반입, 원문 복제 없음.
 - missing 3건 중 구현에 착수한 것은 #11(trust tier) 1건뿐이며, 나머지는 백로그 등재가 이 문서의 완료 조건.
+
+## 4. Agent SDK 루프 크로스체크 (2026-07-18 추가, 기준 버전 v0.5.1)
+
+외부 기준: Anthropic Agent SDK *How the agent loop works* (2026-07 접근).
+SDK가 런타임 프리미티브로 제공하는 루프 제어 장치를 하네스의 등가물과
+1:1 대조한다. 판정 어휘 — equivalent(다른 수단의 등가) / partial /
+intentional-gap(의도적 비구현) / **gap**(실갭 → 백로그).
+
+| SDK 개념 | 하네스 등가물 | 판정 |
+|---|---|---|
+| 턴/메시지 사이클 (evaluate→tool→repeat) | 웨이브/디스패치 사이클 (`skills/supervise/SKILL.md` §2) — 구조적 유비일 뿐 1:1 아님(하네스의 단위는 턴이 아니라 웨이브) | equivalent |
+| `max_turns` 턴 상한 | 없음 — 런당 턴/디스패치 상한 부재, 토큰 예산만 존재 | **gap → LE-8** |
+| `max_budget_usd` 비용 상한 | goal-mode 토큰 예산 + `budget_limited` 상태(`core/infra/supervisor-goal.sh` track-tokens). 가격 상수 금지는 설계 결정(`docs/model-routing.md`) — 절대액 상한은 의도적 비채택 | partial |
+| `effort` 파라미터 | "effort before tier-up" 관례(`docs/model-routing.md`) — 디스패치 필드가 아닌 문서 관례. 프롬프트측 지침은 `concepts/fable-5-prompting.md` §1 | partial |
+| permission modes (`default`/`acceptEdits`/`plan`/…) | trust tier(`customization.md` § Trust tiers) + 훅 게이트(plan-scope-allow, NEVER_ALLOW) — 다른 수단의 등가 | equivalent |
+| 자동 compaction | 런타임 네이티브 기능 — 하네스의 연속성은 `RECORD.md` + goal-state.db가 담당(transcript 요약에 의존하지 않는 설계, 감사 #4) | intentional-gap |
+| 서브에이전트 컨텍스트 격리 (fresh context, 요약만 회수) | delegation-contract "Self-contained (no history assumed)" + verifier fresh-spawn — 동일 원리를 계약으로 강제 | equivalent |
+| result subtypes (`error_max_turns`/`error_max_budget_usd`) | goal-state의 `budget_limited`/`aborted` 상태는 예산·세이프가드 종료를 구분하나 턴 상한 아날로그는 없음(위 LE-8과 동근) | partial |
+| hooks (PreToolUse/Stop/PreCompact 등) | `core/hooks/` + 어댑터 레이어(`docs/hook-protocol.md`) | equivalent |
+
+요지: SDK 루프의 통제 축 중 하네스에 없는 것은 **턴 상한 하나**이고
+(토큰 예산과 별개의 정지 조건 — Infinite Fix Loop 방어의 SDK측 대응물),
+나머지는 등가물 보유 또는 의도적 비구현. compaction·스케줄링처럼 런타임이
+이미 잘하는 것은 하네스가 재구현하지 않는다는 §1-#3 원칙과 일관.

@@ -131,6 +131,11 @@ verify-completion <slug>: CONFIRMED | REFUTED   (score S)
   skill exists to prevent.
 - **A CONFIRMED verdict cites its evidence.** Score, dimension counts, and
   (for the semantic pass) the reason each doubt was resolved.
+- **Evidence means artifacts, never replayed reasoning.** Grade files, diffs,
+  exit codes, and tool-call results. Never ask the builder to reproduce or
+  narrate its reasoning chain as proof — on frontier models that can trigger
+  reasoning-extraction refusals, and it was always self-assessment, not
+  evidence (`docs/concepts/fable-5-prompting.md` rule 8).
 - **A dead reviewer is not a clean review.** An aggregated result of `raised: 0`
   (or `findings: 0`) is NOT clean when any dispatched agent errored or died at
   its session limit (`agents_error > 0`, session-limit failures, empty agent

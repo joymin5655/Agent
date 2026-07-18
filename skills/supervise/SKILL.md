@@ -18,7 +18,7 @@ wave, auditing after each wave, and aborting on risk-area violations.
 | Mode | Behavior |
 |---|---|
 | `/supervise <slug>` | Default: full-auto. Dispatch, audit, advance. Stops on Wave fail or safeguard. |
-| `/supervise <slug> --goal-mode` | Tracks state in SQLite via `core/infra/supervisor-goal.sh`. Resumable across sessions. |
+| `/supervise <slug> --goal-mode` | Tracks state in SQLite via `core/infra/supervisor-goal.sh`. Resumable across sessions. Requires `sqlite3` + `jq` (the script exits 127 without them — see README Prerequisites). |
 | `/supervise <slug> --auto-push` | Each wave commits + pushes + opens PR. User merges. |
 | `/supervise <slug> --auto-merge` | Each wave commits + pushes + admin-merges via `auto-ship.sh`. |
 
@@ -77,7 +77,9 @@ planning or deep design, leave `model:` out of its frontmatter.
 
 This table is the enforced (Claude) instance of the cross-runtime tier policy
 in `docs/model-routing.md` — see that document for the Codex/Gemini columns,
-the verify-judge floor, and the fan-out worker default.
+the verify-judge floor, and the fan-out worker default. Prompt-side dispatch
+guidance for frontier models (anti-wrap-up, evidence-grounded claims, no
+reasoning replay) is advisory in `docs/concepts/fable-5-prompting.md`.
 
 ## Steps
 

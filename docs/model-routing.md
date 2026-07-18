@@ -22,7 +22,9 @@ budget) that exists on every rung:
 
 **Effort before tier-up.** Before promoting a task one rung, raise the effort
 dial *within* the rung first. A MID model at high effort beats a TOP model at
-low effort for most bounded tasks, at a fraction of the cost.
+low effort for most bounded tasks, at a fraction of the cost. Frontier-model
+vendor guidance now says the same — effort is the primary cost/latency dial;
+prompt-side implications live in `docs/concepts/fable-5-prompting.md`.
 
 ## Work class → tier
 
