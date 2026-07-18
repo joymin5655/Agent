@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- **Gemini backend retired from `backends.json`** — `second-opinion-review`
+  now ships codex-only (`fallback: null`), and the `gemini` backend entry is
+  gone. Real-call verification (2026-07-17) showed the path fails by default
+  for individual installs: gemini-cli 0.44–0.46 `oauth-personal` is
+  deprecated upstream (`IneligibleTierError` → Antigravity migration), and
+  the API-key path demands paid prepay credits. A shipped fallback that
+  cannot work out of the box misleads worse than no fallback. The
+  dispatcher's fallback mechanism is unchanged and stays stub-tested; to
+  re-enable, add a backend entry and point a role's `fallback` at it (the
+  removed entry lives in git history).
+
 ### Fixed
 - **`.gitignore` — `.agent/plans/` re-entry gap closed (v0.5.2).** The
   runtime-state block enumerated `.agent/locks|logs|state|workers/` but not
