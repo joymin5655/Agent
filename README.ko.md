@@ -113,6 +113,10 @@ flowchart LR
 
 - `gitleaks` 8+ — 시크릿 스캔. 없으면 훅은 시크릿 스캔 단계를 건너뜁니다(CI는 여전히 강제).
 - `gh` 2.0+ — 저장소 작업과 `auto-ship.sh`용.
+- `sqlite3` + `jq` — `/supervise --goal-mode` 전용 필수
+  (`core/infra/supervisor-goal.sh`가 없으면 에러로 종료; macOS는 sqlite3 기본
+  탑재, Debian/Ubuntu는 `apt install sqlite3 jq`). manager-audit 토큰 레인은
+  없어도 우아하게 축소 동작합니다.
 
 언제든 `bash setup.sh --doctor`로 위 목록 + 훅/어댑터 실행권한 + 레지스트리 정합성을
 확인할 수 있습니다 — 읽기 전용, 아무것도 설치하지 않습니다.

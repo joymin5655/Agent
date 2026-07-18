@@ -552,6 +552,21 @@ PY
         fi
     fi
 
+    # 14. goal-mode deps — core/infra/supervisor-goal.sh hard-requires BOTH
+    #     sqlite3 and jq (exit 127), and check 4 never sees it (it only scans
+    #     core/hooks/*.sh). goal-mode is an optional feature, so WARN not
+    #     FAIL; without these /supervise --goal-mode is unavailable and the
+    #     manager-audit token lane degrades.
+    local goal_missing=""
+    for f in sqlite3 jq; do
+        command -v "$f" >/dev/null 2>&1 || goal_missing="${goal_missing:+$goal_missing, }$f"
+    done
+    if [[ -z "$goal_missing" ]]; then
+        add_row PASS "goal-mode deps — sqlite3 + jq present (/supervise --goal-mode available)"
+    else
+        add_row WARN "goal-mode deps — missing: $goal_missing; /supervise --goal-mode will hard-fail (supervisor-goal.sh exit 127), manager-audit token lane degrades. Install: brew/apt install sqlite3 jq"
+    fi
+
     echo "=== Environment diagnosis (--doctor) ==="
     local row status msg
     for row in "${rows[@]}"; do

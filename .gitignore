@@ -35,6 +35,7 @@ secrets/
 # --- Runtime state (AI session locks, logs, telemetry) ------------------------
 .agent/locks/
 .agent/logs/
+.agent/plans/
 .agent/state/
 .agent/workers/
 .claude/locks/
@@ -54,6 +55,7 @@ secrets/
 .worktrees/
 .agents/
 .omc/
+.codegraph/
 
 # Personal context anchor for the repo owner's local sessions — not shipped.
 # Consumers get their own CLAUDE.md via `setup.sh --project` (templates/).

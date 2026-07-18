@@ -251,6 +251,8 @@
 | LE-5 | **supervise 중 플랜 플래그 갱신** — 승인 플래그가 세션 시작 시 클리어되므로 재개된 supervise 세션은 재승인 전까지 auto-allow 없음. supervise가 approved plan 존재를 검증하고 플래그를 재수립하는 명시 경로 검토 | plan-scope-allow ↔ supervise 상호 참조 0 실측(2026-07-11) | supervise 재개 픽스처에서 플래그 재수립 + 위조 플랜 거부 | S–M |
 | LE-6 | **anti-flake 규율** — completion_tests 실패의 flake 분류/격리(quarantine): 같은 테스트의 비결정 실패는 코드 "수정"이 아니라 격리 대상으로 라우팅 | 감사 #14 missing — "flake를 코드로 고치기" 안티패턴 | flake 픽스처(2회 중 1회 실패)가 quarantine 기록으로 라우팅 | M |
 | LE-7 | **human synthesis cadence** — 루프/supervise가 쉬핑한 diff의 주기 다이제스트(읽을거리 1페이지) + "결정 필요할 때만 알림" 규율 명문화 | 감사 #7/#15 — comprehension debt·notification fatigue 무방비 | digest 스크립트 존재 + 주기 실행 문서화 | S–M |
+| LE-8 | **런당 턴/디스패치 상한** — goal-mode에 토큰 예산과 별개의 디스패치 횟수 상한(SDK `max_turns` 아날로그): 초과 시 abort가 아니라 사용자 핸드오프 | 감사 §4 (2026-07-18 SDK 크로스체크) — Infinite Fix Loop의 SDK측 대응물이 하네스에 부재 | goal-state에 dispatch 카운터 + 상한 초과 픽스처에서 핸드오프 기록 | S–M |
+| LE-9 | **fable-5 디스패치 프롬프트 감사 레인** — `concepts/fable-5-prompting.md` 규칙 2–4(anti-wrap-up·근거 인용·경계 명시)를 manager-audit의 검사 레인으로 승격(현재 advisory) | 같은 크로스체크 — 프롬프트 규율이 문서 관례로만 존재 | manager-audit.sh 신규 레인 + RED/GREEN 픽스처 | M |
 
 ---
 

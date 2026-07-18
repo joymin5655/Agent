@@ -114,6 +114,10 @@ Optional:
 
 - `gitleaks` 8+ — secret scanning. If missing, hooks skip the secret-scan step (CI still enforces it).
 - `gh` 2.0+ — for repo operations and `auto-ship.sh`.
+- `sqlite3` + `jq` — required only for `/supervise --goal-mode`
+  (`core/infra/supervisor-goal.sh` exits with an error without them; macOS
+  ships sqlite3, Debian/Ubuntu need `apt install sqlite3 jq`). The
+  manager-audit token lane degrades gracefully when they're missing.
 
 Run `bash setup.sh --doctor` any time to check all of the above plus hook/adapter
 executable bits and registry integrity — read-only, no installs.

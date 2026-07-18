@@ -8,6 +8,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **`.gitignore` — `.agent/plans/` re-entry gap closed (v0.5.2).** The
+  runtime-state block enumerated `.agent/locks|logs|state|workers/` but not
+  `.agent/plans/`, so a `git add -A` could commit per-run records
+  (RECORD/RESTATEMENT/PROPOSALS) — artifacts that demonstrably carry
+  machine-local absolute paths. Audit note for the record: the tracked tree
+  itself was verified clean (sanitize-audit tokens + manual grep — no personal
+  paths shipped); this closes the door, it does not clean up a leak. If
+  committed specs are ever wanted, un-ignoring `.agent/plans/**/spec.md` is
+  the narrower future carve-out.
+
+### Docs
+- **sqlite3 + jq declared as goal-mode prerequisites (v0.5.2).**
+  `core/infra/supervisor-goal.sh` hard-requires both (`exit 127`) but README
+  Prerequisites, `setup.sh --doctor`, and the supervise skill never said so —
+  the same undeclared-dependency class the jq/telemetry-digest fix already
+  established as a bug (`docs/harness-improvement-plan.md` P1-5 — jq removed
+  there precisely because a hard dep contradicts doctor's WARN tier). Now:
+  README/README.ko Optional entries, doctor check 14 ("goal-mode deps",
+  WARN-tier — goal-mode is optional), and a prerequisite note on the
+  `--goal-mode` row in `skills/supervise/SKILL.md`.
+
+### Added
+- **`docs/concepts/fable-5-prompting.md` — frontier-model dispatch guidance
+  (v0.5.2).** Distills Anthropic's Fable-5-class prompting guide into 8
+  harness-mapped rules (effort-before-tier-up backing, anti-wrap-up,
+  evidence-grounded progress claims, boundaries+why, delegation, memory
+  surface, two registers, no reasoning replay). Advisory: cited from the
+  supervise Model policy, the delegation-contract template (evidence-citation
+  + anti-wrap-up lines added), verify-completion (artifacts-not-replayed-
+  reasoning hard rule), and `docs/model-routing.md`. Enforcement lane is
+  backlog (LE-9), not shipped.
+- **Agent SDK loop cross-check — `docs/loop-engineering-audit-2026-07.md`
+  §4 (v0.5.2).** Maps the SDK's loop controls (max_turns, budget, effort,
+  permission modes, compaction, subagent isolation, result subtypes, hooks)
+  to harness equivalents. One real gap found: no per-run turn/dispatch cap
+  (token budget only) → LE-8; compaction/scheduling stay intentionally
+  runtime-native. New backlog: LE-8 (dispatch cap), LE-9 (fable-5 prompt
+  audit lane).
+
+### Fixed
 - **v0.5.1 version bump — re-cut of stale 0.5.0 caches.** PR #73 changed
   shipped content (manager-audit `--since`, Explore-MID fan-out exception,
   Step 0 run-start timestamp) without bumping the version, so installed

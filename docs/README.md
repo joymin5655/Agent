@@ -13,6 +13,7 @@
 | [`concepts/memory-discipline.md`](concepts/memory-discipline.md) | When and how to use AI memory systems |
 | [`concepts/plan-mode.md`](concepts/plan-mode.md) | The plan-first workflow + tier classification |
 | [`concepts/loop-engineering.md`](concepts/loop-engineering.md) | Designing autonomous loops on top of the harness — building blocks, L0→L3 readiness, 15-criteria checklist |
+| [`concepts/fable-5-prompting.md`](concepts/fable-5-prompting.md) | Writing dispatch prompts for frontier (Fable-5-class) models — 8 rules mapped to the delegation contract |
 | [`loop-engineering-audit-2026-07.md`](loop-engineering-audit-2026-07.md) | Dated audit of the harness against the loop-engineering checklist (gaps → LE-* backlog) |
 
 ## Quick links
