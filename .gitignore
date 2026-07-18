@@ -54,6 +54,7 @@ secrets/
 .worktrees/
 .agents/
 .omc/
+.codegraph/
 
 # Personal context anchor for the repo owner's local sessions — not shipped.
 # Consumers get their own CLAUDE.md via `setup.sh --project` (templates/).
