@@ -1,7 +1,7 @@
 # Agent
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-![Version](https://img.shields.io/badge/version-0.2.5-blue.svg)
+![Version](https://img.shields.io/badge/version-0.5.1-blue.svg)
 ![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-7c3aed.svg)
 ![AI-agnostic](https://img.shields.io/badge/AI-Claude%20%7C%20Codex%20%7C%20Gemini-orange.svg)
 
@@ -16,36 +16,90 @@ Install it once as a **Claude Code plugin** (or via a shell script for all three
 every project gets the same guardrails. The rules are written once and return the same
 **allow / ask / deny** answer no matter which AI is driving.
 
-> Status: v0.2.5 · License: **MIT**
+> Status: v0.5.1 · License: **MIT**
 
 ---
 
+## The pipeline
+
+One idea travels through five skills. Between every two stages stands a **machine gate**
+(hexagons below) — a script that blocks, not a prompt that suggests.
+
+```mermaid
+flowchart LR
+    IDEA(["idea /<br/>request"]) --> SPEC["<b>/spec</b><br/>brainstorm →<br/>spec.md + plan.md"]
+    SPEC --> G1{{"spec-gate.py<br/>no approved plan,<br/>no substantive edits"}}
+    G1 --> SUP["<b>/supervise</b><br/>wave-by-wave dispatch<br/>to specialist agents"]
+    SUP --> G2{{"supervisor-goal-audit.sh<br/>every wave audited<br/>FAIL = STOP, no auto-retry"}}
+    G2 --> VER["<b>/verify-completion</b><br/>mechanical checks +<br/>refute-by-default judge"]
+    VER --> G3{{"gitleaks +<br/>risk-area gates"}}
+    G3 --> WRAP["<b>/wrap</b><br/>commit + PR"]
+    WRAP -.-> MA["<b>/manager-audit</b><br/>post-hoc: did the<br/>supervisor do its job?"]
+    MA -.-> PROP(["PROPOSALS.md<br/>patches await<br/>your approval"])
+
+    style G1 fill:#fdf6b2,stroke:#b45309
+    style G2 fill:#fdf6b2,stroke:#b45309
+    style G3 fill:#fdf6b2,stroke:#b45309
+```
+
+Deep dives on each stage: [`skills/`](skills/) · state machine and audit internals in
+[How a run flows](#how-a-run-flows) below.
+
+## Why this harness
+
+Table stakes first: multi-session mutexes, 6-layer secret hardening, and TDD enforcement
+are all here (see [Catalog](#catalog)). What actually sets this harness apart:
+
+**Gates, not vibes** — enforcement lives at the tool boundary, not in prompt wording.
+
+- `core/hooks/spec-gate.py`, `core/hooks/tdd-guard.py`, and `core/hooks/pre-tool-guard.sh`
+  physically block the edit or command; the AI cannot talk its way past them.
+- Completion claims are verified **refute-by-default**: mechanical checks plus a semantic
+  judge where low confidence and even judge crashes all resolve to REFUTED (fail-closed) —
+  see the [verification diagram](#how-a-run-flows).
+- Cross-AI parity is machine-proved, not promised: `core/tests/adapter-parity.sh` feeds the
+  same events through all three adapters and asserts identical decisions.
+
+**The harness gates itself** — every enforcement layer is watched by another layer.
+
+- [`docs/gate-registry.md`](docs/gate-registry.md) records, for every gate, *the model
+  weakness it assumes* plus a review date, and flags gates as DEAD / FATIGUE / STALE when
+  those assumptions expire — the gates are themselves gated.
+- Three audits at three altitudes: goal-audit checks each wave, manager-audit checks the
+  supervisor, harness-audit checks the harness — see the
+  [audit diagram](#how-a-run-flows).
+- This README is CI-verified: `core/tests/doc-reality.sh` fails the build if any doc names
+  a file that doesn't exist. The docs are not allowed to lie.
+
+**Honest economics** — cost and limits are designed in, not papered over.
+
+- Model-tier routing ([`docs/model-routing.md`](docs/model-routing.md)): LOW / MID / TOP
+  with "effort before tier-up" — and the decision to *reject* runtime model-switching is
+  itself documented, with reasons.
+- Goal mode survives session death: a SQLite state machine
+  (`core/infra/supervisor-goal.sh`) tracks waves and token budgets, and resumes exactly
+  where it stopped — including a graceful `budget_limited` wrap-up.
+- The [self-benchmark](#benchmark) admits a near-tie with a rival stack. An honest audit
+  log beats a marketing page.
+
 ## Concepts in 60 seconds
 
-New to this space? These seven terms are all you need to read the rest of this page.
+New to this space? These ten terms are all you need to read the rest of this page.
 
 | Term | Plain meaning |
 |---|---|
 | **harness** | The whole safety layer: agents + hooks + skills + rules, wrapped around your AI. |
-| **hook** | A small script your AI runtime runs automatically before/after an action. It answers **allow**, **ask**, or **deny**. 20 of them live in [`core/hooks/`](core/hooks/). |
+| **hook** | A small script your AI runtime runs automatically before/after an action. It answers **allow**, **ask**, or **deny**. 21 of them (plus 2 shared modules) live in [`core/hooks/`](core/hooks/). |
 | **adapter** | A thin translator between one AI CLI's native event format and the harness's canonical JSON. There are 3 ([`adapters/`](adapters/)). |
 | **agent** | A specialist your AI delegates to — e.g. a security reviewer that only reviews and never writes. 2 ship here ([`agents/`](agents/)). |
-| **skill** | A reusable step-by-step workflow the AI follows, e.g. the commit + PR flow. 6 ship here ([`skills/`](skills/)). |
+| **skill** | A reusable step-by-step workflow the AI follows, e.g. the commit + PR flow. 7 ship here ([`skills/`](skills/)). |
+| **gate** | A hook decision point (deny / ask / block). Every gate is registered with the model weakness it assumes — [`docs/gate-registry.md`](docs/gate-registry.md). |
+| **wave** | One batch of work inside a `/supervise` plan — dispatched, executed, and audited before the next wave starts. |
+| **verdict** | The shared CONFIRMED / REFUTED result schema every verifier emits — [`docs/scoring-convention.md`](docs/scoring-convention.md). |
 | **plan-gate** | A hook that classifies your prompt and forces a written plan before risky, multi-step work. |
 | **mutex** | A lock file so two AI sessions never touch the same risky area (prod DB, deploys, payments) at once. |
 
 More depth: [`docs/concepts/`](docs/concepts/).
-
-## What you get
-
-1. **Multi-session safety** — Claude in one terminal, Codex in another: they don't collide. Locks on shared resources are coordinated through a single JSON lock file.
-2. **Secret hardening** — a 6-layer defense (`gitleaks` config + pre-commit + pre-push + Bash/MCP content scanners + policy doc + CI). Catches OpenAI/Anthropic/AWS/Stripe/Slack/Supabase + custom tokens in code, env files, MCP tool calls, and push diffs.
-3. **Plan-first discipline** — hooks classify your prompt by tier (trivial / interactive / autonomous / conversational) and gate destructive operations behind a plan.
-4. **Test-Driven enforcement** — `tdd-guard` blocks new production code unless a corresponding test file exists.
-5. **Policy enforcement** — generic `.claude/rules/`-style policy docs: contributing, public-repo safety, memory discipline, worktree coordination, 5 configurable risk areas.
-6. **Worktree coordination** — `core/infra/agent-session.sh` for branch-per-task discipline with stale-session GC and heartbeats.
-7. **Commit + PR automation** — `auto-ship.sh` runs gitleaks + risk-area checks + CI watch + merge in one command; aborts if any safeguard trips.
-8. **Cross-AI parity** — the same `core/hooks/*` script returns the same decision under all three AIs.
 
 ## Prerequisites
 
@@ -124,32 +178,41 @@ decision. That's the whole point.
 
 ## Architecture
 
-One canonical hook protocol; thin per-AI adapters translate native events to it. Write a guard
-once in `core/hooks/`, and it returns the same `allow` / `ask` / `deny` decision everywhere.
+One canonical hook protocol; thin per-AI adapters translate native events to it. Write a
+guard once in `core/hooks/`, and it returns the same `allow` / `ask` / `deny` decision
+everywhere.
 
 ```mermaid
-flowchart LR
-    subgraph AIs["AI runtimes"]
+flowchart TB
+    subgraph RT["AI runtimes"]
+        direction LR
         CC["Claude Code"]
         CX["Codex CLI"]
         GM["Gemini CLI"]
     end
-    subgraph Adapters["adapters/ (thin)"]
-        A1["claude-code/adapter.sh"]
+    subgraph AD["Layer 2 — adapters/ (thin translators)"]
+        direction LR
+        A1["claude-code/"]
         A2["codex/"]
         A3["gemini/"]
     end
-    subgraph Core["core/ (the truth)"]
-        H["hooks/ — secret scan · worktree mutex · plan-gate · tdd-guard · supervisor"]
-        I["infra/ — session coordination · auto-ship"]
+    subgraph CORE["Layer 1 — core/ (the single source of truth)"]
+        H["hooks/ — 21 gates: secret scan · mutex ·<br/>spec-gate · tdd-guard · supervisor …"]
+        I["infra/ — sessions · goal mode ·<br/>audits · auto-ship"]
+        T["tests/ — 37 self-verification scripts"]
     end
-    CC --> A1 --> H
-    CX --> A2 --> H
-    GM --> A3 --> H
-    H -->|allow / ask / deny| AIs
+    R["rules/ — policy<br/>source of truth"]
+    PLUG[".claude-plugin/ + hooks/hooks.json<br/>plugin distribution"]
 
-    PLUG[".claude-plugin/ + hooks/hooks.json"] -. "Claude Code plugin install" .-> A1
-    PLUG -. "bundles" .-> AG["agents/ · skills/ · commands/"]
+    CC -->|native event| A1
+    CX -->|native event| A2
+    GM -->|native event| A3
+    A1 -->|canonical JSON| H
+    A2 -->|canonical JSON| H
+    A3 -->|canonical JSON| H
+    H -->|"allow / ask / deny"| RT
+    R --- H
+    PLUG -. "/plugin install wires" .-> A1
 ```
 
 Four layers, lowest wins:
@@ -159,8 +222,88 @@ Four layers, lowest wins:
 - **L3 `templates/`** — project scaffolds that `setup.sh --project` / `/project-init` copy in.
 - **L4 your project** — overrides via `hook-config.yml` and optional `.agent/` files. No core edits needed.
 
-The **Claude Code plugin** (`.claude-plugin/`) wires the same core through `hooks/hooks.json` and
-bundles the agents/skills/commands — so `/plugin install` gives you the whole harness with zero setup.
+A `pre-tool-guard.sh` written once works for all 3 AIs. Adding a new AI runtime means
+writing one new adapter — `core/hooks/*` doesn't change.
+See [`docs/hook-protocol.md`](docs/hook-protocol.md) for the canonical event schema, and
+[Determinism and model-invariance](docs/architecture.md#determinism-and-model-invariance)
+for exactly what's guaranteed identical across AIs/models (the gates) versus what isn't
+(generated content).
+
+## How a run flows
+
+Three internals worth seeing once. Click to expand.
+
+<details>
+<summary><b>Goal mode — a run that survives session death</b> (SQLite state machine)</summary>
+
+`/supervise <slug> --goal-mode` backs the run with a SQLite state machine
+(`core/infra/supervisor-goal.sh`). Kill the terminal mid-run, come back tomorrow,
+`resume` — it continues from the exact wave it stopped at. Token budgets are tracked
+per run; hitting the budget triggers a graceful wrap, not a crash.
+
+```mermaid
+stateDiagram-v2
+    [*] --> active : init
+    active --> active : advance-wave
+    active --> paused : pause
+    paused --> active : resume
+    active --> budget_limited : token budget hit — graceful wrap
+    active --> complete : all waves pass
+    active --> aborted : abort
+    budget_limited --> [*]
+    complete --> [*]
+    aborted --> [*]
+```
+
+Policy: [`rules/policy/supervisor-goal-mode.md`](rules/policy/supervisor-goal-mode.md).
+
+</details>
+
+<details>
+<summary><b>Verification — refute-by-default, fail-closed</b> (two layers, every REFUTED path converges)</summary>
+
+"Done" is a claim until it survives two layers. Layer 1 is deterministic
+(`core/infra/completion-verify.py`); Layer 2 is a semantic judge spawned in a **fresh
+context** whose default verdict is REFUTED. Low confidence → REFUTED. Judge crashes →
+REFUTED. Nothing ambiguous ever becomes CONFIRMED.
+
+```mermaid
+flowchart TD
+    CLAIM(["completion claim"]) --> M["Layer 1 — mechanical<br/>completion-verify.py"]
+    M --> M1{"files exist?<br/>tests exit 0?<br/>assertions hold?"}
+    M1 -- "any check fails" --> R["REFUTED"]
+    M1 -- "all pass" --> S["Layer 2 — semantic judge<br/>fresh context, refute-by-default"]
+    S -- "confidence below threshold" --> R
+    S -- "judge error / exception" --> R
+    S -- "evidence survives refutation" --> C["CONFIRMED"]
+    R --> STOP(["fail-closed:<br/>the work is NOT done"])
+
+    style R fill:#fde8e8,stroke:#c81e1e
+    style C fill:#def7ec,stroke:#046c4e
+```
+
+Verdicts use the shared schema in [`docs/scoring-convention.md`](docs/scoring-convention.md),
+so the completion verifier, goal-audit scorer, and eval harness all speak one format.
+
+</details>
+
+<details>
+<summary><b>Triple audit — who audits the auditor</b> (three audits, three altitudes)</summary>
+
+Each audit watches a *different* layer, so no layer grades its own homework.
+
+```mermaid
+flowchart TD
+    GA["<b>goal-audit</b><br/>supervisor-goal-audit.sh<br/>in-loop · after every wave"] --> WAVES["Level 1 — the work<br/>each wave of a /supervise run"]
+    MA["<b>manager-audit</b><br/>manager-audit.sh<br/>post-hoc · 4 lanes"] --> SUPER["Level 2 — the supervisor<br/>the /supervise run itself:<br/>restatement · routing · spend · roles"]
+    HA["<b>harness-audit</b><br/>verify-all.sh dry-run"] --> HARN["Level 3 — the harness<br/>hooks · gates · tests · docs"]
+```
+
+And the gates themselves age: [`docs/gate-registry.md`](docs/gate-registry.md) marks a gate
+DEAD / FATIGUE / STALE when the model weakness it was built for no longer exists.
+Manager-audit findings never self-apply — they land in a `PROPOSALS.md` for your approval.
+
+</details>
 
 ## Catalog
 
@@ -181,7 +324,7 @@ Model is cost-tiered per work class ([`docs/model-routing.md`](docs/model-routin
 | `manager-audit` | Meta-audit of a `/supervise` run — restatement quality, model-routing waste, relative token spend, role compliance; findings become patch proposals for user approval |
 | `harness-help` | Router — which skill fits the situation, and the main flow through them |
 
-| Hooks — 20, wired via `hooks/hooks.json` → `core/hooks/` | Event |
+| Hooks — 21 (+2 shared modules), wired via `hooks/hooks.json` → `core/hooks/` | Event |
 |---|---|
 | secret-content-scan · check-hardcoding | PreToolUse (Write/Edit) |
 | pre-tool-guard · r4-mutex · context-mode-guard | PreToolUse |
@@ -208,41 +351,18 @@ Agent/
 ├── hooks/              # plugin hook wiring (hooks.json)
 │
 ├── core/               # AI-agnostic core — the truth
-│   ├── hooks/          #   20 portable hooks + hook_config.py (shared module)
-│   ├── infra/          #   session coordination · auto-ship · goal mode
+│   ├── hooks/          #   21 portable hooks + 2 shared modules
+│   ├── infra/          #   session coordination · goal mode · audits · auto-ship
 │   ├── git-hooks/      #   pre-commit · pre-push
-│   └── tests/          #   4 test scripts
+│   └── tests/          #   37 test scripts (verify-all.sh runs them all)
 │
 ├── adapters/           # claude-code (thin) · codex · gemini
 ├── rules/              # generic policy docs
 ├── templates/          # project scaffold templates
+├── evals/              # judge + verifier eval datasets and runners
 ├── docs/               # architecture · protocol · guides · benchmark
 └── github/             # PR template + workflow templates
 ```
-
-## Why "AI-agnostic"?
-
-One hook protocol, three adapters:
-
-```
- [AI runtime]  Claude / Codex / Gemini
-      │  native hook event
-      ▼
- [adapter]  translates to canonical stdin JSON
-      ▼
- [core/hooks/<name>]  decides once
-      ▼
- [adapter]  translates back to the AI's native format
-      ▼
- [AI runtime enforces]  allow / ask / deny
-```
-
-A `pre-tool-guard.sh` written once works for all 3 AIs. Adding a new AI runtime means
-writing one new adapter — `core/hooks/*` doesn't change.
-See [`docs/hook-protocol.md`](docs/hook-protocol.md) for the canonical event schema, and
-[Determinism and model-invariance](docs/architecture.md#determinism-and-model-invariance)
-for exactly what's guaranteed identical across AIs/models (the gates) versus what isn't
-(generated content).
 
 ## Benchmark
 
@@ -287,11 +407,14 @@ bash core/tests/sanitize-audit.sh
 bash core/tests/adapter-parity.sh
 # → === Parity: 24 passed, 0 failed ===
 
-# 4) config parsing + autosync hook
+# 4) docs match the repo (phantom paths + fence balance)
+bash core/tests/doc-reality.sh
+
+# 5) config parsing + autosync hook
 bash core/tests/hook-config-test.sh
 bash core/tests/post-commit-autosync-test.sh
 
-# 5) environment diagnosis — read-only, no installs
+# 6) environment diagnosis — read-only, no installs
 bash setup.sh --doctor
 ```
 
@@ -330,6 +453,8 @@ see [`docs/specializing-agents.md`](docs/specializing-agents.md).
 - [`docs/customization.md`](docs/customization.md) — risk areas and per-project config
 - [`docs/specializing-agents.md`](docs/specializing-agents.md) — per-project agent injection
 - [`docs/model-routing.md`](docs/model-routing.md) — cross-runtime model-tier policy (judgment vs execution, floors)
+- [`docs/gate-registry.md`](docs/gate-registry.md) — every gate, its assumed model weakness, and its freshness verdict
+- [`docs/scoring-convention.md`](docs/scoring-convention.md) — the shared verifier verdict schema
 - [`docs/benchmark/results.md`](docs/benchmark/results.md) — reviewer self-benchmark
 - [`docs/benchmark/landscape.md`](docs/benchmark/landscape.md) — survey vs popular harnesses + gap→backlog map
 - [`docs/harness-improvement-plan.md`](docs/harness-improvement-plan.md) — audit + improvement roadmap *(Korean)*
