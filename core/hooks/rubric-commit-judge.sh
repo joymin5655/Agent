@@ -32,12 +32,26 @@ REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
 RUBRIC="$REPO_ROOT/.agent/rubric.yml"
 [[ -f "$RUBRIC" ]] || exit 0   # no project rubric -> nothing to score (opt-in per project)
 
-SCORER="$(cd "$(dirname "${BASH_SOURCE[0]}")/../infra" 2>/dev/null && pwd)/rubric-score.py"
-[[ -f "$SCORER" ]] || exit 0
 command -v python3 >/dev/null 2>&1 || exit 0
+HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+SCORER="$HOOK_DIR/../infra/rubric-score.py"
+[[ -f "$SCORER" ]] || exit 0
 
 LOG_DIR="$REPO_ROOT/.agent/logs"
 mkdir -p "$LOG_DIR" 2>/dev/null || exit 0
+
+# TRUST GATE (security). A rubric's grader_check entries are shell commands, and
+# .agent/rubric.yml is DISTRIBUTED with the repo tree (clone/fork/pull) — unlike
+# .git/hooks, which git deliberately does not distribute. Auto-executing those
+# commands on every commit in a foreign repo is silent RCE. So auto-run ONLY in a
+# personal-tier repo (your own project, per trust_tier.py — foreign-owned clones
+# fail closed to collab). In collab/unknown, record that a rubric exists but was
+# NOT auto-run; the user can review it on-demand via /verify-completion.
+TIER="$(python3 "$HOOK_DIR/trust_tier.py" --detect "$REPO_ROOT" 2>/dev/null)"
+if [[ "$TIER" != "personal" ]]; then
+  printf '%s\n' '{"verdict":"REFUTED","score":0.0,"target":"rubric present","dimensions":{},"refutations":["not auto-run: non-personal trust tier — grader_checks execute shell commands, so only a personal-tier repo auto-scores; review this repo rubric on-demand via /verify-completion"],"schema_version":"1.0.0"}' >> "$LOG_DIR/rubric-score.jsonl"
+  exit 0
+fi
 
 # Advisory: capture the verdict, append one jsonl line; ignore the scorer's exit
 # code so a REFUTED verdict never fails anything — this hook records, never gates.

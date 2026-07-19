@@ -33,6 +33,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 
 SCHEMA_VERSION = "1.0.0"
 
@@ -51,6 +52,12 @@ def _parse_timeout(raw):
 
 
 CMD_TIMEOUT = _parse_timeout(os.environ.get("AGENT_RUBRIC_CMD_TIMEOUT", "60"))
+# Aggregate wall-clock ceiling across ALL dimensions. Per-check timeouts alone do
+# not bound total time (50 dims x 60s each = 50 min), and the commit hook runs the
+# scorer synchronously — so an aggregate cap keeps a heavy/hostile rubric from
+# stalling every commit. Checks stop starting once this is exceeded; the rest are
+# refuted (refute-by-default).
+_MAX_TOTAL = _parse_timeout(os.environ.get("AGENT_RUBRIC_TOTAL_TIMEOUT", "120"))
 
 
 def load_rubric(path):
@@ -103,6 +110,7 @@ def score(target, dims, root):
     weighted_passed = 0.0
     weighted_total = 0.0
     checked = 0
+    deadline = time.monotonic() + _MAX_TOTAL
 
     if len(dims) > _MAX_DIMS:
         refutations.append(
@@ -120,9 +128,14 @@ def score(target, dims, root):
         # Keep EVERY dimension in the audit trail: a duplicate id would otherwise
         # overwrite the earlier entry in `dimensions`, silently under-reporting how
         # many were checked (the score stays correct — weights are summed
-        # independently — but .agent/logs/rubric-score.jsonl would hide one).
+        # independently — but .agent/logs/rubric-score.jsonl would hide one). Loop,
+        # not a single rename, so a synthesized "id#n" cannot itself collide with a
+        # literal later id of that exact shape.
         if did in dimensions:
-            did = "%s#%d" % (did, i)
+            base, n = did, 1
+            while did in dimensions:
+                did = "%s#%d" % (base, n)
+                n += 1
         check = dim.get("grader_check")
         try:
             weight = float(dim.get("weight", 1))
@@ -138,6 +151,12 @@ def score(target, dims, root):
         if check is None:
             dimensions[did] = {"passed": 0, "total": 0}
             continue
+        if time.monotonic() > deadline:
+            refutations.append(
+                "rubric scoring exceeded the %ds total budget — remaining dimensions not scored"
+                % _MAX_TOTAL
+            )
+            break
         checked += 1
         weighted_total += weight
         if _run(check, root):

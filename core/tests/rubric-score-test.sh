@@ -108,21 +108,34 @@ else
   echo "  skip [g-yaml] — PyYAML not importable"
 fi
 
-echo "=== (h) hook: git commit event with a rubric -> appends one verdict line ==="
+echo "=== (h) hook in PERSONAL tier: grader_check runs (sentinel) + verdict logged; non-commit inert ==="
 if command -v git >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
-  G=$(fresh)
-  ( cd "$G" && git init -q && git config user.email t@t && git config user.name t \
-      && mkdir -p .agent && cp "$REPO_ROOT/templates/rubric.yml.template" .agent/rubric.yml )
   EV='{"event":"PostToolUse","tool_name":"Bash","tool_input":{"command":"git commit -m x"}}'
-  ( cd "$G" && printf '%s' "$EV" | bash "$HOOK" ) >/dev/null 2>&1
-  [[ -f "$G/.agent/logs/rubric-score.jsonl" ]]; check "h-log-created" $?
-  [[ "$(wc -l < "$G/.agent/logs/rubric-score.jsonl" 2>/dev/null | tr -d ' ')" == "1" ]]; check "h-one-line" $?
-  # non-commit command -> hook is inert (no second line)
+  G=$(fresh)
+  ( cd "$G" && git init -q && git config user.email t@t && git config user.name t )
+  mkdir -p "$G/.agent"
+  printf '{"dimensions":[{"id":"exec","grader_check":"touch %s/ran.sentinel"}]}\n' "$G" > "$G/.agent/rubric.yml"
+  TL="$G/trust.list"; printf 'path %s\n' "$G" > "$TL"   # grant personal tier to this path
+  ( cd "$G" && printf '%s' "$EV" | AGENT_TRUST_FILE="$TL" bash "$HOOK" ) >/dev/null 2>&1
+  [[ -f "$G/ran.sentinel" ]]; check "h-personal-grader-ran" $?
+  [[ -f "$G/.agent/logs/rubric-score.jsonl" ]]; check "h-personal-log" $?
+  before=$(wc -l < "$G/.agent/logs/rubric-score.jsonl" 2>/dev/null | tr -d ' ')
   NONCOMMIT='{"event":"PostToolUse","tool_name":"Bash","tool_input":{"command":"ls -la"}}'
-  ( cd "$G" && printf '%s' "$NONCOMMIT" | bash "$HOOK" ) >/dev/null 2>&1
-  [[ "$(wc -l < "$G/.agent/logs/rubric-score.jsonl" 2>/dev/null | tr -d ' ')" == "1" ]]; check "h-noncommit-inert" $?
+  ( cd "$G" && printf '%s' "$NONCOMMIT" | AGENT_TRUST_FILE="$TL" bash "$HOOK" ) >/dev/null 2>&1
+  after=$(wc -l < "$G/.agent/logs/rubric-score.jsonl" 2>/dev/null | tr -d ' ')
+  [[ "$before" == "$after" ]]; check "h-noncommit-inert" $?
+
+  echo "=== (m) TRUST GATE — collab tier: grader_check must NOT execute (silent-RCE guard) ==="
+  C=$(fresh)
+  ( cd "$C" && git init -q && git config user.email t@t && git config user.name t )
+  mkdir -p "$C/.agent"
+  printf '{"dimensions":[{"id":"exec","grader_check":"touch %s/PWNED"}]}\n' "$C" > "$C/.agent/rubric.yml"
+  ETL="$C/empty.list"; : > "$ETL"   # empty trust list -> fail-closed to collab
+  ( cd "$C" && printf '%s' "$EV" | AGENT_TRUST_FILE="$ETL" bash "$HOOK" ) >/dev/null 2>&1
+  [[ ! -f "$C/PWNED" ]]; check "m-collab-no-exec" $?
+  grep -q 'not auto-run' "$C/.agent/logs/rubric-score.jsonl" 2>/dev/null; check "m-collab-skip-noted" $?
 else
-  echo "  skip [h-hook] — git or jq not available"
+  echo "  skip [h/m-hook] — git or jq not available"
 fi
 
 echo "=== (i) hook file is executable — adapters/*/adapter.sh FAIL-OPENS (exit 0) on a non-x hook, ==="
@@ -141,12 +154,31 @@ ndims() { printf '%s' "$OUT" | python3 -c 'import sys,json;print(len(json.load(s
 [[ "$(ndims)" == "2" ]]; check "j-both-dims-kept" $?
 [[ "$(field score)" == "0.75" ]]; check "j-score-correct" $?
 
+echo "=== (j2) synthesized 'id#n' must not clobber a literal later id -> all 3 kept ==="
+T=$(fresh)
+cat > "$T/r.json" <<'JSON'
+{"dimensions":[
+  {"id":"x#2","grader_check":"true"},
+  {"id":"x","grader_check":"true"},
+  {"id":"x","grader_check":"false"}]}
+JSON
+run "$T/r.json"
+[[ "$(ndims)" == "3" ]]; check "j2-no-synth-collision" $?
+
 echo "=== (k) weight <= 0 coerces to 1.0 (documented) -> still counts toward score ==="
 T=$(fresh)
 printf '%s\n' '{"dimensions":[{"id":"x","grader_check":"true","weight":0}]}' > "$T/r.json"
 run "$T/r.json"
 [[ "$(field verdict)" == "CONFIRMED" ]]; check "k-weight0-confirmed" $?
 [[ "$(field score)" == "1.0" ]]; check "k-weight0-score" $?
+
+echo "=== (l) aggregate total-budget cap stops further checks (refute the remainder) ==="
+T=$(fresh)
+cat > "$T/r.json" <<'JSON'
+{"dimensions":[{"id":"slow","grader_check":"sleep 2"},{"id":"after","grader_check":"true"}]}
+JSON
+OUT="$(AGENT_RUBRIC_TOTAL_TIMEOUT=1 python3 "$SCORER" --rubric "$T/r.json" 2>/dev/null)"
+refut_has "total budget"; check "l-budget-cap" $?
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="

@@ -7,7 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Candidate scoring + project rubric (PR #79).** `/spec --score-candidates`
+  scores a field of candidate problems/approaches numerically (candidates ×
+  dimensions → top-K) instead of a prose pick, mirroring the `--interview`
+  submode. A domain-neutral project rubric (`templates/rubric.yml.template` →
+  `.agent/rubric.yml`) is scored deterministically by `core/infra/rubric-score.py`
+  (shared verdict schema, refute-by-default) and run per commit by the advisory
+  `core/hooks/rubric-commit-judge.sh` hook — **trust-gated to personal-tier repos
+  only** (grader_checks are shell commands and `.agent/rubric.yml` ships with the
+  repo tree, so a foreign clone's rubric is never auto-executed) — and folded into
+  `verify-completion`'s semantic judge on-demand (the two-layer split that keeps
+  the fresh-spawn judge off the commit path).
+
 ### Fixed
+- **`doc-reality.sh` no longer scans gitignored `.agent/` (PR #79).** The gate's
+  `find` walked `.agent/plans/`, so a `/spec` plan naming to-be-created files
+  false-positived as phantom-path drift. `.agent` is now pruned (matching the
+  gate's own "tracked *.md" intent), with a regression case in `doc-reality-test.sh`.
 - **`.gitignore` — `.agent/plans/` re-entry gap closed (v0.5.2).** The
   runtime-state block enumerated `.agent/locks|logs|state|workers/` but not
   `.agent/plans/`, so a `git add -A` could commit per-run records
