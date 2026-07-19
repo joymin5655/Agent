@@ -3,6 +3,8 @@
 # Copy this to `.agent/rubric.yml` in a consumer project and replace the
 # placeholder dimensions with the criteria that actually matter for THIS project.
 # The harness ships only this neutral template — never a concrete domain rubric.
+# (A `.agent/rubric.json` with the same shape is also honored, and needs no PyYAML;
+#  the commit hook prefers .yml, then falls back to .json.)
 #
 # Two consumers read it, both emitting the shared verdict schema
 # (docs/scoring-convention.md, schema_version 1.0.0):
