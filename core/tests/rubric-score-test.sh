@@ -114,7 +114,10 @@ if command -v git >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
   G=$(fresh)
   ( cd "$G" && git init -q && git config user.email t@t && git config user.name t )
   mkdir -p "$G/.agent"
-  printf '{"dimensions":[{"id":"exec","grader_check":"touch %s/ran.sentinel"}]}\n' "$G" > "$G/.agent/rubric.yml"
+  # .json rubric -> hook + scorer run with NO PyYAML dependency, so this positive
+  # control is self-standing: if the trust gate were removed the sentinel WOULD
+  # appear, which is exactly what (m)/(m2) rely on to be genuine negative controls.
+  printf '{"dimensions":[{"id":"exec","grader_check":"touch %s/ran.sentinel"}]}\n' "$G" > "$G/.agent/rubric.json"
   TL="$G/trust.list"; printf 'path %s\n' "$G" > "$TL"   # grant personal tier to this path
   ( cd "$G" && printf '%s' "$EV" | AGENT_TRUST_FILE="$TL" bash "$HOOK" ) >/dev/null 2>&1
   [[ -f "$G/ran.sentinel" ]]; check "h-personal-grader-ran" $?
@@ -125,17 +128,44 @@ if command -v git >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
   after=$(wc -l < "$G/.agent/logs/rubric-score.jsonl" 2>/dev/null | tr -d ' ')
   [[ "$before" == "$after" ]]; check "h-noncommit-inert" $?
 
-  echo "=== (m) TRUST GATE — collab tier: grader_check must NOT execute (silent-RCE guard) ==="
+  echo "=== (m) TRUST GATE — collab (empty trust list): grader_check must NOT execute ==="
   C=$(fresh)
   ( cd "$C" && git init -q && git config user.email t@t && git config user.name t )
   mkdir -p "$C/.agent"
-  printf '{"dimensions":[{"id":"exec","grader_check":"touch %s/PWNED"}]}\n' "$C" > "$C/.agent/rubric.yml"
+  printf '{"dimensions":[{"id":"exec","grader_check":"touch %s/PWNED"}]}\n' "$C" > "$C/.agent/rubric.json"
   ETL="$C/empty.list"; : > "$ETL"   # empty trust list -> fail-closed to collab
   ( cd "$C" && printf '%s' "$EV" | AGENT_TRUST_FILE="$ETL" bash "$HOOK" ) >/dev/null 2>&1
   [[ ! -f "$C/PWNED" ]]; check "m-collab-no-exec" $?
   grep -q 'not auto-run' "$C/.agent/logs/rubric-score.jsonl" 2>/dev/null; check "m-collab-skip-noted" $?
+
+  echo "=== (m2) TRUST GATE — collab (foreign origin owner): owner-decides-alone branch blocks ==="
+  F=$(fresh)
+  ( cd "$F" && git init -q && git config user.email t@t && git config user.name t \
+      && git remote add origin https://github.com/attacker/repo.git )
+  mkdir -p "$F/.agent"
+  printf '{"dimensions":[{"id":"exec","grader_check":"touch %s/PWNED2"}]}\n' "$F" > "$F/.agent/rubric.json"
+  # trust list grants a DIFFERENT owner -> the foreign origin owner still resolves
+  # collab (owner decides alone, trust_tier.py:138), a distinct branch from (m).
+  FTL="$F/trust.list"; printf 'owner someoneelse\n' > "$FTL"
+  ( cd "$F" && printf '%s' "$EV" | AGENT_TRUST_FILE="$FTL" bash "$HOOK" ) >/dev/null 2>&1
+  [[ ! -f "$F/PWNED2" ]]; check "m2-foreign-owner-no-exec" $?
 else
   echo "  skip [h/m-hook] — git or jq not available"
+fi
+
+echo "=== (n) hook prefers .agent/rubric.yml over .json when both exist (PyYAML-guarded) ==="
+if command -v git >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 && python3 -c 'import yaml' 2>/dev/null; then
+  EVN='{"event":"PostToolUse","tool_name":"Bash","tool_input":{"command":"git commit -m x"}}'
+  P=$(fresh)
+  ( cd "$P" && git init -q && git config user.email t@t && git config user.name t )
+  mkdir -p "$P/.agent"
+  printf 'dimensions:\n  - id: y\n    grader_check: "touch %s/YML_RAN"\n' "$P" > "$P/.agent/rubric.yml"
+  printf '{"dimensions":[{"id":"j","grader_check":"touch %s/JSON_RAN"}]}\n' "$P" > "$P/.agent/rubric.json"
+  TLP="$P/trust.list"; printf 'path %s\n' "$P" > "$TLP"
+  ( cd "$P" && printf '%s' "$EVN" | AGENT_TRUST_FILE="$TLP" bash "$HOOK" ) >/dev/null 2>&1
+  [[ -f "$P/YML_RAN" && ! -f "$P/JSON_RAN" ]]; check "n-yml-preferred" $?
+else
+  echo "  skip [n-yml-preferred] — git/jq/PyYAML not all available"
 fi
 
 echo "=== (i) hook file is executable — adapters/*/adapter.sh FAIL-OPENS (exit 0) on a non-x hook, ==="

@@ -29,7 +29,8 @@ command -v git >/dev/null 2>&1 || exit 0
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
 [[ -z "$REPO_ROOT" ]] && exit 0
 
-RUBRIC="$REPO_ROOT/.agent/rubric.yml"
+RUBRIC="$REPO_ROOT/.agent/rubric.yml"                       # YAML preferred (needs PyYAML)
+[[ -f "$RUBRIC" ]] || RUBRIC="$REPO_ROOT/.agent/rubric.json" # JSON fallback (no PyYAML dep)
 [[ -f "$RUBRIC" ]] || exit 0   # no project rubric -> nothing to score (opt-in per project)
 
 command -v python3 >/dev/null 2>&1 || exit 0
