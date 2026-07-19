@@ -18,6 +18,7 @@ AI-agnostic hook implementations. Each script reads a canonical event JSON from 
 | `spec-gate.py` | PreToolUse (Write/Edit/MultiEdit) | Gate substantive impl edits when no plan is approved this session — `ask` unless the plan-approval flag exists (written by `plan-gate.py`). Escape: `/spec` writes spec.md+plan.md then approve via ExitPlanMode, or `AGENT_SPEC_GATE_MODE=off`; modes off/dryrun/block (default dryrun) |
 | `plan-scope-allow.py` | PreToolUse (Write/Edit/MultiEdit, last in chain) | Auto-allow accelerator — once a plan is approved this session, in-workspace non-risk edits skip the native permission prompt. Emits only `allow` or nothing (never deny/ask); risk areas, `.agent/hook-config.yml`, `.git/`, and out-of-workspace paths always pass through. Env-gated: `AGENT_PLAN_ALLOW_MODE=on` (default off) |
 | `circuit-breaker.py` | PostToolUse (Bash) | Detect repeated Bash failures + advise strategy change |
+| `rubric-commit-judge.sh` | PostToolUse (Bash) | Advisory per-commit rubric scoring — on `git commit`, if `.agent/rubric.yml` exists, runs `core/infra/rubric-score.py` and appends the verdict to `.agent/logs/rubric-score.jsonl`; never blocks (deterministic half of the two-layer rubric design; the semantic half is skills/verify-completion) |
 | `check-hardcoding.py` | PreToolUse (Write/Edit) | Detect hardcoded color arrays / gradients / UI metadata |
 | `session-init.py` | SessionStart | Surface project agent inventory + cleanup per-session flags |
 | `session-close.sh` | Stop | Session cleanup + broadcast done + optional macOS notification |

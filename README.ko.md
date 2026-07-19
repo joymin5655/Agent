@@ -88,7 +88,7 @@ flowchart LR
 | 용어 | 쉬운 뜻 |
 |---|---|
 | **하네스(harness)** | 에이전트 + 훅 + 스킬 + 규칙을 묶어 AI를 감싸는 안전 계층 전체. |
-| **훅(hook)** | AI 런타임이 어떤 행동 전/후에 자동으로 실행하는 작은 스크립트. **allow**, **ask**, **deny** 중 하나로 답합니다. [`core/hooks/`](core/hooks/)에 21개(+공유 모듈 2개)가 있습니다. |
+| **훅(hook)** | AI 런타임이 어떤 행동 전/후에 자동으로 실행하는 작은 스크립트. **allow**, **ask**, **deny** 중 하나로 답합니다. [`core/hooks/`](core/hooks/)에 22개(+공유 모듈 2개)가 있습니다. |
 | **어댑터(adapter)** | 각 AI CLI의 고유 이벤트 형식과 하네스의 표준 JSON 사이를 번역하는 얇은 계층. 3개가 있습니다([`adapters/`](adapters/)). |
 | **에이전트(agent)** | AI가 일을 위임하는 전문가 — 예: 리뷰만 하고 절대 코드를 쓰지 않는 보안 리뷰어. 2종이 포함됩니다([`agents/`](agents/)). |
 | **스킬(skill)** | AI가 따라가는 재사용 가능한 단계별 워크플로우 — 예: 커밋+PR 자동화 흐름. 7종이 포함됩니다([`skills/`](skills/)). |
@@ -200,9 +200,9 @@ flowchart TB
         A3["gemini/"]
     end
     subgraph CORE["Layer 1 — core/ (단일 진실 원천)"]
-        H["hooks/ — 게이트 21개: 시크릿 스캔 · 뮤텍스 ·<br/>spec-gate · tdd-guard · supervisor …"]
+        H["hooks/ — 게이트 22개: 시크릿 스캔 · 뮤텍스 ·<br/>spec-gate · tdd-guard · supervisor …"]
         I["infra/ — 세션 · goal 모드 ·<br/>감사 · auto-ship"]
-        T["tests/ — 자가검증 스크립트 37개"]
+        T["tests/ — 자가검증 스크립트 39개"]
     end
     R["rules/ — 정책<br/>원문(SOT)"]
     PLUG[".claude-plugin/ + hooks/hooks.json<br/>플러그인 배포"]
@@ -329,7 +329,7 @@ manager-audit의 발견은 절대 스스로 적용되지 않습니다 — `PROPO
 | `manager-audit` | `/supervise` 실행의 메타 감사 — 재구성 품질, 모델 라우팅 낭비, 상대 토큰 지출, 역할 준수; 발견은 사용자 승인용 패치 제안이 됨 |
 | `harness-help` | 라우터 — 상황에 맞는 스킬 안내와 전체 흐름 |
 
-| 훅 — 21개(+공유 모듈 2개), `hooks/hooks.json` → `core/hooks/` 연결 | 이벤트 |
+| 훅 — 22개(+공유 모듈 2개), `hooks/hooks.json` → `core/hooks/` 연결 | 이벤트 |
 |---|---|
 | secret-content-scan · check-hardcoding | PreToolUse (Write/Edit) |
 | pre-tool-guard · r4-mutex · context-mode-guard | PreToolUse |
@@ -356,10 +356,10 @@ Agent/
 ├── hooks/              # 플러그인 훅 배선 (hooks.json)
 │
 ├── core/               # AI 무관 코어 — 진실 원천
-│   ├── hooks/          #   이식 가능한 훅 21개 + 공유 모듈 2개
+│   ├── hooks/          #   이식 가능한 훅 22개 + 공유 모듈 2개
 │   ├── infra/          #   세션 조정 · goal 모드 · 감사 · auto-ship
 │   ├── git-hooks/      #   pre-commit · pre-push
-│   └── tests/          #   테스트 스크립트 37개 (verify-all.sh가 전부 실행)
+│   └── tests/          #   테스트 스크립트 39개 (verify-all.sh가 전부 실행)
 │
 ├── adapters/           # claude-code (얇음) · codex · gemini
 ├── rules/              # 범용 정책 문서

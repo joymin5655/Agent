@@ -18,13 +18,17 @@
 # HITS accumulation, bash suffix-strip reporting, 0=clean / 1=drift).
 #
 # ── (A) scope & exclusions (calibrated to ZERO hits on a clean HEAD) ─────────────────
-# Doc set: EVERY tracked *.md under the tree, EXCEPT three by-design exclusions —
+# Doc set: EVERY tracked *.md under the tree, EXCEPT four by-design exclusions —
 #   * docs/harness-improvement-plan.md — FORWARD-LOOKING backlog: references not-yet-built
 #     deliverables (verify-all.sh, grade.sh, skills/harness-loop/SKILL.md) on purpose. Its
 #     numeric claims are gated instead by (B)/(C), which read specific declaration lines.
 #   * CHANGELOG.md — BACKWARD-LOOKING history: legitimately names removed/renamed artifacts
 #     ("cross-ai-parity.sh … never existed; docs now fixed"), so path-existence is wrong for it.
 #   * anything under legacy/ — retired snapshots.
+#   * anything under .agent/ — GITIGNORED runtime state (plans, logs, workers). A /spec plan.md
+#     names files it is about to CREATE, so path-existence is wrong for it; and being untracked
+#     it never ships (absent in a fresh CI checkout). Pruned in the find, matching the "tracked
+#     *.md" intent above — otherwise a local run false-positives on every planning artifact.
 #   Nested docs are IN scope: docs/**/*.md (recursive) and every */README.md — a phantom in
 #   core/hooks/README.md is as much a lie as one in the top-level README.
 #
@@ -82,10 +86,11 @@ HITS=""
 
 # ── (A) referenced-path existence ────────────────────────────────────────────────────
 # collect_docs_A — every current-state *.md (recursive), minus the forward-looking backlog,
-# the backward-looking CHANGELOG, and legacy/. `find` (not a glob) so nested docs — docs/**
-# and every */README.md — are covered; both prune terms are portable to BSD + GNU find.
+# the backward-looking CHANGELOG, legacy/, and .agent/ (gitignored runtime plans/logs). `find`
+# (not a glob) so nested docs — docs/** and every */README.md — are covered; all prune terms
+# are portable to BSD + GNU find.
 collect_docs_A() {
-  find "$TARGET" \( -name .git -o -name legacy \) -prune -o \
+  find "$TARGET" \( -name .git -o -name legacy -o -name .agent \) -prune -o \
        -type f -name '*.md' -print 2>/dev/null \
     | grep -vxF "$PLAN" \
     | grep -vxF "$TARGET/CHANGELOG.md" \

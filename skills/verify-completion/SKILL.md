@@ -82,6 +82,17 @@ to **refute**, not confirm:
 Default each open question to **REFUTED**. A confirmation needs a reason; a
 refutation is the resting state.
 
+**Optional: a project rubric.** If the project defines `.agent/rubric.yml`
+(from `templates/rubric.yml.template`), its dimensions are the project's own bar
+for "done" — fold them into this pass. The *deterministic* dimensions are already
+scored per commit by the `rubric-commit-judge` hook (advisory, appended to
+`.agent/logs/rubric-score.jsonl`); refresh them with
+`python3 core/infra/rubric-score.py --root "$PWD"`. The *semantic-only*
+dimensions (those with no `grader_check`) are yours to judge here,
+refute-by-default, exactly like the questions above. A failing rubric dimension
+is a refutation like any other — this is the semantic half of the two-layer
+rubric design, the deterministic half being the commit hook.
+
 **Optional flag `--second-opinion`** — attach a cross-vendor opinion as
 additional evidence input to this pass. Ask the user for cost approval, then:
 
