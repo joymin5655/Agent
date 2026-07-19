@@ -2,8 +2,8 @@
 # rubric-score-test.sh — hermetic battery for the project-rubric scorer (core/infra/
 # rubric-score.py) and the per-commit advisory hook (core/hooks/rubric-commit-judge.sh).
 #
-# Core cases use JSON rubrics so they run with no PyYAML dependency (CI-safe); one
-# case exercises the YAML path only when PyYAML is importable. Asserts the shared
+# Core cases use JSON rubrics so they run with no PyYAML dependency (CI-safe); the
+# YAML path is exercised only when PyYAML is importable (cases (g) and (n)). Asserts the shared
 # verdict schema (docs/scoring-convention.md) and refute-by-default semantics:
 #   - a checkable dimension whose grader_check fails => REFUTED, named
 #   - a rubric with no checkable dimension => REFUTED "nothing to score"
@@ -144,11 +144,15 @@ if command -v git >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
       && git remote add origin https://github.com/attacker/repo.git )
   mkdir -p "$F/.agent"
   printf '{"dimensions":[{"id":"exec","grader_check":"touch %s/PWNED2"}]}\n' "$F" > "$F/.agent/rubric.json"
-  # trust list grants a DIFFERENT owner -> the foreign origin owner still resolves
-  # collab (owner decides alone, trust_tier.py:138), a distinct branch from (m).
-  FTL="$F/trust.list"; printf 'owner someoneelse\n' > "$FTL"
+  # trust list grants a DIFFERENT owner AND this very path -> a foreign origin owner
+  # must still resolve collab, overriding the otherwise-granting path (owner decides
+  # alone, trust_tier.py:138). The path grant is load-bearing: without it a buggy impl
+  # that fell through to the path check (139-146) would also find no grant and yield
+  # collab, so the test would pass vacuously against the exact regression it guards.
+  FTL="$F/trust.list"; printf 'owner someoneelse\npath %s\n' "$F" > "$FTL"
   ( cd "$F" && printf '%s' "$EV" | AGENT_TRUST_FILE="$FTL" bash "$HOOK" ) >/dev/null 2>&1
   [[ ! -f "$F/PWNED2" ]]; check "m2-foreign-owner-no-exec" $?
+  grep -q 'not auto-run' "$F/.agent/logs/rubric-score.jsonl" 2>/dev/null; check "m2-collab-skip-noted" $?
 else
   echo "  skip [h/m-hook] — git or jq not available"
 fi
