@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.3] — 2026-07-19
+
+> **Consolidation note.** The changelog was not rolled from [0.2.5] (2026-07-08)
+> through the 0.5.3 cut, so entries for the 0.3.x–0.5.3 releases accumulated under
+> [Unreleased]. They are gathered here at 0.5.3 rather than retro-split into
+> per-version sections, because no version tags or per-release `release:` commits
+> exist for 0.3.x/0.4.x/0.5.0 to place undated entries reliably (a guess would be
+> fabrication). The inline `(vX.Y.Z)` / `(PR #NN)` labels below preserve the finer
+> per-release provenance. Future releases roll [Unreleased] into a dated section.
+
 ### Added
 - **Candidate scoring + project rubric (PR #79).** `/spec --score-candidates`
   scores a field of candidate problems/approaches numerically (candidates ×
