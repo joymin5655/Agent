@@ -1,0 +1,38 @@
+# .agent/rubric.yml — project completion rubric (domain-neutral template)
+#
+# Copy this to `.agent/rubric.yml` in a consumer project and replace the
+# placeholder dimensions with the criteria that actually matter for THIS project.
+# The harness ships only this neutral template — never a concrete domain rubric.
+#
+# Two consumers read it, both emitting the shared verdict schema
+# (docs/scoring-convention.md, schema_version 1.0.0):
+#   * core/infra/rubric-score.py — the DETERMINISTIC layer: runs each dimension's
+#     `grader_check` shell command (exit 0 = the dimension passes). The
+#     rubric-commit-judge hook runs this on every `git commit` and logs the
+#     verdict, advisory, to .agent/logs/rubric-score.jsonl (it never blocks).
+#   * skills/verify-completion — the SEMANTIC layer: folds these dimensions into
+#     its refute-by-default judge, on-demand, in a fresh context.
+#
+# A dimension with no `grader_check` (or `grader_check: null`) is SEMANTIC-ONLY —
+# the deterministic scorer skips it and leaves it for verify-completion's judge.
+
+target: "<what this rubric judges — e.g. a feature slug or 'each commit'>"
+
+dimensions:
+  - id: correctness
+    name: Correctness
+    description: The change does what it claims — proven by an executable check, not asserted.
+    weight: 2
+    grader_check: "true"        # replace: e.g. "bash tests/run.sh" (exit 0 = pass)
+
+  - id: test-coverage
+    name: Test coverage
+    description: New behavior is covered by a test that would fail without the change.
+    weight: 1
+    grader_check: "true"        # replace: e.g. "grep -rq 'def test_' tests/"
+
+  - id: clarity
+    name: Clarity
+    description: The change reads cleanly and matches surrounding style.
+    weight: 1
+    grader_check: null          # semantic-only: left to verify-completion's judge

@@ -106,6 +106,15 @@ printf '%s\n' 'Old notes archived at `docs/legacy/old-thing.md` (removed).' > "$
 gate "$T"; [[ $RC -eq 0 ]]; check "legacy-not-flagged" $?
 
 echo
+echo "=== (d3) a doc UNDER .agent/ naming a missing listed-segment path -> NOT flagged (gitignored runtime, pruned) ==="
+# A /spec plan.md legitimately names files it is about to CREATE, and .agent/ is gitignored
+# (never ships / absent in CI). Without the .agent prune the find scans it and the prose ref
+# to core/infra/not-built-yet.sh below would be a phantom-hit — proving the prune is load-bearing.
+T=$(fresh_tree); mkdir -p "$T/.agent/plans/demo"
+printf '%s\n' '# demo — plan' 'Wave 1: add `core/infra/not-built-yet.sh` → verify: it runs.' > "$T/.agent/plans/demo/plan.md"
+gate "$T"; [[ $RC -eq 0 ]]; check "under-dot-agent-not-flagged" $?
+
+echo
 echo "=== (e) backlog-count mismatch (declares 29, live P-rows = 2) -> detected ==="
 T=$(fresh_tree); plan_prows "$T" 29
 gate "$T"; [[ $RC -eq 1 ]]; check "backlog-mismatch-detected" $?

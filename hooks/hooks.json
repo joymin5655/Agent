@@ -73,7 +73,8 @@
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" circuit-breaker.py" }
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" circuit-breaker.py" },
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" rubric-commit-judge.sh" }
         ]
       },
       {

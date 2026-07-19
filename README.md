@@ -89,7 +89,7 @@ New to this space? These ten terms are all you need to read the rest of this pag
 | Term | Plain meaning |
 |---|---|
 | **harness** | The whole safety layer: agents + hooks + skills + rules, wrapped around your AI. |
-| **hook** | A small script your AI runtime runs automatically before/after an action. It answers **allow**, **ask**, or **deny**. 21 of them (plus 2 shared modules) live in [`core/hooks/`](core/hooks/). |
+| **hook** | A small script your AI runtime runs automatically before/after an action. It answers **allow**, **ask**, or **deny**. 22 of them (plus 2 shared modules) live in [`core/hooks/`](core/hooks/). |
 | **adapter** | A thin translator between one AI CLI's native event format and the harness's canonical JSON. There are 3 ([`adapters/`](adapters/)). |
 | **agent** | A specialist your AI delegates to — e.g. a security reviewer that only reviews and never writes. 2 ship here ([`agents/`](agents/)). |
 | **skill** | A reusable step-by-step workflow the AI follows, e.g. the commit + PR flow. 7 ship here ([`skills/`](skills/)). |
@@ -201,9 +201,9 @@ flowchart TB
         A3["gemini/"]
     end
     subgraph CORE["Layer 1 — core/ (the single source of truth)"]
-        H["hooks/ — 21 gates: secret scan · mutex ·<br/>spec-gate · tdd-guard · supervisor …"]
+        H["hooks/ — 22 gates: secret scan · mutex ·<br/>spec-gate · tdd-guard · supervisor …"]
         I["infra/ — sessions · goal mode ·<br/>audits · auto-ship"]
-        T["tests/ — 37 self-verification scripts"]
+        T["tests/ — 39 self-verification scripts"]
     end
     R["rules/ — policy<br/>source of truth"]
     PLUG[".claude-plugin/ + hooks/hooks.json<br/>plugin distribution"]
@@ -328,7 +328,7 @@ Model is cost-tiered per work class ([`docs/model-routing.md`](docs/model-routin
 | `manager-audit` | Meta-audit of a `/supervise` run — restatement quality, model-routing waste, relative token spend, role compliance; findings become patch proposals for user approval |
 | `harness-help` | Router — which skill fits the situation, and the main flow through them |
 
-| Hooks — 21 (+2 shared modules), wired via `hooks/hooks.json` → `core/hooks/` | Event |
+| Hooks — 22 (+2 shared modules), wired via `hooks/hooks.json` → `core/hooks/` | Event |
 |---|---|
 | secret-content-scan · check-hardcoding | PreToolUse (Write/Edit) |
 | pre-tool-guard · r4-mutex · context-mode-guard | PreToolUse |
@@ -355,10 +355,10 @@ Agent/
 ├── hooks/              # plugin hook wiring (hooks.json)
 │
 ├── core/               # AI-agnostic core — the truth
-│   ├── hooks/          #   21 portable hooks + 2 shared modules
+│   ├── hooks/          #   22 portable hooks + 2 shared modules
 │   ├── infra/          #   session coordination · goal mode · audits · auto-ship
 │   ├── git-hooks/      #   pre-commit · pre-push
-│   └── tests/          #   37 test scripts (verify-all.sh runs them all)
+│   └── tests/          #   39 test scripts (verify-all.sh runs them all)
 │
 ├── adapters/           # claude-code (thin) · codex · gemini
 ├── rules/              # generic policy docs
