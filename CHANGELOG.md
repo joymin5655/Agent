@@ -18,7 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   only** (grader_checks are shell commands and `.agent/rubric.yml` ships with the
   repo tree, so a foreign clone's rubric is never auto-executed) — and folded into
   `verify-completion`'s semantic judge on-demand (the two-layer split that keeps
-  the fresh-spawn judge off the commit path).
+  the fresh-spawn judge off the commit path). Follow-up **PR #80** hardened the
+  hook's test battery: a `.agent/rubric.json` fallback (no PyYAML dep) makes the
+  trust-gate tests self-standing, plus a foreign-origin collab case proving the
+  `owner-decides-alone` branch also blocks auto-execution.
+- **`sanitize-audit.sh --range` mode (PR #78).** The domain-neutrality gate can
+  now scan a commit range (PR/push span), catching taint that a single commit
+  adds and a later commit removes — an add-then-remove sequence the per-commit
+  scan misses. CI wires an explicit `--range` verification step.
 
 ### Fixed
 - **`doc-reality.sh` no longer scans gitignored `.agent/` (PR #79).** The gate's
