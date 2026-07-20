@@ -179,38 +179,49 @@ rno() { echo "  FAIL [$1] $2"; RFAIL=$((RFAIL + 1)); }
 FAKE_ROOT="/opt/agent-fake"
 render() { sed "s|{{FRAMEWORK_ROOT}}|$FAKE_ROOT|g" "$1"; }
 EXPECT_ARG="$FAKE_ROOT/core/brain/brain-mcp.py"
+EXPECT_CMD="python3"   # all three runtimes must launch the server via this interpreter
 
-echo "=== (n) codex template registers [mcp_servers.brain] -> brain-mcp.py ==="
+echo "=== (n) codex template: [mcp_servers.brain] table launches python3 brain-mcp.py ==="
 CODEX_T="$REPO_ROOT/adapters/codex/codex-config.toml.template"
-if render "$CODEX_T" | grep -q '^\[mcp_servers.brain\]' \
-   && render "$CODEX_T" | grep -qF "$EXPECT_ARG"; then
+# Slice to the [mcp_servers.brain] table body ONLY, then verify command + arg
+# path INSIDE it — so a `command = "python3"` belonging to some other
+# [mcp_servers.*] server can't satisfy brain's check (section-scoped parity,
+# matching what (o)/(p) get for free by parsing the brain object). Quote class
+# ["'] accepts either TOML string style. Header regex tolerates whitespace.
+CODEX_BRAIN="$(render "$CODEX_T" | awk '
+  /^\[[[:space:]]*mcp_servers\.brain[[:space:]]*\]/ { f=1; next }
+  /^\[/ { f=0 }
+  f')"
+if [[ -n "$CODEX_BRAIN" ]] \
+   && grep -qE "command[[:space:]]*=[[:space:]]*[\"']$EXPECT_CMD[\"']" <<<"$CODEX_BRAIN" \
+   && grep -qF "$EXPECT_ARG" <<<"$CODEX_BRAIN"; then
   rok "codex-mcp"
 else
-  rno "codex-mcp" "missing [mcp_servers.brain] or brain-mcp.py path"
+  rno "codex-mcp" "no [mcp_servers.brain] table launching \"$EXPECT_CMD\" -> brain-mcp.py"
 fi
 
-echo "=== (o) gemini template: valid JSON, mcpServers.brain -> brain-mcp.py ==="
+echo "=== (o) gemini template: valid JSON, mcpServers.brain -> python3 brain-mcp.py ==="
 GEMINI_T="$REPO_ROOT/adapters/gemini/gemini-settings.json.template"
-if render "$GEMINI_T" | EXPECT="$EXPECT_ARG" python3 -c '
+if render "$GEMINI_T" | EXPECT="$EXPECT_ARG" EXPECT_CMD="$EXPECT_CMD" python3 -c '
 import json, os, sys
-d = json.load(sys.stdin)
-a = d["mcpServers"]["brain"]["args"]
-sys.exit(0 if os.environ["EXPECT"] in a else 1)' 2>/dev/null; then
+b = json.load(sys.stdin)["mcpServers"]["brain"]
+sys.exit(0 if b.get("command") == os.environ["EXPECT_CMD"]
+         and os.environ["EXPECT"] in b["args"] else 1)' 2>/dev/null; then
   rok "gemini-mcp"
 else
-  rno "gemini-mcp" "invalid JSON or mcpServers.brain.args missing brain-mcp.py"
+  rno "gemini-mcp" "invalid JSON or mcpServers.brain not (command=\"$EXPECT_CMD\", args->brain-mcp.py)"
 fi
 
-echo "=== (p) claude .mcp.json template: valid JSON, mcpServers.brain -> brain-mcp.py ==="
+echo "=== (p) claude .mcp.json template: valid JSON, mcpServers.brain -> python3 brain-mcp.py ==="
 CLAUDE_T="$REPO_ROOT/adapters/claude-code/mcp.json.template"
-if render "$CLAUDE_T" | EXPECT="$EXPECT_ARG" python3 -c '
+if render "$CLAUDE_T" | EXPECT="$EXPECT_ARG" EXPECT_CMD="$EXPECT_CMD" python3 -c '
 import json, os, sys
-d = json.load(sys.stdin)
-a = d["mcpServers"]["brain"]["args"]
-sys.exit(0 if os.environ["EXPECT"] in a else 1)' 2>/dev/null; then
+b = json.load(sys.stdin)["mcpServers"]["brain"]
+sys.exit(0 if b.get("command") == os.environ["EXPECT_CMD"]
+         and os.environ["EXPECT"] in b["args"] else 1)' 2>/dev/null; then
   rok "claude-mcp"
 else
-  rno "claude-mcp" "invalid JSON or mcpServers.brain.args missing brain-mcp.py"
+  rno "claude-mcp" "invalid JSON or mcpServers.brain not (command=\"$EXPECT_CMD\", args->brain-mcp.py)"
 fi
 
 echo
