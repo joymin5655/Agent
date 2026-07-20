@@ -10,12 +10,21 @@
     "name": "gemini-3-flash"
   },
   "project_doc": "GEMINI.md",
+  "_comment_context": "AGENTS.md is the canonical cross-AI instruction file (incl. the shared agent-brain policy); GEMINI.md is the Gemini-specific overlay read via project_doc. Listing AGENTS.md in the context ensures Gemini reads the same brain-usage guidance Codex gets natively and Claude gets via CLAUDE.md. If a stale GEMINI.md ever contradicts AGENTS.md, treat AGENTS.md as canonical and reconcile GEMINI.md.",
   "context": {
     "include": [
+      "AGENTS.md",
       "GEMINI.md",
       "rules/**/*.md",
       "hook-config.yml"
     ]
+  },
+  "_comment_mcp": "Agent-brain MCP server (core/brain/brain-mcp.py) — the shared cross-AI knowledge store, same server registered for Claude + Codex so all three CLIs query one brain. Read tools + brain_capture (writes raw/ quarantine only). Stdlib-only, no pip install. Gemini slot is best-effort: wired even though live Gemini access may be gated.",
+  "mcpServers": {
+    "brain": {
+      "command": "python3",
+      "args": ["{{FRAMEWORK_ROOT}}/core/brain/brain-mcp.py"]
+    }
   },
   "sandbox": {
     "mode": "workspace",

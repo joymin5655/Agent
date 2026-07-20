@@ -49,7 +49,7 @@ The `settings.json.template` wires up:
 | Event | Matcher | Hook |
 |---|---|---|
 | SessionStart | `*` | `agent-session-start.sh`, `session-init.py` |
-| Stop | `*` | `session-close.sh` |
+| Stop | `*` | `session-quality-gate.py`, `brain-capture.py`, `session-close.sh` |
 | UserPromptSubmit | `*` | `agent-session-heartbeat.sh`, `plan-gate.py` |
 | PreToolUse | `Bash` | `pre-tool-guard.sh` |
 | PreToolUse | `*` | `r4-mutex-check.sh`, `context-mode-guard.sh` |

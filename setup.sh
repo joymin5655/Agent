@@ -104,6 +104,27 @@ install_claude() {
     local template="$FRAMEWORK_ROOT/adapters/claude-code/settings.json.template"
     apply_template "$template" "$target"
     chmod +x "$FRAMEWORK_ROOT/adapters/claude-code/adapter.sh"
+
+    # Agent-brain MCP server. Claude reads MCP from .mcp.json / user config (NOT
+    # settings.json), so register it user-scoped — every Claude session then sees
+    # the brain, matching the global codex/gemini registrations. Best-effort:
+    # only if the claude CLI is present and 'brain' isn't already registered;
+    # AGENT_SKIP_CLAUDE_MCP=1 opts out (tests set this so setup never mutates the
+    # real user MCP config). Guarded so a failure never aborts setup under set -e.
+    local brain_mcp="$FRAMEWORK_ROOT/core/brain/brain-mcp.py"
+    if [[ "${AGENT_SKIP_CLAUDE_MCP:-0}" == "1" ]]; then
+        echo "  skipped: brain MCP registration (AGENT_SKIP_CLAUDE_MCP=1)"
+    elif command -v claude >/dev/null 2>&1; then
+        if claude mcp list 2>/dev/null | grep -qE '^brain[: ]'; then
+            echo "  up-to-date: claude MCP 'brain' already registered"
+        elif claude mcp add brain --scope user -- python3 "$brain_mcp" >/dev/null 2>&1; then
+            echo "  installed: claude MCP 'brain' (user scope) -> $brain_mcp"
+        else
+            echo "  NOTE: could not auto-register brain MCP — copy adapters/claude-code/mcp.json.template to a project .mcp.json (see file)."
+        fi
+    else
+        echo "  NOTE: claude CLI not found — register brain MCP via adapters/claude-code/mcp.json.template (.mcp.json) or 'claude mcp add'."
+    fi
 }
 
 # ---------------------------------------------------------------------------
