@@ -71,6 +71,18 @@ specialist agents. Common dispatches:
 - New code → `code-reviewer` after writing
 - Security-sensitive changes → `security-reviewer`
 
+## Agent brain (shared cross-AI knowledge)
+
+The harness ships a shared knowledge store queried via the `brain` MCP server
+(one store for Claude / Codex / Gemini). Two rules, always:
+
+- **Query before re-deriving** — `brain_search` / `brain_get` / `brain_neighbors`
+  may already hold the answer.
+- **Write quarantine only** — `brain_capture` appends to `raw/`; never write the
+  curated `notes/` or the vault directly. Distill via `/brain-ingest`.
+
+Full policy + provenance/trust model: **AGENTS.md § Agent brain**.
+
 ## Where to look
 
 - Framework hooks: `core/hooks/`
