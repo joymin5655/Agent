@@ -28,3 +28,13 @@ allow_network = false
 #   ~/.codex/quick.config.toml  (see quick.config.toml.template)
 #   ~/.codex/deep.config.toml   (see deep.config.toml.template)
 # Raise model_reasoning_effort within a rung before promoting a rung up.
+
+# Agent-brain MCP server (core/brain/brain-mcp.py) — the shared cross-AI
+# knowledge store. Read tools (brain_search / brain_get / brain_neighbors /
+# brain_stats) + brain_capture, which writes the raw/ quarantine ONLY (never a
+# curated note or the vault). The SAME server is registered for Claude and
+# Gemini, so all three CLIs query one brain. Stdlib only — no pip install.
+# As the final table header, nothing below can bleed into it.
+[mcp_servers.brain]
+command = "python3"
+args = ["{{FRAMEWORK_ROOT}}/core/brain/brain-mcp.py"]
