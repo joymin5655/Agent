@@ -6,7 +6,8 @@
         "matcher": "*",
         "hooks": [
           { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh agent-session-start.sh" },
-          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh session-init.py" }
+          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh session-init.py" },
+          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh session-tier-observer.py" }
         ]
       }
     ],
