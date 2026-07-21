@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   CHANGELOG's latest release heading must all agree on one version; any lag
   fails the suite (this release repaired a three-file drift: README and
   marketplace at 0.5.1 vs plugin manifest at 0.5.3).
+- **backends.json v2 lane registry (PR #89).** Cross-vendor worker lanes gain
+  tiers, `enabled`/preflight flags, and status frontmatter, replacing the flat
+  single-backend registry.
 - **Doctor real-wiring checks (15–18).** `setup.sh --doctor` now verifies the
   install is actually wired, not just installable: **codex wiring** (brain MCP
   `[mcp_servers.brain]` + `codex-shell-wrap.sh` in the live config; WARN when
