@@ -63,7 +63,8 @@ elements, plus:
   interface not written here does not exist for it.
 - **Verification command**: the runnable acceptance check, stated in the spec
   itself — the lane runs it, and the caller RE-RUNS it on return.
-- **Return format**: the lane report (`templates/lane-report.md` — STATUS /
+- **Return format**: the lane report
+  (`skills/supervise/templates/lane-report.md` — STATUS /
   OBJECTIVE / CHANGES / VERIFIED / LANE SAID / GAPS). The caller reads
   `git diff` and re-runs the verification command before accepting; a lane's
   own success claim is never evidence (claim ≠ evidence).
