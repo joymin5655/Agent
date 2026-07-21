@@ -25,8 +25,15 @@ Two severities:
                                 AI-authored path
 
   WARNINGS (exit 0, or exit 1 under --strict) — reported, non-fatal by default.
-    W1  no typed edges   — atomicity favors >=1 edge (the >=2 distill target is a
-                           skill-level policy; the lint floor is >=1, warned)
+    W1  isolated note    — no typed edges in EITHER direction (the note neither
+                           links out nor is linked to; atomicity favors >=1
+                           connection — the >=2 distill target is a skill-level
+                           policy). A hub that only RECEIVES edges (e.g. a topic
+                           note many notes tag) is connected, not isolated.
+                           Seed-status notes (status: seed — imported, not yet
+                           connected) are exempt: a seed is declared-unconnected
+                           by design, and a promotable note must first leave
+                           seed status (brain-ingest distills at status:growing)
     E/W2 dangling edge   — an edge target id has no note in the store
 
 `--strict` promotes warnings to errors: that is the >=1-edge / no-dangling gate
@@ -66,6 +73,13 @@ def lint() -> tuple[list[dict], list[dict], int]:
         node, edges = store._parse(p, text)   # one read shared by every check below
         scanned.append((p, fm, node, edges))
         ids.add(node["id"])
+
+    # Every edge target across the store — a note that appears here is linked
+    # TO, so it is connected even with zero outgoing edges (W1 hub case).
+    targets: set[str] = set()
+    for _, _, _, edges in scanned:
+        for e in edges:
+            targets.add(e["target"])
 
     for p, fm, node, edges in scanned:
         rel = node.get("file") or p.name
@@ -109,8 +123,16 @@ def lint() -> tuple[list[dict], list[dict], int]:
             errors.append({"note": rel, "code": "E6",
                            "message": f"brain-ingest note must be kind=generated, not '{kind}' (forged trust sentinel)"})
 
-        if node.get("edge_count", 0) == 0:
-            warnings.append({"note": rel, "code": "W1", "message": "no typed edges (atomicity favors >=1)"})
+        # W1 = isolated in BOTH directions. Skips status=seed (seeds are
+        # declared-unconnected imports; the promotion path — brain-ingest —
+        # writes status=growing, so the strict gate keeps its teeth exactly
+        # where promotion happens) and skips edge TARGETS (a hub that only
+        # receives edges is connected, not isolated).
+        if (node.get("edge_count", 0) == 0
+                and (node.get("status") or "") != "seed"
+                and node["id"] not in targets):
+            warnings.append({"note": rel, "code": "W1",
+                             "message": "isolated: no typed edges in or out (atomicity favors >=1)"})
         for e in edges:
             if e["target"] not in ids:
                 warnings.append({"note": rel, "code": "W2",

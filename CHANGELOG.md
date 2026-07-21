@@ -8,6 +8,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Doctor real-wiring checks (15–18).** `setup.sh --doctor` now verifies the
+  install is actually wired, not just installable: **codex wiring** (brain MCP
+  `[mcp_servers.brain]` + `codex-shell-wrap.sh` in the live config; WARN when
+  absent, FAIL when a wired path is missing on disk), **gemini wiring** (same
+  policy for `~/.gemini/settings.json` — doctor previously had zero Gemini
+  checks; new `GEMINI_SETTINGS` seam), **claude install path** (reports whether
+  the plugin or the shell install is live; WARN when both — hooks can run
+  twice — or neither), and **brain strict lint** over the live store (WARN when
+  the `/brain-ingest` promotion gate would be blocked). 12 new fixture cases in
+  `setup-doctor-test.sh`.
+
+### Fixed
+- **Brain W1 lint measures isolation, not just out-degree.** `lint.py` W1 now
+  fires only for notes with no typed edges in *either* direction and skips
+  `status: seed` imports (seeds are declared-unconnected; distillations are
+  `status: growing`, where the strict gate keeps its teeth). A freshly seeded
+  store no longer fails `--strict` wholesale — previously 143 warnings made the
+  `/brain-ingest` precondition (`--strict` at 0) permanently unsatisfiable.
+- **doc-reality prunes `.claude/`.** A live multi-session worktree under
+  `.claude/worktrees/` carries *another branch's* doc snapshots; the gate was
+  scanning them and failing this branch for that branch's paths. `.claude/` is
+  untracked runtime state, pruned like `.agent/`.
 - **Hook-manifest parity gate (`core/tests/hook-template-parity.sh` + battery).**
   `hooks/hooks.json` (plugin path) and `adapters/claude-code/settings.json.template`
   (shell-install path) had silently diverged by six hooks; the template is now a

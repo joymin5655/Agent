@@ -225,5 +225,198 @@ OUT_J3="$(CODEX_CONFIG=/nonexistent/codex/config.toml bash "$SETUP" --doctor 2>&
 check "codex-config-absent-skip" $?
 
 echo
+echo "=== (k) codex wiring: brain MCP + wrapper wired to real files -> PASS ==="
+CXW_FIX="$(mktemp -d)"
+touch "$CXW_FIX/brain-mcp.py" "$CXW_FIX/codex-shell-wrap.sh"
+cat > "$CXW_FIX/config.toml" <<EOF
+[tools.shell]
+command = "$CXW_FIX/codex-shell-wrap.sh"
+[mcp_servers.brain]
+command = "python3"
+args = ["$CXW_FIX/brain-mcp.py"]
+EOF
+OUT_K="$(CODEX_CONFIG="$CXW_FIX/config.toml" bash "$SETUP" --doctor 2>&1)"
+[[ "$OUT_K" == *"[PASS"*"codex wiring — brain MCP + shell wrapper wired"* ]]
+check "codex-wired-pass" $?
+
+echo
+echo "=== (k2) codex wiring: brain MCP section absent -> WARN naming it, warn != fail ==="
+cat > "$CXW_FIX/config.toml" <<EOF
+[tools.shell]
+command = "$CXW_FIX/codex-shell-wrap.sh"
+EOF
+OUT_K2="$(CODEX_CONFIG="$CXW_FIX/config.toml" bash "$SETUP" --doctor 2>&1)"
+RC_K2=$?
+[[ $RC_K2 -eq 0 && "$OUT_K2" == *"[WARN"*"codex wiring — not wired: brain MCP"* ]]
+check "codex-unwired-warn" $?
+
+echo
+echo "=== (k3) codex wiring: wired path missing on disk -> FAIL + exit 1 ==="
+cat > "$CXW_FIX/config.toml" <<EOF
+[tools.shell]
+command = "$CXW_FIX/codex-shell-wrap.sh"
+[mcp_servers.brain]
+command = "python3"
+args = ["/nonexistent/brain-mcp.py"]
+EOF
+OUT_K3="$(CODEX_CONFIG="$CXW_FIX/config.toml" bash "$SETUP" --doctor 2>&1)"
+RC_K3=$?
+[[ $RC_K3 -eq 1 && "$OUT_K3" == *"[FAIL"*"codex wiring — wired path missing on disk: brain-mcp.py -> /nonexistent/brain-mcp.py"* ]]
+check "codex-broken-wiring-fail" $?
+rm -rf "$CXW_FIX"
+
+echo
+echo "=== (k5) codex wiring: header present but atypical path shape -> WARN not-wired, NO crash ==="
+CXA_FIX="$(mktemp -d)"
+touch "$CXA_FIX/codex-shell-wrap.sh"
+cat > "$CXA_FIX/config.toml" <<EOF
+[tools.shell]
+command = "$CXA_FIX/codex-shell-wrap.sh"
+[mcp_servers.brain]
+command = "python3"
+args = ["-m", "brain_mcp"]
+EOF
+OUT_K5="$(CODEX_CONFIG="$CXA_FIX/config.toml" bash "$SETUP" --doctor 2>&1)"
+RC_K5=$?
+[[ $RC_K5 -eq 0 && "$OUT_K5" == *"doctor: "*" pass,"* ]]
+check "codex-atypical-no-crash" $?
+[[ "$OUT_K5" == *"[WARN"*"codex wiring — not wired: brain MCP ([mcp_servers.brain] present but no quoted brain-mcp.py path"* ]]
+check "codex-atypical-warns-not-wired" $?
+rm -rf "$CXA_FIX"
+
+echo
+echo "=== (k4) codex wiring: control chars in a wired-but-missing path sanitized in output ==="
+CXE_FIX="$(mktemp -d)"
+touch "$CXE_FIX/codex-shell-wrap.sh"
+printf '[tools.shell]\ncommand = "%s/codex-shell-wrap.sh"\n[mcp_servers.brain]\nargs = ["/nonexistent/\x1b[2Jx/brain-mcp.py"]\n' "$CXE_FIX" > "$CXE_FIX/config.toml"
+OUT_K4="$(CODEX_CONFIG="$CXE_FIX/config.toml" bash "$SETUP" --doctor 2>&1)"
+[[ "$OUT_K4" == *"[FAIL"*"codex wiring"* ]]
+check "codex-escape-path-still-fails" $?
+case "$OUT_K4" in
+  *$'\x1b'"[2J"*) check "codex-escape-stripped-from-output" 1 ;;
+  *)              check "codex-escape-stripped-from-output" 0 ;;
+esac
+rm -rf "$CXE_FIX"
+
+echo
+echo "=== (l) gemini wiring: brain MCP + wrapper wired to real files -> PASS ==="
+GMW_FIX="$(mktemp -d)"
+touch "$GMW_FIX/brain-mcp.py" "$GMW_FIX/gemini-shell-wrap.sh"
+cat > "$GMW_FIX/settings.json" <<EOF
+{"tools":{"shell":{"command":"$GMW_FIX/gemini-shell-wrap.sh"}},
+ "mcpServers":{"brain":{"command":"python3","args":["$GMW_FIX/brain-mcp.py"]}}}
+EOF
+OUT_L="$(GEMINI_SETTINGS="$GMW_FIX/settings.json" bash "$SETUP" --doctor 2>&1)"
+[[ "$OUT_L" == *"[PASS"*"gemini wiring — brain MCP + shell wrapper wired"* ]]
+check "gemini-wired-pass" $?
+
+echo
+echo "=== (l2) gemini wiring: nothing wired -> WARN naming both, warn != fail ==="
+printf '{"model":{"name":"g"}}' > "$GMW_FIX/settings.json"
+OUT_L2="$(GEMINI_SETTINGS="$GMW_FIX/settings.json" bash "$SETUP" --doctor 2>&1)"
+RC_L2=$?
+[[ $RC_L2 -eq 0 && "$OUT_L2" == *"[WARN"*"gemini wiring — not wired: brain MCP"*"shell wrapper"* ]]
+check "gemini-unwired-warn" $?
+
+echo
+echo "=== (l3) gemini wiring: wired path missing on disk -> FAIL + exit 1; bad JSON -> WARN ==="
+printf '{"mcpServers":{"brain":{"args":["/nonexistent/brain-mcp.py"]}},"tools":{"shell":{"command":"/nonexistent/gemini-shell-wrap.sh"}}}' > "$GMW_FIX/settings.json"
+OUT_L3="$(GEMINI_SETTINGS="$GMW_FIX/settings.json" bash "$SETUP" --doctor 2>&1)"
+RC_L3=$?
+[[ $RC_L3 -eq 1 && "$OUT_L3" == *"[FAIL"*"gemini wiring — wired path missing on disk"* ]]
+check "gemini-broken-wiring-fail" $?
+printf '{ not json' > "$GMW_FIX/settings.json"
+OUT_L4="$(GEMINI_SETTINGS="$GMW_FIX/settings.json" bash "$SETUP" --doctor 2>&1)"
+RC_L4=$?
+[[ $RC_L4 -eq 0 && "$OUT_L4" == *"[WARN"*"gemini wiring — settings parse failed"* ]]
+check "gemini-bad-json-warn" $?
+
+echo
+echo "=== (l5) gemini wiring: \\u-escaped control chars in a wired path sanitized in output ==="
+printf '{"tools":{"shell":{"command":"%s/gemini-shell-wrap.sh"}},"mcpServers":{"brain":{"args":["/nonexistent/\\u001b[2Jx/brain-mcp.py"]}}}' "$GMW_FIX" > "$GMW_FIX/settings.json"
+touch "$GMW_FIX/gemini-shell-wrap.sh"
+OUT_L5="$(GEMINI_SETTINGS="$GMW_FIX/settings.json" bash "$SETUP" --doctor 2>&1)"
+[[ "$OUT_L5" == *"[FAIL"*"gemini wiring"* ]]
+check "gemini-escape-path-still-fails" $?
+case "$OUT_L5" in
+  *$'\x1b'"[2J"*) check "gemini-escape-stripped-from-output" 1 ;;
+  *)              check "gemini-escape-stripped-from-output" 0 ;;
+esac
+rm -rf "$GMW_FIX"
+
+echo
+echo "=== (m) claude install path: plugin-only / shell-only -> PASS naming the path ==="
+CIP_FIX="$(mktemp -d)"
+mkdir -p "$CIP_FIX/cache/market/agent-harness/0.5.4"
+OUT_M="$(AGENT_PLUGIN_CACHE_ROOT="$CIP_FIX/cache" AGENT_GLOBAL_SETTINGS=/nonexistent/settings.json bash "$SETUP" --doctor 2>&1)"
+[[ "$OUT_M" == *"[PASS"*"claude install path — plugin"* ]]
+check "claude-path-plugin-pass" $?
+cat > "$CIP_FIX/settings.json" <<'JSON'
+{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[
+  {"type":"command","command":"/home/u/agent/adapters/claude-code/adapter.sh pre-tool-guard.sh"}]}]}}
+JSON
+OUT_M2="$(AGENT_PLUGIN_CACHE_ROOT="$CIP_FIX/empty-cache" AGENT_GLOBAL_SETTINGS="$CIP_FIX/settings.json" bash "$SETUP" --doctor 2>&1)"
+[[ "$OUT_M2" == *"[PASS"*"claude install path — shell install"* ]]
+check "claude-path-shell-pass" $?
+
+echo
+echo "=== (m2) claude install path: both -> WARN double-run; neither -> WARN not wired ==="
+OUT_M3="$(AGENT_PLUGIN_CACHE_ROOT="$CIP_FIX/cache" AGENT_GLOBAL_SETTINGS="$CIP_FIX/settings.json" bash "$SETUP" --doctor 2>&1)"
+RC_M3=$?
+[[ $RC_M3 -eq 0 && "$OUT_M3" == *"[WARN"*"claude install path — BOTH"* ]]
+check "claude-path-both-warn" $?
+OUT_M4="$(AGENT_PLUGIN_CACHE_ROOT="$CIP_FIX/empty-cache" AGENT_GLOBAL_SETTINGS=/nonexistent/settings.json bash "$SETUP" --doctor 2>&1)"
+RC_M4=$?
+[[ $RC_M4 -eq 0 && "$OUT_M4" == *"[WARN"*"claude install path — neither"* ]]
+check "claude-path-neither-warn" $?
+rm -rf "$CIP_FIX"
+
+echo
+echo "=== (n) brain lint: strict-clean fixture store -> PASS; dangling edge -> WARN, warn != fail ==="
+BRN_FIX="$(mktemp -d)"
+REPO_ROOT="$REPO_ROOT" AGENT_BRAIN_DIR="$BRN_FIX" python3 - <<'PY'
+import os, sys
+sys.path.insert(0, os.environ["REPO_ROOT"] + "/core/brain")
+import store
+for nid, ntype, edges in [("concept-a", "concept", {"topic-tag": ["topic-b"]}),
+                          ("topic-b", "topic", {"topic-tag": ["concept-a"]})]:
+    store.write_note(node_id=nid, note_type=ntype, title="t", body="b", edges=edges,
+                     provenance={"ai": "claude", "session": "s", "generated_by": "brain-ingest",
+                                 "source": "raw:x", "kind": "generated"})
+PY
+OUT_N="$(AGENT_BRAIN_DIR="$BRN_FIX" bash "$SETUP" --doctor 2>&1)"
+[[ "$OUT_N" == *"[PASS"*"brain lint —"*"clean"* ]]
+check "brain-strict-clean-pass" $?
+cat > "$BRN_FIX/notes/concept/concept-dangle.md" <<'EOF'
+---
+id: concept-dangle
+type: concept
+title: "dangle"
+status: growing
+edges:
+  supports: [[concept-ghost]]
+provenance:
+  ai: "claude"
+  session: "s"
+  generated_by: "brain-ingest"
+  source: "raw:x"
+  kind: "generated"
+---
+
+body
+EOF
+OUT_N2="$(AGENT_BRAIN_DIR="$BRN_FIX" bash "$SETUP" --doctor 2>&1)"
+RC_N2=$?
+[[ $RC_N2 -eq 0 && "$OUT_N2" == *"[WARN"*"brain lint —"*"promotion is blocked"* ]]
+check "brain-dirty-warn-not-fail" $?
+rm -rf "$BRN_FIX"
+
+echo
+echo "=== (n2) brain lint: no store -> check skipped ==="
+OUT_N3="$(AGENT_BRAIN_DIR=/nonexistent/brain bash "$SETUP" --doctor 2>&1)"
+[[ "$OUT_N3" == *"brain lint — no store at /nonexistent/brain/notes (check skipped)"* ]]
+check "brain-absent-skip" $?
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]
