@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Memory-pollution guard (`core/tests/memory-pollution-guard.sh` + battery).**
+  Fails the suite when an AI-memory plugin's session-context dump (observed
+  injected into `AGENTS.md`) is present in any committable file — tracked or
+  untracked-unignored — so a personal session log can never reach a public
+  commit. Wired into the `/wrap` pre-flight gate list.
+
+### Fixed
+- **Docs truthfulness.** README (en/ko) no longer claims `spec-gate.py` /
+  `tdd-guard.py` "physically block" — both ship in observation mode
+  (`off | dryrun | block`, default `dryrun`; only `pre-tool-guard.sh` always
+  blocks) and the modes are now documented. The "same guardrails no matter which
+  AI" claim is split into decision parity (machine-tested) vs per-runtime event
+  coverage, with an honest **Runtime coverage** table. `docs/architecture.md` no
+  longer claims the plan-approval flag has no consumer — both wired consumers
+  (`spec-gate.py`, `plan-scope-allow.py`) are now named. Stale README counts
+  corrected (39→48 test scripts, 7→8 skills — `brain-ingest` added to the
+  catalog).
+
 ## [0.5.3] — 2026-07-19
 
 > **Consolidation note.** The changelog was not rolled from [0.2.5] (2026-07-08)

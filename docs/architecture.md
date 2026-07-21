@@ -135,13 +135,15 @@ asks/denies are an actual gate: `pre-tool-guard.sh` runs on `PreToolUse` and can
 still can't act, because the boundary sits in front of the effect, not in the model's
 judgment (pillar ③: a request is a request, a boundary is physical).
 
-Plan-mode and TDD are earlier-stage. `plan-gate.py` is a `PostToolUse` hook — it *records*
-plan approval (writes `/tmp/agent-plan-approved` after `ExitPlanMode` or a plan-class
-`Agent`/`Task` dispatch) but nothing currently reads that flag to gate `Write`/`Edit`; the
-consuming enforcer (a supervisor dispatch mode) isn't wired yet — see
-`docs/harness-improvement-plan.md` P1-4/P1-8. `tdd-guard.py` defaults to
-`AGENT_TDD_GUARD_MODE=dryrun`, which logs would-block verdicts as advisory only; it only
-returns a real deny when explicitly set to `AGENT_TDD_GUARD_MODE=block`.
+Plan-mode and TDD gates ship in observation mode. `plan-gate.py` is a `PostToolUse` hook —
+it *records* plan approval (writes `/tmp/agent-plan-approved` after `ExitPlanMode` or a
+plan-class `Agent`/`Task` dispatch) — and the flag has two wired consumers:
+`spec-gate.py` (`PreToolUse` on `Write|Edit|MultiEdit`) short-circuits its gate when the
+flag exists, and `plan-scope-allow.py` reads the same flag to auto-allow `Write`/`Edit`
+permission prompts for plan-approved work. Both `spec-gate.py` and `tdd-guard.py` default to `dryrun`
+(`AGENT_SPEC_GATE_MODE` / `AGENT_TDD_GUARD_MODE`), which logs would-block verdicts as
+advisory only; each returns a real deny only when explicitly set to `block` — see
+`docs/harness-improvement-plan.md` P1-4/P1-8.
 
 **What's honestly NOT model-invariant: generated content.** The plan a model writes, the
 code it produces, the prose in a commit message — these vary by model and prompt. The

@@ -13,8 +13,11 @@ opens PRs — and the harness stops it from falling: committing secrets, collidi
 another AI session, skipping tests, or touching things it shouldn't.
 
 Install it once as a **Claude Code plugin** (or via a shell script for all three CLIs) and
-every project gets the same guardrails. The rules are written once and return the same
-**allow / ask / deny** answer no matter which AI is driving.
+every project gets the same decision core. The rules are written once: when an event
+reaches the core, it returns the same **allow / ask / deny** answer no matter which AI is
+driving — machine-tested by `core/tests/adapter-parity.sh`. What *differs* per runtime is
+how much of the CLI's activity reaches that core; see
+[Runtime coverage](#runtime-coverage).
 
 > Status: v0.5.1 · License: **MIT**
 
@@ -52,13 +55,19 @@ are all here (see [Catalog](#catalog)). What actually sets this harness apart:
 
 **Gates, not vibes** — enforcement lives at the tool boundary, not in prompt wording.
 
-- `core/hooks/spec-gate.py`, `core/hooks/tdd-guard.py`, and `core/hooks/pre-tool-guard.sh`
-  physically block the edit or command; the AI cannot talk its way past them.
+- `core/hooks/pre-tool-guard.sh` physically blocks the edit or command at the tool
+  boundary; the AI cannot talk its way past it.
+- `core/hooks/spec-gate.py` and `core/hooks/tdd-guard.py` are the same kind of gate but
+  ship in **observation mode**: `AGENT_SPEC_GATE_MODE` / `AGENT_TDD_GUARD_MODE` accept
+  `off | dryrun | block`, and the default `dryrun` only logs the would-block verdict.
+  Set `block` to enforce.
 - Completion claims are verified **refute-by-default**: mechanical checks plus a semantic
   judge where low confidence and even judge crashes all resolve to REFUTED (fail-closed) —
   see the [verification diagram](#how-a-run-flows).
 - Cross-AI parity is machine-proved, not promised: `core/tests/adapter-parity.sh` feeds the
-  same events through all three adapters and asserts identical decisions.
+  same events through all three adapters and asserts identical decisions. That proves
+  *decision* parity; *event coverage* still differs per runtime — see
+  [Runtime coverage](#runtime-coverage).
 
 **The harness gates itself** — every enforcement layer is watched by another layer.
 
@@ -92,7 +101,7 @@ New to this space? These ten terms are all you need to read the rest of this pag
 | **hook** | A small script your AI runtime runs automatically before/after an action. It answers **allow**, **ask**, or **deny**. 22 of them (plus 2 shared modules) live in [`core/hooks/`](core/hooks/). |
 | **adapter** | A thin translator between one AI CLI's native event format and the harness's canonical JSON. There are 3 ([`adapters/`](adapters/)). |
 | **agent** | A specialist your AI delegates to — e.g. a security reviewer that only reviews and never writes. 2 ship here ([`agents/`](agents/)). |
-| **skill** | A reusable step-by-step workflow the AI follows, e.g. the commit + PR flow. 7 ship here ([`skills/`](skills/)). |
+| **skill** | A reusable step-by-step workflow the AI follows, e.g. the commit + PR flow. 8 ship here ([`skills/`](skills/)). |
 | **gate** | A hook decision point (deny / ask / block). Every gate is registered with the model weakness it assumes — [`docs/gate-registry.md`](docs/gate-registry.md). |
 | **wave** | One batch of work inside a `/supervise` plan — dispatched, executed, and audited before the next wave starts. |
 | **verdict** | The shared CONFIRMED / REFUTED result schema every verifier emits — [`docs/scoring-convention.md`](docs/scoring-convention.md). |
@@ -100,6 +109,23 @@ New to this space? These ten terms are all you need to read the rest of this pag
 | **mutex** | A lock file so two AI sessions never touch the same risky area (prod DB, deploys, payments) at once. |
 
 More depth: [`docs/concepts/`](docs/concepts/).
+
+## Runtime coverage
+
+Decision parity is proven at the core: the same event produces the same verdict on every
+runtime. Event *coverage* — how much of each CLI's activity is routed through that core —
+is **not** identical, and this is the honest table:
+
+| Capability | Claude Code | Codex CLI | Gemini CLI |
+|---|---|---|---|
+| PreToolUse: shell commands | native hooks | shell wrapper | shell wrapper |
+| PreToolUse: native file-write tools | native hooks | not intercepted | not intercepted |
+| PostToolUse | native hooks | none | none |
+| Session lifecycle | native hooks | simulated (`core/infra/codex-session.sh`) | simulated (`core/infra/gemini-session.sh`) |
+
+Per-runtime details and workarounds:
+[`adapters/codex/README.md`](adapters/codex/README.md) ·
+[`adapters/gemini/README.md`](adapters/gemini/README.md).
 
 ## Prerequisites
 
@@ -147,7 +173,7 @@ Then:
 3. **Scaffold a project.** Inside any repo, run `/project-init` to generate `CLAUDE.md`, rules, and `gitleaks.toml`.
 4. *(Optional)* In a repo that already runs another hook-heavy plugin, disable agent-harness there via `/plugin` — agents stay namespaced as `agent-harness:*`, so there's no collision either way.
 
-The plugin bundles: **2 agents**, **7 skills**, the hook set, and the `/project-init` command.
+The plugin bundles: **2 agents**, **8 skills**, the hook set, and the `/project-init` command.
 
 ### Path B — shell install (Codex CLI / Gemini CLI / all three)
 
@@ -203,7 +229,7 @@ flowchart TB
     subgraph CORE["Layer 1 — core/ (the single source of truth)"]
         H["hooks/ — 22 gates: secret scan · mutex ·<br/>spec-gate · tdd-guard · supervisor …"]
         I["infra/ — sessions · goal mode ·<br/>audits · auto-ship"]
-        T["tests/ — 39 self-verification scripts"]
+        T["tests/ — 48 self-verification scripts"]
     end
     R["rules/ — policy<br/>source of truth"]
     PLUG[".claude-plugin/ + hooks/hooks.json<br/>plugin distribution"]
@@ -324,6 +350,7 @@ Model is cost-tiered per work class ([`docs/model-routing.md`](docs/model-routin
 | `supervise` | Delegate a plan to autonomous execution |
 | `verify-completion` | Independently re-verify a completion claim (deterministic checks + refute-by-default judge) |
 | `wrap` | Commit + PR automation with safeguards |
+| `brain-ingest` | Distill raw session captures into curated brain notes behind a deterministic lint gate |
 | `harness-audit` | Read-only health check of the harness itself (one `verify-all.sh` dry-run, interpreted) |
 | `manager-audit` | Meta-audit of a `/supervise` run — restatement quality, model-routing waste, relative token spend, role compliance; findings become patch proposals for user approval |
 | `harness-help` | Router — which skill fits the situation, and the main flow through them |
@@ -350,7 +377,7 @@ Agent/
 ├── CHANGELOG.md
 │
 ├── agents/             # 2 agent definitions + master-registry.json
-├── skills/             # 7 skills (spec · supervise · verify-completion · wrap · harness-audit · manager-audit · harness-help)
+├── skills/             # 8 skills (spec · supervise · verify-completion · wrap · brain-ingest · harness-audit · manager-audit · harness-help)
 ├── commands/           # 1 slash command (/project-init)
 ├── hooks/              # plugin hook wiring (hooks.json)
 │
@@ -358,7 +385,7 @@ Agent/
 │   ├── hooks/          #   22 portable hooks + 2 shared modules
 │   ├── infra/          #   session coordination · goal mode · audits · auto-ship
 │   ├── git-hooks/      #   pre-commit · pre-push
-│   └── tests/          #   39 test scripts (verify-all.sh runs them all)
+│   └── tests/          #   48 test scripts (verify-all.sh runs them all)
 │
 ├── adapters/           # claude-code (thin) · codex · gemini
 ├── rules/              # generic policy docs
