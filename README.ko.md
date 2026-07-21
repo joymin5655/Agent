@@ -13,8 +13,10 @@
 건드리면 안 되는 영역 접근을 구조적으로 차단합니다.
 
 **Claude Code 플러그인**으로 한 번 설치하면(또는 셸 스크립트로 3개 CLI 모두) 모든
-프로젝트에 같은 가드레일이 적용됩니다. 규칙은 한 번만 작성하고, 어떤 AI가 실행하든 같은
-**allow / ask / deny** 답을 돌려줍니다.
+프로젝트에 같은 결정 코어가 적용됩니다. 규칙은 한 번만 작성하고, 이벤트가 코어에
+도달하면 어떤 AI가 실행하든 같은 **allow / ask / deny** 답을 돌려줍니다 —
+`core/tests/adapter-parity.sh`가 기계로 증명합니다. 런타임마다 다른 것은 CLI 활동 중
+얼마나 많은 부분이 그 코어에 도달하는가입니다 — [런타임 커버리지](#런타임-커버리지) 참고.
 
 > 상태: v0.5.1 · 라이선스: **MIT**
 
@@ -52,13 +54,19 @@ flowchart LR
 
 **Gates, not vibes** — 강제는 프롬프트 문구가 아니라 툴 경계에 있습니다.
 
-- `core/hooks/spec-gate.py`, `core/hooks/tdd-guard.py`, `core/hooks/pre-tool-guard.sh`가
-  편집과 명령을 물리적으로 차단합니다. AI가 말로 설득해서 통과할 수 없습니다.
+- `core/hooks/pre-tool-guard.sh`가 툴 경계에서 편집과 명령을 물리적으로 차단합니다.
+  AI가 말로 설득해서 통과할 수 없습니다.
+- `core/hooks/spec-gate.py`와 `core/hooks/tdd-guard.py`는 같은 종류의 게이트지만 기본은
+  **관찰 모드**입니다: `AGENT_SPEC_GATE_MODE` / `AGENT_TDD_GUARD_MODE`가
+  `off | dryrun | block`을 받고, 기본값 `dryrun`은 차단했을 판정을 로그로만 남깁니다.
+  강제하려면 `block`으로 설정하세요.
 - 완료 주장은 **refute-by-default**로 검증됩니다: 기계 검증 + 시맨틱 저지 이중 구조로,
   낮은 확신도는 물론 저지 크래시조차 전부 REFUTED로 수렴합니다(fail-closed) —
   [검증 다이어그램](#실행-흐름-심화) 참고.
 - Cross-AI 동일성은 약속이 아니라 기계 증명입니다: `core/tests/adapter-parity.sh`가
-  같은 이벤트를 3개 어댑터에 흘려 동일한 결정을 assert합니다.
+  같은 이벤트를 3개 어댑터에 흘려 동일한 결정을 assert합니다. 이것이 증명하는 것은
+  *결정* 동일성입니다. 런타임별 *이벤트 커버리지*는 다릅니다 —
+  [런타임 커버리지](#런타임-커버리지) 참고.
 
 **하네스가 하네스를 게이트한다** — 모든 강제 계층은 다른 계층이 감시합니다.
 
@@ -91,7 +99,7 @@ flowchart LR
 | **훅(hook)** | AI 런타임이 어떤 행동 전/후에 자동으로 실행하는 작은 스크립트. **allow**, **ask**, **deny** 중 하나로 답합니다. [`core/hooks/`](core/hooks/)에 22개(+공유 모듈 2개)가 있습니다. |
 | **어댑터(adapter)** | 각 AI CLI의 고유 이벤트 형식과 하네스의 표준 JSON 사이를 번역하는 얇은 계층. 3개가 있습니다([`adapters/`](adapters/)). |
 | **에이전트(agent)** | AI가 일을 위임하는 전문가 — 예: 리뷰만 하고 절대 코드를 쓰지 않는 보안 리뷰어. 2종이 포함됩니다([`agents/`](agents/)). |
-| **스킬(skill)** | AI가 따라가는 재사용 가능한 단계별 워크플로우 — 예: 커밋+PR 자동화 흐름. 7종이 포함됩니다([`skills/`](skills/)). |
+| **스킬(skill)** | AI가 따라가는 재사용 가능한 단계별 워크플로우 — 예: 커밋+PR 자동화 흐름. 8종이 포함됩니다([`skills/`](skills/)). |
 | **게이트(gate)** | 훅의 결정 지점(deny / ask / block). 모든 게이트는 자신이 가정하는 모델 약점과 함께 등록됩니다 — [`docs/gate-registry.md`](docs/gate-registry.md). |
 | **웨이브(wave)** | `/supervise` 플랜 안의 작업 묶음 하나 — 디스패치·실행·감사를 마쳐야 다음 웨이브가 시작됩니다. |
 | **판정(verdict)** | 모든 검증기가 뱉는 공용 CONFIRMED / REFUTED 결과 스키마 — [`docs/scoring-convention.md`](docs/scoring-convention.md). |
@@ -99,6 +107,23 @@ flowchart LR
 | **뮤텍스(mutex)** | 두 AI 세션이 같은 위험 영역(운영 DB, 배포, 결제)을 동시에 건드리지 못하게 하는 잠금 파일. |
 
 더 깊은 설명: [`docs/concepts/`](docs/concepts/).
+
+## 런타임 커버리지
+
+결정 동일성은 코어에서 증명됩니다: 같은 이벤트는 어떤 런타임에서든 같은 판정을 받습니다.
+반면 이벤트 *커버리지* — 각 CLI의 활동 중 얼마나 많은 부분이 그 코어를 거치는가 — 는
+동일하지 **않습니다**. 정직한 표는 다음과 같습니다:
+
+| 능력 | Claude Code | Codex CLI | Gemini CLI |
+|---|---|---|---|
+| PreToolUse: 셸 명령 | 네이티브 훅 | 셸 래퍼 | 셸 래퍼 |
+| PreToolUse: 네이티브 파일 쓰기 도구 | 네이티브 훅 | 미가로채기 | 미가로채기 |
+| PostToolUse | 네이티브 훅 | 없음 | 없음 |
+| 세션 라이프사이클 | 네이티브 훅 | 시뮬레이션 (`core/infra/codex-session.sh`) | 시뮬레이션 (`core/infra/gemini-session.sh`) |
+
+런타임별 상세와 우회 방법:
+[`adapters/codex/README.md`](adapters/codex/README.md) ·
+[`adapters/gemini/README.md`](adapters/gemini/README.md).
 
 ## 사전 준비물
 
@@ -146,7 +171,7 @@ flowchart LR
 3. **프로젝트를 스캐폴드합니다.** 아무 저장소에서 `/project-init`을 실행하면 `CLAUDE.md`, 규칙, `gitleaks.toml`이 생성됩니다.
 4. *(선택)* 훅이 많은 다른 플러그인을 쓰는 저장소에서는 `/plugin`으로 agent-harness를 꺼도 됩니다 — 에이전트는 `agent-harness:*` 네임스페이스라 어느 쪽이든 충돌하지 않습니다.
 
-플러그인에 포함: **에이전트 2종**, **스킬 7종**, 훅 세트, `/project-init` 커맨드.
+플러그인에 포함: **에이전트 2종**, **스킬 8종**, 훅 세트, `/project-init` 커맨드.
 
 ### Path B — 셸 설치 (Codex CLI / Gemini CLI / 3개 전부)
 
@@ -202,7 +227,7 @@ flowchart TB
     subgraph CORE["Layer 1 — core/ (단일 진실 원천)"]
         H["hooks/ — 게이트 22개: 시크릿 스캔 · 뮤텍스 ·<br/>spec-gate · tdd-guard · supervisor …"]
         I["infra/ — 세션 · goal 모드 ·<br/>감사 · auto-ship"]
-        T["tests/ — 자가검증 스크립트 39개"]
+        T["tests/ — 자가검증 스크립트 48개"]
     end
     R["rules/ — 정책<br/>원문(SOT)"]
     PLUG[".claude-plugin/ + hooks/hooks.json<br/>플러그인 배포"]
@@ -325,6 +350,7 @@ manager-audit의 발견은 절대 스스로 적용되지 않습니다 — `PROPO
 | `supervise` | 플랜을 자율 실행에 위임 |
 | `verify-completion` | 완료 주장을 독립적으로 재검증 (결정론적 검사 + refute-by-default 저지) |
 | `wrap` | 세이프가드가 걸린 커밋 + PR 자동화 |
+| `brain-ingest` | raw 세션 캡처를 결정론적 lint 게이트 뒤에서 큐레이션된 brain 노트로 증류 |
 | `harness-audit` | 하네스 자체의 읽기 전용 건강 검진 (`verify-all.sh` 드라이런 1회, 해석 포함) |
 | `manager-audit` | `/supervise` 실행의 메타 감사 — 재구성 품질, 모델 라우팅 낭비, 상대 토큰 지출, 역할 준수; 발견은 사용자 승인용 패치 제안이 됨 |
 | `harness-help` | 라우터 — 상황에 맞는 스킬 안내와 전체 흐름 |
@@ -351,7 +377,7 @@ Agent/
 ├── CHANGELOG.md
 │
 ├── agents/             # 에이전트 정의 2종 + master-registry.json
-├── skills/             # 스킬 7종 (spec · supervise · verify-completion · wrap · harness-audit · manager-audit · harness-help)
+├── skills/             # 스킬 8종 (spec · supervise · verify-completion · wrap · brain-ingest · harness-audit · manager-audit · harness-help)
 ├── commands/           # 슬래시 커맨드 1개 (/project-init)
 ├── hooks/              # 플러그인 훅 배선 (hooks.json)
 │
@@ -359,7 +385,7 @@ Agent/
 │   ├── hooks/          #   이식 가능한 훅 22개 + 공유 모듈 2개
 │   ├── infra/          #   세션 조정 · goal 모드 · 감사 · auto-ship
 │   ├── git-hooks/      #   pre-commit · pre-push
-│   └── tests/          #   테스트 스크립트 39개 (verify-all.sh가 전부 실행)
+│   └── tests/          #   테스트 스크립트 48개 (verify-all.sh가 전부 실행)
 │
 ├── adapters/           # claude-code (얇음) · codex · gemini
 ├── rules/              # 범용 정책 문서
