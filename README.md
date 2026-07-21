@@ -229,7 +229,7 @@ flowchart TB
     subgraph CORE["Layer 1 — core/ (the single source of truth)"]
         H["hooks/ — 22 gates: secret scan · mutex ·<br/>spec-gate · tdd-guard · supervisor …"]
         I["infra/ — sessions · goal mode ·<br/>audits · auto-ship"]
-        T["tests/ — 48 self-verification scripts"]
+        T["tests/ — 50 self-verification scripts"]
     end
     R["rules/ — policy<br/>source of truth"]
     PLUG[".claude-plugin/ + hooks/hooks.json<br/>plugin distribution"]
@@ -362,7 +362,7 @@ Model is cost-tiered per work class ([`docs/model-routing.md`](docs/model-routin
 | tdd-guard · spec-gate · supervisor · plan-scope-allow | PreToolUse (Write/Edit) |
 | session heartbeat | UserPromptSubmit |
 | plan-gate · model-routing-observer | PostToolUse (ExitPlanMode/Task/Agent) |
-| session-quality-gate · session-close | Stop |
+| session-quality-gate · brain-capture · session-close | Stop |
 
 Command: **`/project-init`** scaffolds project-level files (`CLAUDE.md`, rules, `gitleaks.toml`).
 
@@ -385,7 +385,7 @@ Agent/
 │   ├── hooks/          #   22 portable hooks + 2 shared modules
 │   ├── infra/          #   session coordination · goal mode · audits · auto-ship
 │   ├── git-hooks/      #   pre-commit · pre-push
-│   └── tests/          #   48 test scripts (verify-all.sh runs them all)
+│   └── tests/          #   50 test scripts (verify-all.sh runs them all)
 │
 ├── adapters/           # claude-code (thin) · codex · gemini
 ├── rules/              # generic policy docs
