@@ -1,14 +1,47 @@
 {
-  "version": 1,
-  "comment": "Machine-readable SSOT for cross-vendor worker dispatch (docs/model-routing.md § Cross-vendor second-opinion lane). Roles map to backends, backends map to CLI argv. Model names NEVER appear here — each vendor's adapter/profile owns its tier (codex --profile deep = TOP-tier reasoning per the enforcement map).",
+  "version": 2,
+  "comment": "Machine-readable SSOT for cross-vendor worker dispatch (docs/model-routing.md § Cross-vendor lanes). Roles map to backends at a tier; backends map to CLI argv. argv = cmd + tier_args[role.tier] + role.args_extra. Model names NEVER appear here — each vendor's adapter/profile owns its tier (codex --profile deep = TOP-tier reasoning per the enforcement map). A disabled backend (enabled: false) refuses loudly with its disabled_reason — never a silent fallback.",
   "roles": {
-    "second-opinion-review": { "backend": "codex", "fallback": null },
-    "second-opinion-verify": { "backend": "codex", "fallback": null }
+    "second-opinion-review": { "backend": "codex", "tier": "TOP", "fallback": null },
+    "second-opinion-verify": { "backend": "codex", "tier": "TOP", "fallback": null },
+    "implementer": {
+      "backend": "codex",
+      "tier": "MID",
+      "fallback": null,
+      "args_extra": ["--sandbox", "workspace-write", "--ask-for-approval", "never"]
+    },
+    "advisor": { "backend": "codex", "tier": "TOP", "fallback": null }
   },
   "backends": {
     "codex": {
+      "vendor": "openai",
       "connection": "cli",
-      "cmd": ["codex", "exec", "--profile", "deep"],
+      "enabled": true,
+      "cmd": ["codex", "exec"],
+      "tier_args": {
+        "LOW": ["--profile", "quick"],
+        "MID": [],
+        "TOP": ["--profile", "deep"]
+      },
+      "preflight": ["codex", "--version"],
+      "timeout_s": 300
+    },
+    "gemini": {
+      "vendor": "google",
+      "connection": "cli",
+      "enabled": false,
+      "cmd": ["gemini", "-p", ""],
+      "tier_args": {},
+      "disabled_reason": "individual OAuth sign-in retired upstream (2026-07); the paid credential path requires prepaid credits. Set enabled: true only after verifying a working login on this machine.",
+      "timeout_s": 300
+    },
+    "grok": {
+      "vendor": "xai",
+      "connection": "cli",
+      "enabled": false,
+      "cmd": ["grok", "-p"],
+      "tier_args": {},
+      "disabled_reason": "CLI is early beta (2026-07) — config slot only. Set enabled: true once the CLI is installed and authenticated.",
       "timeout_s": 300
     }
   }

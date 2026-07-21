@@ -13,6 +13,15 @@
 #   approval      <- AGENT_WORKER_YES unset -> exit 3 and NO backend invoked
 #   bad-role      <- unknown role -> exit 2 naming known roles
 #
+# Registry v2 additions (v1 fixture above stays valid — back-compat is itself
+# under test):
+#   status        <- capture header carries status: complete (mechanical truth)
+#   tier-argv     <- argv = cmd + tier_args[role.tier] + role.args_extra
+#   disabled      <- enabled:false -> loud refusal citing disabled_reason,
+#                    exit 127, status: unavailable capture on disk
+#   disabled-fb   <- disabled primary -> fallback runs, reason names disable
+#   preflight     <- failing preflight -> unavailable; passing preflight -> ok
+#
 # Registry is pinned via AGENT_BACKENDS_FILE and output via AGENT_WORKERS_DIR
 # (test seams) so the battery never touches core/infra/backends.json routing
 # assumptions or the repo's own .agent/ (hook-config-test lesson: a test that
@@ -210,6 +219,156 @@ if [[ $rc -eq 2 ]] && grep -q "review" "$WORK/err6"; then
     ok "bad-role — exit 2, known roles listed"
 else
     bad "bad-role" "rc=$rc (want 2) err=$(head -1 "$WORK/err6" 2>/dev/null)"
+fi
+
+# --- 7. v2 registry: tier/args_extra argv composition + status header ----
+
+REG2="$WORK/backends-v2.json"
+cat > "$REG2" <<'JSON'
+{
+  "version": 2,
+  "roles": {
+    "review":  { "backend": "codex", "tier": "TOP", "fallback": "gemini" },
+    "build":   { "backend": "codex", "tier": "MID", "fallback": null,
+                 "args_extra": ["--sandbox", "workspace-write"] },
+    "lowfan":  { "backend": "codex", "tier": "LOW", "fallback": null }
+  },
+  "backends": {
+    "codex":  { "vendor": "openai", "connection": "cli", "enabled": true,
+                "cmd": ["codex", "exec"],
+                "tier_args": { "LOW": ["--profile", "quick"], "MID": [],
+                               "TOP": ["--profile", "deep"] },
+                "timeout_s": 30 },
+    "gemini": { "vendor": "google", "connection": "cli", "enabled": true,
+                "cmd": ["gemini", "-p", ""], "tier_args": {}, "timeout_s": 30 }
+  }
+}
+JSON
+
+ARGV_DIR="$WORK/bin-argv"
+mkdir -p "$ARGV_DIR"
+cat > "$ARGV_DIR/codex" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$@" > "$MARKERS/codex.argv"
+cat >/dev/null
+echo "CODEX-STUB-REPLY"
+EOF
+chmod +x "$ARGV_DIR/codex"
+
+run_v2() {  # run_v2 <stub-dir> <role> [extra-env...]
+    local stub_dir="$1" role="$2"; shift 2
+    env PATH="$stub_dir:/usr/bin:/bin" \
+        AGENT_BACKENDS_FILE="$REG2" \
+        AGENT_WORKERS_DIR="$WORK/workers" \
+        AGENT_WORKER_YES=1 \
+        "$@" \
+        bash "$DISPATCHER" "$role" <<< "sample prompt"
+}
+
+out="$(run_v2 "$ARGV_DIR" review 2>"$WORK/err7")"; rc=$?
+if [[ $rc -eq 0 && -f "$out" ]] \
+   && [[ "$(tr '\n' ' ' < "$MARKERS/codex.argv")" == "exec --profile deep " ]] \
+   && grep -q "^status: complete$" "$out"; then
+    ok "v2 tier argv — TOP composes cmd+tier_args; status: complete in header"
+else
+    bad "v2 tier argv" "rc=$rc argv=[$(tr '\n' ' ' < "$MARKERS/codex.argv" 2>/dev/null)] out=$out"
+fi
+
+out="$(run_v2 "$ARGV_DIR" build 2>"$WORK/err7b")"; rc=$?
+if [[ $rc -eq 0 ]] \
+   && [[ "$(tr '\n' ' ' < "$MARKERS/codex.argv")" == "exec --sandbox workspace-write " ]]; then
+    ok "v2 args_extra — MID (empty tier_args) + role args_extra appended"
+else
+    bad "v2 args_extra" "rc=$rc argv=[$(tr '\n' ' ' < "$MARKERS/codex.argv" 2>/dev/null)]"
+fi
+
+out="$(run_v2 "$ARGV_DIR" lowfan 2>"$WORK/err7c")"; rc=$?
+if [[ $rc -eq 0 ]] \
+   && [[ "$(tr '\n' ' ' < "$MARKERS/codex.argv")" == "exec --profile quick " ]]; then
+    ok "v2 LOW tier — --profile quick composed"
+else
+    bad "v2 LOW tier" "rc=$rc argv=[$(tr '\n' ' ' < "$MARKERS/codex.argv" 2>/dev/null)]"
+fi
+
+# --- 8. v2 disabled backend: loud refusal, exit 127, unavailable capture --
+
+REG3="$WORK/backends-v2-disabled.json"
+cat > "$REG3" <<'JSON'
+{
+  "version": 2,
+  "roles": {
+    "solo": { "backend": "gemini", "tier": "TOP", "fallback": null },
+    "duo":  { "backend": "gemini", "tier": "TOP", "fallback": "codex" }
+  },
+  "backends": {
+    "gemini": { "vendor": "google", "connection": "cli", "enabled": false,
+                "cmd": ["gemini", "-p", ""], "tier_args": {},
+                "disabled_reason": "auth path retired upstream", "timeout_s": 30 },
+    "codex":  { "vendor": "openai", "connection": "cli", "enabled": true,
+                "cmd": ["codex", "exec"],
+                "tier_args": { "TOP": ["--profile", "deep"] }, "timeout_s": 30 }
+  }
+}
+JSON
+
+DIS_WORKERS="$WORK/workers-disabled"
+env PATH="$BOTH:/usr/bin:/bin" AGENT_BACKENDS_FILE="$REG3" \
+    AGENT_WORKERS_DIR="$DIS_WORKERS" AGENT_WORKER_YES=1 \
+    bash "$DISPATCHER" solo <<< "p" >"$WORK/out8" 2>"$WORK/err8"; rc=$?
+cap8="$(ls "$DIS_WORKERS" 2>/dev/null | head -1)"
+if [[ $rc -eq 127 ]] && grep -q "disabled in registry: auth path retired upstream" "$WORK/err8" \
+   && [[ -n "$cap8" ]] && grep -q "^status: unavailable$" "$DIS_WORKERS/$cap8" \
+   && ! grep -q "GEMINI-STUB-REPLY" "$DIS_WORKERS/$cap8"; then
+    ok "v2 disabled — exit 127, reason on stderr, status: unavailable capture, no dispatch"
+else
+    bad "v2 disabled" "rc=$rc (want 127) err=$(head -1 "$WORK/err8" 2>/dev/null) cap=$cap8"
+fi
+
+out="$(env PATH="$BOTH:/usr/bin:/bin" AGENT_BACKENDS_FILE="$REG3" \
+    AGENT_WORKERS_DIR="$WORK/workers" AGENT_WORKER_YES=1 \
+    bash "$DISPATCHER" duo <<< "p" 2>"$WORK/err8b")"; rc=$?
+if [[ $rc -eq 0 && -f "$out" ]] && grep -q "CODEX-STUB-REPLY" "$out" \
+   && grep -q "fallback_reason: primary 'gemini' unavailable (backend 'gemini' disabled in registry" "$out"; then
+    ok "v2 disabled-fb — fallback ran, reason names the disable"
+else
+    bad "v2 disabled-fb" "rc=$rc out=$out err=$(head -1 "$WORK/err8b" 2>/dev/null)"
+fi
+
+# --- 9. v2 preflight: failing probe -> unavailable; passing probe -> ok ---
+
+REG4="$WORK/backends-v2-preflight.json"
+cat > "$REG4" <<'JSON'
+{
+  "version": 2,
+  "roles": { "solo": { "backend": "codex", "tier": "TOP", "fallback": null } },
+  "backends": {
+    "codex": { "vendor": "openai", "connection": "cli", "enabled": true,
+               "cmd": ["codex", "exec"],
+               "tier_args": { "TOP": ["--profile", "deep"] },
+               "preflight": ["false"], "timeout_s": 30 }
+  }
+}
+JSON
+
+rm -f "$MARKERS/codex.called"
+env PATH="$BOTH:/usr/bin:/bin" AGENT_BACKENDS_FILE="$REG4" \
+    AGENT_WORKERS_DIR="$WORK/workers" AGENT_WORKER_YES=1 \
+    bash "$DISPATCHER" solo <<< "p" >"$WORK/out9" 2>"$WORK/err9"; rc=$?
+if [[ $rc -eq 127 && ! -f "$MARKERS/codex.called" ]] \
+   && grep -q "preflight failed" "$WORK/err9"; then
+    ok "v2 preflight-fail — unavailable (127), backend never dispatched"
+else
+    bad "v2 preflight-fail" "rc=$rc (want 127) called=$([[ -f "$MARKERS/codex.called" ]] && echo yes)"
+fi
+
+sed 's/\["false"\]/["true"]/' "$REG4" > "$REG4.ok" && mv "$REG4.ok" "$REG4"
+out="$(env PATH="$BOTH:/usr/bin:/bin" AGENT_BACKENDS_FILE="$REG4" \
+    AGENT_WORKERS_DIR="$WORK/workers" AGENT_WORKER_YES=1 \
+    bash "$DISPATCHER" solo <<< "p" 2>"$WORK/err9b")"; rc=$?
+if [[ $rc -eq 0 && -f "$out" ]] && grep -q "CODEX-STUB-REPLY" "$out"; then
+    ok "v2 preflight-pass — dispatch proceeds normally"
+else
+    bad "v2 preflight-pass" "rc=$rc out=$out err=$(head -1 "$WORK/err9b" 2>/dev/null)"
 fi
 
 # --- tally ---------------------------------------------------------------
