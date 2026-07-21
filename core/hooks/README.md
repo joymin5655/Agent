@@ -24,6 +24,7 @@ AI-agnostic hook implementations. Each script reads a canonical event JSON from 
 | `session-close.sh` | Stop | Session cleanup + broadcast done + optional macOS notification |
 | `plan-gate.py` | PostToolUse (Agent + ExitPlanMode) | Set plan-approval flag after plan-class agent or ExitPlanMode |
 | `model-routing-observer.py` | PostToolUse (Task/Agent) | Pure observer — classify each subagent dispatch's model choice (override / pinned_specialist / inherit_top) into `.agent/logs/model-routing.jsonl`, plus a spend signal (`prompt_chars`, best-effort `total_tokens`) consumed by `core/infra/manager-audit.sh`; measures the docs/model-routing.md call-time convention before any enforcement |
+| `session-tier-observer.py` | SessionStart | Pure observer — best-effort detect the session's model tier (stdin model field → transcript tail → settings default) and surface the routing advisory on stderr ("session=TOP; execution dispatches at MID/LOW"); logs to `.agent/logs/session-tier.jsonl` for /manager-audit. Detection is allowed, switching is not (docs/model-routing.md) |
 | `supervisor.py` | UserPromptSubmit + PreToolUse (Write/Edit/MultiEdit) + PostToolUse (Task/Agent) | v0.2 minimal dispatcher — records a registry-keyword intent, `ask`s on the next edit (once), resolves on specialist dispatch; independent security file-glob matcher; ghost→executor fallback; `AGENT_SUPERVISOR_MODE=observe` downgrades to stderr |
 
 ## Roadmap — v0.2.0 ports
