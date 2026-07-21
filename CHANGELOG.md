@@ -57,6 +57,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Plugin session capture.** `brain-capture.py` added to the plugin Stop chain
   (`hooks/hooks.json`) — the 0.5.3 brain feature now actually captures sessions
   on the plugin install path, not just shell installs.
+- **Codex profile templates refreshed to the GPT-5.6 family (PR #88).**
+  quick → light lane, deep → top lane at xhigh effort, ahead of the 2026-07-23
+  legacy-model sunset; model ids verified against the Codex CLI's own models
+  cache, with a currency test (`codex-template-currency-test.sh`) pinning them.
 - **Memory-pollution guard (`core/tests/memory-pollution-guard.sh` + battery).**
   Fails the suite when an AI-memory plugin's session-context dump (observed
   injected into `AGENTS.md`) is present in any committable file — tracked or

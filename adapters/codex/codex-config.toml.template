@@ -21,7 +21,8 @@ allow_network = false
 # Skills directory (optional — set if using ~/.codex/skills layout).
 
 # Model tier profiles (docs/model-routing.md). The unprefixed default model is
-# the workhorse (MID) tier; the LOW and TOP rungs are reached with
+# the workhorse (MID) tier (GPT-5.6 family as of 2026-07 — Sol/Terra/Luna);
+# the LOW and TOP rungs are reached with
 # `codex --profile quick` / `codex --profile deep`.
 # Recent Codex CLI builds reject inline `[profiles.*]` tables as legacy —
 # each profile lives in its own file next to config.toml instead:
