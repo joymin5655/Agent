@@ -52,6 +52,26 @@ tool result from its own session (path, exit code, diff) — self-assessment
 without evidence is not a status report. Prompt-side rules for frontier-model
 dispatches: `docs/concepts/fable-5-prompting.md`.
 
+## Cross-vendor lane dispatch (when the worker is an external CLI)
+
+A dispatch that leaves the Claude runtime — a `core/infra/call-worker.sh` role
+(`implementer`, `second-opinion-*`, `advisor`) — carries the same four
+elements, plus:
+
+- **Interfaces**: name the exact function/CLI/API surfaces the lane may rely
+  on or must expose. An external lane shares no runtime with us, so an
+  interface not written here does not exist for it.
+- **Verification command**: the runnable acceptance check, stated in the spec
+  itself — the lane runs it, and the caller RE-RUNS it on return.
+- **Return format**: the lane report
+  (`skills/supervise/templates/lane-report.md` — STATUS /
+  OBJECTIVE / CHANGES / VERIFIED / LANE SAID / GAPS). The caller reads
+  `git diff` and re-runs the verification command before accepting; a lane's
+  own success claim is never evidence (claim ≠ evidence).
+- **Spec transport**: unique temp file per dispatch, piped via
+  `call-worker.sh <role>`; the printed capture's `status:` frontmatter is the
+  mechanical record beneath the lane's self-report.
+
 ## Wave shaping — fan-out cap and lanes
 
 - **Fan-out cap 3–5** concurrent workers per wave. A wave with more concurrent
