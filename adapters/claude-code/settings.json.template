@@ -1,5 +1,5 @@
 {
-  "_comment": "Claude Code hook wire-up template. Copy to ~/.claude/settings.json (or merge into existing). Replace {{FRAMEWORK_ROOT}} with the absolute path to your Agent/ checkout (e.g., /Users/yourname/Agent).",
+  "_comment": "Claude Code hook wire-up template. Copy to ~/.claude/settings.json (or merge into existing). Replace {{FRAMEWORK_ROOT}} with the absolute path to your Agent/ checkout (e.g., /Users/yourname/Agent). Kept in lockstep with hooks/hooks.json (the plugin manifest) — core/tests/hook-template-parity.sh fails the suite on drift.",
   "hooks": {
     "SessionStart": [
       {
@@ -25,7 +25,7 @@
         "matcher": "*",
         "hooks": [
           { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh agent-session-heartbeat.sh" },
-          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh plan-gate.py" }
+          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh supervisor.py" }
         ]
       }
     ],
@@ -50,15 +50,32 @@
           { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh secret-content-scan.py" },
           { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh r4-file-mutex-check.sh" },
           { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh tdd-guard.py" },
-          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh supervisor.py" }
+          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh spec-gate.py" },
+          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh supervisor.py" },
+          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh plan-scope-allow.py" }
+        ]
+      },
+      {
+        "matcher": "WebFetch|mcp__supabase__execute_sql|mcp__supabase__apply_migration|mcp__supabase__deploy_edge_function|mcp__firecrawl__firecrawl_scrape|mcp__firecrawl__firecrawl_crawl|mcp__firecrawl__firecrawl_search|mcp__firecrawl__firecrawl_extract|mcp__firecrawl__firecrawl_map|mcp__claude_ai_Notion__notion-create-pages|mcp__claude_ai_Notion__notion-update-page|mcp__claude_ai_Notion__notion-create-comment|mcp__claude_ai_Google_Drive__create_file|mcp__claude_ai_Google_Drive__copy_file|mcp__stitch__upload_design_md|mcp__stitch__create_design_system_from_design_md",
+        "hooks": [
+          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh secret-content-scan.py" }
         ]
       }
     ],
     "PostToolUse": [
       {
+        "matcher": "ExitPlanMode|Task|Agent",
+        "hooks": [
+          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh plan-gate.py" },
+          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh supervisor.py" },
+          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh model-routing-observer.py" }
+        ]
+      },
+      {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh circuit-breaker.py" }
+          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh circuit-breaker.py" },
+          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh rubric-commit-judge.sh" }
         ]
       },
       {

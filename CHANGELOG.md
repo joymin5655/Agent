@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Hook-manifest parity gate (`core/tests/hook-template-parity.sh` + battery).**
+  `hooks/hooks.json` (plugin path) and `adapters/claude-code/settings.json.template`
+  (shell-install path) had silently diverged by six hooks; the template is now a
+  faithful mirror of the manifest (SSOT: `hooks/hooks.json`) and the gate fails
+  the suite on any future drift (path prefixes normalized; chain order enforced).
+  Shell installs now also wire `spec-gate.py`, `plan-scope-allow.py`,
+  `model-routing-observer.py`, `rubric-commit-judge.sh`, the WebFetch/MCP
+  `secret-content-scan.py` matcher, and `supervisor.py` on UserPromptSubmit
+  (replacing a stale `plan-gate.py`) — behavior change is observation-only since
+  spec-gate/tdd-guard default to `dryrun`.
+- **Plugin session capture.** `brain-capture.py` added to the plugin Stop chain
+  (`hooks/hooks.json`) — the 0.5.3 brain feature now actually captures sessions
+  on the plugin install path, not just shell installs.
 - **Memory-pollution guard (`core/tests/memory-pollution-guard.sh` + battery).**
   Fails the suite when an AI-memory plugin's session-context dump (observed
   injected into `AGENTS.md`) is present in any committable file — tracked or
