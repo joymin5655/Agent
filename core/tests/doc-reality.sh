@@ -86,11 +86,13 @@ HITS=""
 
 # ── (A) referenced-path existence ────────────────────────────────────────────────────
 # collect_docs_A — every current-state *.md (recursive), minus the forward-looking backlog,
-# the backward-looking CHANGELOG, legacy/, and .agent/ (gitignored runtime plans/logs). `find`
-# (not a glob) so nested docs — docs/** and every */README.md — are covered; all prune terms
-# are portable to BSD + GNU find.
+# the backward-looking CHANGELOG, legacy/, .agent/ (gitignored runtime plans/logs), and
+# .claude/ (gitignored runtime state — session worktrees under .claude/worktrees/ carry
+# OTHER branches' doc snapshots, which must never gate this branch). `find` (not a glob)
+# so nested docs — docs/** and every */README.md — are covered; all prune terms are
+# portable to BSD + GNU find.
 collect_docs_A() {
-  find "$TARGET" \( -name .git -o -name legacy -o -name .agent \) -prune -o \
+  find "$TARGET" \( -name .git -o -name legacy -o -name .agent -o -name .claude \) -prune -o \
        -type f -name '*.md' -print 2>/dev/null \
     | grep -vxF "$PLAN" \
     | grep -vxF "$TARGET/CHANGELOG.md" \

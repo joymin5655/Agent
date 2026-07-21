@@ -588,6 +588,164 @@ PY
         add_row WARN "goal-mode deps — missing: $goal_missing; /supervise --goal-mode will hard-fail (supervisor-goal.sh exit 127), manager-audit token lane degrades. Install: brew/apt install sqlite3 jq"
     fi
 
+    # 15. codex wiring — check 13 verifies tier profiles; this verifies the
+    #     framework is actually WIRED into the codex config: the brain MCP
+    #     server ([mcp_servers.brain] -> core/brain/brain-mcp.py) and the
+    #     shell wrapper (codex-shell-wrap.sh). Absent config -> skipped.
+    #     Wiring absent -> WARN (setup.sh can install it, but nothing before
+    #     this check verified it STAYED installed). Wiring present but
+    #     pointing at a file that does not exist -> FAIL (the config claims a
+    #     harness that is not on disk — stale config or moved checkout).
+    if [[ ! -f "$codex_cfg" ]]; then
+        add_row PASS "codex wiring — no codex config at ${codex_cfg/#$HOME/~} (check skipped)"
+    else
+        local cx_missing="" cx_broken="" cx_path cx_shown
+        if grep -q '^\[mcp_servers\.brain\]' "$codex_cfg" 2>/dev/null; then
+            # Extraction scoped to the [mcp_servers.brain] section body so a
+            # brain-mcp.py-shaped string under another section can't leak in.
+            # `|| true`: a present header with an atypical path shape must
+            # CLASSIFY below (not-wired), never abort the doctor under
+            # set -e/pipefail (grep -o exits 1 on no match).
+            cx_path="$(sed -n '/^\[mcp_servers\.brain\]/,/^\[/p' "$codex_cfg" 2>/dev/null \
+                | grep -o '"[^"]*brain-mcp\.py"' | head -1 | tr -d '"' || true)"
+            if [[ -z "$cx_path" ]]; then
+                cx_missing="brain MCP ([mcp_servers.brain] present but no quoted brain-mcp.py path in its section)"
+            elif [[ ! -f "$cx_path" ]]; then
+                # strip control chars before echoing config-derived bytes back
+                # to a terminal (escape-sequence display spoofing — same
+                # hardening as check 12)
+                cx_shown="$(printf '%s' "$cx_path" | tr -d '\000-\037\177')"
+                cx_broken="brain-mcp.py -> $cx_shown"
+            fi
+        else
+            cx_missing="brain MCP ([mcp_servers.brain])"
+        fi
+        # Unanchored substring heuristic: a comment mentioning the wrapper also
+        # matches — acceptable under the WARN policy (asymmetric on purpose with
+        # the anchored section-header check above; TOML has no fixed home for
+        # the wrapper command). Same || true guard as the brain extraction.
+        if grep -q 'codex-shell-wrap\.sh' "$codex_cfg" 2>/dev/null; then
+            cx_path="$(grep -o '"[^"]*codex-shell-wrap\.sh"' "$codex_cfg" 2>/dev/null | head -1 | tr -d '"' || true)"
+            if [[ -z "$cx_path" ]]; then
+                cx_missing="${cx_missing:+$cx_missing, }shell wrapper (codex-shell-wrap.sh mentioned but no quoted path)"
+            elif [[ ! -f "$cx_path" ]]; then
+                cx_shown="$(printf '%s' "$cx_path" | tr -d '\000-\037\177')"
+                cx_broken="${cx_broken:+$cx_broken; }shell wrapper -> $cx_shown"
+            fi
+        else
+            cx_missing="${cx_missing:+$cx_missing, }shell wrapper (codex-shell-wrap.sh)"
+        fi
+        if [[ -n "$cx_broken" ]]; then
+            add_row FAIL "codex wiring — wired path missing on disk: $cx_broken"
+        elif [[ -n "$cx_missing" ]]; then
+            add_row WARN "codex wiring — not wired: $cx_missing; see adapters/codex/codex-config.toml.template (bash setup.sh --codex installs it)"
+        else
+            add_row PASS "codex wiring — brain MCP + shell wrapper wired in ${codex_cfg/#$HOME/~}"
+        fi
+    fi
+
+    # 16. gemini wiring — same declared-vs-actual family for the gemini
+    #     settings (previously doctor had NO gemini checks at all). Same
+    #     policy as 15: skipped / WARN not-wired / FAIL wired-but-missing.
+    local gemini_settings="${GEMINI_SETTINGS:-$HOME/.gemini/settings.json}"
+    if [[ ! -f "$gemini_settings" ]]; then
+        add_row PASS "gemini wiring — no gemini settings at ${gemini_settings/#$HOME/~} (check skipped)"
+    else
+        local gm_out gm_rc
+        if gm_out="$(GEMINI_SETTINGS_FILE="$gemini_settings" python3 - <<'PY' 2>&1
+import json, os, re, sys
+
+def clean(s):
+    # strip control chars before echoing settings-derived strings back to a
+    # terminal (escape-sequence display spoofing — same hardening as check 12);
+    # JSON \u-escapes can decode to live ESC bytes.
+    return re.sub(r"[\x00-\x1f\x7f]", "?", s)
+
+try:
+    s = json.load(open(os.environ["GEMINI_SETTINGS_FILE"], encoding="utf-8"))
+except Exception as e:
+    print(clean(f"settings parse failed: {e}"))
+    sys.exit(2)
+missing, broken = [], []
+brain = (s.get("mcpServers") or {}).get("brain") or {}
+mcp = next((a for a in (brain.get("args") or [])
+            if isinstance(a, str) and a.endswith("brain-mcp.py")), None)
+if mcp is None:
+    missing.append("brain MCP (mcpServers.brain -> brain-mcp.py)")
+elif not os.path.isfile(os.path.expanduser(mcp)):
+    broken.append(clean(f"brain-mcp.py -> {mcp}"))
+wrap = ((s.get("tools") or {}).get("shell") or {}).get("command") or ""
+if "gemini-shell-wrap.sh" not in wrap:
+    missing.append("shell wrapper (gemini-shell-wrap.sh)")
+elif not os.path.isfile(os.path.expanduser(wrap)):
+    broken.append(clean(f"shell wrapper -> {wrap}"))
+if broken:
+    print("wired path missing on disk: " + "; ".join(broken))
+    sys.exit(1)
+if missing:
+    print("not wired: " + ", ".join(missing))
+    sys.exit(3)
+print("brain MCP + shell wrapper wired")
+PY
+        )"; then
+            gm_rc=0
+        else
+            gm_rc=$?
+        fi
+        case $gm_rc in
+            0) add_row PASS "gemini wiring — $gm_out in ${gemini_settings/#$HOME/~}" ;;
+            1) add_row FAIL "gemini wiring — $gm_out" ;;
+            *) add_row WARN "gemini wiring — $gm_out; see adapters/gemini/gemini-settings.json.template (bash setup.sh --gemini installs it)" ;;
+        esac
+    fi
+
+    # 17. claude install path — which of the two install paths is live here:
+    #     the plugin (a cached agent-harness under the plugin cache) or the
+    #     shell install (global settings wiring adapters/claude-code/
+    #     adapter.sh). Exactly one -> PASS. Both -> WARN (the same hook chain
+    #     can fire twice). Neither -> WARN (harness not wired into Claude
+    #     Code on this machine). Never FAIL — machine state, not repo
+    #     integrity. Reuses the check-10 cache root and check-11 settings
+    #     seams.
+    local plugin_active=0 shell_active=0 ip
+    for ip in "$cache_root"/*/agent-harness/; do
+        [[ -d "$ip" ]] && { plugin_active=1; break; }
+    done
+    if [[ -f "$settings" ]] && grep -q 'adapters/claude-code/adapter\.sh' "$settings" 2>/dev/null; then
+        shell_active=1
+    fi
+    if [[ $plugin_active -eq 1 && $shell_active -eq 1 ]]; then
+        add_row WARN "claude install path — BOTH plugin cache and shell-install settings are wired; the hook chain can run twice. Keep one (plugin recommended)"
+    elif [[ $plugin_active -eq 1 ]]; then
+        add_row PASS "claude install path — plugin (agent-harness in ${cache_root/#$HOME/~})"
+    elif [[ $shell_active -eq 1 ]]; then
+        add_row PASS "claude install path — shell install (adapter wired in ${settings/#$HOME/~})"
+    else
+        add_row WARN "claude install path — neither plugin cache nor shell-install wiring found; harness not active in Claude Code on this machine"
+    fi
+
+    # 18. brain strict lint — the live store's promotion-gate health. notes/
+    #     absent -> skipped (no brain seeded here). Strict-clean -> PASS.
+    #     Warnings -> WARN: a red strict gate stops every /brain-ingest
+    #     promotion. WARN, never FAIL — a dirty personal store must not
+    #     redden the repo suite.
+    local brain_dir="${AGENT_BRAIN_DIR:-$HOME/.agent/brain}" brain_out brain_rc
+    if [[ ! -d "$brain_dir/notes" ]]; then
+        add_row PASS "brain lint — no store at ${brain_dir/#$HOME/~}/notes (check skipped)"
+    else
+        if brain_out="$(AGENT_BRAIN_DIR="$brain_dir" python3 "$FRAMEWORK_ROOT/core/brain/lint.py" --strict 2>&1)"; then
+            brain_rc=0
+        else
+            brain_rc=$?
+        fi
+        brain_out="$(printf '%s\n' "$brain_out" | tail -1)"
+        if [[ $brain_rc -eq 0 ]]; then
+            add_row PASS "brain lint — ${brain_dir/#$HOME/~}: $brain_out"
+        else
+            add_row WARN "brain lint — ${brain_dir/#$HOME/~}: $brain_out; /brain-ingest promotion is blocked until strict is clean (run core/brain/lint.py --strict for details)"
+        fi
+    fi
+
     echo "=== Environment diagnosis (--doctor) ==="
     local row status msg
     for row in "${rows[@]}"; do

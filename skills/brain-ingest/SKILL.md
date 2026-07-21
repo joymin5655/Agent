@@ -142,7 +142,10 @@ the brain stages, the vault graduates.
 - **One-way only.** raw → notes → vault. Never sync the vault back into the brain,
   and never let a distilled note silently overwrite a `kind: user` note.
 - **The lint gate is a gate, not a suggestion.** `lint.py --strict` at 0 is the
-  precondition for promotion; a non-zero result stops the ingest.
+  precondition for promotion; a non-zero result stops the ingest. Seed-status
+  notes are W1-exempt (a seed is declared-unconnected by design; distillations
+  are `status: growing`, where the isolation gate keeps its teeth), and a note
+  that only *receives* edges (a topic hub) counts as connected.
 
 ## Failure modes
 

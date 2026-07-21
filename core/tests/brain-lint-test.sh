@@ -96,7 +96,7 @@ cat > "$BRAIN_DIR/notes/concept/concept-lonely.md" <<'EOF'
 id: concept-lonely
 type: concept
 title: "lonely"
-status: seed
+status: growing
 edges: {}
 provenance:
   ai: "claude"
@@ -209,6 +209,78 @@ body
 EOF
 OUT="$(python3 "$LINT" 2>&1)"; RC=$?
 if [[ "$RC" -eq 1 && "$OUT" == *"E2"* && "$OUT" == *"no id: key"* ]]; then ok "absent-id-key-E2"; else no "absent-id-key-E2" "rc=$RC out='$OUT'"; fi
+
+echo "=== (j) a seed-status note with no edges is W1-exempt (strict exit 0) ==="
+reset_store
+mkdir -p "$BRAIN_DIR/notes/concept"
+cat > "$BRAIN_DIR/notes/concept/concept-seeded.md" <<'EOF'
+---
+id: concept-seeded
+type: concept
+title: "freshly seeded"
+status: seed
+edges: {}
+provenance:
+  ai: "claude"
+  session: "s"
+  generated_by: "brain-seed"
+  source: "vault:x"
+  kind: "user"
+---
+
+body
+EOF
+OUT="$(python3 "$LINT" --strict 2>&1)"; RC=$?
+if [[ "$RC" -eq 0 && "$OUT" != *"W1"* ]]; then ok "seed-no-edge-exempt"; else no "seed-no-edge-exempt" "rc=$RC out='$OUT'"; fi
+
+echo "=== (j2) a growing-status note with no edges still trips W1 under --strict (exit 1) ==="
+reset_store
+mkdir -p "$BRAIN_DIR/notes/concept"
+cat > "$BRAIN_DIR/notes/concept/concept-grown.md" <<'EOF'
+---
+id: concept-grown
+type: concept
+title: "grown but unconnected"
+status: growing
+edges: {}
+provenance:
+  ai: "claude"
+  session: "s"
+  generated_by: "brain-ingest"
+  source: "raw:x"
+  kind: "generated"
+---
+
+body
+EOF
+OUT="$(python3 "$LINT" --strict 2>&1)"; RC=$?
+if [[ "$RC" -eq 1 && "$OUT" == *"W1"* ]]; then ok "growing-no-edge-strict-W1"; else no "growing-no-edge-strict-W1" "rc=$RC out='$OUT'"; fi
+
+echo "=== (j3) a hub note that only RECEIVES an edge is connected, not W1-isolated ==="
+reset_store
+seed "concept-alpha" "concept"
+# seed() links concept-alpha -> topic-x; give topic-x a real note with ZERO
+# outgoing edges and non-seed status: incoming-only must satisfy W1.
+mkdir -p "$BRAIN_DIR/notes/topic"
+cat > "$BRAIN_DIR/notes/topic/topic-x.md" <<'EOF'
+---
+id: topic-x
+type: topic
+title: "hub"
+status: evergreen
+edges: {}
+provenance:
+  ai: "claude"
+  session: "s"
+  generated_by: "brain-seed"
+  source: "vault:x"
+  kind: "user"
+---
+
+body
+EOF
+OUT="$(python3 "$LINT" --strict 2>&1)"; RC=$?
+if [[ "$RC" -eq 0 && "$OUT" != *"W1"* ]]; then ok "incoming-only-hub-exempt"; else no "incoming-only-hub-exempt" "rc=$RC out='$OUT'"; fi
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
