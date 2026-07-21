@@ -7,7 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.4] — 2026-07-21
+
+> **Truthfulness repair wave.** An external cross-AI audit (2026-07-21) found
+> the docs claiming more than the code delivered and the doctor verifying
+> installability but never installed state. This release makes the claims match
+> the code, the two install paths match each other, and the doctor check the
+> machine it runs on — and adds gates so each repaired drift class cannot
+> silently return (version parity, hook-manifest parity, memory-dump pollution).
+
 ### Added
+- **Version-parity gate (`core/tests/version-parity.sh` + battery).** README
+  (en/ko) badge + status lines, `plugin.json`, `marketplace.json`, and the
+  CHANGELOG's latest release heading must all agree on one version; any lag
+  fails the suite (this release repaired a three-file drift: README and
+  marketplace at 0.5.1 vs plugin manifest at 0.5.3).
 - **Doctor real-wiring checks (15–18).** `setup.sh --doctor` now verifies the
   install is actually wired, not just installable: **codex wiring** (brain MCP
   `[mcp_servers.brain]` + `codex-shell-wrap.sh` in the live config; WARN when
@@ -49,7 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   untracked-unignored — so a personal session log can never reach a public
   commit. Wired into the `/wrap` pre-flight gate list.
 
-### Fixed
+### Docs
 - **Docs truthfulness.** README (en/ko) no longer claims `spec-gate.py` /
   `tdd-guard.py` "physically block" — both ship in observation mode
   (`off | dryrun | block`, default `dryrun`; only `pre-tool-guard.sh` always

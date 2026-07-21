@@ -1,7 +1,7 @@
 # Agent
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-![Version](https://img.shields.io/badge/version-0.5.1-blue.svg)
+![Version](https://img.shields.io/badge/version-0.5.4-blue.svg)
 ![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-7c3aed.svg)
 ![AI-agnostic](https://img.shields.io/badge/AI-Claude%20%7C%20Codex%20%7C%20Gemini-orange.svg)
 
@@ -19,7 +19,7 @@ driving — machine-tested by `core/tests/adapter-parity.sh`. What *differs* per
 how much of the CLI's activity reaches that core; see
 [Runtime coverage](#runtime-coverage).
 
-> Status: v0.5.1 · License: **MIT**
+> Status: v0.5.4 · License: **MIT**
 
 ---
 
@@ -229,7 +229,7 @@ flowchart TB
     subgraph CORE["Layer 1 — core/ (the single source of truth)"]
         H["hooks/ — 22 gates: secret scan · mutex ·<br/>spec-gate · tdd-guard · supervisor …"]
         I["infra/ — sessions · goal mode ·<br/>audits · auto-ship"]
-        T["tests/ — 50 self-verification scripts"]
+        T["tests/ — 52 self-verification scripts"]
     end
     R["rules/ — policy<br/>source of truth"]
     PLUG[".claude-plugin/ + hooks/hooks.json<br/>plugin distribution"]
@@ -385,7 +385,7 @@ Agent/
 │   ├── hooks/          #   22 portable hooks + 2 shared modules
 │   ├── infra/          #   session coordination · goal mode · audits · auto-ship
 │   ├── git-hooks/      #   pre-commit · pre-push
-│   └── tests/          #   50 test scripts (verify-all.sh runs them all)
+│   └── tests/          #   52 test scripts (verify-all.sh runs them all)
 │
 ├── adapters/           # claude-code (thin) · codex · gemini
 ├── rules/              # generic policy docs

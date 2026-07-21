@@ -1,7 +1,7 @@
 # Agent
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-![Version](https://img.shields.io/badge/version-0.5.1-blue.svg)
+![Version](https://img.shields.io/badge/version-0.5.4-blue.svg)
 ![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-7c3aed.svg)
 ![AI-agnostic](https://img.shields.io/badge/AI-Claude%20%7C%20Codex%20%7C%20Gemini-orange.svg)
 
@@ -18,7 +18,7 @@
 `core/tests/adapter-parity.sh`가 기계로 증명합니다. 런타임마다 다른 것은 CLI 활동 중
 얼마나 많은 부분이 그 코어에 도달하는가입니다 — [런타임 커버리지](#런타임-커버리지) 참고.
 
-> 상태: v0.5.1 · 라이선스: **MIT**
+> 상태: v0.5.4 · 라이선스: **MIT**
 
 ---
 
@@ -227,7 +227,7 @@ flowchart TB
     subgraph CORE["Layer 1 — core/ (단일 진실 원천)"]
         H["hooks/ — 게이트 22개: 시크릿 스캔 · 뮤텍스 ·<br/>spec-gate · tdd-guard · supervisor …"]
         I["infra/ — 세션 · goal 모드 ·<br/>감사 · auto-ship"]
-        T["tests/ — 자가검증 스크립트 50개"]
+        T["tests/ — 자가검증 스크립트 52개"]
     end
     R["rules/ — 정책<br/>원문(SOT)"]
     PLUG[".claude-plugin/ + hooks/hooks.json<br/>플러그인 배포"]
@@ -385,7 +385,7 @@ Agent/
 │   ├── hooks/          #   이식 가능한 훅 22개 + 공유 모듈 2개
 │   ├── infra/          #   세션 조정 · goal 모드 · 감사 · auto-ship
 │   ├── git-hooks/      #   pre-commit · pre-push
-│   └── tests/          #   테스트 스크립트 50개 (verify-all.sh가 전부 실행)
+│   └── tests/          #   테스트 스크립트 52개 (verify-all.sh가 전부 실행)
 │
 ├── adapters/           # claude-code (얇음) · codex · gemini
 ├── rules/              # 범용 정책 문서
