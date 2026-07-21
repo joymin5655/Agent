@@ -1,7 +1,8 @@
 # Codex profile: TOP tier — planning, architecture, security review.
 # Copy to ~/.codex/deep.config.toml; invoke with `codex --profile deep`.
-# Model ID is a 2026-07 snapshot. If your account exposes a max-tier
-# variant, pin it here instead (its dedicated top effort level is
-# exclusive to that tier). (docs/model-routing.md)
-model = "gpt-5.5"
-model_reasoning_effort = "high"
+# Model ID is a 2026-07 snapshot (GPT-5.6 family; legacy gpt-5.2/5.3/5.4
+# IDs sunset 2026-07-23). If a task warrants more depth and your account
+# exposes a higher effort level (max/ultra), raise model_reasoning_effort
+# here before switching models. (docs/model-routing.md)
+model = "gpt-5.6-sol"
+model_reasoning_effort = "xhigh"
