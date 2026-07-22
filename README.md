@@ -1,7 +1,7 @@
 # Agent
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-![Version](https://img.shields.io/badge/version-0.5.4-blue.svg)
+![Version](https://img.shields.io/badge/version-0.5.5-blue.svg)
 ![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-7c3aed.svg)
 ![AI-agnostic](https://img.shields.io/badge/AI-Claude%20%7C%20Codex%20%7C%20Gemini-orange.svg)
 
@@ -19,7 +19,7 @@ driving — machine-tested by `core/tests/adapter-parity.sh`. What *differs* per
 how much of the CLI's activity reaches that core; see
 [Runtime coverage](#runtime-coverage).
 
-> Status: v0.5.4 · License: **MIT**
+> Status: v0.5.5 · License: **MIT**
 
 ---
 

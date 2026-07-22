@@ -39,7 +39,9 @@ voice pretending to be five.
 
 Read `skills/persona-review/personas/catalog.json` and confirm
 `personas` is a non-empty list. Each entry carries `age`, `sex`, `province`,
-`occupation`, `education_level`, a one-line `summary`, and `hobbies` / `skills`.
+`occupation`, `education_level`, a one-line `summary`, `hobbies` / `skills`,
+and a `review_lens` tag (1-2 of `UX` / `카피` / `접근성` / `신뢰` / `가격민감` —
+what kind of scrutiny this panelist is naturally suited to).
 **Completion criterion:** you can name the persona count and it is > 0.
 
 ### 2. Frame the target
@@ -55,8 +57,12 @@ Pick five personas that **spread across** age bucket, region (province), and
 occupation — not five who cluster. A concrete rule that works: sort by a key
 that rotates each run (e.g. offset by how many times this target was reviewed),
 then walk the list skipping any persona whose (age_bucket, province) pair is
-already seated until you have five. **Completion criterion:** the five seated
-personas cover at least three distinct age buckets and four distinct provinces.
+already seated until you have five. If the question (step 2) maps to a
+`review_lens` — accessibility, pricing/trust, plain-language copy — prefer
+candidates whose lens matches when there's a tie, but never sacrifice the
+spread requirement to chase a lens match. **Completion criterion:** the five
+seated personas cover at least three distinct age buckets and four distinct
+provinces.
 
 ### 4. Dispatch the panel (parallel, independent)
 
@@ -123,12 +129,16 @@ no finding is invented to round out the report.
 
 ## Regenerating the catalog
 
-The shipped catalog is a stratified subsample of the public
-`nvidia/Nemotron-Personas-Korea` dataset (CC BY 4.0). To rebuild it (e.g. a
-larger or re-seeded sample):
+The shipped catalog (119 personas) is a stratified subsample of the public
+`nvidia/Nemotron-Personas-Korea` dataset (CC BY 4.0): age_group × province
+hard-balanced across a 7×17 grid (one persona per cell — every province gets
+an even seat, not a population-proportional one, so a "spread panel" is
+always possible), with occupation_group × education_level soft-balanced on
+top. To rebuild it (e.g. a re-seeded sample), via DuckDB `httpfs` (no local
+dataset download):
 
 ```
-python3 skills/persona-review/scripts/build_catalog.py --size 120 --seed 42
+uv run --with duckdb skills/persona-review/scripts/build_catalog.py --seed my-seed-2027
 ```
 
 Attribution and modification notes live in the catalog's `_meta` block; keep
