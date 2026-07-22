@@ -38,6 +38,10 @@ trivial work out by design.
 - **`/harness-audit`** — read-only health check of the harness itself: one
   `verify-all.sh` dry-run, a per-check table, the doc-reality verdict named.
   Run it before a release or after a structural change.
+- **`/persona-review <target>`** — seat a panel of grounded Korean citizen
+  personas in front of a piece of UX/copy/content and report how ordinary users
+  would react. A user-perspective lens beside `code-reviewer` (correctness) and
+  `security-reviewer` (vulnerabilities) — it judges experience, not code.
 - **`/project-init`** (command) — scaffold a consumer project with
   `CLAUDE.md`, rules, and `gitleaks.toml`.
 
