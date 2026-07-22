@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.5] — 2026-07-23
+
 ### Added
 - **Persona-review skill + orchestrator agent (citizen/user review lane).** A
   new `/persona-review <target>` skill and `persona-review-orchestrator` agent
@@ -14,13 +16,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   content and report how ordinary users would react — a user-perspective lens
   beside `code-reviewer` (correctness) and `security-reviewer` (vulnerabilities),
   replacing neither. Ships a stratified persona catalog
-  (`skills/persona-review/personas/catalog.json`, N=120) subsampled from the
-  public `nvidia/Nemotron-Personas-Korea` dataset (CC BY 4.0) across province ×
-  age × sex, with a reproducible builder
-  (`skills/persona-review/scripts/build_catalog.py`) and a determinism battery
-  (`core/tests/persona-catalog-test.sh`: schema, CC-BY attribution, stratification
-  sanity, skill/agent wiring). Personas are synthetic (no real individuals, no
-  name/contact fields).
+  (`skills/persona-review/personas/catalog.json`, N=119) subsampled from the
+  public `nvidia/Nemotron-Personas-Korea` dataset (CC BY 4.0) via DuckDB
+  `httpfs`: age_group × province hard-balanced across a 7×17 grid (one persona
+  per cell — every province gets an even seat, not a population-proportional
+  one) plus occupation_group × education_level soft-balancing, with a 1-2-tag
+  `review_lens` (UX/카피/접근성/신뢰/가격민감) per persona. A reproducible
+  builder (`skills/persona-review/scripts/build_catalog.py`) and a determinism
+  battery (`core/tests/persona-catalog-test.sh`: schema, CC-BY attribution,
+  stratification sanity, skill/agent wiring) guard it. Personas are synthetic
+  (no real individuals, no name/contact fields). *(Converged from two parallel
+  builders: an initial population-proportional HTTP-paging sampler was
+  superseded by the DuckDB full-dataset hard-balanced one for genuinely even
+  province coverage — the earlier approach left small provinces as few as 2
+  of 120 seats.)*
 
 ## [0.5.4] — 2026-07-21
 
