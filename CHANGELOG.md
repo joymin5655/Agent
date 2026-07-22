@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Persona-review skill + orchestrator agent (citizen/user review lane).** A
+  new `/persona-review <target>` skill and `persona-review-orchestrator` agent
+  seat a panel of grounded Korean citizen personas in front of UX / copy /
+  content and report how ordinary users would react — a user-perspective lens
+  beside `code-reviewer` (correctness) and `security-reviewer` (vulnerabilities),
+  replacing neither. Ships a stratified persona catalog
+  (`skills/persona-review/personas/catalog.json`, N=120) subsampled from the
+  public `nvidia/Nemotron-Personas-Korea` dataset (CC BY 4.0) across province ×
+  age × sex, with a reproducible builder
+  (`skills/persona-review/scripts/build_catalog.py`) and a determinism battery
+  (`core/tests/persona-catalog-test.sh`: schema, CC-BY attribution, stratification
+  sanity, skill/agent wiring). Personas are synthetic (no real individuals, no
+  name/contact fields).
+
 ## [0.5.4] — 2026-07-21
 
 > **Truthfulness repair wave.** An external cross-AI audit (2026-07-21) found
