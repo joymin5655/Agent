@@ -746,6 +746,67 @@ PY
         fi
     fi
 
+    # 19. gh CLI — optional (getting-started.md declares it for repo operations:
+    #     `gh repo clone`, PR creation). Same WARN-only observer family as gitleaks
+    #     (check 3): absence never fails the harness, it just narrows what's usable.
+    if command -v gh >/dev/null 2>&1; then
+        add_row PASS "gh — $(gh --version 2>&1 | head -1)"
+    else
+        add_row WARN "gh — not found; repo operations (gh repo clone, gh pr create) unavailable. Install: brew install gh (macOS) or https://cli.github.com"
+    fi
+
+    # 20. brain MCP registration on the PLUGIN install path — DETECT-AND-GUIDE ONLY.
+    #     install_claude() (the shell-install path) offers to register the brain MCP
+    #     during setup; a plugin/marketplace install has no equivalent step, so the
+    #     server can stay silently unregistered forever with no signal anywhere.
+    #     This check never writes to ~/.claude.json (or any user config) — it only
+    #     reads the user-scope MCP registry (Claude Code stores user-scope MCP
+    #     servers under top-level "mcpServers" in ~/.claude.json, NOT settings.json —
+    #     same non-settings.json fact install_claude()'s comment already documents)
+    #     and prints the exact opt-in command for the user to run themselves
+    #     (consent-first: unconsented ~/.claude writes are this project's named
+    #     failure mode — see the OpenKnowledge REJECT precedent). Reuses check 17's
+    #     plugin_active/shell_active/settings locals (same function scope, no
+    #     subshell between them). Scoped to plugin-only installs: a shell install
+    #     already gets registration guidance from install_claude() itself, and a
+    #     "both" install is check 17's problem to flag, not this one's.
+    local claude_user_cfg="${AGENT_CLAUDE_USER_CONFIG:-$HOME/.claude.json}"
+    local brain_reg_cmd="claude mcp add brain --scope user -- python3 $FRAMEWORK_ROOT/core/brain/brain-mcp.py"
+    if [[ $plugin_active -ne 1 || $shell_active -eq 1 ]]; then
+        add_row PASS "brain MCP (plugin path) — not a plugin-only install (check scoped to plugin-path installs)"
+    elif [[ ! -f "$claude_user_cfg" ]]; then
+        add_row WARN "brain MCP (plugin path) — no user config at ${claude_user_cfg/#$HOME/~}; opt in with: $brain_reg_cmd (never auto-registered)"
+    else
+        local bm_out bm_rc
+        if bm_out="$(CLAUDE_USER_CFG="$claude_user_cfg" python3 - <<'PY' 2>&1
+import json, os, sys
+try:
+    d = json.load(open(os.environ["CLAUDE_USER_CFG"], encoding="utf-8"))
+except Exception as e:
+    print(f"user config parse failed: {e}")
+    sys.exit(2)
+brain = (d.get("mcpServers") or {}).get("brain")
+if brain is None:
+    print("not registered")
+    sys.exit(3)
+args = brain.get("args") or []
+if not any(isinstance(a, str) and a.endswith("brain-mcp.py") for a in args):
+    print("registered but does not point at brain-mcp.py")
+    sys.exit(3)
+print("registered")
+PY
+        )"; then
+            bm_rc=0
+        else
+            bm_rc=$?
+        fi
+        case $bm_rc in
+            0) add_row PASS "brain MCP (plugin path) — registered in ${claude_user_cfg/#$HOME/~}" ;;
+            2) add_row WARN "brain MCP (plugin path) — $bm_out" ;;
+            *) add_row WARN "brain MCP (plugin path) — $bm_out; opt in with: $brain_reg_cmd (never auto-registered)" ;;
+        esac
+    fi
+
     echo "=== Environment diagnosis (--doctor) ==="
     local row status msg
     for row in "${rows[@]}"; do

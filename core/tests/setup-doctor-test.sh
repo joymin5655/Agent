@@ -418,5 +418,67 @@ OUT_N3="$(AGENT_BRAIN_DIR=/nonexistent/brain bash "$SETUP" --doctor 2>&1)"
 check "brain-absent-skip" $?
 
 echo
+echo "=== (o) gh CLI: on PATH -> PASS with version; absent from PATH -> WARN, warn != fail ==="
+OUT_O="$(bash "$SETUP" --doctor 2>&1)"
+[[ "$OUT_O" == *"[PASS"*"gh — gh version"* ]]
+check "gh-present-pass" $?
+OUT_O2="$(PATH=/usr/bin:/bin bash "$SETUP" --doctor 2>&1)"
+RC_O2=$?
+[[ $RC_O2 -eq 0 && "$OUT_O2" == *"[WARN"*"gh — not found"*"brew install gh"* ]]
+check "gh-absent-warn-not-fail" $?
+
+echo
+echo "=== (p) brain MCP (plugin path): not a plugin-only install -> PASS skip ==="
+BMP_FIX="$(mktemp -d)"
+OUT_P="$(AGENT_PLUGIN_CACHE_ROOT="$BMP_FIX/empty-cache" AGENT_GLOBAL_SETTINGS=/nonexistent/settings.json bash "$SETUP" --doctor 2>&1)"
+[[ "$OUT_P" == *"[PASS"*"brain MCP (plugin path) — not a plugin-only install"* ]]
+check "brain-mcp-not-plugin-path-skip" $?
+
+echo
+echo "=== (p2) brain MCP (plugin path): plugin-only, no user config -> WARN with opt-in command ==="
+mkdir -p "$BMP_FIX/cache/market/agent-harness/0.5.4"
+OUT_P2="$(AGENT_PLUGIN_CACHE_ROOT="$BMP_FIX/cache" AGENT_GLOBAL_SETTINGS=/nonexistent/settings.json AGENT_CLAUDE_USER_CONFIG=/nonexistent/.claude.json bash "$SETUP" --doctor 2>&1)"
+RC_P2=$?
+[[ $RC_P2 -eq 0 && "$OUT_P2" == *"[WARN"*"brain MCP (plugin path) — no user config at"*"claude mcp add brain --scope user"* ]]
+check "brain-mcp-plugin-no-user-config-warn" $?
+
+echo
+echo "=== (p3) brain MCP (plugin path): plugin-only, user config present but brain absent -> WARN, exit 0, file untouched ==="
+printf '{"mcpServers":{"codegraph":{"command":"codegraph"}}}' > "$BMP_FIX/claude.json"
+BEFORE_P3="$(cat "$BMP_FIX/claude.json")"
+OUT_P3="$(AGENT_PLUGIN_CACHE_ROOT="$BMP_FIX/cache" AGENT_GLOBAL_SETTINGS=/nonexistent/settings.json AGENT_CLAUDE_USER_CONFIG="$BMP_FIX/claude.json" bash "$SETUP" --doctor 2>&1)"
+RC_P3=$?
+[[ $RC_P3 -eq 0 && "$OUT_P3" == *"[WARN"*"brain MCP (plugin path) — not registered; opt in with: claude mcp add brain --scope user"* ]]
+check "brain-mcp-plugin-unregistered-warn" $?
+AFTER_P3="$(cat "$BMP_FIX/claude.json")"
+[[ "$BEFORE_P3" == "$AFTER_P3" ]]
+check "brain-mcp-plugin-doctor-never-writes-user-config" $?
+
+echo
+echo "=== (p4) brain MCP (plugin path): registered but wrong target -> WARN naming the mismatch ==="
+printf '{"mcpServers":{"brain":{"command":"python3","args":["/some/other/tool.py"]}}}' > "$BMP_FIX/claude.json"
+OUT_P4="$(AGENT_PLUGIN_CACHE_ROOT="$BMP_FIX/cache" AGENT_GLOBAL_SETTINGS=/nonexistent/settings.json AGENT_CLAUDE_USER_CONFIG="$BMP_FIX/claude.json" bash "$SETUP" --doctor 2>&1)"
+[[ "$OUT_P4" == *"[WARN"*"brain MCP (plugin path) — registered but does not point at brain-mcp.py"* ]]
+check "brain-mcp-plugin-wrong-target-warn" $?
+
+echo
+echo "=== (p5) brain MCP (plugin path): registered correctly -> PASS naming the config ==="
+printf '{"mcpServers":{"brain":{"command":"python3","args":["/opt/agent/core/brain/brain-mcp.py"]}}}' > "$BMP_FIX/claude.json"
+OUT_P5="$(AGENT_PLUGIN_CACHE_ROOT="$BMP_FIX/cache" AGENT_GLOBAL_SETTINGS=/nonexistent/settings.json AGENT_CLAUDE_USER_CONFIG="$BMP_FIX/claude.json" bash "$SETUP" --doctor 2>&1)"
+[[ "$OUT_P5" == *"[PASS"*"brain MCP (plugin path) — registered in"* ]]
+check "brain-mcp-plugin-registered-pass" $?
+
+echo
+echo "=== (p6) brain MCP (plugin path): shell install (not plugin-only) -> PASS skip even with a cache present ==="
+cat > "$BMP_FIX/settings.json" <<'JSON'
+{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[
+  {"type":"command","command":"/home/u/agent/adapters/claude-code/adapter.sh pre-tool-guard.sh"}]}]}}
+JSON
+OUT_P6="$(AGENT_PLUGIN_CACHE_ROOT="$BMP_FIX/empty-cache" AGENT_GLOBAL_SETTINGS="$BMP_FIX/settings.json" AGENT_CLAUDE_USER_CONFIG=/nonexistent/.claude.json bash "$SETUP" --doctor 2>&1)"
+[[ "$OUT_P6" == *"[PASS"*"brain MCP (plugin path) — not a plugin-only install"* ]]
+check "brain-mcp-shell-install-skip" $?
+rm -rf "$BMP_FIX"
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]

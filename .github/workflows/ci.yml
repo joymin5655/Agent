@@ -136,6 +136,22 @@ jobs:
       - name: Run the full discovered check set
         run: bash core/tests/verify-all.sh
 
+  plugin-path-install:
+    name: plugin-path install smoke (marketplace/plugin cache → doctor guidance)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Distinct from clean-install below: clean-install proves the SHELL install
+      # path (`setup.sh --claude`) end to end. This job proves the PLUGIN/marketplace
+      # install path — which never runs setup.sh's install functions at all — still
+      # gets a working doctor: plugin-cache detection, the gh presence check, and
+      # brain-MCP plugin-path guidance (detect-and-guide only, never an auto-write).
+      # core/tests/plugin-path-install-test.sh is the single source of truth for the
+      # operations this job performs; this step is a thin caller (same "gate is a
+      # standalone script, CI just runs it" shape as doc-reality/supply-chain-scan).
+      - name: Run the plugin-path install battery (doctor guidance + loud-degrade + anti-vacuous manifest probe)
+        run: bash core/tests/plugin-path-install-test.sh
+
   clean-install:
     name: clean-install smoke (bare checkout → scratch-home install → doctor)
     runs-on: ubuntu-latest
