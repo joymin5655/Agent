@@ -17,10 +17,16 @@ visible commit are attributed to Maciej Ciemborowicz) — it is in mattpocock's 
 not his authored work. See its dossier for detail.
 
 **OpenKnowledge precedent check**: applied to all 9 repos (the specific check this project used
-to reject OpenKnowledge v0.28.1's unconsented `~/.claude` writes). Result: **zero
-`postinstall` scripts found across all 9 repos** (`grep -rl postinstall --include=package.json`
-run against every clone, zero hits) and no observed writes outside the invoking project.
-All 9 PASS clean on this axis — no install-time trust concern anywhere in this batch.
+to reject OpenKnowledge v0.28.1's unconsented **install-time** `~/.claude` writes via
+`postinstall`). Result: **zero `postinstall` scripts found across all 9 repos**
+(`grep -rl postinstall --include=package.json` run against every clone, zero hits) — no
+install-time trust concern anywhere in this batch. This does NOT mean no repo touches
+`~/.claude` at all: `sandcastle` writes there at **runtime**, by default, as a documented
+session-capture/resume feature, not an install-time surprise — see `sandcastle.md`'s
+Install/distribution section for the source citations (`SessionStore.ts`, `AgentProvider.ts`,
+`README.md:891`). Applying the same evidence standard in both directions: a claim of "doesn't
+touch X" is only made here where the source was actually read and confirmed absent, not
+assumed from an install command's simplicity.
 
 ---
 
@@ -31,7 +37,7 @@ All 9 PASS clean on this axis — no install-time trust concern anywhere in this
 | `mattpocock/skills` | 22-skill Agent-Skills plugin for planning/TDD/review/domain-modeling | High category overlap (planning-discipline skills), low mechanism overlap (prompt-only, no enforcement layer vs this harness's hook/CI-gated design) | See Table 2 — per-skill verdicts, not one repo-level verdict | Mixed: most skills REJECT (redundant with installed tooling or out of harness scope), 2 productivity skills (`grill-me`/`grilling`) are ADOPT-tool, 1 (`wayfinder`) is ADOPT-pattern | mixed, see Table 2 |
 | `mattpocock/sandcastle` | TS lib/CLI: container-sandboxed AI agent orchestration (Docker/Podman/Vercel) | None — this harness has no container-sandboxing layer; conceptually adjacent to `.worktrees/` git-level isolation this harness already uses | DEFER | Real, mature tool (7k stars, active) solving a problem (untrusted/AFK agent execution isolation) this harness's single-trusted-developer-machine threat model hasn't hit; revisit only if `/supervise --goal-mode` autonomy scope grows to run untrusted code | clone-reference (already cloned to `_repos/reference/`) |
 | `mattpocock/evalite` | TS/Vitest eval framework for LLM apps, SQLite run-history + UI | Strong conceptual overlap with `evals/run-evals.py` + judges + baseline; near-zero implementation overlap (Python-stdlib-only by design) | DEFER (pattern-only, no TS runtime) | Comparison confirms this repo's `evals/` already independently converged on the load-bearing ideas (separated data/task/score hooks, repeated-trial rigor, CI-gating baseline) evalite also uses; a TS runtime dependency is explicitly not recommended for a Python-stdlib harness | clone-reference (pattern lens only) |
-| `mattpocock/dictionary-of-ai-coding` | Static AI-coding vocabulary glossary (published web content) | None structural; thematic only (defines terms this harness's docs use undefined — effort, harness, compaction) | REJECT (harness) | Not a tool or agent behavior — reference content for a human reader; brain-note ingestion is out of scope for this wave (2_BRAIN distillation is `/brain-ingest`'s job, not this wave's) | brain-note (deferred to future `/brain-ingest`, not executed here) |
+| `mattpocock/dictionary-of-ai-coding` | Static AI-coding vocabulary glossary (published web content) | None structural; thematic only (defines terms this harness's docs use undefined — effort, harness, compaction) | REJECT | Not a tool or agent behavior — reference content for a human reader; brain-note ingestion is out of scope for this wave (2_BRAIN distillation is `/brain-ingest`'s job, not this wave's) | brain-note (deferred to future `/brain-ingest`, not executed here) |
 | `mattpocock/agent-rules-books` | Book-derived (Clean Code, DDD, etc.) AGENTS.md rule sets, 3-tier compression | None — style/architecture guidance vs this harness's workflow-governance focus; also **not actually mattpocock's authored content** (fork of ciembor/agent-rules-books) | REJECT | Out of scope, and crediting it as "a mattpocock repo" would misattribute Maciej Ciemborowicz's work | none — if ever wanted for a consumer project's own `AGENTS.md`, cite `ciembor/agent-rules-books` directly |
 | `mattpocock/slopwatch` | Self-hosted coding-agent observability platform (Postgres, per-agent Listeners) | Conceptually adjacent to the open M-8 backlog item (cost/telemetry instrumentation); zero implementation overlap | DEFER | Core Claude Code listener is an unimplemented 4-line stub — nothing working to adopt; revisit only if the listener ships and M-8 becomes active work | none currently — re-scan if slopwatch ships a working listener |
 | `mattpocock/ai-hero-cli` | CLI for navigating "AI Hero" paid-course exercises | None — course-delivery tooling, different problem domain | REJECT | No overlap with engineering-workflow governance; a student-facing course tool | none |
@@ -71,21 +77,28 @@ evaluated as installable candidates).
 | `teach` | Teach the user a new skill/concept within the workspace | None specific | REJECT | No clear gap — general-purpose explanation already covers this without a dedicated skill | none |
 | `writing-great-skills` | Reference for writing/editing skills well | Duplicate of the already-installed `skill-creator` plugin (broader: also runs evals/benchmarks) | REJECT | Redundant with already-installed, more capable tooling | none |
 
-### Table 2 verdict counts
+### Table 2 verdict counts (recounted row-by-row)
 
-REJECT: 15 · DEFER: 3 (`grill-with-docs`, `tdd`, `code-review`) · ADOPT-pattern: 1 (`wayfinder`)
-· ADOPT-tool: 2 (`grill-me`, `grilling`) = 22 rows, 22 verdicts, 0 unverdicted.
+REJECT ×16: `ask-matt`, `diagnosing-bugs`, `triage`, `improve-codebase-architecture`,
+`setup-matt-pocock-skills`, `to-spec`, `to-tickets`, `implement`, `prototype`, `research`,
+`domain-modeling`, `codebase-design`, `resolving-merge-conflicts`, `handoff`, `teach`,
+`writing-great-skills`.
+DEFER ×3: `grill-with-docs`, `tdd`, `code-review`.
+ADOPT-pattern ×1: `wayfinder`.
+ADOPT-tool ×2: `grill-me`, `grilling`.
 
-## Overall verdict counts (Table 1 + Table 2 combined, excluding the `skills` repo's own
-"see Table 2" placeholder row)
+16 + 3 + 1 + 2 = **22 rows, 22 verdicts, 0 unverdicted.**
 
-REJECT: 22 (8 repo-level/skill-level in Table 1's other 8 repos... see below for exact split)
-· DEFER: 6 · ADOPT-pattern: 1 · ADOPT-tool: 2.
+## Overall verdict counts (Table 1's 8 non-`skills` repo rows + Table 2's 22 skill rows = 30
+verdict-bearing rows total; the `skills` repo's own Table 1 row is a pointer to Table 2, not an
+independent 31st verdict, and is excluded from this sum)
 
-Exact split — Table 1 (8 non-`skills` repos): REJECT ×5 (`dictionary-of-ai-coding`,
-`agent-rules-books`, `ai-hero-cli`, `mise-en-place`, `ai-sdk-tips`), DEFER ×3 (`sandcastle`,
-`evalite`, `slopwatch`), ADOPT ×0. Table 2 (22 skills): REJECT ×15, DEFER ×3, ADOPT-pattern ×1,
-ADOPT-tool ×2. Combined: REJECT 20, DEFER 6, ADOPT-pattern 1, ADOPT-tool 2 — total 29
-verdict-bearing rows (8 repo rows + 22 skill rows, minus the 1 `skills` repo-level row that
-defers to Table 2 instead of carrying its own verdict = 8 + 22 = 30 total analyzed items, 29
-independently verdicted + 1 pointer row).
+Table 1 (8 repos): REJECT ×5 (`dictionary-of-ai-coding`, `agent-rules-books`, `ai-hero-cli`,
+`mise-en-place`, `ai-sdk-tips`), DEFER ×3 (`sandcastle`, `evalite`, `slopwatch`), ADOPT ×0.
+5 + 3 + 0 = 8. ✓
+
+Table 2 (22 skills): REJECT ×16, DEFER ×3, ADOPT-pattern ×1, ADOPT-tool ×2.
+16 + 3 + 1 + 2 = 22. ✓
+
+**Combined: REJECT 21 (5+16), DEFER 6 (3+3), ADOPT-pattern 1, ADOPT-tool 2.**
+21 + 6 + 1 + 2 = **30 — matches the 8+22 row total exactly, 0 unverdicted.**

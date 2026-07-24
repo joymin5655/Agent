@@ -33,12 +33,32 @@ multiple AFK (away-from-keyboard) agents, review pipelines, or custom orchestrat
 
 ## Install / distribution mechanism — OpenKnowledge precedent check
 
-**PASS, clean.** `npm install --save-dev @ai-hero/sandcastle` — no `postinstall` script in
-`package.json` (grep confirmed, zero hits across the whole repo). The `sandcastle init` CLI
-command scaffolds a `.sandcastle/` directory **inside the current project only** — never
-touches `~/.claude` or any global path. Docker/Podman/Vercel credentials and API keys
-(`CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`) are read from a project-local `.sandcastle/.env`
-the user fills in themselves — explicit, not auto-collected.
+**Install-time: PASS, clean.** `npm install --save-dev @ai-hero/sandcastle` — no `postinstall`
+script in `package.json` (grep confirmed, zero hits across the whole repo). The `sandcastle init`
+CLI command scaffolds a `.sandcastle/` directory inside the current project only. Docker/Podman/
+Vercel credentials and API keys (`CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`) are read from a
+project-local `.sandcastle/.env` the user fills in themselves.
+
+**Runtime: DOES write to `~/.claude/projects/` — correction to an earlier draft of this
+dossier**, which claimed sandcastle "never touches `~/.claude`." That was wrong; verified by
+reading the source rather than asserting from the README:
+
+- `src/SessionStore.ts:56-64` (`claudeHostSessionPath`) and `:90-98`
+  (`claudeSubagentsDirOnHost`) default to `join(process.env.HOME ?? "~", ".claude", "projects")`
+  when no `hostProjectsDir` override is passed.
+- `src/AgentProvider.ts:370-421` (`captureToHost`) copies the sandboxed agent's Claude Code
+  session JSONL (and any subagent transcripts) out of the container and `writeFile`s them to
+  that host path (`:348-349`, `:381`) — i.e. it writes real files under `~/.claude/projects/
+  <encoded-cwd>/` after every run.
+- `README.md:891`: **"Session capture is enabled by default for `claudeCode()`, `codex()`, and
+  `pi()` and can be opted out via `captureSessions: false`."** — default-on, not default-off.
+
+This is a documented, functional feature (so a sandboxed agent's session can be resumed
+normally on the host afterward) — not a hidden or unconsented write in the OpenKnowledge sense
+(no install-time trigger, the user explicitly invoked `sandcastle.run()`/`interactive()` to get
+this behavior, and it's scoped to session-transcript JSONL files, not arbitrary config
+mutation). But it is a real `~/.claude` write path, on by default, and this dossier should say
+so accurately rather than assert its absence.
 
 ## Key patterns worth absorbing
 
@@ -73,6 +93,13 @@ delegation contracts) without any container step.
 
 ## Security notes
 
+- Default-on session capture (see Install/distribution section above) writes the sandboxed
+  agent's Claude Code session JSONL — and any subagent transcripts — to `~/.claude/projects/`
+  on the host after every run (`src/AgentProvider.ts:370-421`). Direction of flow is
+  sandbox→host, not exfiltration outward; the content is the same transcript the user would
+  have produced running Claude Code directly, now persisted to the normal host location so
+  `claude --resume` works afterward. Opt-out exists (`captureSessions: false`) but is not the
+  default.
 - Bind-mount providers (Docker/Podman) share the host filesystem with the sandbox by design —
   isolation is process/dependency-level, not filesystem-level, unless mounts are scoped
   carefully (the `mounts:` config supports `readonly: true` per mount, which is good practice
