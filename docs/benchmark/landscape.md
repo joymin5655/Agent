@@ -204,6 +204,87 @@ Consistent thinness:
 | Doctor tier-profile blind spot | M-4 | doctor check + fixtures (profiles present/absent/skip) |
 | Clean-install CI smoke | M-5 | bare-checkout install on a scratch config home → doctor 0 fail; sabotaged exec bit → job fails |
 
+## Public setups benchmark — 2026-07-25 (R6)
+
+Six well-known **public** Claude-Code-adjacent setups, scored against this
+harness's own 3-layer model: **L1** = the agent-harness plugin itself (gates,
+review agents, skills, hooks — portable via marketplace); **L2** = curated
+third-party plugins/tools (memory layer, token-optimizer hooks, statusline,
+search skills); **L3** = personal glue (global CLAUDE.md instruction files,
+personal hooks, personal skills). The owner's confirmed weak spot going into
+this survey: **zero replication mechanism for L2/L3 on a new machine** — L1
+ships via `/plugin marketplace add`, but the personal layer has no bootstrap
+story (a parallel wave is building one). Stars pulled live via `gh api` on
+**2026-07-25**. CI-workflow presence was verified the same way
+(`gh api repos/{owner}/{repo}/contents/.github/workflows`) for four of the
+six rows — disler/claude-code-hooks-mastery, anthropics/skills,
+poshan0126/dotclaude, citypaul/.dotfiles (each tagged "verified via API" in
+its Self-verify CI cell below). **obra/superpowers and mattpocock/skills were
+not API-checked**; their cells reflect README-level claims only, same caveat
+as buckets 1–2 above.
+
+| Project (★ 2026-07-25, license) | Philosophy | Install / bootstrap | Self-verify CI | Curation vs. bulk | Memory / continuity | Multi-vendor | Security posture |
+|---|---|---|---|---|---|---|---|
+| **obra/superpowers** (260.6k, MIT) | prompt-only skill/methodology pack | marketplace-driven across many runtimes (Claude Code, Antigravity, Cursor, Gemini CLI, Copilot CLI, Kimi Code); no manual clone | **partial** — ships `evals/` (drill-eval harness cloned from `superpowers-evals`, skill-behavior tests) + `tests/` plugin-infra (`npm test`) — deeper than the 2026-07-08 snapshot in Bucket 1 recorded as "no"; flagged for the next R1 refresh, not corrected here | bulk-leaning — broad catalog, prompt-only "MUST" enforcement (matches Bucket 1 finding) | none documented — stateless design→plan→execute; git worktrees isolate workspace, not context | **yes** — dedicated install path per runtime | telemetry opt-out env var only; no secret scanning or deny/ask hooks documented — prompt-instruction-only |
+| **mattpocock/skills** (186.7k, MIT) | personal "skills for real engineers" catalog, published `.agents` directory | `npx skills@latest add mattpocock/skills` (skills.sh) or Claude Code plugin marketplace, per-agent targeting | not documented — mutation testing (Stryker) is a *skill the pack teaches*, not CI on the pack itself | engineering/productivity axis split, user-invoked vs. auto-discovered — organized, no hard roster cap | CLAUDE.md persists guidance; no session-state mechanism documented | **yes** — skills.sh explicitly supports 40+ agents | none documented (repo nav shows "Security and quality 0") |
+| **disler/claude-code-hooks-mastery** (3.8k, no LICENSE detected) | hooks-first reference architecture — demonstrates all 13 lifecycle hook points | manual clone; UV single-file scripts (per-hook inline deps, no venv) | **no** — no `.github/workflows` (verified via API); relies on runtime hook-based validators (ruff/ty on PostToolUse) instead of a test suite | reference/demo scope, not a daily-driver roster | not a focus — session/subagent hooks only, no cross-session store | **no** — Claude Code only | **partial real enforcement** — PreToolUse blocks dangerous commands (`rm -rf`, `.env` access, `chmod 777`) via exit-code-2 blocking; closest peer to hard deny/ask gates among the six |
+| **anthropics/skills** (163.9k, license unspecified) | official first-party skills reference/distribution | 3 channels — Claude Code marketplace, claude.ai (paid plans), Claude API | **no** (verified via API, no workflows) — explicit disclaimer: "test skills thoroughly in your own environment before relying on them" | demonstration-only, no documented quality gate | none — stateless instruction sets | n/a (defines the platform rather than consuming other runtimes) | none documented |
+| **poshan0126/dotclaude** (829, MIT) | "standard `.claude/` folder" personal template, marketplace-distributed | `/plugin marketplace add` + `/plugin install setupdotclaude@dotclaude` → `/setupdotclaude` deep-scans the target codebase (manifests, source/test files, git workflow, existing AI configs) and *proposes* component placement — evidence-based install | **yes** — `ci.yml` (verified via API) + `bash hooks/tests/run-all.sh` fixture tests across Linux/macOS + `claude plugin validate --strict` | curated, fixed roster — 7 agents, 12 skills, 6 rules, 8 hooks | `/claude-md audit` captures durable learnings into CLAUDE.md; `/catchup handoff` rebuilds context post-`/clear` + writes `HANDOFF.md`; `.dotclaude.json` project fingerprint drives session-start drift warnings — most developed continuity story of the six | **no** — Claude Code only | **yes**, real hard hooks — `protect-files.sh`, `scan-secrets.sh`, `block-dangerous-commands.sh`, `warn-large-files.sh`, all PreToolUse; explicit confirm-before-apply discipline |
+| **citypaul/.dotfiles** (693, MIT) | personal dotfiles repo that "became unexpectedly popular" for its CLAUDE.md; now a curated aggregation point | `git clone` into a dotfiles-managed home; `--with-opencode` flag copies Claude-Code-specific agents/commands into OpenCode equivalents | **yes** (verified via API) — `ci.yml` runs `test/opencode-compat.sh` (cross-runtime compat test) + changesets validation on every PR | explicit provenance — vendors 18 design skills from `pbakaus/impeccable`, 6 from `addyosmani/web-quality-skills`, 3 from `vercel-labs/next-skills`, 1 from `mattpocock/skills` (`grill-me`), 1 from `coreyhaines31/marketingskills`, each credited by source repo | `expectations` skill captures learnings ("would save future developers >30 minutes" criterion); no cross-session state store | **partial** — Claude Code + OpenCode via explicit flag, not a generic adapter layer | agent-based advisory only (`tdd-guardian`, `ts-enforcer` are subagents, not PreToolUse hooks) — no secret scanning or hard hooks documented, same prompt-only bucket as the Bucket-1 majority |
+
+### Notable observations
+
+- **dotclaude is the closest public peer to this harness's enforcement
+  model** — real PreToolUse deny/ask hooks plus a CI job, at 829★. It does not
+  overturn Bucket 1's field-wide "prompt-only dominates" finding (N=1 among
+  six, and none of the mega-star projects match it), but it shows the pattern
+  exists in the wild at small scale, not just here.
+- **citypaul/.dotfiles is the field's answer to L2 curation** — five
+  named upstream skill sources vendored with explicit provenance and license
+  attribution per source. This harness's L2 has no equivalent provenance
+  ledger; see gaps below.
+- **superpowers' actual CI depth exceeds the 2026-07-08 Bucket 1 snapshot** —
+  `evals/` + `tests/` were found on this pass. Not corrected in the Bucket 1
+  table (out of this wave's scope; flagged for the next scheduled refresh per
+  [Review cadence](#review-cadence)).
+
+### Verdict — lacking vs. excessive vs. the owner's setup
+
+| Axis | Lacking — evidence | Excessive — evidence | Backlog ID |
+|---|---|---|---|
+| Codebase-aware, evidence-based install | dotclaude's `/setupdotclaude` deep-scans manifests/source/tests/git workflow/existing AI configs before proposing placement; `setup.sh` here copies templates with no target-codebase analysis | — | **H-4** (`/project-init` 메타 팩토리 라이트 — same premise: domain analysis → tailored config proposal) |
+| Post-install drift detection on the *consumer* project | dotclaude's `.dotclaude.json` fingerprint + session-start "config drift: project manifests changed since setup" warning; this harness's doctor checks (I-2/M-4) watch the harness's own install caches and tier profiles, not whether a consumer project's stack moved since `setup.sh` ran | — | **W-1** (freshness-watchdog — designed but not yet implemented/wired; this finding is a concrete instantiation of its intended scope) |
+| Self-verification apparatus vs. shipped-surface size | — | At `main`@121f82f: 8 CI jobs (`git show main:.github/workflows/ci.yml` → `secret-scan`, `validate-plugin`, `sanitize`, `supply-chain-scan`, `doc-reality`, `evals`, `verify`, `clean-install`) + 13+ local test scripts guarding **2 agents (`git ls-tree main -- agents/`) + 8 skills (`git ls-tree main -- skills/`: `brain-ingest`, `harness-audit`, `harness-help`, `manager-audit`, `spec`, `supervise`, `verify-completion`, `wrap`)**; the two public peers with any CI at all (dotclaude, citypaul) run exactly 1 CI job each covering multiple steps. No surveyed project approaches this jobs-per-shipped-unit ratio. **Note**: Bucket 1 (line 40) and "Where this harness is strong" (146–152) still read "4 skills" / "4 jobs" — that is the 2026-07-08 snapshot; the live `main` count has since grown to 8 CI jobs and 8 skills. Not corrected in those sections here (Preserve scope, same pattern as the superpowers observation above); flagged for the next scheduled refresh. | — |
+| Gate telemetry + expiry infrastructure (T-2) at solo-maintainer scale | — | None of the six surveyed setups — including dotclaude, the one peer with real hard hooks — instrument gate fire-rate or run an expiry-review process. T-2's registry+digest infra assumes enough traffic to distinguish DEAD/FATIGUE signal from noise; worth re-checking against this repo's actual single-user fire-rate before investing further here. | — |
+
+Two gaps surfaced with **no existing backlog ID** — per the orphan-zero rule
+they are not placed in the table above; they are proposed here as text for
+the supervisor to ratify and insert at merge, not edited into
+`docs/harness-improvement-plan.md` by this wave:
+
+**Proposed new backlog rows**
+
+- **L2 provenance/license ledger** — citypaul/.dotfiles vendors skills from
+  5 named upstream repos, each with source + license attribution inline in
+  the README. This harness's L2 (curated third-party plugins/tools) has no
+  documented mechanism for tracking *what was vendored from where, under what
+  license* if a personal skill/hook is ever adopted from a public source.
+  Distinct from W-2 (`/reorg-sync`, which sweeps stale path references, not
+  provenance) and from the Non-goals "marketplace/catalog scale" rejection
+  (this is about honest bookkeeping for the harness's own occasional L2
+  imports, not building a catalog). Done-condition sketch: a
+  `docs/l2-provenance.md` (or equivalent) ledger + a doc-reality-style check
+  that flags an L2-sourced file with no provenance entry.
+- **L2/L3 cross-machine bootstrap** — the confirmed gap driving the parallel
+  bootstrap wave in this same campaign (`setup.sh --bootstrap` +
+  `local-layer-export`, tracked outside this document). Named here for
+  completeness since it is the single largest gap this survey's peer set
+  addresses and this repo does not: dotclaude ships one-command evidence-based
+  install, citypaul's entire personal layer is one `git clone` away on a new
+  machine. No ID exists yet in `docs/harness-improvement-plan.md` — this
+  wave does not mint one; the parallel wave's own landing is the natural
+  place to register it.
+
 ## Review cadence
 
 Star counts and feature claims are a **2026-07-08 snapshot**. Re-verify with:
