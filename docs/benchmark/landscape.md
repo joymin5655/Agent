@@ -215,10 +215,13 @@ personal hooks, personal skills). The owner's confirmed weak spot going into
 this survey: **zero replication mechanism for L2/L3 on a new machine** — L1
 ships via `/plugin marketplace add`, but the personal layer has no bootstrap
 story (a parallel wave is building one). Stars pulled live via `gh api` on
-**2026-07-25**; CI-workflow presence verified the same way
-(`gh api repos/{owner}/{repo}/contents/.github/workflows`), not just claimed
-in READMEs — everything else is README-based reading, same caveat as buckets
-1–2 above.
+**2026-07-25**. CI-workflow presence was verified the same way
+(`gh api repos/{owner}/{repo}/contents/.github/workflows`) for four of the
+six rows — disler/claude-code-hooks-mastery, anthropics/skills,
+poshan0126/dotclaude, citypaul/.dotfiles (each tagged "verified via API" in
+its Self-verify CI cell below). **obra/superpowers and mattpocock/skills were
+not API-checked**; their cells reflect README-level claims only, same caveat
+as buckets 1–2 above.
 
 | Project (★ 2026-07-25, license) | Philosophy | Install / bootstrap | Self-verify CI | Curation vs. bulk | Memory / continuity | Multi-vendor | Security posture |
 |---|---|---|---|---|---|---|---|
@@ -247,11 +250,11 @@ in READMEs — everything else is README-based reading, same caveat as buckets
 
 ### Verdict — lacking vs. excessive vs. the owner's setup
 
-| Axis | 부족 (lacking) — evidence | 과잉 (excessive) — evidence | 백로그 ID |
+| Axis | Lacking — evidence | Excessive — evidence | Backlog ID |
 |---|---|---|---|
 | Codebase-aware, evidence-based install | dotclaude's `/setupdotclaude` deep-scans manifests/source/tests/git workflow/existing AI configs before proposing placement; `setup.sh` here copies templates with no target-codebase analysis | — | **H-4** (`/project-init` 메타 팩토리 라이트 — same premise: domain analysis → tailored config proposal) |
 | Post-install drift detection on the *consumer* project | dotclaude's `.dotclaude.json` fingerprint + session-start "config drift: project manifests changed since setup" warning; this harness's doctor checks (I-2/M-4) watch the harness's own install caches and tier profiles, not whether a consumer project's stack moved since `setup.sh` ran | — | **W-1** (freshness-watchdog — designed but not yet implemented/wired; this finding is a concrete instantiation of its intended scope) |
-| Self-verification apparatus vs. shipped-surface size | — | 8 CI jobs + 13+ local test scripts guarding **2 agents + 2 skills**; the two public peers with any CI at all (dotclaude, citypaul) run exactly 1 CI job each covering multiple steps. No surveyed project approaches this jobs-per-shipped-unit ratio. | — |
+| Self-verification apparatus vs. shipped-surface size | — | At `main`@121f82f: 8 CI jobs (`git show main:.github/workflows/ci.yml` → `secret-scan`, `validate-plugin`, `sanitize`, `supply-chain-scan`, `doc-reality`, `evals`, `verify`, `clean-install`) + 13+ local test scripts guarding **2 agents (`git ls-tree main -- agents/`) + 8 skills (`git ls-tree main -- skills/`: `brain-ingest`, `harness-audit`, `harness-help`, `manager-audit`, `spec`, `supervise`, `verify-completion`, `wrap`)**; the two public peers with any CI at all (dotclaude, citypaul) run exactly 1 CI job each covering multiple steps. No surveyed project approaches this jobs-per-shipped-unit ratio. **Note**: Bucket 1 (line 40) and "Where this harness is strong" (146–152) still read "4 skills" / "4 jobs" — that is the 2026-07-08 snapshot; the live `main` count has since grown to 8 CI jobs and 8 skills. Not corrected in those sections here (Preserve scope, same pattern as the superpowers observation above); flagged for the next scheduled refresh. | — |
 | Gate telemetry + expiry infrastructure (T-2) at solo-maintainer scale | — | None of the six surveyed setups — including dotclaude, the one peer with real hard hooks — instrument gate fire-rate or run an expiry-review process. T-2's registry+digest infra assumes enough traffic to distinguish DEAD/FATIGUE signal from noise; worth re-checking against this repo's actual single-user fire-rate before investing further here. | — |
 
 Two gaps surfaced with **no existing backlog ID** — per the orphan-zero rule
