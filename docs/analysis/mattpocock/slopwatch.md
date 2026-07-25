@@ -23,8 +23,8 @@ Codex CLI, Pi, OpenCode, Copilot CLI), store them in Postgres, and serve a cost/
 - `research/v1-architecture-decisions.md`, `research/coding-agent-ingestion.md`,
   `research/developer-leaderboard-design.md` — design docs exist and are fairly developed;
   the code has not caught up to them yet.
-- `docs/adr/0001-bun-everywhere.md` — one ADR so far (bun as the runtime/package-manager
-  choice).
+- One ADR so far in the upstream repo's `docs/adr/` folder — `0001-bun-everywhere.md` (bun as
+  the runtime/package-manager choice).
 
 ## Install / distribution mechanism
 

@@ -29,11 +29,12 @@ Working Effectively with Legacy Code) plus a Refactoring.Guru-derived set.
   for most real task use"), `<book>.nano.md` (~35-45 lines, "compact fallback for very tight
   context budgets"). Line/rule/byte counts are tabulated in the README's release matrix,
   generated deterministically (`wc -l`, markdown-list-item count, `wc -c`).
-- `docs/USAGE.md` covers per-editor setup (Codex, Claude Code, Cursor) — always-on vs on-demand
-  usage, skills vs scoped rules vs MCP/RAG patterns.
-- `docs/COMPATIBILITY.md` and `docs/CRITICISM.md` (the latter explicitly logging "constructive
-  criticism from Reddit") — unusually transparent for a rules repo; it airs its own weak points
-  rather than only showcasing positives.
+- The upstream repo's `docs/` folder has a `USAGE.md` covering per-editor setup (Codex,
+  Claude Code, Cursor) — always-on vs on-demand usage, skills vs scoped rules vs MCP/RAG
+  patterns.
+- Also in that upstream `docs/` folder: `COMPATIBILITY.md` and `CRITICISM.md` (the latter
+  explicitly logging "constructive criticism from Reddit") — unusually transparent for a
+  rules repo; it airs its own weak points rather than only showcasing positives.
 
 ## Install / distribution mechanism
 
@@ -50,9 +51,10 @@ possible since there's no `package.json` at all in this repo (pure content).
   **not a fit for this wave's scope**: this harness's docs are operational/mechanical
   (routing tables, gate definitions), not book-derived style guidance — there's no rule set
   here that needs a mini/nano compression pass. Noted for awareness only.
-- `docs/CRITICISM.md` as a standing "known weaknesses, sourced from public pushback" file is a
-  good transparency habit. This harness's own `docs/benchmark/landscape.md` (Wave 4's territory,
-  not this dossier's) already plays a similar role by comparing against competitors' strengths.
+- The upstream repo's `CRITICISM.md` (under its `docs/`) as a standing "known weaknesses,
+  sourced from public pushback" file is a good transparency habit. This harness's own
+  `docs/benchmark/landscape.md` (Wave 4's territory, not this dossier's) already plays a
+  similar role by comparing against competitors' strengths.
 
 ## Overlap with this harness
 

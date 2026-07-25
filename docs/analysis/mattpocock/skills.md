@@ -89,7 +89,9 @@ hook-enforced harness would understate what this harness already guarantees mech
 ## Security notes
 
 - No installer runs arbitrary code; skills are markdown + a handful of static template files
-  (`agents/openai.yaml` config stubs for cross-agent metadata).
+  (each engineering skill folder carries an `openai.yaml` config stub, in an `agents`
+  subfolder, for cross-agent metadata — upstream's `agents` here is a per-skill directory
+  name, unrelated to this repo's own top-level `agents/` directory).
 - `git-guardrails-claude-code` (misc/, not in the shipped plugin) sets up CC hooks to block
   destructive git commands — same intent as this harness's own pre-tool-guard hooks. Read but
   not adopted (duplicate coverage, not evaluated further since it's excluded from the plugin
