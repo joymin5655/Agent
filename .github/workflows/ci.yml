@@ -149,6 +149,16 @@ jobs:
       # core/tests/plugin-path-install-test.sh is the single source of truth for the
       # operations this job performs; this step is a thin caller (same "gate is a
       # standalone script, CI just runs it" shape as doc-reality/supply-chain-scan).
+      # Same scratch-$HOME isolation as clean-install below (M-5): the test script
+      # already builds its OWN internal scratch homes for its snapshot assertions,
+      # but job-level isolation is defense in depth — no doctor invocation in this
+      # job, wrapped in an assertion or not, should ever touch the CI runner's real
+      # $HOME (a security review of an earlier revision of this wave found exactly
+      # this kind of unintended $HOME write from an unrelated doctor check).
+      - name: Create an isolated scratch HOME for this job
+        run: |
+          SCRATCH="$(mktemp -d)"
+          echo "HOME=$SCRATCH" >> "$GITHUB_ENV"
       - name: Run the plugin-path install battery (doctor guidance + loud-degrade + anti-vacuous manifest probe)
         run: bash core/tests/plugin-path-install-test.sh
 

@@ -418,9 +418,10 @@ OUT_N3="$(AGENT_BRAIN_DIR=/nonexistent/brain bash "$SETUP" --doctor 2>&1)"
 check "brain-absent-skip" $?
 
 echo
-echo "=== (o) gh CLI: on PATH -> PASS with version; absent from PATH -> WARN, warn != fail ==="
+echo "=== (o) gh CLI: on PATH -> PASS naming its path (presence-only, never invoked); absent from PATH -> WARN, warn != fail ==="
 OUT_O="$(bash "$SETUP" --doctor 2>&1)"
-[[ "$OUT_O" == *"[PASS"*"gh — gh version"* ]]
+GH_PATH="$(command -v gh)"
+[[ "$OUT_O" == *"[PASS"*"gh — $GH_PATH"* ]]
 check "gh-present-pass" $?
 OUT_O2="$(PATH=/usr/bin:/bin bash "$SETUP" --doctor 2>&1)"
 RC_O2=$?

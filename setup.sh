@@ -749,8 +749,14 @@ PY
     # 19. gh CLI — optional (getting-started.md declares it for repo operations:
     #     `gh repo clone`, PR creation). Same WARN-only observer family as gitleaks
     #     (check 3): absence never fails the harness, it just narrows what's usable.
+    #     PRESENCE ONLY — never invoke `gh` itself: on a clean $HOME, `gh --version`
+    #     writes ~/.local/state/gh/device-id (a UUID), which is a doctor read-only
+    #     contract violation (same class of bug as the OpenKnowledge REJECT
+    #     precedent — an unconsented write under the user's home on a check that
+    #     promises to only look). `command -v` is the same presence-only shape
+    #     check 3 (gitleaks) already uses.
     if command -v gh >/dev/null 2>&1; then
-        add_row PASS "gh — $(gh --version 2>&1 | head -1)"
+        add_row PASS "gh — $(command -v gh)"
     else
         add_row WARN "gh — not found; repo operations (gh repo clone, gh pr create) unavailable. Install: brew install gh (macOS) or https://cli.github.com"
     fi
@@ -771,11 +777,19 @@ PY
     #     already gets registration guidance from install_claude() itself, and a
     #     "both" install is check 17's problem to flag, not this one's.
     local claude_user_cfg="${AGENT_CLAUDE_USER_CONFIG:-$HOME/.claude.json}"
-    local brain_reg_cmd="claude mcp add brain --scope user -- python3 $FRAMEWORK_ROOT/core/brain/brain-mcp.py"
+    # printf %q on the interpolated path: an unquoted $FRAMEWORK_ROOT in a
+    # copy-pasteable shell command is a command-injection vector for any path
+    # containing shell metacharacters (spaces, $(), backticks, ;) — install_claude()
+    # (line ~120) already quotes its own brain_mcp path for the same reason.
+    local brain_reg_cmd="claude mcp add brain --scope user -- python3 $(printf '%q' "$FRAMEWORK_ROOT")/core/brain/brain-mcp.py"
+    # strip control chars before echoing a config-derived path back to a terminal
+    # (escape-sequence display spoofing — same hardening as checks 12/15/16).
+    local claude_user_cfg_shown
+    claude_user_cfg_shown="$(printf '%s' "${claude_user_cfg/#$HOME/~}" | tr -d '\000-\037\177')"
     if [[ $plugin_active -ne 1 || $shell_active -eq 1 ]]; then
         add_row PASS "brain MCP (plugin path) — not a plugin-only install (check scoped to plugin-path installs)"
     elif [[ ! -f "$claude_user_cfg" ]]; then
-        add_row WARN "brain MCP (plugin path) — no user config at ${claude_user_cfg/#$HOME/~}; opt in with: $brain_reg_cmd (never auto-registered)"
+        add_row WARN "brain MCP (plugin path) — no user config at $claude_user_cfg_shown; opt in with: $brain_reg_cmd (never auto-registered)"
     else
         local bm_out bm_rc
         if bm_out="$(CLAUDE_USER_CFG="$claude_user_cfg" python3 - <<'PY' 2>&1
@@ -789,7 +803,13 @@ brain = (d.get("mcpServers") or {}).get("brain")
 if brain is None:
     print("not registered")
     sys.exit(3)
-args = brain.get("args") or []
+# a malformed config can carry a non-list "args" (int/str/dict/bool) — `or []`
+# only guards the FALSY cases; a truthy non-list (e.g. args: 12345) reached the
+# `for a in args` below and raised an uncaught TypeError, whose traceback leaked
+# into the WARN row. Type-check instead of relying on truthiness.
+args = brain.get("args")
+if not isinstance(args, list):
+    args = []
 if not any(isinstance(a, str) and a.endswith("brain-mcp.py") for a in args):
     print("registered but does not point at brain-mcp.py")
     sys.exit(3)
@@ -801,7 +821,7 @@ PY
             bm_rc=$?
         fi
         case $bm_rc in
-            0) add_row PASS "brain MCP (plugin path) — registered in ${claude_user_cfg/#$HOME/~}" ;;
+            0) add_row PASS "brain MCP (plugin path) — registered in $claude_user_cfg_shown" ;;
             2) add_row WARN "brain MCP (plugin path) — $bm_out" ;;
             *) add_row WARN "brain MCP (plugin path) — $bm_out; opt in with: $brain_reg_cmd (never auto-registered)" ;;
         esac
