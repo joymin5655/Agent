@@ -1,20 +1,28 @@
 #!/usr/bin/env python3
 """Stop hook — completion gate for code-quality violations.
 
-Inspects the session's git diff at Stop time. If any changed source file
-has unresolved style/quality violations (inline types, hardcoded colors,
-console.log statements), the hook EMITS `decision: block` and the AI
-must address them before the session can end.
+Two layers, calibrated separately (2026-07-27 guard-trim):
+
+  1. COMPLETION gate (objective, consumer-declared): runs the project's
+     `session.completion_tests` (P3-1). Any failure EMITS `decision: block` —
+     an unverifiable completion must not end the session silently.
+  2. STYLE scan (subjective taste: inline types, hardcoded colors,
+     console.log): ADVISORY by default — findings are reported and logged but
+     never block. Per the harness escalation principle, a style opinion is not
+     an irreversibility/secret gate. Opt back into the pre-2026-07 blocking
+     behavior with AGENT_QUALITY_STYLE_BLOCK=1.
 
 Anti-infinite-loop: `stop_hook_active=true` on stdin means this Stop was
 already blocked once. We pass on the second Stop so the user can break out
 by deciding "intentional violation".
 
-Escape hatch: AGENT_QUALITY_GATE_BLOCK=0 → advisory only (no block).
+Escape hatch: AGENT_QUALITY_GATE_BLOCK=0 → advisory only (no block at all).
 
 Configuration (env vars):
-  AGENT_QUALITY_GATE_BLOCK=1 (default)   enable block enforcement
-  AGENT_QUALITY_GATE_BLOCK=0             advisory only
+  AGENT_QUALITY_GATE_BLOCK=1 (default)   enable block enforcement (master)
+  AGENT_QUALITY_GATE_BLOCK=0             advisory only (never blocks)
+  AGENT_QUALITY_STYLE_BLOCK=0 (default)  style findings are advisory
+  AGENT_QUALITY_STYLE_BLOCK=1            style findings also block (opt-in)
   AGENT_QUALITY_SCAN_DIRS                comma-separated dir prefixes to scan
                                           (default: 'src/')
 """
@@ -186,6 +194,7 @@ def main() -> None:
     log_dir = os.path.join(root, ".agent/logs")
 
     block_enabled = os.environ.get("AGENT_QUALITY_GATE_BLOCK", "1") == "1"
+    style_block = os.environ.get("AGENT_QUALITY_STYLE_BLOCK", "0") == "1"
     # Enforce only on the first Stop (anti-loop: a second Stop passes) and only
     # when block is enabled (advisory mode never runs tests or blocks).
     enforcing = block_enabled and not stop_hook_active
@@ -250,9 +259,13 @@ def main() -> None:
     except Exception:
         pass
 
-    # Completion gate: block on the first Stop with any failure. Second Stop
-    # passes (user decided "intentional"). Advisory mode (BLOCK=0) never blocks.
-    if enforcing:
+    # Block decision: completion-test failures always block (objective,
+    # consumer-declared); style findings block only under the opt-in
+    # AGENT_QUALITY_STYLE_BLOCK=1 — by default they were reported+logged above
+    # and the session may end. Second Stop passes (user decided "intentional").
+    # Advisory mode (BLOCK=0) never blocks.
+    should_block = bool(completion_failures) or (style_block and total_issues > 0)
+    if enforcing and should_block:
         # Teaching format (T-1): WHY + FIX so the agent can self-correct.
         reason = (
             f"{summary}\n\n"

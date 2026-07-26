@@ -75,6 +75,9 @@ resources:
 
 # ---------------------------------------------------------------------------
 # Hardcoding policy — paths exempt from check-hardcoding.py / check-staged.py.
+# NOT YET WIRED (declarative documentation only — backlog T-4). The live knob
+# is the env var AGENT_HARDCODING_MODE=off|dryrun|block (default dryrun:
+# advisory + jsonl log, never blocks; block restores the hard deny).
 # ---------------------------------------------------------------------------
 hardcoding:
   exempt_globs:
@@ -112,7 +115,10 @@ session:
   # Shell commands run on the FIRST Stop of a response. If any exits non-zero
   # (or times out), the session is blocked from ending until it passes — you
   # cannot claim "done" while tests fail. A second Stop passes (intentional
-  # override), as does AGENT_QUALITY_GATE_BLOCK=0 (advisory). Commands run at
+  # override), as does AGENT_QUALITY_GATE_BLOCK=0 (advisory). The hook's
+  # subjective STYLE scan (inline types / hex colors / console.log) is
+  # advisory-only by default and never blocks — opt back into style blocking
+  # with AGENT_QUALITY_STYLE_BLOCK=1. Commands run at
   # the project's OWN trust level (same as your package.json scripts); unset or
   # empty = the completion gate does nothing. Per-command timeout:
   # AGENT_COMPLETION_TEST_TIMEOUT seconds (default 120).

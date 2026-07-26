@@ -250,5 +250,35 @@ printf '%s' "$OUT_K" | python3 -c "import json,sys; d=json.load(sys.stdin); r=d[
 check "traversal-sink-not-read" $?
 
 echo
+echo "=== (l) --gates: same guard in one sink split by hook field (double-count regression) ==="
+# Two gates share a sink AND a guard value (the real secrets-bash vs
+# secrets-content shape). Records carry a hook field: 2 for hook-a.sh,
+# 1 for hook-b.py, plus 1 legacy record with NO hook field. Each gate must
+# count its own hook's records + the legacy record (guard-only fallback) —
+# never the union: hook-a=3, hook-b=2. Pre-fix both reported 4.
+HOOKSPLIT_DIR="$TMP_DIR/hooksplit"
+mkdir -p "$HOOKSPLIT_DIR/logs"
+cat > "$HOOKSPLIT_DIR/registry.md" <<EOF
+<!-- gate-registry:begin -->
+GATE shared-a | hook-a.sh | deny | shared.jsonl | secrets | $NEW_REVIEW | hook-a share of the shared guard.
+GATE shared-b | hook-b.py | deny | shared.jsonl | secrets | $NEW_REVIEW | hook-b share of the shared guard.
+<!-- gate-registry:end -->
+EOF
+{
+  printf '{"ts":"%s","guard":"secrets","hook":"hook-a.sh","reproduce_test":false}\n' "$NOW_TS"
+  printf '{"ts":"%s","guard":"secrets","hook":"hook-a.sh","reproduce_test":false}\n' "$NOW_TS"
+  printf '{"ts":"%s","guard":"secrets","hook":"hook-b.py","reproduce_test":false}\n' "$NOW_TS"
+  printf '{"ts":"%s","guard":"secrets","reproduce_test":false}\n' "$NOW_TS"
+} > "$HOOKSPLIT_DIR/logs/shared.jsonl"
+OUT_L="$(bash "$SCRIPT" --gates --registry "$HOOKSPLIT_DIR/registry.md" --logs-dir "$HOOKSPLIT_DIR/logs" --json 2>&1)"
+printf '%s' "$OUT_L" | python3 -c "import json,sys; d=json.load(sys.stdin); r={x['id']:x for x in d['reports']}; sys.exit(0 if r['shared-a']['fired']==3 else 1)"
+check "hook-split-a-counts-own-plus-legacy" $?
+printf '%s' "$OUT_L" | python3 -c "import json,sys; d=json.load(sys.stdin); r={x['id']:x for x in d['reports']}; sys.exit(0 if r['shared-b']['fired']==2 else 1)"
+check "hook-split-b-counts-own-plus-legacy" $?
+# union would be 4 — assert neither gate reports it (the actual double-count bug)
+printf '%s' "$OUT_L" | python3 -c "import json,sys; d=json.load(sys.stdin); sys.exit(1 if any(x['fired']==4 for x in d['reports']) else 0)"
+check "hook-split-no-union-double-count" $?
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]

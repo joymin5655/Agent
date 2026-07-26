@@ -41,6 +41,7 @@ _no() { echo "    FAIL $1"; FAIL=$((FAIL + 1)); }
 # norm — reduce an adapter's raw stdout to a single decision verb.
 #   empty stdout            -> "allow" (silent pass)
 #   {...permissionDecision} -> that value (allow|ask|deny)
+#   {...additionalContext}  -> "advisory" (dryrun-mode gates emit context, no decision)
 #   anything unparseable    -> "MALFORMED" (so a drift fails loudly, never silently)
 norm() {
     python3 -c '
@@ -50,7 +51,13 @@ if not d:
     print("allow")
 else:
     try:
-        print(json.loads(d).get("hookSpecificOutput", {}).get("permissionDecision", "MALFORMED"))
+        h = json.loads(d).get("hookSpecificOutput", {})
+        if "permissionDecision" in h:
+            print(h["permissionDecision"])
+        elif "additionalContext" in h:
+            print("advisory")
+        else:
+            print("MALFORMED")
     except Exception:
         print("MALFORMED")'
 }
@@ -137,8 +144,24 @@ parity_case "deny-destructive-bash" pre-tool-guard.sh    deny    Bash   "rm -rf 
 parity_case "allow-quoted-bash"     pre-tool-guard.sh    allow   Bash   "echo it's fine"                ""    ""
 parity_case "deny-quoted-secrets"   pre-tool-guard.sh    deny    Bash   "cat secrets/a.env # it's mine" ""    ""
 echo "--- file/content shape (check-hardcoding.py reads tool_input.file_path + .content) ---"
-parity_case "deny-hardcoded-content" check-hardcoding.py deny    Write  ""  "app.js"  "const seg = [5, [255, 0, 0]]"
+# 2026-07-27 guard-trim: check-hardcoding defaults to dryrun (advisory); the
+# deny path is opt-in via AGENT_HARDCODING_MODE=block. Cover both across all
+# three adapters. Firings are sunk to a scratch file + marked reproduce_test
+# so parity runs never pollute the live fire-rate log. Fixture content is
+# runtime-assembled via an empty ${Z} splice so no literal hardcoding pattern
+# appears in this source (same precedent as check-hardcoding-test.sh).
+Z=""
+HC_FIXTURE="const seg = [5,${Z} [255, 0, 0]]"
+_HC_SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/parity-hc.XXXXXX")"
+export AGENT_HARDCODING_SINK="$_HC_SCRATCH/hardcoding.jsonl"
+export AGENT_REPRODUCE_TEST=1
+export AGENT_HARDCODING_MODE=block
+parity_case "deny-hardcoded-content" check-hardcoding.py deny    Write  ""  "app.js"  "$HC_FIXTURE"
+unset AGENT_HARDCODING_MODE   # unset = the shipped default (dryrun/advisory)
+parity_case "advisory-hardcoded-default" check-hardcoding.py advisory Write "" "app.js" "$HC_FIXTURE"
 parity_case "allow-quoted-content"   check-hardcoding.py allow   Write  ""  "app.js"  "const s = \"it's 100% fine\""
+unset AGENT_REPRODUCE_TEST AGENT_HARDCODING_SINK
+rm -rf "$_HC_SCRATCH"
 
 echo
 echo "=== Parity: $PASS passed, $FAIL failed ==="

@@ -154,3 +154,21 @@ shared blind spot doesn't survive review.
   override, not by shipping more agents; the agent roster stays curated.
 - **No price constants.** Tiers are relative; absolute prices live outside
   the repo.
+
+## Currency log
+
+Dated re-verifications of this policy against the live model landscape (the
+tier table itself is generation-agnostic, so entries here record *that* the
+mapping was checked, not new mappings):
+
+- **2026-07-27** — verified against official vendor docs. Claude: the shipped
+  reviewer pins are generation-neutral aliases (`sonnet` / `opus`) which the
+  runtime resolves to the current generation (Claude 5 family at check time),
+  so the pins self-update and need no edit; the LOW rung's `haiku` alias is
+  likewise current. Codex: the adapter profile templates (quick=low-effort
+  light tier, deep=high-effort top tier, PR #88) match the current GPT-5.6
+  lineup; a newer above-top variant (client-side since 2026-07) is a **watch
+  item** for the deep profile — per effort-before-tier-up, no promotion
+  without benchmark evidence (backlog MC series, `harness-improvement-plan.md`
+  §4.13). Intro/promotional pricing on the current mid tier is noted as a
+  cost tailwind but changes no mapping (no price constants in-repo).

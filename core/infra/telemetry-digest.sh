@@ -174,9 +174,14 @@ except Exception as e:
 
 
 # --- count in-window firings per sink, once per distinct sink ----------------
-def count_sink(sink, match):
-    """Return in-window firing count for (sink, match). match '*' counts every
-    valid JSON-object line; otherwise counts lines whose guard field == match.
+def count_sink(sink, match, hook):
+    """Return in-window firing count for (sink, match, hook). match '*' counts
+    every valid JSON-object line; otherwise counts lines whose guard field ==
+    match. When a record ALSO carries a `hook` field it must equal the registry
+    hook — two gates sharing one sink AND one guard value (secrets-bash vs
+    secrets-content, both guard=secrets in security-violations.jsonl) would
+    otherwise each count the union and double-report. Records without a hook
+    field keep matching on guard alone (older schema stays countable).
     The sink is confined to logs_dir: a registry line with a '../' traversal
     resolves outside and is refused (returns None — treated like an absent sink),
     so a bad registry entry can never make the digest read arbitrary files."""
@@ -206,8 +211,12 @@ def count_sink(sink, match):
                 ts = parse_ts(rec.get("ts"))
                 if ts is not None and ts < cutoff:
                     continue
-                if match == "*" or rec.get("guard") == match:
-                    n += 1
+                if match != "*" and rec.get("guard") != match:
+                    continue
+                rec_hook = rec.get("hook")
+                if rec_hook is not None and rec_hook != hook:
+                    continue
+                n += 1
     except FileNotFoundError:
         return None            # sink absent — distinct from 0 firings
     except Exception:
@@ -222,7 +231,7 @@ for g in gates:
     if g["sink"] == "-":
         classes.append("UNINSTRUMENTED")
     else:
-        fired = count_sink(g["sink"], g["match"])
+        fired = count_sink(g["sink"], g["match"], g["hook"])
         if fired is None:
             classes.append("DEAD")          # sink never created == never fired
             fired = 0

@@ -76,6 +76,11 @@ Behavior:
 - A **second Stop** passes automatically (intentional-override anti-loop), and
   `AGENT_QUALITY_GATE_BLOCK=0` makes the whole gate advisory. Each command is
   bounded by `AGENT_COMPLETION_TEST_TIMEOUT` seconds (default 120).
+- **Style scan is advisory** (2026-07-27 guard-trim): the same hook's
+  subjective style checks (inline types, hardcoded hex colors, `console.log`)
+  are reported and logged but never block by default — only `completion_tests`
+  failures drive the `block` decision. Opt back into the old style-blocking
+  behavior with `AGENT_QUALITY_STYLE_BLOCK=1`.
 - **Trust model:** these commands run at the project's OWN trust level — the
   same as its `package.json` scripts or Makefile. The loader bounds count (≤20)
   and length (≤500 chars) but does not sandbox execution; an agent that could

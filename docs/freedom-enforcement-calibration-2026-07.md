@@ -92,6 +92,20 @@ secrets deny(무우회), fail-open 전면, ask-티어 에스컬레이션 원칙(
 
 전역 TDD block 승격 · deny 티어 확대(secrets 외 ask 유지) · 프롬프트 강제 문구 추가(도구경계 원칙 위반) · 신규 런타임 의존성(bash+python3 플로어) · 계측 없는 게이트 완화/강화 · 관측 로그의 규칙 자동 영속(인간 승인 PR만).
 
+## 3e. 후속 판정 — §3c 계측-후-재판정 집행 (2026-07-27 guard-trim)
+
+§3c가 예고한 "계측 후 데이터로 재판정"을 T-2 30일 데이터로 집행. 판정과 근거:
+
+| 대상 | 30일 실측 (T-2 digest) | 판정 |
+|---|---|---|
+| `check-hardcoding.py` deny | **UNINSTRUMENTED**(sink 부재로 fire-rate 측정 자체 불가) + 독스트링·에러 메시지가 `hook-config.yml: hardcoding_patterns[]` 완화를 안내하나 **코드 미배선(거짓 탈출구)** — deny인데 계측도 탈출구도 없는 유일 게이트 | **기본 dryrun 강등** (`AGENT_HARDCODING_MODE=off/dryrun/block`, block=기존 동작 opt-in) + sink 계측 신설(`hardcoding.jsonl`) + 탈출구 주장 정직화(T-4 예정 명시). 디자인 취향은 비가역·시크릿 게이트가 아니므로 ask-티어 에스컬레이션 원칙(§3a)의 자기 적용 |
+| `session-quality-gate.py` 스타일 block | 위반 로그 0건 생성(스타일 경로 실발화 0) — 주관 검사가 객관 completion_tests와 한 block 결정에 동승 | **분리 강등**: 스타일 검사=advisory 기본(`AGENT_QUALITY_STYLE_BLOCK=1` opt-in), block 결정은 completion_tests 단독 소유(P3-1 강제층 무손상) |
+| `supervisor.py` ask | 30일 440레코드/ask 11건이 레지스트리 **미등록** 상태로 발화(심사 사각) | **등록만** (`supervisor-ask` 행 신설, ask 레코드에 guard 스탬프) — 모드 무변경, §3c 원칙("계측 없는 완화 금지")대로 측정 먼저 |
+| telemetry-digest 집계 | secrets-bash·secrets-content가 같은 sink+같은 guard값 공유로 **이중계산**(둘 다 2179 표기, 실제 1353/826) | hook 필드 구분 수정 — FATIGUE 판정 입력의 신뢰 회복 |
+| 안전 deny·ask 고발화 게이트(destructive 1282·verify-bypass 1751 등) | FATIGUE 플래그이나 전부 §3a 유지 계열 | **무변경** — 발화량은 마찰이 아니라 방어 실적; 창의성 억압 근거 없음 |
+
+기각 재확인: deny 티어 확대 금지·전역 TDD block 승격 금지·계측 없는 강도 조정 금지(§3c·"하지 말 것" 전부 유지). 로드맵 편입: `harness-improvement-plan.md` §4.13 (Axis 1 가드 캘리브레이션 — T-4 실배선, LE-4 제안형 래칫).
+
 ## 4. 이 문서 자체의 검증
 
 1. §1 인벤토리의 각 파일 경로 실존: `ls core/hooks/{pre-tool-guard.sh,secret-content-scan.py,check-hardcoding.py,session-quality-gate.py,tdd-guard.py,supervisor.py,r4-mutex-check.sh,context-mode-guard.sh} core/infra/{completion-verify.py,telemetry-digest.sh} core/git-hooks/{pre-commit,pre-push} .github/workflows/ci.yml`
