@@ -37,7 +37,7 @@ support, shipped eval suite.
 | BMAD-METHOD (50.2k) | prompt-only (workflow gates) | large (agile ceremony) | partial (QA role) | no | manual per-agent | **yes** (IDE-agnostic) | no |
 | wshobson/agents (37.6k) | none (catalog) | small per-agent | n/a | no | hints only | **yes** (6 runtimes) | no |
 | oh-my-claudecode (37.5k) | **yes** (real hooks) | large (eager context) | **yes** (verifier lane) | no | yes (manual 3-tier) | partial (worker CLIs) | no |
-| **agent-harness (this repo)** | **yes** (deny/ask hooks, fail-open) | **small** (2 agents, 4 skills) | **yes** (skill-mandated separate-context verify) | **yes** (4 CI jobs on itself) | policy + config templates (not runtime-enforced) | **yes** (3 adapters) | **no → E-1** |
+| **agent-harness (this repo)** | **yes** (deny/ask hooks, fail-open) | **small** (3 agents, 9 skills) | **yes** (skill-mandated separate-context verify) | **yes** (8 CI jobs on itself) | policy + observer hook (measured, not runtime-enforced) | **yes** (3 adapters) | **yes** (`evals/` — datasets + judges, CI-gated) |
 
 Cut for space: SuperClaude 23.5k (persona prompt-pack, prompt-only),
 claude-squad 8.1k (parallel-session TUI, a runner not a harness), agent-os
@@ -135,21 +135,23 @@ Consistent thinness:
 
 ## Where this harness is strong (evidence-linked)
 
-- **Real enforcement with a calibrated ceiling.** 17 registered hook scripts
-  (`setup.sh --doctor` checks every registered hook resolves and is
-  executable); the `deny` tier is deliberately narrow — destructive fs/git
+- **Real enforcement with a calibrated ceiling.** The full registered hook set
+  (`hooks/hooks.json` → `core/hooks/`; `setup.sh --doctor` checks every
+  registered hook resolves and is executable); the `deny` tier is deliberately narrow — destructive fs/git
   operations, secrets access, and design-constant hardcoding — and the
   calibration rule bars adding new `deny` tiers: everything else escalates at
   most to `ask`, and hooks fail open
   (`docs/freedom-enforcement-calibration-2026-07.md` records the calibration
   and its external grounding).
-- **Curated surface.** Exactly 2 shipped agents (`agents/master-registry.json`,
-  trimmed from 5 on usage evidence) and 4 skills — the anti-bloat position the
-  survey shows the field lacks.
-- **Self-verification CI.** 4 jobs run against the harness itself
-  (`.github/workflows/ci.yml`: manifest/frontmatter drift, domain-neutrality
-  sanitize gate, self supply-chain scan, gitleaks) plus `setup.sh --doctor`
-  environment reconciliation and 12+ test scripts in `core/tests/`.
+- **Curated surface.** 3 shipped agents (`agents/master-registry.json`,
+  trimmed from 5 on usage evidence, +1 persona orchestrator in 0.5.5) and
+  9 skills — the anti-bloat position the survey shows the field lacks.
+- **Self-verification CI.** 8 jobs run against the harness itself
+  (`.github/workflows/ci.yml`: gitleaks, manifest/frontmatter drift,
+  domain-neutrality + PII sanitize gate, self supply-chain scan, doc-reality,
+  evals, the `verify-all.sh` unified runner, and a scratch-home clean-install
+  smoke with mutation probes) plus `setup.sh --doctor` environment
+  reconciliation and 56 test scripts in `core/tests/`.
 - **Author≠reviewer as skill-mandated discipline.** `/verify-completion`
   requires a separate-context, refute-by-default verifier (a skill rule, not
   yet CI-enforced — the mechanical guard is O-1's open done-condition); in
@@ -162,17 +164,20 @@ Consistent thinness:
 
 ## Where it is behind (each closes on a backlog ID)
 
-- **No shipped eval suite** — the field's strongest card is this repo's
-  biggest gap. → **E-1** (public `evals/` with labeled cases, LLM-judge
-  scoring, Pass^3, CI regression gate).
-- **Orchestration maturity** — supervise lacks the delegation-contract
-  template, fan-out caps, and single-writer rule as checkable rules → **O-1**;
-  no general fresh-context loop skill → **O-2**.
-- **Gates don't teach or report.** Deny/ask messages lack WHY/FIX → **T-1**;
-  no gate registry with fire-rate/expiry telemetry → **T-2**; skill
-  descriptions lack negative triggers → **T-3**.
-- **Cold-install path is unverified in CI** → **M-5** (new, this survey).
-- **Doctor can't see tier-profile drift** → **M-4**.
+Most of the gaps this survey originally named have since shipped — see the
+[Gap → backlog map](#gap--backlog-map) statuses below. Still open:
+
+- **No general fresh-context loop skill** → **O-2** (the goal-mode state
+  machine exists; the generic per-iteration loop skill on top of it does not).
+- **Grader/test write-ban during improvement loops** → **L-2** (designed and
+  reviewed, not yet merged — the checklist half, L-1, shipped in
+  `evals/failure-modes.yaml`).
+- **Real-LLM judge track runs local-only** — `evals/judges/llm-judge.py` is
+  deliberately out of CI (no model calls in CI); the deterministic and
+  semantic-judge tracks are the CI-gated layers.
+- **Model-tier routing stays measured-not-enforced** — a deliberate position
+  (see strengths above), but still the softest spot in the "gates, not vibes"
+  pitch.
 
 ## Non-goals (deliberate, with reversal conditions)
 
@@ -192,21 +197,25 @@ Consistent thinness:
 
 ## Gap → backlog map
 
-| Survey gap | ID | Done-condition (from `docs/harness-improvement-plan.md`) |
-|---|---|---|
-| Eval suite | E-1 | `evals/` exists; ≥10 labeled cases; CI Pass^3 report; regression fails CI |
-| Delegation contracts / fan-out / single-writer | O-1 | template file + SKILL.md references 4 rules + CI guards reviewer read-only toolsets |
-| General loop skill | O-2 | fixture mission: state file → session restart → resume + cap-stop recorded |
-| Teaching gates | T-1 | every deny/ask fixture's decision JSON carries WHY/FIX |
-| Gate registry + fire-rate + expiry | T-2 | registry rows for all gates + digest reports DEAD/FATIGUE candidates |
-| Negative skill triggers | T-3 | every shipped SKILL.md description has ≥1 negative example |
-| Grader failure-mode checklist / write-ban | L-1/L-2 | failure-modes.yaml ≥8 modes; loop-session writes to evals/tests → ask |
-| Doctor tier-profile blind spot | M-4 | doctor check + fixtures (profiles present/absent/skip) |
-| Clean-install CI smoke | M-5 | bare-checkout install on a scratch config home → doctor 0 fail; sabotaged exec bit → job fails |
+| Survey gap | ID | Status | Done-condition (from `docs/harness-improvement-plan.md`) |
+|---|---|---|---|
+| Eval suite | E-1 | **shipped** (`evals/` — datasets, judges, CI regression gate) | `evals/` exists; ≥10 labeled cases; CI Pass^3 report; regression fails CI |
+| Delegation contracts / fan-out / single-writer | O-1 | **shipped** (`skills/supervise/templates/delegation-contract.md` + registry-drift CI guard) | template file + SKILL.md references 4 rules + CI guards reviewer read-only toolsets |
+| General loop skill | O-2 | open | fixture mission: state file → session restart → resume + cap-stop recorded |
+| Teaching gates | T-1 | **shipped** (WHY/FIX in deny/ask decisions) | every deny/ask fixture's decision JSON carries WHY/FIX |
+| Gate registry + fire-rate + expiry | T-2 | **shipped** (`docs/gate-registry.md` + `core/infra/telemetry-digest.sh --gates`) | registry rows for all gates + digest reports DEAD/FATIGUE candidates |
+| Negative skill triggers | T-3 | **shipped** | every shipped SKILL.md description has ≥1 negative example |
+| Grader failure-mode checklist / write-ban | L-1/L-2 | L-1 **shipped** (`evals/failure-modes.yaml`); L-2 open | failure-modes.yaml ≥8 modes; loop-session writes to evals/tests → ask |
+| Doctor tier-profile blind spot | M-4 | **shipped** (doctor profile check) | doctor check + fixtures (profiles present/absent/skip) |
+| Clean-install CI smoke | M-5 | **shipped** (`clean-install` CI job) | bare-checkout install on a scratch config home → doctor 0 fail; sabotaged exec bit → job fails |
 
 ## Review cadence
 
-Star counts and feature claims are a **2026-07-08 snapshot**. Re-verify with:
+Star counts and competitor feature claims are a **2026-07-08 snapshot**
+(spot re-checks 2026-07-14 / 2026-07-16). The **self-row and gap statuses
+were last verified 2026-07-28** against the repo itself (`ls agents/ skills/`,
+CI job list, backlog ✅ marks in `docs/harness-improvement-plan.md`) — re-run
+that comparison whenever the version bumps. Re-verify star counts with:
 
 ```bash
 gh api repos/{owner}/{repo} --jq .stargazers_count
