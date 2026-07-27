@@ -31,6 +31,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     creativity suppression.
 
 ### Fixed
+- **Adversarial-review hardening (2 lanes, 2026-07-27).** code-reviewer
+  (2 MINOR + 1 NIT) and security-reviewer (2 LOW, verdict APPROVE — both
+  demoted gates confirmed to carry no security duty; `pre-tool-guard.sh` /
+  `secret-content-scan.py` verified untouched):
+  - check-hardcoding: unknown `AGENT_HARDCODING_MODE` values now warn loudly
+    on stderr and degrade to dryrun (a typo like `Block` no longer silently
+    weakens an intended hard gate); sink writes are **confined** to the repo
+    root or the system temp dir (escaping/empty overrides fall back to the
+    default in-repo sink — mirrors the digest's read-side confinement), and
+    the same writer-side confinement was applied to `spec-gate.py`.
+  - session-quality-gate: the block reason's FIX remedies now name only the
+    layer that actually blocked (completion vs opt-in style), instead of
+    always listing style fixes that no longer block.
+  - telemetry-digest: reproduce_test-excluded records are now **tallied and
+    reported as `suppressed`** instead of silently dropped, so a lingering
+    `AGENT_REPRODUCE_TEST=1` in a real session surfaces as an anomaly rather
+    than invisibly blinding the DEAD/FATIGUE audit.
+  - gate-registry: hardcoding row's decision column reads
+    `deny(opt-in; default=dryrun)` so the scannable machine block can't be
+    misread as a live deny.
 - **telemetry-digest `--gates` double-counting.** Two gates sharing one sink
   AND one guard value (`secrets-bash` vs `secrets-content`, both
   `guard=secrets` in `security-violations.jsonl`) each reported the union

@@ -266,15 +266,23 @@ def main() -> None:
     # Advisory mode (BLOCK=0) never blocks.
     should_block = bool(completion_failures) or (style_block and total_issues > 0)
     if enforcing and should_block:
-        # Teaching format (T-1): WHY + FIX so the agent can self-correct.
+        # Teaching format (T-1): WHY + FIX so the agent can self-correct. The
+        # remedy list names only the layer(s) that actually triggered the block
+        # — post-split, pointing at non-blocking style fixes when only a
+        # completion test failed would send the agent chasing the wrong work.
+        remedies = []
+        if completion_failures:
+            remedies.append("fix the failing completion test(s)")
+        if style_block and total_issues:
+            remedies.append("move types to types.ts / tokenize colors / remove console.log")
         reason = (
             f"{summary}\n\n"
             "Response halted by quality gate.\n"
-            "WHY: completion gate — the session diff still carries quality violations "
-            "or failing completion tests; ending now would ship them silently.\n"
+            "WHY: completion gate — the session diff still carries "
+            + ("failing completion tests" if completion_failures else "blocking style violations")
+            + "; ending now would ship them silently.\n"
             "FIX: choose one:\n"
-            "  (a) Resolve — fix the failing test(s) / move types to types.ts /\n"
-            "      tokenize colors / remove console.log, then complete.\n"
+            "  (a) Resolve — " + " and ".join(remedies) + ", then complete.\n"
             "  (b) Intentional — state the reason explicitly, then complete\n"
             "      (the second Stop will pass automatically).\n"
             "  (c) Disable for this session: set AGENT_QUALITY_GATE_BLOCK=0\n"

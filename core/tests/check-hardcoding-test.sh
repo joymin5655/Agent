@@ -88,6 +88,35 @@ else
 fi
 
 echo
+echo "=== invalid mode value: loud stderr warning, degrades to dryrun (never deny) ==="
+ERRFILE="$SINK_DIR/.stderr"
+OUT=$(printf '%s' "$event" | AGENT_HARDCODING_MODE=banana AGENT_HARDCODING_SINK="$SINK" AGENT_REPRODUCE_TEST=1 python3 "$HOOK" 2>"$ERRFILE" || true)
+if [[ "$OUT" == *'additionalContext'* && "$OUT" != *'"deny"'* ]]; then
+  echo "  ok   [invalid-mode-degrades-to-dryrun]"; PASS=$((PASS + 1))
+else
+  echo "  FAIL [invalid-mode-degrades-to-dryrun] :: $OUT"; FAIL=$((FAIL + 1))
+fi
+if grep -q "unknown AGENT_HARDCODING_MODE" "$ERRFILE"; then
+  echo "  ok   [invalid-mode-warns-on-stderr]"; PASS=$((PASS + 1))
+else
+  echo "  FAIL [invalid-mode-warns-on-stderr] :: $(cat "$ERRFILE")"; FAIL=$((FAIL + 1))
+fi
+
+echo
+echo "=== sink confinement: escaping override falls back, never writes outside repo/temp ==="
+# An override pointing outside both the repo root and the system temp dir must
+# NOT be written to; the firing lands in the fallback default instead.
+ESCAPE_TARGET="$HOME/.hc-escape-test-$$.jsonl"
+rm -f "$ESCAPE_TARGET"
+printf '%s' "$event" | AGENT_HARDCODING_MODE=dryrun AGENT_HARDCODING_SINK="$ESCAPE_TARGET" AGENT_REPRODUCE_TEST=1 python3 "$HOOK" >/dev/null 2>&1 || true
+if [[ ! -e "$ESCAPE_TARGET" ]]; then
+  echo "  ok   [sink-escape-refused]"; PASS=$((PASS + 1))
+else
+  echo "  FAIL [sink-escape-refused] wrote outside confinement: $ESCAPE_TARGET"; FAIL=$((FAIL + 1))
+  rm -f "$ESCAPE_TARGET"
+fi
+
+echo
 echo "=== off mode: no output ==="
 OUT=$(printf '%s' "$event" | AGENT_HARDCODING_MODE=off AGENT_HARDCODING_SINK="$SINK" python3 "$HOOK" 2>/dev/null || true)
 if [[ -z "$OUT" ]]; then

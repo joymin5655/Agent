@@ -175,7 +175,8 @@ except Exception as e:
 
 # --- count in-window firings per sink, once per distinct sink ----------------
 def count_sink(sink, match, hook):
-    """Return in-window firing count for (sink, match, hook). match '*' counts
+    """Return (fired, suppressed) in-window counts for (sink, match, hook) —
+    suppressed = matching records excluded as reproduce_test. match '*' counts
     every valid JSON-object line; otherwise counts lines whose guard field ==
     match. When a record ALSO carries a `hook` field it must equal the registry
     hook — two gates sharing one sink AND one guard value (secrets-bash vs
@@ -191,6 +192,7 @@ def count_sink(sink, match, hook):
     if real_path != real_logs and not real_path.startswith(real_logs + os.sep):
         return None
     n = 0
+    suppressed = 0
     try:
         with open(path, encoding="utf-8") as f:
             for line in f:
@@ -203,11 +205,6 @@ def count_sink(sink, match, hook):
                     continue
                 if not isinstance(rec, dict):
                     continue
-                # Test-reproduction records (batteries feeding synthetic events
-                # to a hook) carry reproduce_test:true — they are not real gate
-                # firings, so they must never inflate fire-rate / FATIGUE.
-                if rec.get("reproduce_test") is True:
-                    continue
                 ts = parse_ts(rec.get("ts"))
                 if ts is not None and ts < cutoff:
                     continue
@@ -216,35 +213,49 @@ def count_sink(sink, match, hook):
                 rec_hook = rec.get("hook")
                 if rec_hook is not None and rec_hook != hook:
                     continue
+                # Test-reproduction records (batteries feeding synthetic events
+                # to a hook) carry reproduce_test:true — they are not real gate
+                # firings, so they must never inflate fire-rate / FATIGUE. They
+                # are TALLIED (not silently dropped) so a lingering
+                # AGENT_REPRODUCE_TEST=1 in a real session shows up as a
+                # suppressed-count anomaly instead of invisibly blinding the
+                # DEAD audit (security review 2026-07-27).
+                if rec.get("reproduce_test") is True:
+                    suppressed += 1
+                    continue
                 n += 1
     except FileNotFoundError:
         return None            # sink absent — distinct from 0 firings
     except Exception:
         return None
-    return n
+    return n, suppressed
 
 
 reports = []
 for g in gates:
     classes = []
     fired = None
+    suppressed = 0
     if g["sink"] == "-":
         classes.append("UNINSTRUMENTED")
     else:
-        fired = count_sink(g["sink"], g["match"], g["hook"])
-        if fired is None:
+        counts = count_sink(g["sink"], g["match"], g["hook"])
+        if counts is None:
             classes.append("DEAD")          # sink never created == never fired
             fired = 0
-        elif fired == 0:
-            classes.append("DEAD")
-        elif fired >= fatigue:
-            classes.append("FATIGUE")
+        else:
+            fired, suppressed = counts
+            if fired == 0:
+                classes.append("DEAD")
+            elif fired >= fatigue:
+                classes.append("FATIGUE")
     lr = parse_ts(g["last_reviewed"] + "T00:00:00")
     if lr is not None and (now - lr).days > stale_days:
         classes.append("STALE")
     reports.append({
         "id": g["id"], "hook": g["hook"], "decision": g["decision"],
-        "sink": g["sink"], "fired": fired, "last_reviewed": g["last_reviewed"],
+        "sink": g["sink"], "fired": fired, "suppressed": suppressed,
+        "last_reviewed": g["last_reviewed"],
         "flags": classes, "assumption": g["assumption"],
     })
 
@@ -279,8 +290,11 @@ else:
     for r in reports:
         fired = "n/a" if r["fired"] is None else r["fired"]
         flags = ", ".join(r["flags"]) if r["flags"] else "ok"
-        print("  {:<20} {:<26} fired={:<5} reviewed={} [{}]".format(
-            r["id"], r["hook"], str(fired), r["last_reviewed"], flags))
+        # suppressed shown only when non-zero: a real-session env leak
+        # (lingering AGENT_REPRODUCE_TEST=1) surfaces as an anomaly here.
+        sup = " suppressed={}".format(r["suppressed"]) if r.get("suppressed") else ""
+        print("  {:<20} {:<26} fired={:<5} reviewed={} [{}]{}".format(
+            r["id"], r["hook"], str(fired), r["last_reviewed"], flags, sup))
     print()
     print("-- flag summary --")
     if not flag_counts:

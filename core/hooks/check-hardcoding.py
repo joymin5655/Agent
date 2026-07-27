@@ -30,9 +30,20 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from datetime import datetime, timezone
 
 MODE = os.environ.get("AGENT_HARDCODING_MODE", "dryrun")
+if MODE not in ("off", "dryrun", "block"):
+    # Loud fallback: a typo like "Block"/"blck" must not silently weaken the
+    # gate the operator thinks they hardened (fail-open direction is kept —
+    # unknown value degrades to dryrun, never to deny).
+    print(
+        f"[check-hardcoding] unknown AGENT_HARDCODING_MODE={MODE!r} — "
+        "treating as dryrun (valid: off|dryrun|block)",
+        file=sys.stderr,
+    )
+    MODE = "dryrun"
 if MODE == "off":
     sys.exit(0)
 
@@ -128,6 +139,23 @@ def repo_root() -> str:
         return os.getcwd()
 
 
+def resolve_sink(root: str) -> str:
+    """Resolve the firing-sink path, CONFINED to the repo root or the system
+    temp dir (the temp allowance is the battery seam — tests point the sink at
+    a mktemp scratch). An empty or escaping override (absolute path elsewhere,
+    ../ traversal) falls back to the default in-repo sink instead of creating
+    directories / appending at an arbitrary path — mirrors the read-side
+    confinement in telemetry-digest count_sink (security review 2026-07-27)."""
+    default = os.path.join(root, ".agent/logs/hardcoding.jsonl")
+    if not SINK_RELATIVE:
+        return default
+    path = os.path.realpath(os.path.join(root, SINK_RELATIVE))
+    for allowed in (os.path.realpath(root), os.path.realpath(tempfile.gettempdir())):
+        if path == allowed or path.startswith(allowed + os.sep):
+            return path
+    return default
+
+
 def log_firing(file_path: str, verdict: str, warning_count: int) -> None:
     """Append a firing record to the jsonl sink (gate-registry instrumentation).
     Matches the schema written by the other guard hooks (schema_version 2.0.0);
@@ -147,7 +175,7 @@ def log_firing(file_path: str, verdict: str, warning_count: int) -> None:
         "reproduce_test": repro_env in ("1", "true", "TRUE", "True"),
         "schema_version": "2.0.0",
     }
-    sink = os.path.join(repo_root(), SINK_RELATIVE)
+    sink = resolve_sink(repo_root())
     try:
         os.makedirs(os.path.dirname(sink), exist_ok=True)
         with open(sink, "a") as f:

@@ -213,6 +213,9 @@ echo "=== (m) style + AGENT_QUALITY_STYLE_BLOCK=1 -> block (opt-in restores old 
 run_stop_in "$P" false AGENT_QUALITY_STYLE_BLOCK=1 >/dev/null; OUT=$(cat "$OUTFILE")
 is_block "$OUT" && check "style-optin-blocks" 0 || check "style-optin-blocks" 1
 [[ "$OUT" == *"WHY:"* && "$OUT" == *"FIX:"* ]]; check "style-block-teaching-tags" $?
+# remedy text names the layer that blocked: style remedies present, and no
+# completion-test remedy (no completion_tests configured in this fixture)
+[[ "$OUT" == *"console.log"* && "$OUT" != *"failing completion test"* ]]; check "style-block-remedy-matches-layer" $?
 
 echo
 echo "=== (n) style advisory + failing completion_test -> still blocks (completion drives) ==="
@@ -221,6 +224,10 @@ cat > "$P/.agent/hook-config.json" <<'EOF'
 EOF
 run_stop_in "$P" false >/dev/null; OUT=$(cat "$OUTFILE")
 is_block "$OUT" && check "completion-still-blocks-with-style-advisory" 0 || check "completion-still-blocks-with-style-advisory" 1
+# remedy text points at the completion test, NOT at the non-blocking style
+# findings (post-split, style noise in the FIX line sends the agent chasing
+# the wrong work — code-review finding 2026-07-27)
+[[ "$OUT" == *"failing completion test"* && "$OUT" != *"tokenize colors"* ]]; check "completion-block-remedy-matches-layer" $?
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="

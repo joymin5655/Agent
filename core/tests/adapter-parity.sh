@@ -152,7 +152,7 @@ echo "--- file/content shape (check-hardcoding.py reads tool_input.file_path + .
 # appears in this source (same precedent as check-hardcoding-test.sh).
 Z=""
 HC_FIXTURE="const seg = [5,${Z} [255, 0, 0]]"
-_HC_SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/parity-hc.XXXXXX")"
+_HC_SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/parity-hc.XXXXXX")" || { echo "FATAL: mktemp failed"; exit 1; }
 export AGENT_HARDCODING_SINK="$_HC_SCRATCH/hardcoding.jsonl"
 export AGENT_REPRODUCE_TEST=1
 export AGENT_HARDCODING_MODE=block

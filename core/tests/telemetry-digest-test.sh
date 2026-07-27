@@ -206,6 +206,10 @@ check "gates-json-parses" $?
 # fresh-hot fired == 3 (reproduce_test line excluded)
 printf '%s' "$OUT_I" | python3 -c "import json,sys; d=json.load(sys.stdin); r={x['id']:x for x in d['reports']}; sys.exit(0 if r['fresh-hot']['fired']==3 else 1)"
 check "gates-reproduce-test-excluded" $?
+# ...but not silently: the excluded record is TALLIED as suppressed=1, so a
+# lingering AGENT_REPRODUCE_TEST=1 in a real session is visible, not blinding.
+printf '%s' "$OUT_I" | python3 -c "import json,sys; d=json.load(sys.stdin); r={x['id']:x for x in d['reports']}; sys.exit(0 if r['fresh-hot']['suppressed']==1 and r['fresh-cold']['suppressed']==0 else 1)"
+check "gates-suppressed-tallied" $?
 printf '%s' "$OUT_I" | python3 -c "import json,sys; d=json.load(sys.stdin); r={x['id']:x for x in d['reports']}; sys.exit(0 if 'FATIGUE' in r['fresh-hot']['flags'] else 1)"
 check "gates-fatigue-flagged" $?
 printf '%s' "$OUT_I" | python3 -c "import json,sys; d=json.load(sys.stdin); r={x['id']:x for x in d['reports']}; sys.exit(0 if 'DEAD' in r['fresh-cold']['flags'] else 1)"
