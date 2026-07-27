@@ -254,6 +254,26 @@
 | LE-8 | **런당 턴/디스패치 상한** — goal-mode에 토큰 예산과 별개의 디스패치 횟수 상한(SDK `max_turns` 아날로그): 초과 시 abort가 아니라 사용자 핸드오프 | 감사 §4 (2026-07-18 SDK 크로스체크) — Infinite Fix Loop의 SDK측 대응물이 하네스에 부재 | goal-state에 dispatch 카운터 + 상한 초과 픽스처에서 핸드오프 기록 | S–M |
 | LE-9 | **fable-5 디스패치 프롬프트 감사 레인** — `concepts/fable-5-prompting.md` 규칙 2–4(anti-wrap-up·근거 인용·경계 명시)를 manager-audit의 검사 레인으로 승격(현재 advisory) | 같은 크로스체크 — 프롬프트 규율이 문서 관례로만 존재 | manager-audit.sh 신규 레인 + RED/GREEN 픽스처 | M |
 
+### 4.13 로드맵 v2 — 성장 5축 + GT/AP/MC 시리즈 (2026-07-27 추가)
+
+출처: 2026-07-27 로드맵 감사(3축: 게이트 텔레메트리 30일 × `docs/gate-registry.md` 대조 · 백로그 미착수 잔량 스캔 · 모델 지형 공식문서 재검증). 목표 진술(사용자): 창의성을 억누르는 과잉 가드는 근거 기반으로 트림하고, 저비용-고성능 워크플로우와 내외부 플러그인 유기 결합을 키우고, 초보자도 설치 후 쓰다 보면 하네스가 사용자에게 맞춰지는 **제안형 적응**(자동 변경 금지 — 제안→원클릭 승인, PROPOSALS.md 패턴)으로 성장시키고, 모델 세팅 최신성을 상시 검증한다. 기존 시리즈와의 관계: 신규 발명 최소 — 미착수 잔량(P2·LE·T-4·H-4·W-10·O-2)을 5축으로 재편성하고, 순수 신규는 GT(집행 완료)·AP(제안형 적응)·MC(모델 최신성)만.
+
+**5축**: ① 가드 캘리브레이션(자유도) — GT ✅·T-4·LE-4(제안형 재정의) ② 저비용 고성능 — P2 재계획·LE-3·LE-8·M-6/M-7 회수 ③ 초보자 온보딩+제안형 적응 — AP 시리즈·H-4 ④ 내외부 플러그인 유기 결합 — W-10·doctor 공존 체크·brain MCP ⑤ 모델 최신성 — MC 시리즈. **Wave**: W1=GT(✅ 이 PR) → W2=T-4+AP-1/AP-2 (개인화 MVP) → W3=P2 재개(B4 잔여 KNOWN OPEN 해소 선행)+LE-3 → W4=H-4+AP-4+W-10 → 상시=MC. **하지 않는 것(재확인)**: 안전 deny 2계열·verify-bypass ask 완화(발화량은 방어 실적), 런타임 모델 스위칭, 승인 없는 자동 설정 변경, deny 티어 확대.
+
+| ID | 작업 | 근거 | 완료 조건 (기계 검증) | 규모 |
+|---|---|---|---|---|
+| GT-1 ✅ 2026-07-27 | **check-hardcoding 트림** — deny→기본 dryrun(`AGENT_HARDCODING_MODE=off/dryrun/block`), sink 계측 신설, 거짓 탈출구(hook-config 주장 미배선) 정직화(T-4 예정 명시) | 30일 대조에서 유일한 "deny+무계측+거짓 탈출구" 게이트 — 캘리브레이션 §3c의 계측-후-재판정 집행(`docs/freedom-enforcement-calibration-2026-07.md` §3e) | ✅ 3모드 env + `hardcoding.jsonl` sink(schema 2.0.0, reproduce_test 오염 차단) + `check-hardcoding-test.sh` 21체크(3모드·기본값 dryrun 계약·sink 스키마·teaching 태그) + gate-registry 행 갱신 | S |
+| GT-2 ✅ 2026-07-27 | **telemetry-digest 이중계산 수정** — 같은 sink+같은 guard값 공유 게이트(secrets-bash/secrets-content)를 레코드 `hook` 필드로 분리 집계(레거시 무-hook 레코드는 guard 폴백 유지) | 둘 다 fired=2179로 표기되던 실측(실제 1353/826) — FATIGUE 판정 입력 오염 | ✅ `count_sink` hook 인자 + telemetry-digest-test (l)절 3체크(자기 몫+레거시=3/2, union 4 금지) — 37체크 green | S |
+| GT-3 ✅ 2026-07-27 | **supervisor ask 레지스트리 등록** — ask 계열 레코드에 guard/hook/reproduce_test 스탬프 + `supervisor-ask` 행 신설. **모드 무변경**(측정 먼저) | 30일 440레코드/ask 11건이 레지스트리 밖에서 발화(심사 사각) — T-2 원칙 위반 상태 해소 | ✅ gate-registry 17행 파싱 + 실로그 digest에서 supervisor-ask 행 산출(구 레코드는 guard 부재로 등록 시점부터 카운트 — 행 assumption에 명기) | S |
+| GT-4 ✅ 2026-07-27 | **session-quality-gate 분리 강등** — 주관 스타일 검사=advisory 기본(`AGENT_QUALITY_STYLE_BLOCK=1` opt-in), block 결정은 completion_tests(P3-1) 단독 소유 | 스타일 위반 로그 0건 생성 실측 + 주관/객관이 한 block에 동승 — P3-1 강제층은 무손상 유지 | ✅ quality-gate-completion-test (l)(m)(n)절 6체크(스타일-only 무block+sink 기록·opt-in 복원·completion 단독 block) — 28체크 green | S |
+| GT-5 ✅ 2026-07-27 | **모델 세팅 재검증 + 문서 스탬프** — 리뷰어 별칭 핀(sonnet/opus)=세대 자동해석 확인(코드 변경 0), codex 프로파일 현행 확인, 상위 변형 워치 등재 | 사용자 요청 ⑤ — "최신 모델 대비 최적 세팅인지" 공식문서 재검증 | ✅ `docs/model-routing.md` Currency log 2026-07-27 엔트리(별칭 자동해석·codex 현행·워치 항목·effort-before-tier-up 재확인) | S |
+| AP-1 | **사용패턴 로컬 집계기** — 기존 sink들(`model-routing.jsonl`·게이트 sink·plan-scope-allow 등)을 읽어 사용자별 마찰/패턴 요약을 산출(신규 수집 최소화, 전부 로컬·전송 없음). telemetry-digest의 사용자-프로파일 뷰 | 제안형 적응의 데이터층 — 씨앗(트리거 로그)은 전부 존재하는데 사용자 관점 집계가 없음 | digest 신규 모드(또는 스크립트)가 ≥3 신호(게이트 마찰·티어 준수·스킬 트리거) 요약 출력 + 픽스처 배터리 | M |
+| AP-2 | **`/tune` 제안 스킬** — AP-1 집계를 읽고 "이렇게 바꿀까요?" 제안 생성(게이트 모드 env·티어 기본값·리마인더 빈도), PROPOSALS.md 패턴(manager-audit 선례)으로 diff-형 제안 + 원클릭 승인 시에만 적용. **자동 변경 절대 금지**(§4.8 "관측 로그의 규칙 자동 영속 금지" 유지 — 제안서는 인간 승인 관문 통과 필수) | 사용자 목표 진술 ④(스스로 최적화되는 하네스)의 승인-보존형 구현 — LE-4(래칫 제안화)와 동일 원칙, 대상이 게이트→전 설정으로 확장 | SKILL.md + 제안서 산출 픽스처 + **미승인 시 무변경** RED 픽스처 + registry-drift 편입 | M |
+| AP-3 | **적용·롤백 원장** — AP-2가 적용한 제안의 append-only 기록(무엇을·언제·근거 집계 스냅샷·롤백 명령). loop-ledger 패턴 재사용 | 제안형 적응의 감사가능성 — 적응이 쌓여도 "왜 이 설정인가"를 역추적 가능해야 초보자 신뢰 성립 | 원장 파일 + 적용/롤백 왕복 픽스처 + 변조(재작성) 거부 | S–M |
+| AP-4 | **온보딩 프리셋** — `setup.sh`에 starter(가드 최소+안내 최대)/standard(현 기본)/power 3프로파일: env 기본값 묶음 선택 + doctor가 설치 시점 전제조건(bash·python3 버전, git) 검사. H-4(project-init 메타팩토리)와 합쳐 "완전 초보 설치→첫 세션" 마찰 제거 | 사용자 목표 진술 ④ 전반부(초보자도 설치해서 사용) — 현 기본값은 파워유저 캘리브레이션 | setup.sh 프로파일 플래그 + 프로파일별 env 스냅샷 픽스처 + clean-install CI(M-5)에 starter 경로 추가 | M |
+| MC-1 | **model-currency watch 일반화** — `codex-template-currency-test.sh`의 세대 검사를 어댑터 전반으로: 별칭 핀=자동 통과 판정, 명시 핀=최신 세대 대조(월 1회 수동 갱신 기준선), Currency log(§GT-5) 갱신 리마인더 | 모델 지형 변화 시 세팅 드리프트를 사람이 기억하지 않아도 CI가 노출 — 2026-07-27 검증에서 별칭 핀 전략의 우위 실측 | 배터리가 어댑터 ≥2(claude·codex) 커버 + 스테일 기준선 RED 픽스처 | S–M |
+| MC-2 | **신모델 벤치 리플레이 절차** — 신모델 출시 시 evals 결정층+실LLM judge 라벨셋을 신모델로 1회 리플레이해 티어 승격/유지 판정하는 절차 문서(+기록 위치). effort-before-tier-up의 판정 근거 생산 절차화 | 상위 변형 워치 항목(Currency log)이 "벤치 근거 없이 미변경"인데 그 근거를 만드는 절차가 없음 | 절차 문서 + 1회 실행 기록(신모델 출시 시) | S(문서) |
+
 ---
 
 ## 5. Part 3 — `/harness-loop` 자율 개선 루프 설계 (단일 권고안)

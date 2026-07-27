@@ -7,6 +7,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Guard trim (evidence-based, GT series).** Executed the
+  `docs/freedom-enforcement-calibration-2026-07.md` §3c "instrument, then
+  recalibrate" follow-up against 30 days of gate telemetry (new §3e records
+  the verdicts):
+  - `check-hardcoding.py`: hard `deny` → **default dryrun** with
+    `AGENT_HARDCODING_MODE=off|dryrun|block` (block restores the old deny);
+    gains a firing sink (`.agent/logs/hardcoding.jsonl`, schema 2.0.0,
+    `reproduce_test` exclusion) closing its UNINSTRUMENTED status; the
+    docstring/error claim that `hook-config.yml: hardcoding_patterns[]`
+    customizes it — never wired — is now honestly labeled as planned (T-4).
+    Battery rewritten to 21 checks (3 modes, unset-env-defaults-to-dryrun
+    contract, sink schema).
+  - `session-quality-gate.py`: the subjective style scan (inline types, hex
+    colors, console.log) is **advisory by default** — reported and logged,
+    never blocking; the `block` decision is owned solely by the objective
+    `session.completion_tests` layer (P3-1, unweakened). Opt back in with
+    `AGENT_QUALITY_STYLE_BLOCK=1`. Battery +6 checks (style-only no-block +
+    sink write, opt-in restore, completion-still-blocks).
+  - High-firing safety gates (destructive / secrets / verify-bypass) are
+    explicitly **unchanged** — firing volume is defensive track record, not
+    creativity suppression.
+
+### Fixed
+- **Adversarial-review hardening (2 lanes, 2026-07-27).** code-reviewer
+  (2 MINOR + 1 NIT) and security-reviewer (2 LOW, verdict APPROVE — both
+  demoted gates confirmed to carry no security duty; `pre-tool-guard.sh` /
+  `secret-content-scan.py` verified untouched):
+  - check-hardcoding: unknown `AGENT_HARDCODING_MODE` values now warn loudly
+    on stderr and degrade to dryrun (a typo like `Block` no longer silently
+    weakens an intended hard gate); sink writes are **confined** to the repo
+    root or the system temp dir (escaping/empty overrides fall back to the
+    default in-repo sink — mirrors the digest's read-side confinement), and
+    the same writer-side confinement was applied to `spec-gate.py`.
+  - session-quality-gate: the block reason's FIX remedies now name only the
+    layer that actually blocked (completion vs opt-in style), instead of
+    always listing style fixes that no longer block.
+  - telemetry-digest: reproduce_test-excluded records are now **tallied and
+    reported as `suppressed`** instead of silently dropped, so a lingering
+    `AGENT_REPRODUCE_TEST=1` in a real session surfaces as an anomaly rather
+    than invisibly blinding the DEAD/FATIGUE audit.
+  - gate-registry: hardcoding row's decision column reads
+    `deny(opt-in; default=dryrun)` so the scannable machine block can't be
+    misread as a live deny.
+- **telemetry-digest `--gates` double-counting.** Two gates sharing one sink
+  AND one guard value (`secrets-bash` vs `secrets-content`, both
+  `guard=secrets` in `security-violations.jsonl`) each reported the union
+  (both fired=2179; actual in-window 1353/826). `count_sink` now also matches
+  the record's `hook` field against the registry hook when present (legacy
+  hook-less records keep guard-only matching). Regression battery section (l),
+  3 checks.
+
+### Added
+- **`supervisor-ask` gate registered (registry blind-spot closure).**
+  `supervisor.py` had logged ~440 records / 11 ask-intents in 30 days while
+  absent from `docs/gate-registry.md` (firing but unreviewable). Ask-family
+  records now carry `guard`/`hook`/`reproduce_test` stamps and the registry
+  gains a `supervisor-ask` row — **mode unchanged** (measure first; the digest
+  counts from registration forward since older records lack the stamp).
+- **Roadmap v2 (§4.13, growth axes + GT/AP/MC series).**
+  `docs/harness-improvement-plan.md` gains a 5-axis growth plan (guard
+  calibration / low-cost-high-power / beginner onboarding + proposal-based
+  adaptation / plugin interop / model currency) that re-sequences the open
+  backlog (P2, LE, T-4, H-4, W-10, O-2) into waves and adds only three new
+  series: GT (this release's executed trim, 5/5 ✅), AP (proposal-based
+  personalization: local usage aggregation → `/tune` proposal skill →
+  append-only adopt/rollback ledger → onboarding presets; auto-change stays
+  forbidden), MC (model-currency watch + new-model bench-replay procedure).
+- **`docs/model-routing.md` Currency log.** Dated re-verification section:
+  2026-07-27 entry confirms the generation-neutral reviewer alias pins
+  self-update (no edit needed), the codex adapter profiles match the current
+  lineup, and files the above-top client variant as a watch item gated on
+  bench evidence (MC series) per effort-before-tier-up.
+
 ## [0.5.5] — 2026-07-23
 
 ### Added

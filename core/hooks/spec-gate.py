@@ -50,6 +50,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from datetime import datetime, timezone
 
 MODE = os.environ.get("AGENT_SPEC_GATE_MODE", "dryrun")
@@ -113,6 +114,23 @@ def session_id():
     return os.environ.get("AGENT_SESSION_ID", "")
 
 
+def resolve_sink(root):
+    """Resolve the dryrun-sink path, CONFINED to the repo root or the system
+    temp dir (the temp allowance is the battery seam). An empty or escaping
+    override falls back to the default in-repo sink instead of creating
+    directories / appending at an arbitrary path — mirrors the read-side
+    confinement in telemetry-digest count_sink (security review 2026-07-27
+    applied the same writer-side confinement to check-hardcoding.py)."""
+    default = os.path.join(root, ".agent/logs/spec-gate.jsonl")
+    if not DRYRUN_SINK_RELATIVE:
+        return default
+    path = os.path.realpath(os.path.join(root, DRYRUN_SINK_RELATIVE))
+    for allowed in (os.path.realpath(root), os.path.realpath(tempfile.gettempdir())):
+        if path == allowed or path.startswith(allowed + os.sep):
+            return path
+    return default
+
+
 def log_dryrun(root, file_path, verdict, reason, guard_area):
     rec = {
         "ts": datetime.now(timezone.utc).isoformat(),
@@ -123,7 +141,7 @@ def log_dryrun(root, file_path, verdict, reason, guard_area):
         "session_id": session_id(),
         "mode": MODE,
     }
-    sink = os.path.join(root, DRYRUN_SINK_RELATIVE)
+    sink = resolve_sink(root)
     try:
         os.makedirs(os.path.dirname(sink), exist_ok=True)
         with open(sink, "a") as f:
