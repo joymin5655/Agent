@@ -40,18 +40,24 @@ TOKENS=(
 
 # --- machine-identity PII token set (rules/public-repo.md § Machine-identity PII) ---
 # Personal machine identifiers must never enter the repo: real macOS home paths
-# and Apple mDNS device hostnames. Patterns are deliberately narrow:
+# and Apple mDNS device hostnames. Patterns are deliberately narrow, and this
+# group is scanned CASE-SENSITIVELY (unlike TOKENS above) — macOS generates the
+# capitalized spellings, and a case-insensitive match would false-positive on
+# REST-route text like api.github.com/users/octocat or "imacros-….local":
 #   - "/Users/" followed by an alphanumeric = a REAL home path; the placeholder
 #     spellings docs use ("/Users/<name>") stay legal because '<' breaks the match.
 #   - Only .local hostnames that embed an Apple model name are matched — a bare
 #     ".local" token would false-positive on .env.local / settings.local.json.
-TOKENS+=(
+#     "Mac-?" covers both joined and macOS's hyphenated ComputerName forms
+#     (Mac-mini / Mac-Pro / Mac-Studio / MacBook).
+TOKENS_CS=(
   "/Users/[A-Za-z0-9]"
-  "[A-Za-z0-9-]*(MacBook|Macmini|MacPro|iMac|Mac-Studio)[A-Za-z0-9-]*\\.local"
+  "[A-Za-z0-9-]*(Mac-?(Book|mini|Pro|Studio)|iMac)[A-Za-z0-9-]*\\.local"
 )
 # Join with |  (multi-word tokens are fine: the joined pattern is passed as a
 # single quoted ERE argument, where a space is a literal).
 JOINED="$(IFS='|'; echo "${TOKENS[*]}")"
+JOINED_CS="$(IFS='|'; echo "${TOKENS_CS[*]}")"
 
 # Pathspec excludes (shared by both modes; mirror the CI sanitize job):
 # legacy/ is the intentional archive; this script and ci.yml hold the forbidden
@@ -94,16 +100,29 @@ if [[ "${1:-}" == "--range" ]]; then
   # mistaken for a header and dropped; then strip the leading marker.
   ADDED="$(printf '%s\n' "$RAW" | grep -E '^\+' | grep -vE '^\+\+\+ ' | sed 's/^+//' || true)"
   HITS="$(printf '%s\n' "$ADDED" | grep -iE "$JOINED" || true)"
-  if [[ -n "$HITS" ]]; then
-    echo "FAIL — prior-project taint added by a commit in range $RANGE:"
-    printf '%s\n' "$HITS" | sed 's/^/  /'
+  HITS_CS="$(printf '%s\n' "$ADDED" | grep -E "$JOINED_CS" || true)"
+  # Commit METADATA of the range too (author name/email, subject, body): the
+  # historical PII leak class was a hostname-bearing author field, which diff
+  # lines never show. Same fail-loud contract as the log -p read above.
+  if ! META="$(git log --format='%an %ae %cn %ce%n%s%n%b' --no-merges "$RANGE")"; then
+    echo "FAIL — 'git log' could not read metadata for range '$RANGE'" >&2
+    exit 2
+  fi
+  META_HITS="$({ printf '%s\n' "$META" | grep -iE "$JOINED"; printf '%s\n' "$META" | grep -E "$JOINED_CS"; } | sort -u || true)"
+  if [[ -n "$HITS" || -n "$HITS_CS" || -n "$META_HITS" ]]; then
+    echo "FAIL — forbidden token added by a commit in range $RANGE:"
+    printf '%s\n' "$HITS" "$HITS_CS" | sed '/^$/d;s/^/  /'
+    if [[ -n "$META_HITS" ]]; then
+      echo "  -- in commit metadata (author/subject/body):"
+      printf '%s\n' "$META_HITS" | sed 's/^/  /'
+    fi
     echo ""
     echo "A commit in this range adds a forbidden token even though HEAD may be clean."
     echo "Find it with: git log -p -S'<token>' $RANGE  — then sanitize that commit."
     echo "See AGENTS.md § 2 (sanitize discipline)."
     exit 1
   fi
-  echo "PASS — no taint in range $RANGE (added lines of every commit scanned)"
+  echo "PASS — no taint in range $RANGE (added lines + commit metadata of every commit scanned)"
   exit 0
 fi
 
@@ -116,7 +135,7 @@ git rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
   exit 1
 }
 
-TAINT=$(git grep -I -l -i -E --untracked -e "$JOINED" -- "${EXCLUDES[@]}" || true)
+TAINT=$( { git grep -I -l -i -E --untracked -e "$JOINED" -- "${EXCLUDES[@]}"; git grep -I -l -E --untracked -e "$JOINED_CS" -- "${EXCLUDES[@]}"; } | sort -u || true)
 
 if [[ -n "$TAINT" ]]; then
   echo "FAIL — taint detected in files outside legacy/:"

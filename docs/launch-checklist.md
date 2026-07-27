@@ -26,8 +26,9 @@ pain-first pitch, a visible demo, one-line install, and directory listings.
 One-line description to reuse across listings:
 
 > A safety harness for AI coding agents — machine gates (not prompts) that
-> block secret leaks, refute false "done" claims, and enforce plan-first
-> discipline, identically across Claude Code, Codex CLI, and Gemini CLI.
+> block secret leaks, refute false "done" claims, and catch plan-skipping
+> (observation-mode default, block opt-in), identically across Claude Code,
+> Codex CLI, and Gemini CLI.
 
 ## Launch posts (do once, after the GIF exists)
 

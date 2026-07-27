@@ -9,11 +9,12 @@
 **English** | [한국어](README.ko.md)
 
 **Your AI agent will eventually tell you the tests pass when they don't, read a
-secret it shouldn't, or skip the plan and start editing. This harness makes each
-of those physically fail.** Not with prompt wording — with machine gates at the
-tool boundary: a refute-by-default verifier that re-checks every "done" claim in
-a fresh context, deny/ask hooks that block secret access and destructive
-commands, and a CI that verifies the harness itself.
+secret it shouldn't, or skip the plan and start editing. This harness catches
+each of those with machine gates, not prompt wording.** At the tool boundary: a
+refute-by-default verifier that re-checks every "done" claim in a fresh context
+(fail-closed), hooks that hard-deny secret access and destructive commands, and
+a spec gate that catches plan-skipping — in observation mode by default, one
+env var to block. Plus a CI that verifies the harness itself.
 
 **One governance layer, three agent CLIs.** Install once:
 

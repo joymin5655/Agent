@@ -22,6 +22,10 @@ rule plus the machine gate below prevent any recurrence.
 - No absolute home paths in committed content. Write placeholder spellings
   instead: `$HOME/Agent`, `~/Agent`, or `/Users/<name>` (the `<` is what
   keeps a placeholder legal — a real username after the slash is blocked).
+  Machine enforcement covers macOS-style home paths (case-sensitively, so
+  lowercase REST-route text like an `api.github.com/users/…` example stays
+  legal); Linux `/home/<name>` paths are covered by this rule as written
+  but not by the gate — keep them placeholder-spelled too.
 - No device hostnames — Apple mDNS names shaped like `<device>.local`
   (machine model names embedded in a `.local` host) identify a personal
   computer. Use `example-host` in docs and fixtures.
@@ -34,9 +38,10 @@ rule plus the machine gate below prevent any recurrence.
   `git config user.email` before your first commit.
 
 Enforcement: the machine-identity token group in
-`core/tests/sanitize-audit.sh` (working-tree scan + `--range` scan of every
-PR commit, wired into CI's sanitize job). RED-mutation coverage lives in
-`core/tests/sanitize-audit-test.sh`.
+`core/tests/sanitize-audit.sh` — working-tree scan, `--range` scan of every
+PR commit's added lines, **and** the range's commit metadata
+(author/committer name+email, subject, body), all wired into CI's sanitize
+job. RED-mutation coverage lives in `core/tests/sanitize-audit-test.sh`.
 
 ## Git Safety (MUST NOT)
 
