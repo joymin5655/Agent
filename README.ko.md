@@ -1,5 +1,6 @@
 # Agent
 
+[![CI](https://github.com/joymin5655/Agent/actions/workflows/ci.yml/badge.svg)](https://github.com/joymin5655/Agent/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 ![Version](https://img.shields.io/badge/version-0.5.5-blue.svg)
 ![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-7c3aed.svg)
@@ -7,16 +8,32 @@
 
 [English](README.md) | **한국어**
 
+**당신의 AI 에이전트는 언젠가 테스트가 통과하지 않았는데 통과했다고 말하고, 읽으면 안
+되는 시크릿을 읽고, 계획 없이 편집을 시작합니다. 이 하네스는 그 각각을 물리적으로
+실패하게 만듭니다.** 프롬프트 문구가 아니라 툴 경계의 기계 게이트로: 모든 "완료" 주장을
+신선한 컨텍스트에서 재검증하는 refute-by-default 검증기, 시크릿 접근과 파괴적 명령을
+차단하는 deny/ask 훅, 그리고 하네스 자신을 검증하는 CI.
+
+**하나의 거버넌스 계층, 세 개의 에이전트 CLI.** 설치는 한 번:
+
+```
+/plugin marketplace add joymin5655/Agent
+/plugin install agent-harness@agent
+```
+
+(위는 Claude Code 기준; Codex CLI / Gemini CLI는 [셸 설치](#빠른-시작) 사용.
+설치 전에 증거부터 보고 싶다면 — AI 런타임 없이 재현되는 게이트 검출 3장면:
+[`docs/demo.md`](docs/demo.md).)
+
 **Agent는 AI 코딩 에이전트를 위한 안전장치(하네스)입니다.** 등산용 하네스를 떠올려 보세요.
 코드를 쓰고, 명령을 실행하고, PR을 여는 "등반"은 AI(Claude Code, Codex CLI, Gemini CLI)가
 하고, 하네스는 추락을 막습니다 — 시크릿 커밋, 다른 AI 세션과의 충돌, 테스트 건너뛰기,
 건드리면 안 되는 영역 접근을 구조적으로 차단합니다.
 
-**Claude Code 플러그인**으로 한 번 설치하면(또는 셸 스크립트로 3개 CLI 모두) 모든
-프로젝트에 같은 결정 코어가 적용됩니다. 규칙은 한 번만 작성하고, 이벤트가 코어에
-도달하면 어떤 AI가 실행하든 같은 **allow / ask / deny** 답을 돌려줍니다 —
-`core/tests/adapter-parity.sh`가 기계로 증명합니다. 런타임마다 다른 것은 CLI 활동 중
-얼마나 많은 부분이 그 코어에 도달하는가입니다 — [런타임 커버리지](#런타임-커버리지) 참고.
+규칙은 한 번만 작성하고, 이벤트가 코어에 도달하면 어떤 AI가 실행하든 같은
+**allow / ask / deny** 답을 돌려줍니다 — `core/tests/adapter-parity.sh`가 기계로
+증명합니다. 런타임마다 다른 것은 CLI 활동 중 얼마나 많은 부분이 그 코어에
+도달하는가입니다 — [런타임 커버리지](#런타임-커버리지) 참고.
 
 > 상태: v0.5.5 · 라이선스: **MIT**
 
@@ -48,6 +65,23 @@ flowchart LR
 [실행 흐름 심화](#실행-흐름-심화) 참고.
 
 ## 왜 이 하네스인가
+
+대부분의 에이전트 스택은 에이전트 수로 경쟁합니다. 이 하네스는 다른 질문으로
+경쟁합니다 — 자체 [필드 서베이](docs/benchmark/landscape.md) 기준, 어떤 인기
+하네스도 답하지 못하는 질문:
+
+| 어떤 하네스에든 던져야 할 질문 | 여기 | 필드 표준 ([서베이](docs/benchmark/landscape.md)) |
+|---|---|---|
+| "완료" 주장이 독립적으로 반박되는가? | **yes** — `core/infra/completion-verify.py` + 신선한 컨텍스트 저지, 크래시 → REFUTED | 드묾; 빌더가 자기 작업을 자기가 승인 |
+| 강제가 툴 경계의 하드 deny/ask인가? | **yes** — `core/hooks/pre-tool-guard.sh` 등 | 압도적으로 프롬프트 전용 "you MUST" |
+| 하네스가 *자기 자신을* CI 검증하는가? | **yes** — 8잡, 뮤테이션 프로브가 있는 클린인스톨 스모크 포함 | 거의 없음 |
+| 문서가 레포와 기계 대조되는가? | **yes** — `core/tests/doc-reality.sh`가 팬텀 경로에 빌드 실패 | 없음 |
+| Claude / Codex / Gemini에서 같은 결정인가? | **yes** — `core/tests/adapter-parity.sh`가 증명 | 단일 CLI 우선, 포팅은 나중 |
+
+그리고 번들 리뷰어를 인기 경쟁 스택과 블라인드 벤치마크했을 때: **심어둔 버그 8/8
+탐지, 오탐 0** (경쟁 스택: 8/8에 헤지성 오탐 1 — 그리고 정직하게 말하면, 우리 레인이
+놓친 추가 결함 2개도 찾았습니다; 전체 방법론은
+[`docs/benchmark/results.md`](docs/benchmark/results.md)).
 
 기본기부터: 멀티세션 뮤텍스, 6-계층 시크릿 방어, TDD 강제는 전부 들어 있습니다
 ([카탈로그](#카탈로그) 참고). 이 하네스를 실제로 구별 짓는 것은:
@@ -96,10 +130,10 @@ flowchart LR
 | 용어 | 쉬운 뜻 |
 |---|---|
 | **하네스(harness)** | 에이전트 + 훅 + 스킬 + 규칙을 묶어 AI를 감싸는 안전 계층 전체. |
-| **훅(hook)** | AI 런타임이 어떤 행동 전/후에 자동으로 실행하는 작은 스크립트. **allow**, **ask**, **deny** 중 하나로 답합니다. [`core/hooks/`](core/hooks/)에 22개(+공유 모듈 2개)가 있습니다. |
+| **훅(hook)** | AI 런타임이 어떤 행동 전/후에 자동으로 실행하는 작은 스크립트. **allow**, **ask**, **deny** 중 하나로 답합니다. [`core/hooks/`](core/hooks/)에 배선된 게이트 훅 21개(공유 모듈 포함 스크립트 25개)가 있습니다. |
 | **어댑터(adapter)** | 각 AI CLI의 고유 이벤트 형식과 하네스의 표준 JSON 사이를 번역하는 얇은 계층. 3개가 있습니다([`adapters/`](adapters/)). |
-| **에이전트(agent)** | AI가 일을 위임하는 전문가 — 예: 리뷰만 하고 절대 코드를 쓰지 않는 보안 리뷰어. 2종이 포함됩니다([`agents/`](agents/)). |
-| **스킬(skill)** | AI가 따라가는 재사용 가능한 단계별 워크플로우 — 예: 커밋+PR 자동화 흐름. 8종이 포함됩니다([`skills/`](skills/)). |
+| **에이전트(agent)** | AI가 일을 위임하는 전문가 — 예: 리뷰만 하고 절대 코드를 쓰지 않는 보안 리뷰어. 3종이 포함됩니다([`agents/`](agents/)). |
+| **스킬(skill)** | AI가 따라가는 재사용 가능한 단계별 워크플로우 — 예: 커밋+PR 자동화 흐름. 9종이 포함됩니다([`skills/`](skills/)). |
 | **게이트(gate)** | 훅의 결정 지점(deny / ask / block). 모든 게이트는 자신이 가정하는 모델 약점과 함께 등록됩니다 — [`docs/gate-registry.md`](docs/gate-registry.md). |
 | **웨이브(wave)** | `/supervise` 플랜 안의 작업 묶음 하나 — 디스패치·실행·감사를 마쳐야 다음 웨이브가 시작됩니다. |
 | **판정(verdict)** | 모든 검증기가 뱉는 공용 CONFIRMED / REFUTED 결과 스키마 — [`docs/scoring-convention.md`](docs/scoring-convention.md). |
@@ -171,7 +205,7 @@ flowchart LR
 3. **프로젝트를 스캐폴드합니다.** 아무 저장소에서 `/project-init`을 실행하면 `CLAUDE.md`, 규칙, `gitleaks.toml`이 생성됩니다.
 4. *(선택)* 훅이 많은 다른 플러그인을 쓰는 저장소에서는 `/plugin`으로 agent-harness를 꺼도 됩니다 — 에이전트는 `agent-harness:*` 네임스페이스라 어느 쪽이든 충돌하지 않습니다.
 
-플러그인에 포함: **에이전트 2종**, **스킬 8종**, 훅 세트, `/project-init` 커맨드.
+플러그인에 포함: **에이전트 3종**, **스킬 9종**, 훅 세트, `/project-init` 커맨드.
 
 ### Path B — 셸 설치 (Codex CLI / Gemini CLI / 3개 전부)
 
@@ -225,9 +259,9 @@ flowchart TB
         A3["gemini/"]
     end
     subgraph CORE["Layer 1 — core/ (단일 진실 원천)"]
-        H["hooks/ — 게이트 22개: 시크릿 스캔 · 뮤텍스 ·<br/>spec-gate · tdd-guard · supervisor …"]
+        H["hooks/ — 배선된 게이트 21개: 시크릿 스캔 · 뮤텍스 ·<br/>spec-gate · tdd-guard · supervisor …"]
         I["infra/ — 세션 · goal 모드 ·<br/>감사 · auto-ship"]
-        T["tests/ — 자가검증 스크립트 54개"]
+        T["tests/ — 자가검증 스크립트 56개"]
     end
     R["rules/ — 정책<br/>원문(SOT)"]
     PLUG[".claude-plugin/ + hooks/hooks.json<br/>플러그인 배포"]
@@ -341,6 +375,7 @@ manager-audit의 발견은 절대 스스로 적용되지 않습니다 — `PROPO
 |---|---|---|---|
 | `code-reviewer` | sonnet | 읽기 전용 | diff 리뷰; 보안 사안은 security-reviewer에 위임 |
 | `security-reviewer` | opus | 읽기 전용 | OWASP Top 10, 시크릿, 인증, 인젝션 — 보안 발견 전담 |
+| `persona-review-orchestrator` | sonnet | 읽기 전용 + 디스패치 | UX·카피에 시민 페르소나 패널을 돌려 사용자 반응을 종합; 코드가 아니라 사용자 경험만 판정 |
 
 모델은 작업 등급별 비용 티어를 따릅니다([`docs/model-routing.md`](docs/model-routing.md)가 크로스 런타임 정책): 판단(judgment) — 계획, 오케스트레이션 결정, 결과 종합 — 은 세션 최상위 모델을 상속하고(`model:` 핀 없음), 위 두 리뷰어의 핀은 CI 드리프트 가드가 `agents/master-registry.json`과 동기화합니다(기계 강제되는 유일한 부분). 구현 디스패치는 워크호스 티어, 기계적 작업은 로우 티어로 — 호출별 `model` 오버라이드를 쓰는 문서화된 컨벤션입니다. 읽기 전용 에이전트는 실제로 읽기 전용으로 강제됩니다(`Write`/`Edit`/`Bash` 없음). `.agent/` 파일로 프로젝트별 특화 가능 — [`docs/specializing-agents.md`](docs/specializing-agents.md) 참고.
 
@@ -353,9 +388,10 @@ manager-audit의 발견은 절대 스스로 적용되지 않습니다 — `PROPO
 | `brain-ingest` | raw 세션 캡처를 결정론적 lint 게이트 뒤에서 큐레이션된 brain 노트로 증류 |
 | `harness-audit` | 하네스 자체의 읽기 전용 건강 검진 (`verify-all.sh` 드라이런 1회, 해석 포함) |
 | `manager-audit` | `/supervise` 실행의 메타 감사 — 재구성 품질, 모델 라우팅 낭비, 상대 토큰 지출, 역할 준수; 발견은 사용자 승인용 패치 제안이 됨 |
+| `persona-review` | 분포 근거 사용자 페르소나 패널을 UX/카피 앞에 앉혀 일반 사용자 반응을 보고 |
 | `harness-help` | 라우터 — 상황에 맞는 스킬 안내와 전체 흐름 |
 
-| 훅 — 22개(+공유 모듈 2개), `hooks/hooks.json` → `core/hooks/` 연결 | 이벤트 |
+| 훅 — 21개 배선(`hooks/hooks.json` → `core/hooks/`, 공유 모듈 포함 스크립트 25개) | 이벤트 |
 |---|---|
 | secret-content-scan · check-hardcoding | PreToolUse (Write/Edit) |
 | pre-tool-guard · r4-mutex · context-mode-guard | PreToolUse |
@@ -376,23 +412,23 @@ Agent/
 ├── AGENTS.md           # 이 저장소를 작업하는 AI의 운영 규칙
 ├── CHANGELOG.md
 │
-├── agents/             # 에이전트 정의 2종 + master-registry.json
-├── skills/             # 스킬 8종 (spec · supervise · verify-completion · wrap · brain-ingest · harness-audit · manager-audit · harness-help)
+├── agents/             # 에이전트 정의 3종 + master-registry.json
+├── skills/             # 스킬 9종 (spec · supervise · verify-completion · wrap · brain-ingest · harness-audit · manager-audit · persona-review · harness-help)
 ├── commands/           # 슬래시 커맨드 1개 (/project-init)
 ├── hooks/              # 플러그인 훅 배선 (hooks.json)
 │
 ├── core/               # AI 무관 코어 — 진실 원천
-│   ├── hooks/          #   이식 가능한 훅 22개 + 공유 모듈 2개
+│   ├── hooks/          #   이식 가능한 훅 스크립트 25개 (배선 21 + 공유 모듈)
 │   ├── infra/          #   세션 조정 · goal 모드 · 감사 · auto-ship
 │   ├── git-hooks/      #   pre-commit · pre-push
-│   └── tests/          #   테스트 스크립트 54개 (verify-all.sh가 전부 실행)
+│   └── tests/          #   테스트 스크립트 56개 (verify-all.sh가 전부 실행)
 │
 ├── adapters/           # claude-code (얇음) · codex · gemini
 ├── rules/              # 범용 정책 문서
 ├── templates/          # 프로젝트 스캐폴드 템플릿
 ├── evals/              # 저지 + 검증기 평가 데이터셋과 러너
-├── docs/               # 아키텍처 · 프로토콜 · 가이드 · 벤치마크
-└── github/             # PR 템플릿 + 워크플로 템플릿
+├── docs/               # 아키텍처 · 프로토콜 · 가이드 · 벤치마크 · 데모
+└── github/             # 워크플로 템플릿 (PR 템플릿: .github/)
 ```
 
 ## 벤치마크
@@ -479,6 +515,7 @@ risk_areas:
 ## 문서
 
 - [`docs/getting-started.md`](docs/getting-started.md) — 5분 설치 안내
+- [`docs/demo.md`](docs/demo.md) — 재현 가능한 게이트 검출 3장면 (AI 런타임 불필요)
 - [`docs/architecture.md`](docs/architecture.md) — 4계층 모델 심화
 - [`docs/hook-protocol.md`](docs/hook-protocol.md) — 표준 이벤트 스키마 (직접 훅 작성)
 - [`docs/customization.md`](docs/customization.md) — 위험 영역과 프로젝트별 설정
@@ -493,7 +530,9 @@ risk_areas:
 
 ## 기여
 
-[`docs/getting-started.md`](docs/getting-started.md)와 [`rules/contributing.md`](rules/contributing.md) 참고.
+[CONTRIBUTING.md](CONTRIBUTING.md)부터 시작하세요 — 설치 안내, 기본 규칙, 로컬 검증
+배터리. 상세: [`docs/getting-started.md`](docs/getting-started.md) ·
+[`rules/contributing.md`](rules/contributing.md).
 
 ## 라이선스
 
