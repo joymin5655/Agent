@@ -5,9 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.5.6] - 2026-07-28
+
+### Added
+- **Machine-identity PII guard.** After a full-history PII audit (350
+  commits, gitleaks + targeted scans; zero secrets, two low-sensitivity
+  history-only artifacts accepted as-is by owner decision), the sanitize
+  gate now forward-blocks personal machine identifiers:
+  `core/tests/sanitize-audit.sh` gains a token group for real macOS home
+  paths (placeholder spellings stay legal) and Apple mDNS device hostnames
+  (shaped to never false-positive on `.env.local` / `settings.local.json`);
+  the 3 pre-existing placeholder paths in the template/fixtures were
+  normalized in the same commit. Paired RED-mutation cases extend
+  `core/tests/sanitize-audit-test.sh` (catch real path, catch hostname,
+  no-false-positive). Rule + git-author noreply-email guidance:
+  `rules/public-repo.md` § Machine-identity PII, cross-referenced from
+  `AGENTS.md` §2.
+- **Community files.** Root `CONTRIBUTING.md` (verification battery +
+  ground rules), `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1, contact
+  via issues — no personal email), `.github/ISSUE_TEMPLATE/` (bug /
+  feature); the PR template moved to the standard `.github/` path.
+- **`docs/demo.md`** — three reproducible gate-catch scenarios (denied
+  secret read, REFUTED false-"done" claim, caught PII plant) with real
+  captured outputs and GIF-recording instructions.
+- **`docs/launch-checklist.md`** — maintainer-run distribution guide
+  (directory listings, launch copy drafts); all submissions stay manual.
 
 ### Changed
+- **README star-readiness rework (en + ko).** Pain-first opening with the
+  install one-liner in the first screen, live CI badge, evidence-cited
+  category comparison table, promoted blind-benchmark result (honest
+  caveat intact), and stale ungated prose counts corrected to live values
+  (agents 2→3, skills 8→9, tests 54→56, hooks measured as 21 wired /
+  25 scripts).
+- **`docs/benchmark/landscape.md` self-row refresh.** The document
+  violated its own refresh cadence and still described this repo pre-0.3
+  ("no eval suite", 4 CI jobs, 2 agents/4 skills); the self-row, strengths
+  and gap→backlog map now match the live repo (E-1/O-1/T-1..3/L-1/M-4/M-5
+  shipped; O-2/L-2 open), with a dated self-row verification line.
 - **Guard trim (evidence-based, GT series).** Executed the
   `docs/freedom-enforcement-calibration-2026-07.md` §3c "instrument, then
   recalibrate" follow-up against 30 days of gate telemetry (new §3e records
