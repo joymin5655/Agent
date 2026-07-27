@@ -85,6 +85,69 @@ else
   fail "--range missed token on a ++-prefixed line (rc=$rc): $out"
 fi
 
+# --- machine-identity PII tokens (rules/public-repo.md § Machine-identity PII) ---
+# Fixtures are runtime-assembled so this committed file never contains a literal
+# that would trip the working-tree scan (same convention as TOK above).
+
+# 6) A real macOS home path on an added line MUST be caught.
+U1="/Us"; U2="ers/somebody"; HOMEPATH="${U1}${U2}/dev/project"
+printf 'backup lives at %s\n' "$HOMEPATH" >"$TMP/pii1.md"
+git -C "$TMP" add -A && git -C "$TMP" commit -q -m "c4 real home path"
+HEAD4="$(git -C "$TMP" rev-parse HEAD)"
+out="$(cd "$TMP" && bash "$SCRIPT" --range "$HEAD3..$HEAD4" 2>&1)"; rc=$?
+if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -qi "$U2"; then
+  pass "--range catches a real macOS home path (PII token)"
+else
+  fail "--range missed a real home path (rc=$rc): $out"
+fi
+
+# 7) Apple mDNS device hostnames MUST be caught — both the joined spelling and
+#    macOS's real hyphenated ComputerName form (Mac-mini).
+M1="MacB"; M2="ookAir"; HOST="Dev-${M1}${M2}.local"
+MH1="Mac-m"; MH2="ini"; HOST2="Dev-${MH1}${MH2}.local"
+{
+  printf 'built on %s\n' "$HOST"
+  printf 'and on %s\n' "$HOST2"
+} >"$TMP/pii2.md"
+git -C "$TMP" add -A && git -C "$TMP" commit -q -m "c5 device hostname"
+HEAD5="$(git -C "$TMP" rev-parse HEAD)"
+out="$(cd "$TMP" && bash "$SCRIPT" --range "$HEAD4..$HEAD5" 2>&1)"; rc=$?
+if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q "$M2" && printf '%s' "$out" | grep -q "c-min"; then
+  pass "--range catches Apple .local hostnames (joined + hyphenated forms)"
+else
+  fail "--range missed a device hostname form (rc=$rc): $out"
+fi
+
+# 8) False-positive guard: placeholder home paths, .local config filenames, and
+#    lowercase REST-route /users/ text (the PII group is case-sensitive) pass.
+{
+  printf 'set your checkout path, e.g. /Users/<name>/Agent\n'
+  printf 'never commit .env.local or settings.local.json\n'
+  printf 'fetch https://api.github.com/users/octocat for details\n'
+  printf 'legacy automation lives in my-imacros-script.local.js\n'
+} >"$TMP/clean.md"
+git -C "$TMP" add -A && git -C "$TMP" commit -q -m "c6 placeholder + local configs"
+HEAD6="$(git -C "$TMP" rev-parse HEAD)"
+out="$(cd "$TMP" && bash "$SCRIPT" --range "$HEAD5..$HEAD6" 2>&1)"; rc=$?
+if [ "$rc" -eq 0 ]; then
+  pass "--range passes placeholders, .env.local, /users/ routes, imacros (no false positive)"
+else
+  fail "--range false-positived on benign lookalikes (rc=$rc): $out"
+fi
+
+# 9) Commit METADATA is scanned too: a hostname-bearing author email (the
+#    historical leak class) MUST be caught even when the diff content is clean.
+echo "metadata probe" >"$TMP/meta.md"
+git -C "$TMP" add -A
+GIT_AUTHOR_EMAIL="t@Dev-${M1}${M2}.local" git -C "$TMP" commit -q -m "c7 clean content"
+HEAD7="$(git -C "$TMP" rev-parse HEAD)"
+out="$(cd "$TMP" && bash "$SCRIPT" --range "$HEAD6..$HEAD7" 2>&1)"; rc=$?
+if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q "commit metadata"; then
+  pass "--range catches a hostname-bearing author field (metadata scan)"
+else
+  fail "--range missed PII in commit metadata (rc=$rc): $out"
+fi
+
 if [ "$fails" -eq 0 ]; then
   echo "sanitize-audit-test: all checks passed"
   exit 0

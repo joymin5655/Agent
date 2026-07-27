@@ -1,25 +1,43 @@
 # Agent
 
+[![CI](https://github.com/joymin5655/Agent/actions/workflows/ci.yml/badge.svg)](https://github.com/joymin5655/Agent/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-![Version](https://img.shields.io/badge/version-0.5.5-blue.svg)
+![Version](https://img.shields.io/badge/version-0.5.6-blue.svg)
 ![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-7c3aed.svg)
 ![AI-agnostic](https://img.shields.io/badge/AI-Claude%20%7C%20Codex%20%7C%20Gemini-orange.svg)
 
 **English** | [한국어](README.ko.md)
+
+**Your AI agent will eventually tell you the tests pass when they don't, read a
+secret it shouldn't, or skip the plan and start editing. This harness catches
+each of those with machine gates, not prompt wording.** At the tool boundary: a
+refute-by-default verifier that re-checks every "done" claim in a fresh context
+(fail-closed), hooks that hard-deny secret access and destructive commands, and
+a spec gate that catches plan-skipping — in observation mode by default, one
+env var to block. Plus a CI that verifies the harness itself.
+
+**One governance layer, three agent CLIs.** Install once:
+
+```
+/plugin marketplace add joymin5655/Agent
+/plugin install agent-harness@agent
+```
+
+(Claude Code shown; Codex CLI / Gemini CLI use the [shell install](#quick-start).
+Want proof before installing? Three reproducible gate-catches, no AI runtime
+needed: [`docs/demo.md`](docs/demo.md).)
 
 **Agent is a safety harness for AI coding agents.** Think of a climbing harness: your AI
 (Claude Code, Codex CLI, or Gemini CLI) does the climbing — writes code, runs commands,
 opens PRs — and the harness stops it from falling: committing secrets, colliding with
 another AI session, skipping tests, or touching things it shouldn't.
 
-Install it once as a **Claude Code plugin** (or via a shell script for all three CLIs) and
-every project gets the same decision core. The rules are written once: when an event
-reaches the core, it returns the same **allow / ask / deny** answer no matter which AI is
-driving — machine-tested by `core/tests/adapter-parity.sh`. What *differs* per runtime is
-how much of the CLI's activity reaches that core; see
-[Runtime coverage](#runtime-coverage).
+The rules are written once: when an event reaches the core, it returns the same
+**allow / ask / deny** answer no matter which AI is driving — machine-tested by
+`core/tests/adapter-parity.sh`. What *differs* per runtime is how much of the
+CLI's activity reaches that core; see [Runtime coverage](#runtime-coverage).
 
-> Status: v0.5.5 · License: **MIT**
+> Status: v0.5.6 · License: **MIT**
 
 ---
 
@@ -49,6 +67,23 @@ Deep dives on each stage: [`skills/`](skills/) · state machine and audit intern
 [How a run flows](#how-a-run-flows) below.
 
 ## Why this harness
+
+Most agent stacks compete on agent count. This one competes on a different
+question — the one no popular harness answers (per our own
+[field survey](docs/benchmark/landscape.md)):
+
+| The question to ask any harness | Here | Field norm ([survey](docs/benchmark/landscape.md)) |
+|---|---|---|
+| Does a "done" claim get independently refuted? | **yes** — `core/infra/completion-verify.py` + fresh-context judge, crash → REFUTED | rare; builders approve their own work |
+| Is enforcement a hard deny/ask at the tool boundary? | **yes** — `core/hooks/pre-tool-guard.sh` and friends | overwhelmingly prompt-only "you MUST" |
+| Does the harness CI-verify *itself*? | **yes** — 8 jobs incl. a clean-install smoke with mutation probes | almost never |
+| Are the docs machine-checked against the repo? | **yes** — `core/tests/doc-reality.sh` fails the build on a phantom path | no |
+| Same decision across Claude / Codex / Gemini? | **yes** — proven by `core/tests/adapter-parity.sh` | single-CLI first, ports later |
+
+And when the shipped reviewers were benchmarked blind against a popular rival
+stack: **8/8 planted bugs found, 0 false positives** (the rival: 8/8 with 1
+hedged FP — and, honestly, 2 extra defects our lanes missed; full method in
+[`docs/benchmark/results.md`](docs/benchmark/results.md)).
 
 Table stakes first: multi-session mutexes, 6-layer secret hardening, and TDD enforcement
 are all here (see [Catalog](#catalog)). What actually sets this harness apart:
@@ -98,10 +133,10 @@ New to this space? These ten terms are all you need to read the rest of this pag
 | Term | Plain meaning |
 |---|---|
 | **harness** | The whole safety layer: agents + hooks + skills + rules, wrapped around your AI. |
-| **hook** | A small script your AI runtime runs automatically before/after an action. It answers **allow**, **ask**, or **deny**. 22 of them (plus 2 shared modules) live in [`core/hooks/`](core/hooks/). |
+| **hook** | A small script your AI runtime runs automatically before/after an action. It answers **allow**, **ask**, or **deny**. 21 wired gate hooks (25 scripts incl. shared modules) live in [`core/hooks/`](core/hooks/). |
 | **adapter** | A thin translator between one AI CLI's native event format and the harness's canonical JSON. There are 3 ([`adapters/`](adapters/)). |
-| **agent** | A specialist your AI delegates to — e.g. a security reviewer that only reviews and never writes. 2 ship here ([`agents/`](agents/)). |
-| **skill** | A reusable step-by-step workflow the AI follows, e.g. the commit + PR flow. 8 ship here ([`skills/`](skills/)). |
+| **agent** | A specialist your AI delegates to — e.g. a security reviewer that only reviews and never writes. 3 ship here ([`agents/`](agents/)). |
+| **skill** | A reusable step-by-step workflow the AI follows, e.g. the commit + PR flow. 9 ship here ([`skills/`](skills/)). |
 | **gate** | A hook decision point (deny / ask / block). Every gate is registered with the model weakness it assumes — [`docs/gate-registry.md`](docs/gate-registry.md). |
 | **wave** | One batch of work inside a `/supervise` plan — dispatched, executed, and audited before the next wave starts. |
 | **verdict** | The shared CONFIRMED / REFUTED result schema every verifier emits — [`docs/scoring-convention.md`](docs/scoring-convention.md). |
@@ -173,7 +208,7 @@ Then:
 3. **Scaffold a project.** Inside any repo, run `/project-init` to generate `CLAUDE.md`, rules, and `gitleaks.toml`.
 4. *(Optional)* In a repo that already runs another hook-heavy plugin, disable agent-harness there via `/plugin` — agents stay namespaced as `agent-harness:*`, so there's no collision either way.
 
-The plugin bundles: **2 agents**, **8 skills**, the hook set, and the `/project-init` command.
+The plugin bundles: **3 agents**, **9 skills**, the hook set, and the `/project-init` command.
 
 ### Path B — shell install (Codex CLI / Gemini CLI / all three)
 
@@ -206,6 +241,10 @@ Ask your AI to read a file under `secrets/`:
 That exact block fires under Claude Code, Codex CLI, and Gemini CLI — same script, same
 decision. That's the whole point.
 
+No AI runtime attached yet? [`docs/demo.md`](docs/demo.md) reproduces three
+gate-catches (a denied secret read, a REFUTED false-"done" claim, a caught
+PII/taint plant) from a bare clone in under a minute.
+
 ## Architecture
 
 One canonical hook protocol; thin per-AI adapters translate native events to it. Write a
@@ -227,9 +266,9 @@ flowchart TB
         A3["gemini/"]
     end
     subgraph CORE["Layer 1 — core/ (the single source of truth)"]
-        H["hooks/ — 22 gates: secret scan · mutex ·<br/>spec-gate · tdd-guard · supervisor …"]
+        H["hooks/ — 21 wired gates: secret scan · mutex ·<br/>spec-gate · tdd-guard · supervisor …"]
         I["infra/ — sessions · goal mode ·<br/>audits · auto-ship"]
-        T["tests/ — 54 self-verification scripts"]
+        T["tests/ — 56 self-verification scripts"]
     end
     R["rules/ — policy<br/>source of truth"]
     PLUG[".claude-plugin/ + hooks/hooks.json<br/>plugin distribution"]
@@ -341,6 +380,7 @@ Manager-audit findings never self-apply — they land in a `PROPOSALS.md` for yo
 |---|---|---|---|
 | `code-reviewer` | sonnet | read-only | Reviews diffs; defers security to security-reviewer |
 | `security-reviewer` | opus | read-only | OWASP Top 10, secrets, auth, injection — owns security findings |
+| `persona-review-orchestrator` | sonnet | read-only + dispatch | Runs a citizen/user persona panel over UX or copy; judges user experience, never code |
 
 Model is cost-tiered per work class ([`docs/model-routing.md`](docs/model-routing.md) is the cross-runtime policy): judgment — planning, orchestration decisions, result synthesis — inherits the session's top model (no `model:` pin); the two reviewer pins above are kept in sync with `agents/master-registry.json` by a CI drift guard (the only machine-enforced part); implementation dispatches at the workhorse tier and mechanical work at the low tier via an explicit per-call `model` override — documented conventions. Read-only agents are enforced read-only (no `Write`/`Edit`/`Bash`). Specialize any of them per project with `.agent/` files — see [`docs/specializing-agents.md`](docs/specializing-agents.md).
 
@@ -353,9 +393,10 @@ Model is cost-tiered per work class ([`docs/model-routing.md`](docs/model-routin
 | `brain-ingest` | Distill raw session captures into curated brain notes behind a deterministic lint gate |
 | `harness-audit` | Read-only health check of the harness itself (one `verify-all.sh` dry-run, interpreted) |
 | `manager-audit` | Meta-audit of a `/supervise` run — restatement quality, model-routing waste, relative token spend, role compliance; findings become patch proposals for user approval |
+| `persona-review` | Seat a panel of distribution-grounded user personas in front of UX/copy and report how ordinary users react |
 | `harness-help` | Router — which skill fits the situation, and the main flow through them |
 
-| Hooks — 22 (+2 shared modules), wired via `hooks/hooks.json` → `core/hooks/` | Event |
+| Hooks — 21 wired via `hooks/hooks.json` → `core/hooks/` (25 scripts incl. shared modules) | Event |
 |---|---|
 | secret-content-scan · check-hardcoding | PreToolUse (Write/Edit) |
 | pre-tool-guard · r4-mutex · context-mode-guard | PreToolUse |
@@ -371,28 +412,29 @@ Command: **`/project-init`** scaffolds project-level files (`CLAUDE.md`, rules, 
 ```
 Agent/
 ├── .claude-plugin/     # Claude Code plugin + marketplace manifests
+├── .github/            # CI workflows · issue templates · PR template
 ├── setup.sh            # shell installer — 6 combinable flags
 ├── gitleaks.toml       # base secret-scan config
 ├── AGENTS.md           # operating rules for AIs working on this repo
 ├── CHANGELOG.md
 │
-├── agents/             # 2 agent definitions + master-registry.json
-├── skills/             # 8 skills (spec · supervise · verify-completion · wrap · brain-ingest · harness-audit · manager-audit · harness-help)
+├── agents/             # 3 agent definitions + master-registry.json
+├── skills/             # 9 skills (spec · supervise · verify-completion · wrap · brain-ingest · harness-audit · manager-audit · persona-review · harness-help)
 ├── commands/           # 1 slash command (/project-init)
 ├── hooks/              # plugin hook wiring (hooks.json)
 │
 ├── core/               # AI-agnostic core — the truth
-│   ├── hooks/          #   22 portable hooks + 2 shared modules
+│   ├── hooks/          #   25 portable hook scripts (21 wired + shared modules)
 │   ├── infra/          #   session coordination · goal mode · audits · auto-ship
 │   ├── git-hooks/      #   pre-commit · pre-push
-│   └── tests/          #   54 test scripts (verify-all.sh runs them all)
+│   └── tests/          #   56 test scripts (verify-all.sh runs them all)
 │
 ├── adapters/           # claude-code (thin) · codex · gemini
 ├── rules/              # generic policy docs
 ├── templates/          # project scaffold templates
 ├── evals/              # judge + verifier eval datasets and runners
-├── docs/               # architecture · protocol · guides · benchmark
-└── github/             # PR template + workflow templates
+├── docs/               # architecture · protocol · guides · benchmark · demo
+└── github/             # legacy workflow templates (live CI + PR template: .github/)
 ```
 
 ## Benchmark
@@ -479,6 +521,7 @@ see [`docs/specializing-agents.md`](docs/specializing-agents.md).
 ## Docs
 
 - [`docs/getting-started.md`](docs/getting-started.md) — 5-minute install walkthrough
+- [`docs/demo.md`](docs/demo.md) — 3 reproducible gate-catch scenarios (no AI runtime needed)
 - [`docs/architecture.md`](docs/architecture.md) — the 4-layer model in depth
 - [`docs/hook-protocol.md`](docs/hook-protocol.md) — canonical event schema (write your own hooks)
 - [`docs/customization.md`](docs/customization.md) — risk areas and per-project config
@@ -493,7 +536,10 @@ see [`docs/specializing-agents.md`](docs/specializing-agents.md).
 
 ## Contributing
 
-See [`docs/getting-started.md`](docs/getting-started.md) and [`rules/contributing.md`](rules/contributing.md).
+Start with [CONTRIBUTING.md](CONTRIBUTING.md) — install walkthrough, ground
+rules, and the local verification battery. Details:
+[`docs/getting-started.md`](docs/getting-started.md) ·
+[`rules/contributing.md`](rules/contributing.md).
 
 ## License
 

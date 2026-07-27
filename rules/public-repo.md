@@ -12,6 +12,37 @@
 - Check `git diff --cached` for secrets before every commit (handled by
   `core/git-hooks/pre-commit` if installed).
 
+## Machine-identity PII (MUST NOT)
+
+Personal machine identifiers are PII and must never enter committed content
+or commit metadata. This repo once leaked a device hostname and a home path
+into old commits (2026-04/05, low sensitivity, accepted as historical); this
+rule plus the machine gate below prevent any recurrence.
+
+- No absolute home paths in committed content. Write placeholder spellings
+  instead: `$HOME/Agent`, `~/Agent`, or `/Users/<name>` (the `<` is what
+  keeps a placeholder legal — a real username after the slash is blocked).
+  Machine enforcement covers macOS-style home paths (case-sensitively, so
+  lowercase REST-route text like an `api.github.com/users/…` example stays
+  legal); Linux `/home/<name>` paths are covered by this rule as written
+  but not by the gate — keep them placeholder-spelled too.
+- No device hostnames — Apple mDNS names shaped like `<device>.local`
+  (machine model names embedded in a `.local` host) identify a personal
+  computer. Use `example-host` in docs and fixtures.
+- No personal volume or drive paths (external-disk mount points). Use
+  `/opt/...` or `$HOME/...` in fixtures.
+- Git author identity: use your GitHub **noreply** email
+  (`<id>+<user>@users.noreply.github.com`) or a deliberate public address.
+  Never commit with an author field that embeds a machine hostname
+  (misconfigured `git config` defaults to `user@host`); check with
+  `git config user.email` before your first commit.
+
+Enforcement: the machine-identity token group in
+`core/tests/sanitize-audit.sh` — working-tree scan, `--range` scan of every
+PR commit's added lines, **and** the range's commit metadata
+(author/committer name+email, subject, body), all wired into CI's sanitize
+job. RED-mutation coverage lives in `core/tests/sanitize-audit-test.sh`.
+
 ## Git Safety (MUST NOT)
 
 - `git push --force` to `main` / `develop`.

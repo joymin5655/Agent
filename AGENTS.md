@@ -33,7 +33,7 @@ This repo MUST stay domain-neutral. The original maintainer ported it from a pri
 bash core/tests/sanitize-audit.sh
 ```
 
-The audit script greps for known domain taint patterns (prior project name, prior-project domain terms, prior-project absolute paths). The pattern list lives in `core/tests/sanitize-audit.sh` — update it if you introduce a new project-specific term that needs guarding.
+The audit script greps for known domain taint patterns (prior project name, prior-project domain terms, prior-project absolute paths) **and machine-identity PII** (real home paths, Apple `.local` device hostnames — see `rules/public-repo.md` § Machine-identity PII). The pattern list lives in `core/tests/sanitize-audit.sh` — update it if you introduce a new project-specific term that needs guarding.
 
 If you see any match outside `legacy/`, fix before commit.
 
