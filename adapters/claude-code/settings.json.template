@@ -1,5 +1,5 @@
 {
-  "_comment": "Claude Code hook wire-up template. Copy to ~/.claude/settings.json (or merge into existing). Replace {{FRAMEWORK_ROOT}} with the absolute path to your Agent/ checkout (e.g., /Users/yourname/Agent). Kept in lockstep with hooks/hooks.json (the plugin manifest) — core/tests/hook-template-parity.sh fails the suite on drift.",
+  "_comment": "Claude Code hook wire-up template. Copy to ~/.claude/settings.json (or merge into existing). Replace {{FRAMEWORK_ROOT}} with the absolute path to your Agent/ checkout (e.g., $HOME/Agent). Kept in lockstep with hooks/hooks.json (the plugin manifest) — core/tests/hook-template-parity.sh fails the suite on drift.",
   "hooks": {
     "SessionStart": [
       {

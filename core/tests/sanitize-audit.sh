@@ -37,6 +37,18 @@ TOKENS=(
   "ML Uncertainty"
   "Edge Fn"
 )
+
+# --- machine-identity PII token set (rules/public-repo.md § Machine-identity PII) ---
+# Personal machine identifiers must never enter the repo: real macOS home paths
+# and Apple mDNS device hostnames. Patterns are deliberately narrow:
+#   - "/Users/" followed by an alphanumeric = a REAL home path; the placeholder
+#     spellings docs use ("/Users/<name>") stay legal because '<' breaks the match.
+#   - Only .local hostnames that embed an Apple model name are matched — a bare
+#     ".local" token would false-positive on .env.local / settings.local.json.
+TOKENS+=(
+  "/Users/[A-Za-z0-9]"
+  "[A-Za-z0-9-]*(MacBook|Macmini|MacPro|iMac|Mac-Studio)[A-Za-z0-9-]*\\.local"
+)
 # Join with |  (multi-word tokens are fine: the joined pattern is passed as a
 # single quoted ERE argument, where a space is a literal).
 JOINED="$(IFS='|'; echo "${TOKENS[*]}")"

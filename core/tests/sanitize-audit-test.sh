@@ -85,6 +85,48 @@ else
   fail "--range missed token on a ++-prefixed line (rc=$rc): $out"
 fi
 
+# --- machine-identity PII tokens (rules/public-repo.md § Machine-identity PII) ---
+# Fixtures are runtime-assembled so this committed file never contains a literal
+# that would trip the working-tree scan (same convention as TOK above).
+
+# 6) A real macOS home path on an added line MUST be caught.
+U1="/Us"; U2="ers/somebody"; HOMEPATH="${U1}${U2}/dev/project"
+printf 'backup lives at %s\n' "$HOMEPATH" >"$TMP/pii1.md"
+git -C "$TMP" add -A && git -C "$TMP" commit -q -m "c4 real home path"
+HEAD4="$(git -C "$TMP" rev-parse HEAD)"
+out="$(cd "$TMP" && bash "$SCRIPT" --range "$HEAD3..$HEAD4" 2>&1)"; rc=$?
+if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -qi "$U2"; then
+  pass "--range catches a real macOS home path (PII token)"
+else
+  fail "--range missed a real home path (rc=$rc): $out"
+fi
+
+# 7) An Apple mDNS device hostname MUST be caught.
+M1="MacB"; M2="ookAir"; HOST="Dev-${M1}${M2}.local"
+printf 'built on %s\n' "$HOST" >"$TMP/pii2.md"
+git -C "$TMP" add -A && git -C "$TMP" commit -q -m "c5 device hostname"
+HEAD5="$(git -C "$TMP" rev-parse HEAD)"
+out="$(cd "$TMP" && bash "$SCRIPT" --range "$HEAD4..$HEAD5" 2>&1)"; rc=$?
+if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -qi "$M2"; then
+  pass "--range catches an Apple device .local hostname (PII token)"
+else
+  fail "--range missed a device hostname (rc=$rc): $out"
+fi
+
+# 8) False-positive guard: placeholder home paths and .local config filenames pass.
+{
+  printf 'set your checkout path, e.g. /Users/<name>/Agent\n'
+  printf 'never commit .env.local or settings.local.json\n'
+} >"$TMP/clean.md"
+git -C "$TMP" add -A && git -C "$TMP" commit -q -m "c6 placeholder + local configs"
+HEAD6="$(git -C "$TMP" rev-parse HEAD)"
+out="$(cd "$TMP" && bash "$SCRIPT" --range "$HEAD5..$HEAD6" 2>&1)"; rc=$?
+if [ "$rc" -eq 0 ]; then
+  pass "--range passes placeholder /Users/<name> and .env.local (no false positive)"
+else
+  fail "--range false-positived on placeholder/.local configs (rc=$rc): $out"
+fi
+
 if [ "$fails" -eq 0 ]; then
   echo "sanitize-audit-test: all checks passed"
   exit 0
