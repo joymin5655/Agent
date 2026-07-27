@@ -412,6 +412,7 @@ Command: **`/project-init`** scaffolds project-level files (`CLAUDE.md`, rules, 
 ```
 Agent/
 ├── .claude-plugin/     # Claude Code plugin + marketplace manifests
+├── .github/            # CI workflows · issue templates · PR template
 ├── setup.sh            # shell installer — 6 combinable flags
 ├── gitleaks.toml       # base secret-scan config
 ├── AGENTS.md           # operating rules for AIs working on this repo
@@ -433,7 +434,7 @@ Agent/
 ├── templates/          # project scaffold templates
 ├── evals/              # judge + verifier eval datasets and runners
 ├── docs/               # architecture · protocol · guides · benchmark · demo
-└── github/             # workflow templates (PR template: .github/)
+└── github/             # legacy workflow templates (live CI + PR template: .github/)
 ```
 
 ## Benchmark

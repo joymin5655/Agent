@@ -408,6 +408,7 @@ manager-audit의 발견은 절대 스스로 적용되지 않습니다 — `PROPO
 ```
 Agent/
 ├── .claude-plugin/     # Claude Code 플러그인 + 마켓플레이스 매니페스트
+├── .github/            # CI 워크플로 · 이슈 템플릿 · PR 템플릿
 ├── setup.sh            # 셸 설치기 — 조합 가능한 플래그 6개
 ├── gitleaks.toml       # 기본 시크릿 스캔 설정
 ├── AGENTS.md           # 이 저장소를 작업하는 AI의 운영 규칙
@@ -429,7 +430,7 @@ Agent/
 ├── templates/          # 프로젝트 스캐폴드 템플릿
 ├── evals/              # 저지 + 검증기 평가 데이터셋과 러너
 ├── docs/               # 아키텍처 · 프로토콜 · 가이드 · 벤치마크 · 데모
-└── github/             # 워크플로 템플릿 (PR 템플릿: .github/)
+└── github/             # 레거시 워크플로 템플릿 (실제 CI + PR 템플릿: .github/)
 ```
 
 ## 벤치마크

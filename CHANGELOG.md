@@ -20,7 +20,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `core/tests/sanitize-audit-test.sh` (catch real path, catch hostname,
   no-false-positive). Rule + git-author noreply-email guidance:
   `rules/public-repo.md` § Machine-identity PII, cross-referenced from
-  `AGENTS.md` §2.
+  `AGENTS.md` §2. Adversarial security-lane hardening (4 MED, same wave):
+  hostname pattern covers macOS's real hyphenated ComputerName forms
+  (Mac-mini/Pro/Studio); the PII tokens moved to a **case-sensitive**
+  `TOKENS_CS` group (kills latent false positives on lowercase REST-route
+  `/users/` text and imacros-style `.local` filenames); `--range` now also
+  scans each commit's **metadata** (author/committer name+email, subject,
+  body) — the historical leak class was a hostname-bearing author field
+  that diff lines never show; battery extended to 10 checks (hyphenated
+  RED case, FP guards, metadata RED case).
 - **Community files.** Root `CONTRIBUTING.md` (verification battery +
   ground rules), `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1, contact
   via issues — no personal email), `.github/ISSUE_TEMPLATE/` (bug /
@@ -37,7 +45,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   category comparison table, promoted blind-benchmark result (honest
   caveat intact), and stale ungated prose counts corrected to live values
   (agents 2→3, skills 8→9, tests 54→56, hooks measured as 21 wired /
-  25 scripts).
+  25 scripts). Hero copy and launch-checklist wording keep the
+  enforcement claim honest: secret access and destructive commands
+  hard-deny; the spec gate is disclosed as observation-mode by default
+  with block opt-in.
 - **`docs/benchmark/landscape.md` self-row refresh.** The document
   violated its own refresh cadence and still described this repo pre-0.3
   ("no eval suite", 4 CI jobs, 2 agents/4 skills); the self-row, strengths
