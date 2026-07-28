@@ -221,7 +221,9 @@ These are current-state findings, not future design:
    Claude loaded the plugin components successfully.
 2. The Claude adapter silently passes when a named core hook is missing. This
    favors session availability but means installation health must be verified
-   separately.
+   separately. The same fail-open stance holds in the Codex/Gemini shell
+   wraps: a crashed hook's output is discarded and the wrapped command still
+   executes (see `hook-protocol.md` § 4, exit code 1).
 3. All matching Claude handlers run in parallel. Comments or documentation that
    depend on handler array order are not an enforcement guarantee.
 4. Installing both the marketplace plugin and `setup.sh --claude` can register
@@ -230,6 +232,15 @@ These are current-state findings, not future design:
    it sees more than one cached version.
 6. The plugin path does not install the optional dependencies that individual
    hooks may need. Missing tools can degrade observers or secret scanning.
+7. The `.git-hooks-framework` symlink points at a **versioned** plugin-cache
+   path. A plugin update that evicts that version leaves the link dangling,
+   and `core.hooksPath` then names a dead directory — git skips all hooks
+   (pre-commit gitleaks, staged-secret scan, pre-push scans) with no warning.
+   Nothing currently repairs or detects this: `setup.sh`'s `-L` guard is true
+   for a dangling link (so re-running project-init does not re-point it), and
+   `setup.sh --doctor` has no hooksPath check. Until a doctor check lands,
+   the project-init verify step's `test -e .git-hooks-framework` is the
+   detection point — run it after every plugin update.
 
 These gaps explain why the cross-runtime roadmap requires native installation
 tests, a capability registry, and bypass fixtures instead of treating manifest

@@ -144,7 +144,10 @@ Codex currently supports `allow` and `deny` from `PreToolUse`.
 `permissionDecision: "ask"` is parsed but unsupported: the hook fails and the
 tool call continues.
 
-Therefore a Codex adapter must never pass canonical `ask` through unchanged:
+Therefore the native Codex adapter (XRH-02 target — the shipped `adapter.sh`
+stdin path does no such translation today; only `codex-shell-wrap.sh`'s own
+Mode-1 logic maps ask to block) must never pass canonical `ask` through
+unchanged:
 
 1. use a separately proven native permission flow when one already owns the
    tool call; otherwise
@@ -227,6 +230,14 @@ See the
 [official Antigravity hook reference](https://www.antigravity.google/docs/hooks).
 
 ## Decision degradation policy
+
+This table is the **target contract** (XRH-02/03 acceptance criteria), not a
+description of shipped behavior. The shipped adapters currently fail **open**
+on a crashed or empty-output hook: the Codex/Gemini shell wraps discard a
+failed hook's output and execute the command, and the Claude adapter passes
+silently when a named core hook is missing (`hook-protocol.md` § 4, exit
+code 1). Until the native paths land, rule 5 above ("empty output =
+pass-through") is what actually happens on error.
 
 | Condition | Mutating pre-effect event | Observation event |
 |---|---|---|

@@ -95,7 +95,7 @@ Independent of stdout JSON, exit codes follow this convention:
 | Exit code | Meaning |
 |---|---|
 | `0` | Hook ran successfully (decision in stdout, or empty for pass-through) |
-| `1` | Hook errored — apply the adapter's documented runtime-specific failure policy |
+| `1` | Hook errored — current shipped behavior is **fail-open in every adapter**: the Claude adapter silently passes when a named core hook is missing or crashes, and the Codex/Gemini shell wraps discard a crashed hook's output (`2>/dev/null \|\| true`) and fall through to executing the command. This favors session availability over enforcement; a fail-closed option is part of the XRH-02 native-path acceptance criteria (`cross-runtime-harness-design.md` § 11) |
 | `2` | Hook explicit DENY — runtime should block (Claude Code shorthand; equivalent to JSON `deny`) |
 | `15` | Project risk area trip — secret leak detected (auto-ship convention) |
 | `12-16` | Risk-area-specific abort codes — configurable in `hook-config.yml` |

@@ -13,6 +13,12 @@
 # Mode 2 — Native-integration entry point (not registered by setup yet):
 #   The XRH-02 migration will normalize Codex's documented hook format here
 #   and package it through a native Codex plugin.
+#   DO NOT register this file as a native Codex hook before XRH-02 lands:
+#   this path passes canonical `ask` through unchanged, and Codex treats an
+#   unsupported `ask` as a hook error and CONTINUES the tool call (fail-open).
+#   XRH-02's acceptance criteria require an ask->deny translation here first
+#   (docs/ai-adapters.md § Decision mapping). Mode 1's codex-shell-wrap.sh
+#   already maps ask to block and is the only supported enforcement path today.
 #
 # Usage:
 #   adapter.sh <hook-name>                   # stdin = canonical or codex JSON

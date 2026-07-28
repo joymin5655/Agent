@@ -262,6 +262,12 @@ Support is declared per distribution and per tool class.
 
 Tier B is not automatically runtime-wide. A shell wrapper that does not see
 native file-write calls is Tier B for shell and Tier C for file writes.
+Tier B is also **conditional on the wrapper's own dependencies**: the shipped
+shell wraps only parse a decision when `python3` is on PATH and the hook
+exits cleanly — on a host without `python3`, or on a hook crash, they execute
+the command unchecked (fail-open, `hook-protocol.md` § 4). A Tier B claim
+therefore carries an implicit environment precondition until the fail-closed
+work in XRH-02/03 lands.
 
 Promotion rules:
 
@@ -305,9 +311,12 @@ Runtime mappings:
 - **Wrappers and gateways** may treat `ask` as `deny` when they cannot interact
   with the user. They must explain how to retry with approval.
 
-An adapter error on a mutating pre-effect event fails closed. An error on an
-observation event records a warning and continues unless the mission's explicit
-completion gate requires that observation.
+An adapter error on a mutating pre-effect event fails closed — as a **target
+rule**: the shipped wrapper paths currently fail open on a crashed hook
+(`hook-protocol.md` § 4), and closing that gap is part of the XRH-02/03
+acceptance criteria. An error on an observation event records a warning and
+continues unless the mission's explicit completion gate requires that
+observation.
 
 ## 8. Runtime distribution strategy
 
@@ -593,6 +602,25 @@ Acceptance:
   a model;
 - historical snapshots remain reproducible;
 - live Arena changes do not alter runtime enforcement or core policy.
+
+### XRH-07 — Install-integrity revalidation (Claude path)
+
+Deliver:
+
+- a `setup.sh --doctor` check that resolves `.git-hooks-framework` and fails
+  loudly when the link is dangling or `core.hooksPath` names a missing
+  directory (the post-plugin-update failure in the lifecycle doc § 7);
+- repair-on-rerun: `setup.sh --project` re-points a dangling link instead of
+  skipping it (`-L` alone is true for a dangling symlink);
+- a RED fixture: scaffold in a scratch repo, evict the fake plugin-cache dir,
+  assert doctor FAILs and a rerun repairs the link.
+
+Acceptance:
+
+- a dangling `.git-hooks-framework` can no longer coexist with a passing
+  doctor;
+- a commit made with a dangling hooksPath is a reproduced-then-fixed test
+  case, not a silent possibility.
 
 ## 12. Verification and rollout
 

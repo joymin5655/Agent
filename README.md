@@ -93,7 +93,9 @@ are all here (see [Catalog](#catalog)). What actually sets this harness apart:
 prompt wording.
 
 - `core/hooks/pre-tool-guard.sh` physically blocks a routed edit or command at the
-  tool boundary; the AI cannot talk its way past that route.
+  tool boundary; a matched pattern cannot be talked past on that route.
+  (Pattern coverage is a denylist and has known evasions — e.g. reaching a
+  guarded path via `cd` first; treat the guard as one layer, not the perimeter.)
 - `core/hooks/spec-gate.py` and `core/hooks/tdd-guard.py` are the same kind of gate but
   ship in **observation mode**: `AGENT_SPEC_GATE_MODE` / `AGENT_TDD_GUARD_MODE` accept
   `off | dryrun | block`, and the default `dryrun` only logs the would-block verdict.
