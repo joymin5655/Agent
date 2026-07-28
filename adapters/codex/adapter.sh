@@ -2,18 +2,17 @@
 # Codex CLI adapter — translates Codex tool-call envelopes into the canonical
 # hook event protocol, invokes a core hook, and returns the decision JSON.
 #
-# Codex CLI does NOT yet expose a native PreToolUse/PostToolUse hook system
-# the way Claude Code does. This adapter therefore offers TWO modes:
+# Codex CLI now exposes a native hook system, but Agent has not wired its
+# plugin path yet. This adapter therefore offers TWO compatibility modes:
 #
 # Mode 1 — Direct invoke (works today):
 #   When codex is configured to call shell wrappers around its built-in tools
 #   (bash, write_file, etc.), each wrapper can pipe its call envelope through
 #   this adapter before executing the action. See codex-shell-wrap.sh.
 #
-# Mode 2 — Future-compat event bridge (placeholder):
-#   When codex grows native hooks (tracking https://github.com/openai/codex
-#   issue queue), this adapter is the entry point — it normalises input from
-#   codex's eventual hook format into the canonical event JSON shape.
+# Mode 2 — Native-integration entry point (not registered by setup yet):
+#   The XRH-02 migration will normalize Codex's documented hook format here
+#   and package it through a native Codex plugin.
 #
 # Usage:
 #   adapter.sh <hook-name>                   # stdin = canonical or codex JSON

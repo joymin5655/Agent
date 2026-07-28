@@ -127,7 +127,7 @@ claude
 ```bash
 cd /path/to/your/project
 codex
-# Reads AGENTS.md + applies hooks
+# Reads AGENTS.md + applies the configured shell-wrapper gates
 ```
 
 ### Gemini CLI
@@ -135,10 +135,13 @@ codex
 ```bash
 cd /path/to/your/project
 gemini
-# Reads GEMINI.md + applies hooks
+# Reads GEMINI.md + applies the configured shell-wrapper gates
 ```
 
-When the AI tries something blocked by a hook (e.g., reading `secrets/`), you'll see:
+The shipped Codex/Gemini wrapper covers shell calls, not every native file-write
+tool. Check the
+[runtime capability matrix](benchmark/runtime-capability-matrix-2026-07.md)
+before relying on a gate. When a covered call is blocked, you will see:
 
 ```
 🚫 Tool blocked: Direct secrets/ access blocked. Use environment variable.

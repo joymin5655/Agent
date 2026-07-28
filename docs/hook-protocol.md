@@ -1,6 +1,8 @@
 # Hook Protocol — Canonical
 
-The hook protocol is the single contract that makes the framework AI-agnostic. Every `core/hooks/*` script reads JSON from `stdin` and writes JSON to `stdout`. Each AI adapter translates the runtime's native event format to/from this canonical JSON.
+The hook protocol is the single contract that makes the framework AI-agnostic. Every
+`core/hooks/*` script reads JSON from `stdin` and writes JSON to `stdout`. Each adapter
+translates a native hook event or controlled-wrapper event to/from this canonical JSON.
 
 If you write a new core hook OR a new AI adapter: this is the doc.
 
@@ -8,7 +10,8 @@ If you write a new core hook OR a new AI adapter: this is the doc.
 
 ## 1. Event categories
 
-The framework defines 5 event categories, mirroring Claude Code's native taxonomy (which is the most expressive of the 3 supported AIs):
+The framework defines five portable event categories. They are a stable subset of the
+larger lifecycle surfaces exposed by current runtimes:
 
 | Category | Fires when | Decision possible? |
 |---|---|---|
@@ -18,7 +21,9 @@ The framework defines 5 event categories, mirroring Claude Code's native taxonom
 | `Stop` | Session ends / model done | No — observation / cleanup |
 | `UserPromptSubmit` | User submits a message | Yes — `allow` / `block` |
 
-Codex CLI and Gemini CLI may not have all 5 native event types — see [`ai-adapters.md`](ai-adapters.md) for per-AI mappings.
+A runtime distribution may lack an exact equivalent or Agent may not yet wire the
+upstream event. See [`ai-adapters.md`](ai-adapters.md) for current mappings and
+explicit degradation rules.
 
 ---
 
@@ -90,7 +95,7 @@ Independent of stdout JSON, exit codes follow this convention:
 | Exit code | Meaning |
 |---|---|
 | `0` | Hook ran successfully (decision in stdout, or empty for pass-through) |
-| `1` | Hook errored — runtime should treat as `ask` (fail-safe) |
+| `1` | Hook errored — apply the adapter's documented runtime-specific failure policy |
 | `2` | Hook explicit DENY — runtime should block (Claude Code shorthand; equivalent to JSON `deny`) |
 | `15` | Project risk area trip — secret leak detected (auto-ship convention) |
 | `12-16` | Risk-area-specific abort codes — configurable in `hook-config.yml` |
@@ -138,7 +143,11 @@ Adapters MUST preserve these shapes. Don't normalize MCP params across AIs.
 
 ## 7. Hook chain ordering
 
-Multiple hooks can listen to the same event. The runtime executes them sequentially. The framework convention for ordering (PreToolUse):
+Multiple hooks can listen to the same event. Execution and aggregation are
+runtime-specific. Claude Code runs all matching handlers in parallel and
+deduplicates identical handlers, so array position is not execution order.
+
+The framework's logical policy precedence for `PreToolUse` is:
 
 ```
 1. fast-fail security guards   (pre-tool-guard, secret-content-scan)
@@ -148,12 +157,19 @@ Multiple hooks can listen to the same event. The runtime executes them sequentia
 5. specialist dispatch         (supervisor.py)
 6. workflow guards             (plan-gate, tdd-guard)
 7. observation                 (broadcast, record-*, model-routing-observer, model-routing-advisor)
-8. allow accelerators          (plan-scope-allow — last, so any earlier deny short-circuits first)
+8. allow accelerators          (plan-scope-allow)
 ```
 
-An `allow` decision bypasses the AI's native permission prompt only — it never overrides another hook's `deny`/`ask` (most-restrictive-wins). Any hook returning `deny` short-circuits the chain. Any hook returning `ask` defers to user — chain continues after user confirmation.
+An `allow` decision bypasses the AI's native permission prompt only — it never
+overrides another hook's stricter result. Claude applies
+`deny > defer > ask > allow`. Agent-owned wrappers or gateways must implement
+and test their own documented aggregation rule.
 
-See `adapters/claude-code/settings.json.template` for the canonical registration order.
+If a runtime cannot prompt for `ask`, its adapter must use the explicit fail-closed mapping in
+`docs/ai-adapters.md`. It must not emit an unsupported native result.
+
+See `hooks/hooks.json` for Claude registration. Do not encode policy correctness
+in handler order or shared side effects between parallel hooks.
 
 ---
 
@@ -172,19 +188,24 @@ See `adapters/claude-code/settings.json.template` for the canonical registration
 
 ## 9. Writing a new AI adapter — checklist
 
-1. Create `adapters/<ai-name>/`.
-2. Implement `adapter.sh` (and `adapter.py` if event subscription needed):
+1. Classify the target as a runtime host, model backend, or evaluation source.
+2. Create and source a capability descriptor per
+   [`cross-runtime-harness-design.md`](cross-runtime-harness-design.md).
+3. Create `adapters/<ai-name>/` only for a runtime with a controlled effect boundary.
+4. Implement `adapter.sh` (and `adapter.py` if event subscription is needed):
    - Read native AI event format from runtime.
    - Construct canonical stdin JSON (§ 2).
    - Pipe to `core/hooks/<requested-hook>`.
    - Read canonical stdout JSON (§ 3).
    - Translate back to runtime's enforcement mechanism.
-3. Provide `<ai>-settings.template` or `<ai>-config.template` showing how user registers hooks.
-4. Create `tests/run.sh` exercising at least:
+5. Define `allow`, `deny`, and `ask`, including fail-closed behavior when unsupported.
+6. Provide native registration or package templates showing how users enable hooks.
+7. Create `tests/run.sh` exercising at least:
    - `Bash` PreToolUse with safe command → `allow`
    - `Bash` PreToolUse with `cat secrets/foo` → `deny`
    - `Write` PreToolUse to a path containing `.env` → `deny`
-5. Add to the `core/tests/adapter-parity.sh` matrix.
+8. Add to `core/tests/adapter-parity.sh` for core/translation parity.
+9. Add opt-in native runtime tests for registration, file writes, MCP, errors, and bypasses.
 
 ---
 

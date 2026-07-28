@@ -4,15 +4,18 @@ Bridge for [Gemini CLI](https://github.com/google-gemini/gemini-cli).
 
 ## How it works
 
-Gemini CLI exposes a `tools` block in `~/.gemini/settings.json` that lets
-the user point its shell tool at an external executable. This adapter is
-that executable — it intercepts every shell call Gemini wants to make,
-normalises the args into a canonical PreToolUse event, pipes through the
-framework's core hooks, and **blocks** the call (exit 100) on
-`permissionDecision = "deny"` or `"ask"`.
+Current Gemini CLI releases expose native hooks and extensions, but Agent has
+not wired that path yet. This compatibility adapter uses the `tools` block in
+`~/.gemini/settings.json` to point the shell tool at an external executable.
+It intercepts that shell route, normalises the arguments into a canonical
+PreToolUse event, pipes through the core hooks, and **blocks** the call
+(exit 100) on `permissionDecision = "deny"` or `"ask"`.
 
 Architecturally identical to the Codex adapter — see that README for the
 rationale.
+
+The native Gemini extension and separate Antigravity plugin are specified in
+[`docs/cross-runtime-harness-design.md`](../../docs/cross-runtime-harness-design.md).
 
 ## Files
 
@@ -62,8 +65,8 @@ See `tests/run.sh` for the full smoke-test suite.
 
 ## Limitations
 
-- **No native PostToolUse equivalent** via the shell tool wrapper (same as
-  Codex).
+- **No PostToolUse in this wrapper path.** Upstream Gemini `AfterTool` exists,
+  but Agent does not register it yet.
 - **File-write tools** (`write_file`, `replace`) are not yet intercepted
   by `gemini-shell-wrap.sh` — only `run_shell_command` is. To gate file
   writes, configure Gemini's `tools.write_file` and `tools.replace` to

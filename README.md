@@ -12,7 +12,8 @@
 secret it shouldn't, or skip the plan and start editing. This harness catches
 each of those with machine gates, not prompt wording.** At the tool boundary: a
 refute-by-default verifier that re-checks every "done" claim in a fresh context
-(fail-closed), hooks that hard-deny secret access and destructive commands, and
+(fail-closed), hooks that hard-deny secret access and destructive commands on
+their covered tool routes, and
 a spec gate that catches plan-skipping — in observation mode by default, one
 env var to block. Plus a CI that verifies the harness itself.
 
@@ -75,7 +76,7 @@ question — the one no popular harness answers (per our own
 | The question to ask any harness | Here | Field norm ([survey](docs/benchmark/landscape.md)) |
 |---|---|---|
 | Does a "done" claim get independently refuted? | **yes** — `core/infra/completion-verify.py` + fresh-context judge, crash → REFUTED | rare; builders approve their own work |
-| Is enforcement a hard deny/ask at the tool boundary? | **yes** — `core/hooks/pre-tool-guard.sh` and friends | overwhelmingly prompt-only "you MUST" |
+| Is enforcement a hard deny/ask at the tool boundary? | **yes, on covered routes** — `core/hooks/pre-tool-guard.sh` and friends | overwhelmingly prompt-only "you MUST" |
 | Does the harness CI-verify *itself*? | **yes** — 8 jobs incl. a clean-install smoke with mutation probes | almost never |
 | Are the docs machine-checked against the repo? | **yes** — `core/tests/doc-reality.sh` fails the build on a phantom path | no |
 | Same decision across Claude / Codex / Gemini? | **yes** — proven by `core/tests/adapter-parity.sh` | single-CLI first, ports later |
@@ -88,10 +89,11 @@ hedged FP — and, honestly, 2 extra defects our lanes missed; full method in
 Table stakes first: multi-session mutexes, 6-layer secret hardening, and TDD enforcement
 are all here (see [Catalog](#catalog)). What actually sets this harness apart:
 
-**Gates, not vibes** — enforcement lives at the tool boundary, not in prompt wording.
+**Gates, not vibes** — covered enforcement lives at the tool boundary, not in
+prompt wording.
 
-- `core/hooks/pre-tool-guard.sh` physically blocks the edit or command at the tool
-  boundary; the AI cannot talk its way past it.
+- `core/hooks/pre-tool-guard.sh` physically blocks a routed edit or command at the
+  tool boundary; the AI cannot talk its way past that route.
 - `core/hooks/spec-gate.py` and `core/hooks/tdd-guard.py` are the same kind of gate but
   ship in **observation mode**: `AGENT_SPEC_GATE_MODE` / `AGENT_TDD_GUARD_MODE` accept
   `off | dryrun | block`, and the default `dryrun` only logs the would-block verdict.
@@ -134,7 +136,7 @@ New to this space? These ten terms are all you need to read the rest of this pag
 |---|---|
 | **harness** | The whole safety layer: agents + hooks + skills + rules, wrapped around your AI. |
 | **hook** | A small script your AI runtime runs automatically before/after an action. It answers **allow**, **ask**, or **deny**. 22 wired gate hooks (26 scripts incl. shared modules) live in [`core/hooks/`](core/hooks/). |
-| **adapter** | A thin translator between one AI CLI's native event format and the harness's canonical JSON. There are 3 ([`adapters/`](adapters/)). |
+| **adapter** | A translator from a runtime hook or controlled wrapper event to the harness's canonical JSON. There are 3 ([`adapters/`](adapters/)). |
 | **agent** | A specialist your AI delegates to — e.g. a security reviewer that only reviews and never writes. 3 ship here ([`agents/`](agents/)). |
 | **skill** | A reusable step-by-step workflow the AI follows, e.g. the commit + PR flow. 9 ship here ([`skills/`](skills/)). |
 | **gate** | A hook decision point (deny / ask / block). Every gate is registered with the model weakness it assumes — [`docs/gate-registry.md`](docs/gate-registry.md). |
@@ -160,7 +162,9 @@ is **not** identical, and this is the honest table:
 
 Per-runtime details and workarounds:
 [`adapters/codex/README.md`](adapters/codex/README.md) ·
-[`adapters/gemini/README.md`](adapters/gemini/README.md).
+[`adapters/gemini/README.md`](adapters/gemini/README.md). The full current/target
+split is in the
+[runtime capability matrix](docs/benchmark/runtime-capability-matrix-2026-07.md).
 
 ## Prerequisites
 
@@ -203,12 +207,20 @@ Not sure? Take Path A.
 
 Then:
 
-1. **Restart Claude Code.** Agents and hooks load at session start.
-2. **Verify.** Run `/plugin` — `agent-harness` shows *enabled*. In a new session the agents resolve as `agent-harness:code-reviewer`, `agent-harness:security-reviewer`, and `/project-init` is available.
-3. **Scaffold a project.** Inside any repo, run `/project-init` to generate `CLAUDE.md`, rules, and `gitleaks.toml`.
+1. **Activate.** Run `/reload-plugins` or restart Claude Code.
+2. **Verify.** Run `/plugin` and confirm `agent-harness` is enabled. In a new
+   session, confirm the namespaced agents and
+   `/agent-harness:project-init` appear.
+3. **Scaffold a project.** Inside any repo, run
+   `/agent-harness:project-init` to generate runtime instructions, hook policy,
+   secret-scan config, and Git-hook wiring.
 4. *(Optional)* In a repo that already runs another hook-heavy plugin, disable agent-harness there via `/plugin` — agents stay namespaced as `agent-harness:*`, so there's no collision either way.
 
-The plugin bundles: **3 agents**, **9 skills**, the hook set, and the `/project-init` command.
+The plugin bundles: **3 agents**, **9 skills**, the hook set, and the
+`/agent-harness:project-init` command.
+See the
+[plugin installation lifecycle](docs/claude-plugin-install-lifecycle.md) for
+the cache, activation, event flow, project-init side effects, and current gaps.
 
 ### Path B — shell install (Codex CLI / Gemini CLI / all three)
 
@@ -238,8 +250,8 @@ Ask your AI to read a file under `secrets/`:
 🚫 Tool blocked: Direct secrets/ access blocked. Use environment variable.
 ```
 
-That exact block fires under Claude Code, Codex CLI, and Gemini CLI — same script, same
-decision. That's the whole point.
+That exact block fires on the configured Claude hook and Codex/Gemini shell
+routes — same script, same decision. Native file-write coverage still differs.
 
 No AI runtime attached yet? [`docs/demo.md`](docs/demo.md) reproduces three
 gate-catches (a denied secret read, a REFUTED false-"done" claim, a caught
@@ -247,9 +259,9 @@ PII/taint plant) from a bare clone in under a minute.
 
 ## Architecture
 
-One canonical hook protocol; thin per-AI adapters translate native events to it. Write a
-guard once in `core/hooks/`, and it returns the same `allow` / `ask` / `deny` decision
-everywhere.
+One canonical hook protocol; per-AI adapters translate native hook or controlled-wrapper
+events to it. Write a guard once in `core/hooks/`, and it returns the same
+`allow` / `ask` / `deny` decision for the same canonical event.
 
 ```mermaid
 flowchart TB
@@ -274,8 +286,8 @@ flowchart TB
     PLUG[".claude-plugin/ + hooks/hooks.json<br/>plugin distribution"]
 
     CC -->|native event| A1
-    CX -->|native event| A2
-    GM -->|native event| A3
+    CX -->|shell wrapper event| A2
+    GM -->|shell wrapper event| A3
     A1 -->|canonical JSON| H
     A2 -->|canonical JSON| H
     A3 -->|canonical JSON| H
@@ -288,15 +300,19 @@ Four layers, lowest wins:
 
 - **L1 `core/`** — AI-agnostic hooks and infra. The single source of truth.
 - **L2 `adapters/`** — per-AI translators (claude-code is a thin pass-through; codex and gemini do real translation).
-- **L3 `templates/`** — project scaffolds that `setup.sh --project` / `/project-init` copy in.
+- **L3 `templates/`** — project scaffolds copied by `setup.sh --project` or
+  `/agent-harness:project-init`.
 - **L4 your project** — overrides via `hook-config.yml` and optional `.agent/` files. No core edits needed.
 
-A `pre-tool-guard.sh` written once works for all 3 AIs. Adding a new AI runtime means
-writing one new adapter — `core/hooks/*` doesn't change.
+A `pre-tool-guard.sh` written once works for events routed from all three AIs. Adding a
+new runtime means writing one adapter and proving its native effect coverage —
+`core/hooks/*` doesn't change.
 See [`docs/hook-protocol.md`](docs/hook-protocol.md) for the canonical event schema, and
 [Determinism and model-invariance](docs/architecture.md#determinism-and-model-invariance)
 for exactly what's guaranteed identical across AIs/models (the gates) versus what isn't
 (generated content).
+For the general runtime/backend/evaluation architecture, see
+[`docs/cross-runtime-harness-design.md`](docs/cross-runtime-harness-design.md).
 
 ## How a run flows
 
@@ -406,7 +422,9 @@ Model is cost-tiered per work class ([`docs/model-routing.md`](docs/model-routin
 | plan-gate · model-routing-observer | PostToolUse (ExitPlanMode/Task/Agent) |
 | session-quality-gate · brain-capture · session-close | Stop |
 
-Command: **`/project-init`** scaffolds project-level files (`CLAUDE.md`, rules, `gitleaks.toml`).
+Command: **`/agent-harness:project-init`** scaffolds project-level files
+(`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `hook-config.yml`, `gitleaks.toml`)
+and Git-hook wiring.
 
 ## Layout
 
@@ -421,7 +439,7 @@ Agent/
 │
 ├── agents/             # 3 agent definitions + master-registry.json
 ├── skills/             # 9 skills (spec · supervise · verify-completion · wrap · brain-ingest · harness-audit · manager-audit · persona-review · harness-help)
-├── commands/           # 1 slash command (/project-init)
+├── commands/           # 1 namespaced project-init command
 ├── hooks/              # plugin hook wiring (hooks.json)
 │
 ├── core/               # AI-agnostic core — the truth
