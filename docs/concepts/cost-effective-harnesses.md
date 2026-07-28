@@ -15,6 +15,8 @@ Sources (accessed 2026-07):
 - Anthropic advisor-tool docs — https://platform.claude.com/docs/en/agents-and-tools/tool-use/advisor-tool
 - Anthropic cookbook, plan-big-execute-small managed-agents notebook —
   https://github.com/anthropics/claude-cookbooks
+- Cursor, "Agent swarms and the new model economics" (2026-07-20, accessed
+  2026-07-28) — https://cursor.com/blog/agent-swarm-model-economics
 
 ---
 
@@ -82,6 +84,37 @@ per-handoff coordination cost.** Two corollaries:
    models (fewer wasted attempts), which raises the delegation bar further:
    the cheap worker must absorb enough volume to beat a smaller frontier
    token count, not an equal one.
+
+---
+
+## Planner-output quality is a cost control, not a style concern
+
+The Cursor swarm experiment (SQLite reimplementation from the 835-page manual
+alone; hidden sqllogictest grading; all passing configurations eventually hit
+100%) is the largest published measurement of the orchestrator pattern, and it
+adds two findings the sources above don't cover:
+
+- **Tier placement dominates the bill.** Same task, same harness, same final
+  score: frontier planner + cheap workers cost ~1/8 of frontier-everywhere
+  (workers consumed 69–90% of the *tokens*, yet roughly two-thirds of the
+  *dollars* sat in the planner's few high-priced tokens — and the
+  frontier-everywhere run's worker pool alone cost ~23× the hybrid's).
+- **The clarity of the planner's brief decides worker waste.** One
+  frontier-class planner produced cheaper planner-side tokens than another yet
+  a *more expensive run overall*: its briefs were less explicit, so the cheap
+  workers burned several times the tokens filling the gaps. The delegation
+  contract is therefore a **cost control with the same leverage as the tier
+  pin** — an ambiguous brief silently converts planner savings into worker
+  spend. (This is the economic argument behind the restatement-quality lane
+  and the dispatch-prompt rules tracked as LE-9.)
+
+Two supporting observations from the same experiment: **review is cheap
+relative to what it reviews** — several low-correlation review perspectives
+(full transcript / output only / codebase only) stack reliability at a cost
+well below the reviewed work, supporting mid-tier review lanes; and
+**harnesses need per-model re-tuning** — one frontier model had to be dropped
+mid-experiment because it took emphasis markers literally and spiraled
+(tracked as a backlog note in `docs/harness-improvement-plan.md`).
 
 ---
 

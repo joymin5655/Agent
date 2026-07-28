@@ -1,7 +1,8 @@
 # Gate registry (T-2)
 
-Every gate that emits a `deny` / `ask` / `block` decision, with the **model
-weakness it assumes** and a **review date**. The governing principle: *an
+Every gate that emits a `deny` / `ask` / `block` decision — plus the
+non-blocking `observe` / `advise` entries that share this registry — with the
+**model weakness it assumes** and a **review date**. The governing principle: *an
 assumption expires*. A gate written against a model failure mode that no longer
 occurs becomes pure friction (permission-approval rubber-stamping); a gate that
 never fires may be dead wiring. Neither is visible without a registry to compare
@@ -52,6 +53,7 @@ GATE hardcoding | check-hardcoding.py | deny(opt-in; default=dryrun) | hardcodin
 GATE supervisor-ask | supervisor.py | ask | supervisor.jsonl | supervisor-ask | 2026-07-27 | Model will implement specialist-domain work (review/security) inline instead of dispatching the registered specialist. Registered 2026-07-27 after a registry-blindspot audit: the hook had logged ~440 records / 11 ask-intents in 30d while absent from this registry (firing but unreviewable). Records before 2026-07-27 lack the guard field, so the digest counts from registration forward; mode unchanged by registration — measure first, recalibrate on data at the next review.
 GATE plan-scope-allow | plan-scope-allow.py | allow | plan-scope-allow.jsonl | * | 2026-07-11 | Post-plan-approval edit prompts get rubber-stamped (approval fatigue); auto-allow is safe only in-workspace, outside risk areas, while the session plan flag is live. Activation 3-way: AGENT_PLAN_ALLOW_MODE=on forces active, explicit non-"on" forces dark, unset delegates to the per-project trust tier (trust_tier.py — personal only, granted solely by user-side ~/.agent/trust.list outside every workspace; fail-closed collab).
 GATE model-routing-observer | model-routing-observer.py | observe | model-routing.jsonl | * | 2026-07-11 | The call-time model-override convention (implementation=MID, fan-out=LOW) is not followed — unpinned dispatches silently inherit the session top model. Measured before enforced: 2026-07-11 audit found 7/7 dispatches at TOP. 2026-07-17: records gained a spend signal (prompt_chars, best-effort total_tokens) so manager-audit can rank relative dispatch cost.
+GATE model-routing-advisor | model-routing-advisor.py | advise | - | * | 2026-07-28 | Same leak model-routing-observer measures (unpinned dispatch inherits the session top model), caught only after the fact by that observer. This hook surfaces the reminder at the decision point — a one-line additionalContext nudge on PreToolUse Task/Agent — so the dispatcher can add a `model` override or confirm the inherit is intentional before the call goes out. Advisory only: never blocks, never switches a model, writes no log of its own (sink -; model-routing-observer's sink stays the sole measured record).
 GATE rubric-commit | rubric-commit-judge.sh | observe | rubric-score.jsonl | * | 2026-07-19 | A project's per-commit quality is never scored against its own rubric, so regressions land silently between on-demand verify-completion runs. Advisory by design (records, never blocks — the commit already happened); the deterministic half of the two-layer rubric design. Fires only where a consumer defines .agent/rubric.yml (conditional-path, like project-policy), so zero in-window firings means no consumer opted in, not dead wiring.
 <!-- gate-registry:end -->
 

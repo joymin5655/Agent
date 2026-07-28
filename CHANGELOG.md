@@ -8,6 +8,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Decision-time model-routing advisory hook (`core/hooks/model-routing-advisor.py`).**
+  The 2026-07-11 audit measured 7/7 dispatches silently inheriting the session
+  top model *with the post-hoc observer already live* — observation alone does
+  not change dispatch behavior. This PreToolUse (Task|Agent) hook adds the
+  decision-time counterpart: when a dispatch is about to inherit top (no
+  registry pin, no call-time `model` override, and not the intentionally
+  inheriting `Plan` agent) it injects a one-line `additionalContext` reminder
+  pointing at the tier table. **Advisory only** — never blocks, never rewrites
+  the model, always exits 0, swallows all errors (same fail-safe contract as
+  the observer), writes no logs. The "no runtime model-switching" rejection in
+  `docs/model-routing.md` § What-this-policy-deliberately-does-not-do is
+  refined, not reversed: blocking/auto-switching/classifiers stay rejected; a
+  deterministic decision-time reminder sits inside the line, and the dispatch
+  decision stays with the dispatcher. Registered in `hooks/hooks.json`, the
+  Claude settings template, `docs/gate-registry.md` (decision=advise), and
+  `core/hooks/README.md`; battery `core/tests/model-routing-advisor-test.sh`
+  (18 checks: warn on unpinned, silent on override/pin/Plan, fail-safe on
+  broken stdin, zero observer-log pollution). Doc counts (hooks 25→26, tests
+  56→57) updated in §7 live-count declarations and READMEs.
+- **Model axis in telemetry (`telemetry-digest.sh --model`).** New mode (same
+  architecture as `--gates`) summarizing `.agent/logs/model-routing.jsonl`:
+  verdict distribution (override / pinned_specialist / inherit_top) and
+  tier-multiplier-weighted relative spend (reuses manager-audit's LOW 0.15 /
+  MID 1 / TOP 3.5 and its env seams). Loud SKIP when the log is absent;
+  always exit 0. Adversarial security-lane hardening (1 MED + 2 LOW, same
+  wave): per-record type validation routes malformed log lines (string
+  `total_tokens`, non-string `model`/`verdict`) into the existing
+  `skipped_malformed` tally instead of a traceback-then-exit-0 false-green,
+  an outer guard turns any analysis failure into the same loud SKIP as the
+  absent-log path, log-derived strings are whitelist-sanitized
+  (`[A-Za-z0-9:._-]`, 80-char cap) in the text report (JSON keeps raw values
+  for machine consumers), and supervise Step 5 writes `routing: skip (no
+  routing log)` — never `clean` — when the routing log is absent or empty
+  (manager-audit short-circuits an empty log to lane-clean PASS, so absence
+  must not be transcribed as cleanliness). Battery +16 checks total in
+  `telemetry-digest-test.sh` (8 model-axis, 3 type-confusion, rendering-fuzz
+  forged-line/raw-ESC probes).
+- **M-9 backlog row — per-model harness re-tuning.** Cursor's swarm experiment
+  had to drop a frontier model mid-run (emphasis markers taken literally →
+  runaway loop): external evidence that harness prompts need re-validation per
+  model. M-9 adds a prompt-compat smoke row to the tier-promotion procedure
+  (backlog only, no mechanism).
 - **M-6 — cost-effective-harness concept doc.**
   `docs/concepts/cost-effective-harnesses.md` distills the 2026-07 happytlog
   article + ClaudeDevs thread (intelligence-placement patterns
@@ -18,7 +60,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   harness state. Backlog rows M-6/M-7 (✅, this PR) and M-8 (open — delegation
   economics telemetry: spawn-vs-reuse ratio, per-wave delegated volume) added
   to `docs/harness-improvement-plan.md` §4.10 with the M-series count
-  declaration updated 5→8; article added to §8 references. (Recovered from
+  declaration updated 5→9 (M-8 from the recovered commit, M-9 added in this
+  PR below); article added to §8 references. (Recovered from
   stranded branch `claude/cost-effective-harness-article`, commit `7aaa587`,
   2026-07-16 — authored pre-0.5.x but never merged; landed here unchanged.)
 
@@ -41,6 +84,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   verifiable). `docs/README.md` index gains `model-routing.md` (pre-existing
   omission) and the new concept doc. Docs only, no behavior. (Same recovered
   commit as M-6 above.)
+- **Cursor swarm evidence folded into the delegation-economics canon.**
+  `docs/concepts/cost-effective-harnesses.md` gains a "Planner-output quality
+  is a cost control" section (tier placement dominates the bill — hybrid at
+  ~1/8 of frontier-everywhere at equal final score; ambiguous briefs convert
+  planner savings into worker spend; low-correlation cheap review stacks;
+  per-model re-tuning) with the Cursor source added; `docs/model-routing.md`
+  Intelligence-placement gains the orchestrator corollary tying the
+  restatement-quality lane and LE-9 into the cost path (relative numbers
+  only, no price constants). LE-9's evidence column cites the same
+  measurement.
+- **Supervise Step 5 routing visibility.** The manager-audit offer is promoted
+  to an automatic post-run summary of the routing-waste + token-spend lanes,
+  written to RECORD.md's new `routing:` stub field (full 4-lane audit stays
+  an offer; still non-blocking). `supervisor-goal.sh` stub gains the field;
+  battery +1 check.
 
 ## [0.5.6] - 2026-07-28
 

@@ -284,5 +284,107 @@ printf '%s' "$OUT_L" | python3 -c "import json,sys; d=json.load(sys.stdin); sys.
 check "hook-split-no-union-double-count" $?
 
 echo
+echo "=== (m) --model mode: verdict distribution + tier-weighted relative spend ==="
+MODEL_DIR="$TMP_DIR/model"
+mkdir -p "$MODEL_DIR"
+cat > "$MODEL_DIR/routing.jsonl" <<'EOF'
+{"gate":"model-routing-observer","subagent_type":"executor","model":"sonnet","verdict":"override","prompt_chars":400,"total_tokens":1000,"session_id":"s1","ts":"2026-07-17T01:00:00Z"}
+{"gate":"model-routing-observer","subagent_type":"code-reviewer","model":"","verdict":"pinned_specialist","prompt_chars":200,"total_tokens":500,"session_id":"s1","ts":"2026-07-17T01:05:00Z"}
+{"gate":"model-routing-observer","subagent_type":"Explore","model":"","verdict":"inherit_top","prompt_chars":800,"total_tokens":null,"session_id":"s1","ts":"2026-07-17T01:10:00Z"}
+{"gate":"model-routing-observer","subagent_type":"fanout-worker","model":"opus","verdict":"override","prompt_chars":50,"total_tokens":9000,"session_id":"s1","ts":"2026-07-17T01:20:00Z"}
+EOF
+cat > "$MODEL_DIR/registry.json" <<'EOF'
+{"agents": [{"id": "code-reviewer", "model": "sonnet"}]}
+EOF
+
+OUT_M="$(bash "$SCRIPT" --model --routing-log "$MODEL_DIR/routing.jsonl" --model-registry "$MODEL_DIR/registry.json" --json 2>&1)"
+RC_M=$?
+[[ $RC_M -eq 0 ]]; check "model-exit-0" $?
+printf '%s' "$OUT_M" | python3 -c "import json,sys; json.loads(sys.stdin.read())" >/dev/null 2>&1
+check "model-json-parses" $?
+# override=2, pinned_specialist=1, inherit_top=1 (4 records)
+printf '%s' "$OUT_M" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+counts={v['verdict']: v['count'] for v in d['verdict_distribution']}
+sys.exit(0 if counts=={'override':2,'pinned_specialist':1,'inherit_top':1} else 1)
+"
+check "model-verdict-distribution" $?
+# code-reviewer (pinned_specialist, no explicit model) resolves via registry to
+# sonnet -> MID tier, folded into the MID spend bucket with executor's 1000 tokens.
+printf '%s' "$OUT_M" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+mid=[t for t in d['tier_spend'] if t['tier']=='MID'][0]
+sys.exit(0 if mid['rel_cost']==1500.0 else 1)
+"
+check "model-pinned-specialist-registry-resolution" $?
+# fanout-worker (opus, 9000 tokens) is the top spend source at TOP tier
+[[ "$OUT_M" == *"fanout-worker [TOP]"* ]]; check "model-top-spend-source" $?
+
+echo
+echo "=== (n) --model mode: missing routing log -> LOUD SKIP, exit 0, never a silent pass ==="
+OUT_N="$(bash "$SCRIPT" --model --routing-log "$MODEL_DIR/no-such.jsonl" --model-registry "$MODEL_DIR/registry.json" 2>&1)"
+RC_N=$?
+[[ $RC_N -eq 0 ]]; check "model-missing-log-exit-0" $?
+[[ "$OUT_N" == *"SKIP"* ]]; check "model-missing-log-loud-skip" $?
+OUT_N_JSON="$(bash "$SCRIPT" --model --routing-log "$MODEL_DIR/no-such.jsonl" --model-registry "$MODEL_DIR/registry.json" --json 2>/dev/null)"
+printf '%s' "$OUT_N_JSON" | python3 -c "import json,sys; d=json.load(sys.stdin); sys.exit(0 if d.get('skip') is True and d.get('records')==0 else 1)"
+check "model-missing-log-json-skip-flag" $?
+
+echo
+echo "=== (o) --model mode: type-confused records never crash the analysis (false-green regression) ==="
+# 3 malformed records (total_tokens as a JSON string, model as a number, verdict
+# as an object) + 1 well-formed record. Pre-fix, any one of these raised an
+# uncaught TypeError/AttributeError inside the heredoc — the outer bash `exit 0`
+# still fired, so the caller saw rc=0 with a thin/blank report: a false-green
+# indistinguishable from "clean". Post-fix: malformed records are rejected
+# per-record (counted in skipped_malformed), the good record still reports.
+cat > "$MODEL_DIR/type-confusion.jsonl" <<'EOF'
+{"gate":"model-routing-observer","subagent_type":"str-tokens","model":"sonnet","verdict":"override","prompt_chars":400,"total_tokens":"1000","session_id":"s1","ts":"2026-07-17T01:00:00Z"}
+{"gate":"model-routing-observer","subagent_type":"numeric-model","model":123,"verdict":"override","prompt_chars":400,"total_tokens":1000,"session_id":"s1","ts":"2026-07-17T01:00:00Z"}
+{"gate":"model-routing-observer","subagent_type":"object-verdict","model":"sonnet","verdict":{},"prompt_chars":400,"total_tokens":1000,"session_id":"s1","ts":"2026-07-17T01:00:00Z"}
+{"gate":"model-routing-observer","subagent_type":"good-one","model":"sonnet","verdict":"override","prompt_chars":400,"total_tokens":1000,"session_id":"s1","ts":"2026-07-17T01:00:00Z"}
+EOF
+OUT_O="$(bash "$SCRIPT" --model --routing-log "$MODEL_DIR/type-confusion.jsonl" --model-registry "$MODEL_DIR/registry.json" --json 2>&1)"
+RC_O=$?
+[[ $RC_O -eq 0 ]]; check "model-type-confusion-exit-0" $?
+printf '%s' "$OUT_O" | python3 -c "import json,sys; json.loads(sys.stdin.read())" >/dev/null 2>&1
+check "model-type-confusion-json-parses" $?
+# never a blank-success: exactly the 1 well-formed record survives, and the
+# 3 malformed ones are TALLIED (not silently dropped, not crashing) as skipped.
+printf '%s' "$OUT_O" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+sys.exit(0 if d.get('records')==1 and d.get('skipped_malformed')==3 and d.get('skip') is False else 1)
+"
+check "model-type-confusion-malformed-tallied-not-blank-success" $?
+[[ "$OUT_O" == *"good-one"* ]]; check "model-type-confusion-good-record-survives" $?
+
+echo
+echo "=== (p) --model mode: rendering fuzz — log-derived strings cannot forge report lines (CWE-117) ==="
+# subagent_type/verdict carry an embedded newline + ANSI erase-line escape +
+# text that looks like another finding line. json.loads decodes \n and 
+# to real control bytes before the digest ever sees the string — the guard
+# has to be in the RENDERER, not the JSON layer.
+printf '{"ts":"%s","gate":"model-routing-observer","subagent_type":"evil\\nrouting-waste FAKE-INJECTED-LINE\\u001b[2K","model":"sonnet","verdict":"override\\ninjected-verdict-line","prompt_chars":10,"total_tokens":100,"session_id":"s1"}\n' "$NOW_TS" > "$MODEL_DIR/fuzz.jsonl"
+OUT_P="$(bash "$SCRIPT" --model --routing-log "$MODEL_DIR/fuzz.jsonl" --model-registry "$MODEL_DIR/registry.json" 2>&1)"
+RC_P=$?
+[[ $RC_P -eq 0 ]]; check "model-fuzz-exit-0" $?
+# the report must still be exactly the fixed set of lines this mode always
+# prints for a single-record run — a successful line-forge (the embedded \n)
+# would add an extra physical line beyond that fixed shape.
+LINE_COUNT_P="$(printf '%s\n' "$OUT_P" | wc -l | tr -d ' ')"
+[[ "$LINE_COUNT_P" -eq 14 ]]; check "model-fuzz-no-forged-extra-line" $?
+# no raw control bytes (e.g. the injected ESC) reached stdout — grep -P isn't
+# portable to macOS's BSD grep, so check byte-for-byte in python3 instead.
+printf '%s' "$OUT_P" | python3 -c "import sys; data = sys.stdin.buffer.read(); sys.exit(1 if b'\x1b' in data else 0)"
+check "model-fuzz-no-raw-control-bytes" $?
+# the injected text is still visible as inert data (whitelist-sanitized, '?'
+# in place of the control chars) — proves it landed as DATA, not as a parsed
+# extra line or escape sequence.
+[[ "$OUT_P" == *"FAKE-INJECTED-LINE"* ]]; check "model-fuzz-injected-text-inert" $?
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]

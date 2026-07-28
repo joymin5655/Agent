@@ -252,8 +252,27 @@ guarantee the file exists — it never overwrites one you already wrote); on
 non-goal runs writing it is this step's discipline. This keeps an execution
 record on runtimes that have no global recording layer at all.
 
-Finally, offer to run `/manager-audit <slug>` — the meta-audit over this run
-(restatement quality, model-routing waste, relative token spend, role
+Finally, auto-run the two model-economics lanes: `bash core/infra/manager-audit.sh
+<slug> --json --since <Run started ts from RESTATEMENT.md>`, then filter its
+`findings` array to `lane == "routing-waste"` or `lane == "token-spend"` (the
+script has no per-lane flag — the JSON `lane` field on each finding IS the
+selection interface; the other two lanes' findings are simply ignored in this
+pass). First check whether `.agent/logs/model-routing.jsonl` exists and has
+at least one record scoped to this run — if it's missing or empty (the
+`routing-log-missing` WARN finding, or a `routing-waste`/`token-spend`
+finding set with zero `RECORDS`), the correct summary is
+`routing: skip (no routing log)`, NOT `routing: clean` — a missing observer
+log makes the two lanes trivially FAIL/WARN-free (manager-audit.sh short-circuits
+to an empty `RECORDS` set and reports `lane-clean` PASS), so "clean" would
+misrepresent "never measured" as "measured and good." Only write
+`routing: clean` when records actually exist and both lanes are FAIL/WARN-free.
+Otherwise write `routing: N WARN/FAIL — top: <subagent_type> [<tier>]
+rel_cost=<n>` (from the `token-spend` lane's `top-spend-sources` finding).
+This is non-blocking — a bad verdict never blocks completion, it only informs
+the ledger.
+
+Then offer to run the FULL `/manager-audit <slug>` (all four lanes —
+restatement quality, model-routing waste, relative token spend, role
 compliance), passing `--since <Run started ts from RESTATEMENT.md>` so the
 audit scopes to this run's dispatches. It reads the logs this run already
 produced; it never blocks completion.
