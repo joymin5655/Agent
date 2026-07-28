@@ -131,7 +131,7 @@ flowchart LR
 | 용어 | 쉬운 뜻 |
 |---|---|
 | **하네스(harness)** | 에이전트 + 훅 + 스킬 + 규칙을 묶어 AI를 감싸는 안전 계층 전체. |
-| **훅(hook)** | AI 런타임이 어떤 행동 전/후에 자동으로 실행하는 작은 스크립트. **allow**, **ask**, **deny** 중 하나로 답합니다. [`core/hooks/`](core/hooks/)에 배선된 게이트 훅 21개(공유 모듈 포함 스크립트 25개)가 있습니다. |
+| **훅(hook)** | AI 런타임이 어떤 행동 전/후에 자동으로 실행하는 작은 스크립트. **allow**, **ask**, **deny** 중 하나로 답합니다. [`core/hooks/`](core/hooks/)에 배선된 게이트 훅 22개(공유 모듈 포함 스크립트 26개)가 있습니다. |
 | **어댑터(adapter)** | 각 AI CLI의 고유 이벤트 형식과 하네스의 표준 JSON 사이를 번역하는 얇은 계층. 3개가 있습니다([`adapters/`](adapters/)). |
 | **에이전트(agent)** | AI가 일을 위임하는 전문가 — 예: 리뷰만 하고 절대 코드를 쓰지 않는 보안 리뷰어. 3종이 포함됩니다([`agents/`](agents/)). |
 | **스킬(skill)** | AI가 따라가는 재사용 가능한 단계별 워크플로우 — 예: 커밋+PR 자동화 흐름. 9종이 포함됩니다([`skills/`](skills/)). |
@@ -392,11 +392,12 @@ manager-audit의 발견은 절대 스스로 적용되지 않습니다 — `PROPO
 | `persona-review` | 분포 근거 사용자 페르소나 패널을 UX/카피 앞에 앉혀 일반 사용자 반응을 보고 |
 | `harness-help` | 라우터 — 상황에 맞는 스킬 안내와 전체 흐름 |
 
-| 훅 — 21개 배선(`hooks/hooks.json` → `core/hooks/`, 공유 모듈 포함 스크립트 25개) | 이벤트 |
+| 훅 — 22개 배선(`hooks/hooks.json` → `core/hooks/`, 공유 모듈 포함 스크립트 26개) | 이벤트 |
 |---|---|
 | secret-content-scan · check-hardcoding | PreToolUse (Write/Edit) |
 | pre-tool-guard · r4-mutex · context-mode-guard | PreToolUse |
 | tdd-guard · spec-gate · supervisor · plan-scope-allow | PreToolUse (Write/Edit) |
+| model-routing-advisor | PreToolUse (Task/Agent) |
 | 세션 하트비트 | UserPromptSubmit |
 | plan-gate · model-routing-observer | PostToolUse (ExitPlanMode/Task/Agent) |
 | session-quality-gate · brain-capture · session-close | Stop |
@@ -420,7 +421,7 @@ Agent/
 ├── hooks/              # 플러그인 훅 배선 (hooks.json)
 │
 ├── core/               # AI 무관 코어 — 진실 원천
-│   ├── hooks/          #   이식 가능한 훅 스크립트 25개 (배선 21 + 공유 모듈)
+│   ├── hooks/          #   이식 가능한 훅 스크립트 26개 (배선 22 + 공유 모듈)
 │   ├── infra/          #   세션 조정 · goal 모드 · 감사 · auto-ship
 │   ├── git-hooks/      #   pre-commit · pre-push
 │   └── tests/          #   테스트 스크립트 56개 (verify-all.sh가 전부 실행)

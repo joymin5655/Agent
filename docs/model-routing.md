@@ -76,6 +76,44 @@ mode drops the plan-slug and run scope to sweep the *whole* routing log for
 the same leaks that happen outside any supervise run — ad-hoc `Explore` /
 execution dispatches that silently inherit the session top model — so the
 convention is measured for one-off work too, not only inside `/supervise`.
+Measurement alone doesn't change behavior — a 2026-07-11 audit found 7/7
+dispatches inheriting silently even with the observer live — so
+`core/hooks/model-routing-advisor.py` adds a decision-time counterpart: a
+PreToolUse advisory on the same Task/Agent dispatches, one line of
+`additionalContext` when a call is about to leak (see "What this policy
+deliberately does not do" for why this stays advisory, not enforcement).
+
+## Intelligence placement — the advisor pattern
+
+Three placements of TOP-tier intelligence exist, chosen by task shape
+(economics and published measurements: `docs/concepts/cost-effective-harnesses.md`):
+
+| Placement | When | This harness's instance |
+|---|---|---|
+| **Orchestrator** | Judgment concentrates upfront (plan, decompose, delegate) | The main-loop judgment rows above; `/supervise` wave dispatch |
+| **Advisor** | Judgment is *scattered* across an exploratory task — each result reshapes what's worth trying next | `/supervise` audit-after-wave: a TOP-judgment checkpoint re-ranking MID execution mid-run |
+| **Verifier / judge** | Judgment concentrates at review | `/verify-completion` refute-by-default judge (MID floor, below) |
+
+Orchestrator corollary: **the brief's clarity is a cost control with the same
+leverage as the tier pin.** The largest published orchestrator measurement
+(Cursor's 2026-07 swarm run — same task, same final score, TOP-planner +
+cheap-workers at roughly **1/8** the cost of TOP-everywhere) also measured the
+failure mode: a frontier planner whose briefs were less explicit made the
+cheap workers burn several times the tokens filling the gaps, erasing the
+hybrid saving (`docs/concepts/cost-effective-harnesses.md`). An ambiguous
+delegation contract silently converts planner savings into worker spend —
+which is why the restatement-quality audit lane and the dispatch-prompt rules
+(LE-9) sit in the cost path, not the style path.
+
+The advisor rule worth encoding: **checkpoints stay TOP-tier and recur
+mid-run.** A single upfront TOP ranking is not where advisor value
+concentrates — measured on an exploratory ML-engineering task, the frontier
+model's initial ranking was *anti-correlated* with outcomes, while recurring
+mid-run checkpoints captured ~90% of frontier-solo quality at ~34% of the
+cost (details in the concept doc). Cheap executors hill-climb marginal gains;
+the checkpoint's job is stepping back and re-prioritizing. This stays a
+documented convention — no new agent, no new mechanism, consistent with the
+no-runtime-switching decision below.
 
 ## Floors
 
@@ -89,6 +127,25 @@ convention is measured for one-off work too, not only inside `/supervise`.
   anthropic.com/engineering/multi-agent-research-system), which makes worker
   tier the single largest cost lever. Default fan-out workers to LOW and
   promote individually — never promote the whole wave.
+- **Coordination-cost floor — when not to delegate.** Every handoff carries a
+  roughly fixed cost: boundary tokens are billed at least twice (the lead
+  writes a brief the worker reads; the worker writes a report the lead
+  reads), and non-communicating parallel workers duplicate reads. Below a
+  threshold task size this inverts the economics — on a small research task,
+  solo TOP was measured *cheaper* than TOP-orchestrator-plus-cheap-workers
+  (+60% markup for no benefit), while the same split on a large task hit 96%
+  of the score at 46% of the cost
+  (`docs/concepts/cost-effective-harnesses.md`). Delegate only when the
+  delegated volume dwarfs the handoff; a dispatch whose payload is comparable
+  to its own brief+report boundary has negative savings — do the work inline
+  or fold it into an adjacent dispatch.
+- **Prompt-cache preservation — reuse workers.** Each worker maintains its
+  own prompt cache. Route repeat calls at the same context to the *same*
+  worker (continue the live subagent with a follow-up message) instead of
+  fresh-spawning per request — a fresh spawn re-pays the full context write
+  uncached, and a low cache hit rate can erase the entire benefit of a
+  cheaper per-token worker. Standing exception: **verifiers are always fresh
+  spawns** — the verifier-isolation floor beats the cache saving.
 - **Long-horizon implementation is not a LOW-tier task.** An external
   benchmark with a program-based verifier (github.com/datacurve-ai/deep-swe:
   113 long-horizon SWE tasks, 0.3% false-accept; leaderboard as of 2026-05,
@@ -104,7 +161,8 @@ convention is measured for one-off work too, not only inside `/supervise`.
 | Runtime | Mechanism | Where |
 |---|---|---|
 | Claude Code — specialist pins | `model:` frontmatter, **enforced**: CI `validate-plugin` drift guard reconciles registry ↔ frontmatter | `agents/*.md`, `agents/master-registry.json` |
-| Claude Code — judgment unpinned / per-call MID (execution dispatch) & LOW overrides | Convention, documented not CI-checked (frontmatter *absence* and call-time overrides are not statically verifiable) | `skills/supervise/SKILL.md` Model policy |
+| Claude Code — judgment unpinned / per-call MID (execution dispatch) & LOW overrides; coordination-cost check and worker-reuse (cache) | Convention, documented not CI-checked (frontmatter *absence*, call-time overrides, and call-time reuse-vs-spawn choices are not statically verifiable) | `skills/supervise/SKILL.md` Model policy |
+| Claude Code — decision-time reminder | `model-routing-advisor.py` (PreToolUse Task/Agent), advisory: one-line `additionalContext` nudge, never blocks, decision stays with the dispatcher | `core/hooks/model-routing-advisor.py`, `docs/gate-registry.md` GATE model-routing-advisor |
 | Codex CLI | Named profiles (per-profile config files on recent CLI builds): default = workhorse, `quick` = LOW, `deep` = TOP; `model_reasoning_effort` is the effort dial | `adapters/codex/codex-config.toml.template` + `quick.config.toml.template` / `deep.config.toml.template` |
 | Gemini CLI | `settings.json` default model = workhorse; callers escalate with explicit `-m` | `adapters/gemini/gemini-settings.json.template` |
 
@@ -148,6 +206,12 @@ shared blind spot doesn't survive review.
   human-auditable decision into a hook). `/manager-audit` stays on the right
   side of this line: it detects violations after the fact and writes patch
   *proposals* for user approval — it never switches anything at runtime.
+  `model-routing-advisor.py` also stays on this side: it is a *deterministic*
+  PreToolUse reminder (fixed classification, fixed message, no model logic),
+  it never sets `permissionDecision`, and it never touches `model` — the
+  dispatcher reads the nudge and still makes the call. The boundary is
+  narrower than "no automated behavior at decision time"; it is "no automated
+  *decision*" — a reminder is inside that line, a classifier or a switch is not.
 - **No automatic tier escalation.** Promotion is a caller decision, made
   per-task, visible in the invocation.
 - **No dedicated low-tier agents.** The LOW rung is reached with a per-call

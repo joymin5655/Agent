@@ -70,6 +70,15 @@ execution work, dispatch it at the tier the table names instead of doing it
 inline at the session model. Inline execution at the top tier is the expensive
 default this rule exists to prevent.
 
+Two placement corollaries (economics: `docs/model-routing.md` → Intelligence
+placement & Floors): the audit-after-wave step is this harness's **advisor
+checkpoint** — TOP judgment re-ranking MID execution mid-run, which is where
+advisor value concentrates (not in a single upfront ranking). And a
+**coordination-cost check** applies before dispatching: a wave whose delegated
+volume would not clearly offset its own contract+report boundary (billed twice
+in each direction) is not a wave — fold it into an adjacent wave or make the
+edit directly.
+
 The supervise loop itself never overrides a model. `core/hooks/supervisor.py`
 is a dispatch-suggestion stub — it matches intent to a specialist from the
 registry; it does not read or set `model`. If you add an agent whose role is
@@ -135,7 +144,7 @@ b. **Classify the wave and pick lanes** based on its content:
    Every dispatch is written as a **delegation contract** —
    `skills/supervise/templates/delegation-contract.md` (goal / output format /
    tools & scope / boundaries, plus an explicit `model` field per the Model
-   policy). Four orchestration rules travel with it (details in the template):
+   policy). Five orchestration rules travel with it (details in the template):
    - **Fan-out cap 3–5** per wave — a wave with more concurrent subtasks
      splits into consecutive waves (the template shows a worked split).
    - **Write single-threading** — one writer per fileset; review/verify agents
@@ -145,6 +154,10 @@ b. **Classify the wave and pick lanes** based on its content:
      the wave's relevant constraint slice re-stated (not whole rulebooks).
    - **Verifier isolation** — verifiers are fresh spawns with no author
      context or self-assessment; they grade end-state only.
+   - **Worker reuse (cache)** — consecutive subtasks over the same fileset or
+     context continue the *same* worker rather than fresh-spawning each one
+     (a fresh spawn re-pays the full context write uncached). Verifier
+     isolation is the standing exception: verifiers are always fresh.
 c. **Execute** the wave's intended changes — through the dispatched execution
    lane, not inline at the session model (inline is judgment's lane, not
    execution's).
@@ -239,8 +252,27 @@ guarantee the file exists — it never overwrites one you already wrote); on
 non-goal runs writing it is this step's discipline. This keeps an execution
 record on runtimes that have no global recording layer at all.
 
-Finally, offer to run `/manager-audit <slug>` — the meta-audit over this run
-(restatement quality, model-routing waste, relative token spend, role
+Finally, auto-run the two model-economics lanes: `bash core/infra/manager-audit.sh
+<slug> --json --since <Run started ts from RESTATEMENT.md>`, then filter its
+`findings` array to `lane == "routing-waste"` or `lane == "token-spend"` (the
+script has no per-lane flag — the JSON `lane` field on each finding IS the
+selection interface; the other two lanes' findings are simply ignored in this
+pass). First check whether `.agent/logs/model-routing.jsonl` exists and has
+at least one record scoped to this run — if it's missing or empty (the
+`routing-log-missing` WARN finding, or a `routing-waste`/`token-spend`
+finding set with zero `RECORDS`), the correct summary is
+`routing: skip (no routing log)`, NOT `routing: clean` — a missing observer
+log makes the two lanes trivially FAIL/WARN-free (manager-audit.sh short-circuits
+to an empty `RECORDS` set and reports `lane-clean` PASS), so "clean" would
+misrepresent "never measured" as "measured and good." Only write
+`routing: clean` when records actually exist and both lanes are FAIL/WARN-free.
+Otherwise write `routing: N WARN/FAIL — top: <subagent_type> [<tier>]
+rel_cost=<n>` (from the `token-spend` lane's `top-spend-sources` finding).
+This is non-blocking — a bad verdict never blocks completion, it only informs
+the ledger.
+
+Then offer to run the FULL `/manager-audit <slug>` (all four lanes —
+restatement quality, model-routing waste, relative token spend, role
 compliance), passing `--since <Run started ts from RESTATEMENT.md>` so the
 audit scopes to this run's dispatches. It reads the logs this run already
 produced; it never blocks completion.

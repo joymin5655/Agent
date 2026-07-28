@@ -54,6 +54,7 @@ grep -q '^- waves: 2/2 completed' "$REC"; check "record-waves-live-count" $?
 grep -q '^- prs:' "$REC";           check "record-prs-field" $?
 grep -q '^- audit verdict:' "$REC"; check "record-audit-field" $?
 grep -q '^- carried:' "$REC";       check "record-carried-field" $?
+grep -q '^- routing:' "$REC";       check "record-routing-field" $?
 grep -q 'status: complete' "$REC";  check "record-status-line" $?
 
 echo

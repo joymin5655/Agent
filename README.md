@@ -133,7 +133,7 @@ New to this space? These ten terms are all you need to read the rest of this pag
 | Term | Plain meaning |
 |---|---|
 | **harness** | The whole safety layer: agents + hooks + skills + rules, wrapped around your AI. |
-| **hook** | A small script your AI runtime runs automatically before/after an action. It answers **allow**, **ask**, or **deny**. 21 wired gate hooks (25 scripts incl. shared modules) live in [`core/hooks/`](core/hooks/). |
+| **hook** | A small script your AI runtime runs automatically before/after an action. It answers **allow**, **ask**, or **deny**. 22 wired gate hooks (26 scripts incl. shared modules) live in [`core/hooks/`](core/hooks/). |
 | **adapter** | A thin translator between one AI CLI's native event format and the harness's canonical JSON. There are 3 ([`adapters/`](adapters/)). |
 | **agent** | A specialist your AI delegates to — e.g. a security reviewer that only reviews and never writes. 3 ship here ([`agents/`](agents/)). |
 | **skill** | A reusable step-by-step workflow the AI follows, e.g. the commit + PR flow. 9 ship here ([`skills/`](skills/)). |
@@ -266,7 +266,7 @@ flowchart TB
         A3["gemini/"]
     end
     subgraph CORE["Layer 1 — core/ (the single source of truth)"]
-        H["hooks/ — 21 wired gates: secret scan · mutex ·<br/>spec-gate · tdd-guard · supervisor …"]
+        H["hooks/ — 22 wired gates: secret scan · mutex ·<br/>spec-gate · tdd-guard · supervisor …"]
         I["infra/ — sessions · goal mode ·<br/>audits · auto-ship"]
         T["tests/ — 56 self-verification scripts"]
     end
@@ -396,11 +396,12 @@ Model is cost-tiered per work class ([`docs/model-routing.md`](docs/model-routin
 | `persona-review` | Seat a panel of distribution-grounded user personas in front of UX/copy and report how ordinary users react |
 | `harness-help` | Router — which skill fits the situation, and the main flow through them |
 
-| Hooks — 21 wired via `hooks/hooks.json` → `core/hooks/` (25 scripts incl. shared modules) | Event |
+| Hooks — 22 wired via `hooks/hooks.json` → `core/hooks/` (26 scripts incl. shared modules) | Event |
 |---|---|
 | secret-content-scan · check-hardcoding | PreToolUse (Write/Edit) |
 | pre-tool-guard · r4-mutex · context-mode-guard | PreToolUse |
 | tdd-guard · spec-gate · supervisor · plan-scope-allow | PreToolUse (Write/Edit) |
+| model-routing-advisor | PreToolUse (Task/Agent) |
 | session heartbeat | UserPromptSubmit |
 | plan-gate · model-routing-observer | PostToolUse (ExitPlanMode/Task/Agent) |
 | session-quality-gate · brain-capture · session-close | Stop |
@@ -424,7 +425,7 @@ Agent/
 ├── hooks/              # plugin hook wiring (hooks.json)
 │
 ├── core/               # AI-agnostic core — the truth
-│   ├── hooks/          #   25 portable hook scripts (21 wired + shared modules)
+│   ├── hooks/          #   26 portable hook scripts (22 wired + shared modules)
 │   ├── infra/          #   session coordination · goal mode · audits · auto-ship
 │   ├── git-hooks/      #   pre-commit · pre-push
 │   └── tests/          #   56 test scripts (verify-all.sh runs them all)
