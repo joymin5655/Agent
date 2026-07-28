@@ -4,8 +4,11 @@
 |---|---|
 | [`getting-started.md`](getting-started.md) | First-time install — clone, setup, verify |
 | [`architecture.md`](architecture.md) | Understanding the framework layers (core / adapters / rules) |
+| [Claude plugin lifecycle](claude-plugin-install-lifecycle.md) | Install, activation, hooks, and current gaps |
+| [Cross-runtime design](cross-runtime-harness-design.md) | Portable workflow architecture |
 | [`hook-protocol.md`](hook-protocol.md) | Writing a new hook OR a new AI adapter (CANONICAL) |
-| [`ai-adapters.md`](ai-adapters.md) | Adding support for a new AI runtime |
+| [`ai-adapters.md`](ai-adapters.md) | Implementing and testing a new AI runtime adapter |
+| [Runtime capability matrix](benchmark/runtime-capability-matrix-2026-07.md) | Dated vendor evidence |
 | [`customization.md`](customization.md) | Project-specific risk areas, resources, and policy patterns |
 | [`skill-authoring.md`](skill-authoring.md) | Writing or editing a skill in `skills/` — vocabulary and principles |
 | [`model-routing.md`](model-routing.md) | Which model tier runs which work class — the cross-runtime ladder, floors, enforcement map |

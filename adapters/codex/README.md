@@ -4,9 +4,9 @@ Bridge for [OpenAI Codex CLI](https://github.com/openai/codex).
 
 ## How it works
 
-Codex CLI does not currently expose a native PreToolUse hook API the way
-Claude Code does. This adapter therefore enforces gates **at the tool-call
-boundary** by wrapping the shell tool with a script that:
+Current Codex releases expose native hooks and plugins, but Agent has not wired
+that path yet. This shipped compatibility adapter enforces gates **on the
+configured shell route** by wrapping the shell tool with a script that:
 
 1. Receives the shell command Codex wants to run.
 2. Synthesises a canonical PreToolUse event JSON.
@@ -16,9 +16,12 @@ boundary** by wrapping the shell tool with a script that:
    `permissionDecision = "deny"` or `"ask"`.
 5. Executes the original command via `bash -lc` on allow.
 
-This is the same security posture as Claude Code's PreToolUse — the only
-difference is that the enforcement is via a wrapper rather than a runtime
-hook subscription.
+This runs the same deterministic core policy as Claude Code for the covered
+shell route. It has narrower security coverage because native file writes can
+bypass the wrapper.
+
+The native plugin migration is specified in
+[`docs/cross-runtime-harness-design.md`](../../docs/cross-runtime-harness-design.md).
 
 ## Files
 
