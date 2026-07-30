@@ -207,7 +207,10 @@ def verify_sink_path(root: str) -> str:
         return fallback
     for base in allowed:
         if candidate == base or candidate.startswith(base + os.sep):
-            return override
+            # Resolved path, not the override string — see the same note in
+            # core/hooks/verify-observer.py resolve_sink(). Returning the
+            # unresolved value left a symlink-swap window between check and open.
+            return candidate
     return fallback
 
 
@@ -232,13 +235,25 @@ def session_ran_verification(root: str, session_id: str) -> bool:
                 return False
             fh.seek(0, os.SEEK_END)
             size = fh.tell()
-            fh.seek(max(0, size - _SINK_TAIL_BYTES))
-            chunk = fh.read(_SINK_TAIL_BYTES)
+            offset = max(0, size - _SINK_TAIL_BYTES)
+            if offset:
+                # Read one byte BEFORE the window so the partial-line drop is
+                # decided by the actual boundary. Dropping unconditionally
+                # whenever the file exceeded the window discarded a whole valid
+                # record on the exact-boundary case.
+                fh.seek(offset - 1)
+                chunk = fh.read(_SINK_TAIL_BYTES + 1)
+                partial = chunk[:1] != b"\n"
+                chunk = chunk[1:]
+            else:
+                fh.seek(0)
+                chunk = fh.read(_SINK_TAIL_BYTES)
+                partial = False
     except (OSError, ValueError):
         return False
     lines = chunk.decode("utf-8", "ignore").splitlines()
-    if size > _SINK_TAIL_BYTES and lines:
-        lines = lines[1:]          # first line is a partial record
+    if partial and lines:
+        lines = lines[1:]          # first line is a truncated record
     for line in lines:
         line = line.strip()
         if not line:

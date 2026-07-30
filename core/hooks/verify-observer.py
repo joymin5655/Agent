@@ -104,7 +104,13 @@ _FAMILIES: tuple[tuple[str, str], ...] = (
         r"|^make\s+build\b",
     ),
 )
-_COMPILED = tuple((name, re.compile(pattern, re.IGNORECASE)) for name, pattern in _FAMILIES)
+# Case-SENSITIVE on purpose. `PYTEST -q` / `Make build` / `TSC --noEmit` are
+# "command not found" on a case-sensitive filesystem — they execute nothing — yet
+# an IGNORECASE match recorded them as verification (reproduced across all five
+# families). Matching case-sensitively costs at most a false negative on a
+# case-insensitive filesystem, where such a command really would run: the safe
+# direction, per the note above.
+_COMPILED = tuple((name, re.compile(pattern)) for name, pattern in _FAMILIES)
 
 # Segment separators: a runner in `a && pytest` is invoked, one in `grep pytest x`
 # is not. Splitting on these is what makes `^` anchoring meaningful.
@@ -126,9 +132,14 @@ _WRAPPERS_2 = (
 _MAX_COMMAND_CHARS = 8192
 
 
-# A here-document body is DATA, not commands. `<<<` (here-string) is single-line
-# and deliberately not matched: the delimiter group requires a leading letter.
-_HEREDOC_RE = re.compile(r"<<-?\s*(?P<delim>['\"]?[A-Za-z_][A-Za-z0-9_]*['\"]?)")
+# A here-document body is DATA, not commands.
+# The lookarounds exclude `<<<` (here-string). Without them this regex matched
+# the LAST two angle brackets of `cat <<<pytest` and opened a here-doc with the
+# delimiter `pytest`, swallowing every following line — including a real
+# verification run — until a line happened to equal it. Safe direction (a
+# spurious advisory), but it made the comment that claimed `<<<` was excluded
+# false, which is the kind of confident-and-wrong note that survives review.
+_HEREDOC_RE = re.compile(r"(?<!<)<<(?!<)-?\s*(?P<delim>['\"]?[A-Za-z_][A-Za-z0-9_]*['\"]?)")
 # Token separators INSIDE a segment: ASCII blanks only. Python's str.split() also
 # splits on NBSP and other unicode spaces, which a shell does not — that would
 # read `\xa0pytest` (a command that cannot even run) as an invocation of pytest.
@@ -229,7 +240,11 @@ def resolve_sink(root: str) -> str:
         return fallback
     for base in allowed:
         if candidate == base or candidate.startswith(base + os.sep):
-            return override
+            # Return the RESOLVED path, not the override string. Returning the
+            # unresolved value re-opened the symlink later, so a swap between
+            # this check and the open could redirect the write to a regular file
+            # anywhere (the S_ISREG guard rejects device nodes, not locations).
+            return candidate
     return fallback
 
 

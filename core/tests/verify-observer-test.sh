@@ -222,6 +222,17 @@ check_cmd "heredoc-then-real-run"   "$(printf 'cat <<EOF\ndata\nEOF\npytest -q')
 check_cmd "continuation-then-run"   "$(printf 'echo a \\\n b && pytest')" "tests"
 check_cmd "subshell-runs"           '(pytest -q)' "tests"
 check_cmd "newline-two-commands"    "$(printf 'echo hi\npytest -q')" "tests"
+# A security lane found these two. Case first: `PYTEST -q` is "command not
+# found" on a case-sensitive filesystem — it runs nothing — yet an IGNORECASE
+# match banked it as verification, across every family.
+check_cmd "case-sensitive-pytest"   'PYTEST -q'      ""
+check_cmd "case-sensitive-make"     'Make build'     ""
+check_cmd "case-sensitive-tsc"      'TSC --noEmit'   ""
+check_cmd "case-lowercase-still-ok" 'make build'     "build"
+# ...and `<<<` is a here-STRING, not a here-doc. The heredoc regex used to match
+# the last two of the three angle brackets, opening a fake here-doc whose
+# delimiter swallowed every following line — including a real run.
+check_cmd "herestring-not-heredoc"  "$(printf 'grep x <<<word\npytest -q')" "tests"
 
 echo
 echo "=== B. observer protocol: zero bytes, exit 0, no command text, confinement ==="
@@ -512,6 +523,59 @@ if printf '%s' "$OUT" | grep -q "no verification"; then
 else
   bad "fifo/fails-closed-to-advisory" "silently treated as verified"
 fi
+
+echo
+echo "=== G3. confinement returns the RESOLVED path; tail read respects the boundary ==="
+# Both found by a security lane.
+# F3: confinement was decided on the realpath but the UNRESOLVED override string
+#     was returned, so the symlink was re-opened later — a swap between check and
+#     open could redirect the write (S_ISREG rejects device nodes, not locations).
+# F5: the partial-line drop fired whenever the file exceeded the tail window,
+#     even when the window happened to start exactly on a line boundary, throwing
+#     away a whole valid record.
+SEC=$(SRC="$OBSERVER" GT="$GATE" python3 -c '
+import importlib.util, json, os, tempfile
+def load(n, p):
+    spec = importlib.util.spec_from_file_location(n, p)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+obs = load("obs", os.environ["SRC"])
+gate = load("gate", os.environ["GT"])
+root = tempfile.mkdtemp()
+logs = os.path.join(root, ".agent", "logs")
+os.makedirs(logs)
+real = os.path.join(logs, "real.jsonl")
+open(real, "w").close()
+link = os.path.join(logs, "link.jsonl")
+os.symlink(real, link)
+os.environ["AGENT_VERIFY_OBSERVED_SINK"] = link
+w_resolved = os.path.basename(obs.resolve_sink(root)) == "real.jsonl"
+r_resolved = os.path.basename(gate.verify_sink_path(root)) == "real.jsonl"
+del os.environ["AGENT_VERIFY_OBSERVED_SINK"]
+# Build a sink whose tail window starts exactly on a line boundary, with the
+# only session record as the final line.
+sink = os.path.join(logs, gate.VERIFY_SINK_NAME)
+rec = json.dumps({"event": "verification_invoked", "session_id": "S"})
+pad = json.dumps({"event": "pad", "x": "y" * 80})
+with open(sink, "w") as fh:
+    n = 0
+    while n < gate._SINK_TAIL_BYTES - len(rec) - 1:
+        fh.write(pad + "\n")
+        n += len(pad) + 1
+    fh.write(rec + "\n")
+oversized = os.path.getsize(sink) > gate._SINK_TAIL_BYTES
+found = gate.session_ran_verification(root, "S")
+print(f"{int(w_resolved)}{int(r_resolved)}{int(oversized)}{int(found)}")
+')
+[[ "${SEC:0:1}" == "1" ]] && ok "resolved-path/writer" "symlink resolved before return" \
+                          || bad "resolved-path/writer" "returned the unresolved override"
+[[ "${SEC:1:1}" == "1" ]] && ok "resolved-path/reader" "symlink resolved before return" \
+                          || bad "resolved-path/reader" "returned the unresolved override"
+[[ "${SEC:2:1}" == "1" ]] && ok "tail-boundary/fixture-oversized" "sink exceeds the tail window" \
+                          || bad "tail-boundary/fixture-oversized" "fixture too small — check is vacuous"
+[[ "${SEC:3:1}" == "1" ]] && ok "tail-boundary/record-survives" "boundary-aligned record not dropped" \
+                          || bad "tail-boundary/record-survives" "valid record discarded as partial"
 
 echo
 echo "=== H. confinement parity — writer and reader must agree on every path ==="
