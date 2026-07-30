@@ -578,22 +578,23 @@ print(f"{int(w_resolved)}{int(r_resolved)}{int(oversized)}{int(found)}")
                           || bad "tail-boundary/record-survives" "valid record discarded as partial"
 
 echo
-echo "=== H. confinement parity — writer and reader must agree on every path ==="
+echo "=== H. confinement — the right verdict per path, and writer/reader agree ==="
 # resolve_sink() (writer) and verify_sink_path() (reader) are byte-identical
-# confinement logic in two files, kept in sync by comment discipline. If they
-# ever disagree, records land somewhere the reader will not look. Assert the
-# accept/reject decision matches for adversarial paths.
-PARITY_ROOT="$(mkproj parity)"
-mkdir -p "$PARITY_ROOT/.agent/logs"
-for cand in "$PARITY_ROOT/.agent/logs/ok.jsonl" \
-            "$PARITY_ROOT/.agent/logs/../../escape.jsonl" \
-            "$PARITY_ROOT/.agent/logs/sub/deep.jsonl" \
-            "${TMPDIR:-/tmp}/tmp-ok.jsonl" \
-            "/etc/passwd" \
-            "$HOME/.claude/settings.json" \
-            "$PARITY_ROOT/notlogs.jsonl"; do
-  RES=$(OBS="$OBSERVER" GT="$GATE" R="$PARITY_ROOT" C="$cand" python3 -c '
-import importlib.util, os, sys
+# confinement logic in two files, kept in sync by comment discipline. This
+# section asserts BOTH that they agree AND that each verdict is the correct one.
+#
+# The first cut asserted only agreement, and derived "accepted" from
+# `resolver(root) == <the override string>`. That signal died the moment the
+# resolvers began returning the RESOLVED path (the F3 symlink-swap fix): on
+# macOS /var, /tmp and /etc are themselves symlinks, so realpath changes EVERY
+# candidate string and all seven cases silently read as "rejected" — agreeing,
+# green, and blind. Deleting the confinement check entirely would not have moved
+# a single check. Accept/reject is now derived by comparing against the DEFAULT
+# sink, which is what "the override was refused" actually means, and the
+# expected verdict is asserted per candidate.
+verdict_of() {  # verdict_of <candidate> -> "accept-accept" | "reject-reject" | ...
+  OBS="$OBSERVER" GT="$GATE" R="$PARITY_ROOT" C="$1" python3 -c '
+import importlib.util, os
 def load(name, path):
     spec = importlib.util.spec_from_file_location(name, path)
     mod = importlib.util.module_from_spec(spec)
@@ -603,16 +604,63 @@ os.environ["AGENT_VERIFY_OBSERVED_SINK"] = os.environ["C"]
 w = load("obs", os.environ["OBS"])
 g = load("gate", os.environ["GT"])
 root = os.environ["R"]
-# accepted == the resolver returned the override rather than the default
-wa = w.resolve_sink(root) == os.environ["C"]
-ga = g.verify_sink_path(root) == os.environ["C"]
-print("MATCH" if wa == ga else "DIVERGE", "accepted" if wa else "rejected")
-' 2>&1)
-  case "$RES" in
-    MATCH*) ok "confinement-parity" "$(basename "$cand") -> ${RES#MATCH }" ;;
-    *)      bad "confinement-parity" "$cand -> $RES" ;;
-  esac
+# Refused == the resolver fell back to the default sink. Comparing against the
+# default is stable under realpath normalisation; comparing against the override
+# string is not.
+w_default = w.default_sink(root)
+g_default = os.path.join(root, ".agent", "logs", g.VERIFY_SINK_NAME)
+wa = "accept" if w.resolve_sink(root) != w_default else "reject"
+ga = "accept" if g.verify_sink_path(root) != g_default else "reject"
+print(wa + "-" + ga)
+' 2>&1
+}
+# The root must NOT live inside the system temp dir. The temp dir is itself an
+# allowed base, so with a mktemp-rooted fixture every "escape" still lands inside
+# an allowed base and legitimately accepts — the `<root>/.agent/logs` bound
+# becomes untestable and every reject case is a false green waiting to happen.
+# (This battery's first attempt had exactly that fixture, and the repaired
+# accept/reject signal is what exposed it.) `resolve_sink` is pure path logic —
+# it creates nothing — so using the real repo root as the ROOT argument is safe
+# and writes nothing.
+PARITY_ROOT="$REPO_ROOT"
+for spec in "$PARITY_ROOT/.agent/logs/ok.jsonl|accept" \
+            "$PARITY_ROOT/.agent/logs/sub/deep.jsonl|accept" \
+            "${TMPDIR:-/tmp}/tmp-ok.jsonl|accept" \
+            "$PARITY_ROOT/.agent/logs/../../escape.jsonl|reject" \
+            "/etc/passwd|reject" \
+            "$HOME/.claude/settings.json|reject" \
+            "$PARITY_ROOT/notlogs.jsonl|reject"; do
+  CAND="${spec%|*}"; WANT="${spec##*|}"
+  GOT="$(verdict_of "$CAND")"
+  if [[ "$GOT" == "$WANT-$WANT" ]]; then
+    ok "confinement/$WANT" "$(basename "$CAND")"
+  elif [[ "${GOT%-*}" != "${GOT#*-}" ]]; then
+    bad "confinement/$WANT" "writer and reader DIVERGE on $CAND -> $GOT"
+  else
+    bad "confinement/$WANT" "$CAND -> $GOT (want $WANT)"
+  fi
 done
+# Mutation probe: without one, the section above could go blind again the next
+# time a resolver's return value changes shape.
+MC=$(mutate confinement 'if candidate == base or candidate.startswith(base + os.sep):' 'if True:' "$OBSERVER")
+if [[ -z "$MC" ]]; then
+  bad "mutation/anchor-confinement" "anchor missing — probe is inert"
+else
+  ok "mutation/anchor-confinement"
+  ESC=$(OBS="$MC" R="$PARITY_ROOT" python3 -c '
+import importlib.util, os
+spec = importlib.util.spec_from_file_location("mut", os.environ["OBS"])
+mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+os.environ["AGENT_VERIFY_OBSERVED_SINK"] = "/etc/passwd"
+root = os.environ["R"]
+print("escaped" if mod.resolve_sink(root) != mod.default_sink(root) else "still-confined")
+' 2>&1)
+  if [[ "$ESC" == "escaped" ]]; then
+    ok "mutation/confinement-detected" "removing the bounds check lets /etc/passwd through"
+  else
+    bad "mutation/confinement-detected" "mutant still confined ($ESC) — section H proves nothing"
+  fi
+fi
 
 echo
 M2=$(mutate no-code-filter 'if pattern.match(invocation):' 'if False:' "$OBSERVER")
