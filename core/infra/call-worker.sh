@@ -12,8 +12,27 @@
 #   - backend.enabled: false -> loud refusal citing disabled_reason (never a
 #     silent fallback); backend.preflight argv is run first when present, and
 #     a failing preflight is the same loud-unavailable path.
+#   - backend.gateway (e.g. "kiro"): the vendor is reached THROUGH another
+#     vendor's CLI. Such a backend is dispatched from a NEUTRAL, harness-owned
+#     working directory instead of the caller's cwd — see "Gateway isolation".
 #   - The capture header carries "status:" — the mechanical truth layer
 #     (complete|failed|timeout|unavailable) beneath any lane self-report.
+#
+# Gateway isolation (why gateway backends do not inherit the caller's cwd):
+#   A gateway CLI resolves its per-lane profile from the WORKING DIRECTORY first
+#   (kiro: `--agent <name>` reads ./.kiro/agents/<name>.json before
+#   ~/.kiro/agents/<name>.json — measured, and the workspace copy wins). This
+#   dispatcher is normally invoked from the repository under review, so that
+#   repository could ship .kiro/agents/kiro-openai-top.json with
+#   "tools": ["shell","write"] and replace the read-only profile the framework
+#   installed — a write+shell grant handed to an untrusted checkout, with the
+#   registry still reading as a pinned read-only lane. A pre-dispatch scan (the
+#   kiro preflight still does one) cannot close it: the plant can land after the
+#   scan and before the dispatch. So the CWD ITSELF is taken off the table —
+#   every backend carrying "gateway" runs in a fresh mktemp directory owned by
+#   this process, which no repository can write into ahead of time. Non-gateway
+#   backends keep inheriting the caller's cwd exactly as before (codex needs it:
+#   it reads the repo it is reviewing).
 #
 # Design (explicit failure over silence):
 #   - External calls cost money. Without AGENT_WORKER_YES=1 the dispatcher
@@ -65,7 +84,17 @@ fi
 # The prompt is consumed once so both primary and fallback can replay it.
 PROMPT_TMP="$(mktemp)"
 OUT_TMP="$(mktemp)"
-cleanup() { rm -f "$PROMPT_TMP" "$OUT_TMP"; }
+# Gateway isolation (see header): a fresh, empty, process-owned directory that no
+# repository can plant a profile into. mktemp -d, not a fixed path under the
+# repo — a fixed path is plantable before the run, which is the same TOCTOU the
+# preflight's scan cannot close.
+NEUTRAL_CWD="$(mktemp -d)"
+[[ -n "$NEUTRAL_CWD" && -d "$NEUTRAL_CWD" ]] \
+    || { echo "call-worker: could not create a neutral working directory for gateway dispatch — refusing" >&2; exit 2; }
+cleanup() {
+    rm -f "$PROMPT_TMP" "$OUT_TMP"
+    if [[ -n "${NEUTRAL_CWD:-}" && -d "$NEUTRAL_CWD" ]]; then rm -rf "$NEUTRAL_CWD"; fi
+}
 trap cleanup EXIT INT TERM
 cat > "$PROMPT_TMP"
 
@@ -90,17 +119,45 @@ run_backend() {
         < <(jq -r --arg b "$name" '.backends[$b].cmd[]' "$BACKENDS_FILE")
     [[ ${#cmd[@]} -gt 0 ]] || { echo "call-worker: backend '$name' has an empty cmd in $BACKENDS_FILE" >&2; return 64; }
     command -v "${cmd[0]}" >/dev/null 2>&1 || return 127
+    # Gateway isolation (see header). Any non-empty "gateway" value isolates —
+    # including a malformed one: an unrecognized shape is treated as "this
+    # backend reaches its vendor through someone else's CLI", which is the
+    # cautious reading. The tostring keeps a non-string value from crashing jq.
+    local gateway dispatch_cwd
+    gateway="$(jq -r --arg b "$name" '(.backends[$b].gateway // "") | tostring' "$BACKENDS_FILE")"
+    if [[ -n "$gateway" ]]; then
+        dispatch_cwd="$NEUTRAL_CWD"
+    else
+        dispatch_cwd="$PWD"
+    fi
     # v2 preflight (absent in v1 registries -> skipped): a cheap health probe
     # so an unauthenticated/broken CLI surfaces as "unavailable", not a paid
     # dispatch that dies mid-flight. Watchdogged so a hung probe can't wedge us.
+    # The probe runs in the SAME cwd as the dispatch it is vetting (a probe that
+    # inspects a different directory than the dispatch resolves from is exactly
+    # the class of lie this lane already paid for), and is told which lane and
+    # which registry to reproduce: AGENT_PREFLIGHT_LANE + AGENT_BACKENDS_FILE let
+    # adapters/kiro/kiro-preflight.sh compose the real dispatch argv instead of
+    # guessing a binary and a model. Harmless for probes that ignore them.
     local pf=()
     while IFS= read -r line; do pf+=("$line"); done \
         < <(jq -r --arg b "$name" '.backends[$b].preflight // [] | .[]' "$BACKENDS_FILE")
     if [[ ${#pf[@]} -gt 0 ]]; then
-        local prc=0
-        "${pf[@]}" </dev/null >/dev/null 2>&1 &
+        local prc=0 pf_timeout
+        # A gateway probe is a real (cheap) inference round trip, not a --version
+        # call, so the default budget is wider; the env seam still wins.
+        pf_timeout="${AGENT_WORKER_PREFLIGHT_TIMEOUT_S:-}"
+        if [[ -z "$pf_timeout" ]]; then
+            if [[ -n "$gateway" ]]; then pf_timeout=60; else pf_timeout=10; fi
+        fi
+        [[ "$pf_timeout" =~ ^[0-9]+$ ]] \
+            || { echo "call-worker: AGENT_WORKER_PREFLIGHT_TIMEOUT_S is not numeric ('$pf_timeout') — the watchdog would silently never fire" >&2; return 64; }
+        ( cd "$dispatch_cwd" && exec env \
+            AGENT_BACKENDS_FILE="$BACKENDS_FILE" \
+            AGENT_PREFLIGHT_LANE="$name" \
+            "${pf[@]}" ) </dev/null >/dev/null 2>&1 &
         pid=$!
-        ( sleep "${AGENT_WORKER_PREFLIGHT_TIMEOUT_S:-10}" && kill -KILL "$pid" 2>/dev/null ) &
+        ( sleep "$pf_timeout" && kill -KILL "$pid" 2>/dev/null ) &
         wpid=$!
         wait "$pid" || prc=$?
         kill "$wpid" 2>/dev/null || true
@@ -124,7 +181,11 @@ run_backend() {
         || { echo "call-worker: backend '$name' timeout_s is not numeric ('$timeout_s') — the watchdog would silently never fire" >&2; return 64; }
     grace_s="${AGENT_WORKER_KILL_GRACE_S:-5}"
 
-    "${cmd[@]}" < "$PROMPT_TMP" > "$OUT_TMP" 2>&1 &
+    # cd + exec in a subshell: `exec` replaces the subshell with the CLI, so $!
+    # is the CLI's own pid and the watchdog's TERM/KILL still lands on it. For a
+    # non-gateway backend dispatch_cwd is $PWD, i.e. byte-for-byte the previous
+    # behavior (the caller's cwd is inherited); only gateway backends move.
+    ( cd "$dispatch_cwd" && exec "${cmd[@]}" ) < "$PROMPT_TMP" > "$OUT_TMP" 2>&1 &
     pid=$!
     # TERM at timeout, KILL after a grace period — a CLI wrapper that traps or
     # fails to forward TERM must not defeat the timeout guarantee.

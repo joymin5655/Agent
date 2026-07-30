@@ -174,10 +174,33 @@ shared blind spot doesn't survive review.
 
 - **SSOT (machine-readable): `core/infra/backends.json`** — role → backend →
   CLI argv. Roles shipped: `second-opinion-review` and `second-opinion-verify`
-  (both codex, no fallback). Model names deliberately never
+  (codex primary, `kiro-openai` fallback). Model names deliberately never
   appear in the registry or the dispatcher: each vendor's adapter profile owns
   its tier (the rows above — `codex --profile deep` is the TOP-tier reasoning
-  profile), so tier policy stays in one place.
+  profile; `kiro --agent <profile>` pins its model in
+  `adapters/kiro/*.json.template`), so tier policy stays in one place.
+- **Gateway backends (2026-07-30).** Kiro CLI is one credential reaching many
+  vendors, so it registers as several backends — `kiro-openai`, `kiro-zhipu`,
+  `kiro-anthropic` — each carrying the vendor it actually reaches plus
+  `"gateway": "kiro"`. The split is not cosmetic: a second opinion is only
+  independent when its vendor differs from the dispatching session's, and a
+  single `"vendor": "aws"` entry would hide a Claude-session-reviewing-Claude
+  lane behind a label that looks cross-vendor. Kiro lanes are read-only by
+  profile — verified that a profile's tool list overrides even
+  `--trust-all-tools` — so they carry review/verify/advisor, never
+  `implementer`. Auth is `KIRO_API_KEY` (Pro-tier) and no kiro-cli subcommand
+  reports auth failure via exit code, hence the `kiro-preflight` probe — a real
+  round trip that must get one exact token back, composed from the registry's own
+  `cmd` + `tier_args` so it exercises the `--agent` resolution the dispatch uses
+  (billable: it rides the lane's cheapest profile). `adapters/kiro/README.md` has
+  the measurements, the cost note and the lapse path.
+- **Gateway isolation.** A gateway CLI resolves its profile from the working
+  directory first (`./.kiro/agents/<name>.json` beats `~/.kiro/agents/...` —
+  measured), so `call-worker.sh` dispatches any backend carrying `"gateway"` from
+  a neutral `mktemp -d` it owns, never the caller's cwd. Otherwise the repository
+  under review could replace a read-only profile with a `shell`+`write` one; a
+  pre-dispatch scan cannot close that (plant-after-scan wins). Non-gateway
+  backends still inherit the caller's cwd.
 - **Gemini backend retired (2026-07-17).** It shipped as the review fallback,
   but upstream deprecated `oauth-personal` for individuals (gemini-cli 0.44–0.46
   throws `IneligibleTierError`, pointing at Antigravity) and the API-key path
@@ -196,8 +219,8 @@ shared blind spot doesn't survive review.
 - **Consumption**: `/verify-completion --second-opinion` attaches the capture
   as evidence input to the semantic judge; the gate logic itself is unchanged
   (a second opinion informs the verdict, it never replaces the judge).
-- **Tests**: `core/tests/call-worker-test.sh` — PATH-stubbed backends, ten
-  contract paths, zero paid calls in CI.
+- **Tests**: `core/tests/call-worker-test.sh` — PATH-stubbed backends, every
+  contract path (including gateway cwd isolation), zero paid calls in CI.
 
 ## What this policy deliberately does not do
 
