@@ -181,3 +181,13 @@ verify-completion <slug>: CONFIRMED | REFUTED   (score S)
   results) — check the run's journal/agent logs directly and re-run the dead
   reviews before accepting the aggregate. (Recurred twice in the field: the
   review never ran but looked passed.)
+- **A reviewer that goes idle without a report is a FAILED lane, not a clean
+  one.** This is the same trap by a different route: no session-limit error, no
+  crash — the lane simply ends and delivers nothing, so the absence of findings
+  reads as `raised: 0`. Judge a lane by its *artifact*: no report, no verdict.
+  Request the report explicitly, and if it still does not arrive, re-dispatch a
+  fresh lane and report the dimension as **unverified** until one completes.
+  (2026-07-30: four security dispatches in one batch produced zero reports —
+  two silent idles, one session-limit death, one spawn failure — while the code
+  lane in the same batch completed normally and raised three confirmed defects.
+  Machine-enforcing this is backlog X-4.)
