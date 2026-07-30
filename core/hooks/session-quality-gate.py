@@ -48,6 +48,7 @@ Configuration (env vars):
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import tempfile
@@ -215,12 +216,24 @@ def session_ran_verification(root: str, session_id: str) -> bool:
     if not session_id:
         return False
     path = verify_sink_path(root)
+    # The sink must be a REGULAR FILE, opened without blocking. `open(path,"rb")`
+    # hangs forever on a FIFO and reads forever from a character device, and this
+    # is reachable with no environment variable at all: a project shipping a FIFO
+    # at .agent/logs/verify-observed.jsonl would hang the Stop hook, so the
+    # session could not end (measured 2026-07-30). O_NONBLOCK fails/returns fast,
+    # and fstat on the descriptor closes the stat-then-open race.
     try:
-        with open(path, "rb") as fh:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    except OSError:
+        return False
+    try:
+        with os.fdopen(fd, "rb") as fh:
+            if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
+                return False
             fh.seek(0, os.SEEK_END)
             size = fh.tell()
             fh.seek(max(0, size - _SINK_TAIL_BYTES))
-            chunk = fh.read()
+            chunk = fh.read(_SINK_TAIL_BYTES)
     except (OSError, ValueError):
         return False
     lines = chunk.decode("utf-8", "ignore").splitlines()
@@ -284,13 +297,29 @@ def record_verify_firing(root: str, session_id: str, n_files: int, decision: str
     }
     if os.environ.get("AGENT_REPRODUCE_TEST") == "1":
         record["reproduce_test"] = True
+    # Same non-blocking, regular-file-only open as the reader above: a FIFO at
+    # the sink path would otherwise hang the Stop hook here instead.
     path = verify_sink_path(root)
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "a", encoding="utf-8") as fh:
+        flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NONBLOCK", 0)
+        fd = os.open(path, flags, 0o600)
+    except Exception:
+        return
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return
+        with os.fdopen(fd, "a", encoding="utf-8") as fh:
+            fd = -1
             fh.write(json.dumps(record, ensure_ascii=False) + "\n")
     except Exception:
         pass
+    finally:
+        if fd != -1:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
 
 
 def check_file(filepath: str) -> list[str]:

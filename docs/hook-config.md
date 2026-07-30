@@ -143,6 +143,15 @@ Behavior:
   exotic invocation forms are left unmatched rather than covered loosely.
 - Anti-loop and fail-safe follow the rest of the gate: a second Stop passes, and
   an unreadable/unwritable sink degrades to silence rather than crashing Stop.
+- **The sink must be a regular file, and is opened without blocking.** A plain
+  append blocks forever on a FIFO with no reader, and the default sink path
+  reaches that with no environment variable at all — a project shipping a FIFO
+  at `.agent/logs/verify-observed.jsonl` hung every Bash tool call *and* the
+  Stop hook, so the session could not end (measured 2026-07-30). Both halves now
+  open with `O_NONBLOCK` and verify `S_ISREG` on the descriptor, which also
+  closes the stat-then-open race a symlink swap would otherwise win. A
+  non-regular sink records nothing and the advisory still fires — unwritable is
+  never read as verified.
 - Seams: `AGENT_VERIFY_OBSERVED_SINK` (override path, confined by realpath to the
   project's `.agent/logs` or the system temp dir), `AGENT_REPRODUCE_TEST=1`
   (marks battery-fed records `reproduce_test:true` so they never inflate the

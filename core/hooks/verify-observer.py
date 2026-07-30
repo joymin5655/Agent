@@ -47,6 +47,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import stat
 import sys
 import tempfile
 from datetime import datetime, timezone
@@ -222,14 +223,39 @@ def command_from_event(event: dict) -> str:
 
 
 def append_record(sink: str, record: dict) -> None:
-    """Append one JSON line. Never raises — an unwritable sink must not turn an
-    observation hook into a broken tool call."""
+    """Append one JSON line. Never raises, and never blocks.
+
+    The sink must be a REGULAR FILE. A plain `open(sink, "a")` blocks forever on
+    a FIFO with no reader, and this path needs no environment variable to reach:
+    a project shipping a FIFO at `.agent/logs/verify-observed.jsonl` would hang
+    every Bash tool call in that project (measured 2026-07-30 — the writer and
+    the Stop-gate reader both hung indefinitely on the default path).
+
+    O_NONBLOCK makes the open itself fail fast (ENXIO on a reader-less FIFO)
+    instead of hanging, and the fstat is taken on the DESCRIPTOR, so a symlink
+    swapped in between resolve and open cannot slip a non-regular file past the
+    check the way a stat-then-open sequence could.
+    """
     try:
         os.makedirs(os.path.dirname(sink), exist_ok=True)
-        with open(sink, "a", encoding="utf-8") as fh:
+        flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NONBLOCK", 0)
+        fd = os.open(sink, flags, 0o600)
+    except Exception:
+        return
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return
+        with os.fdopen(fd, "a", encoding="utf-8") as fh:
+            fd = -1
             fh.write(json.dumps(record, ensure_ascii=False) + "\n")
     except Exception:
         pass
+    finally:
+        if fd != -1:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
 
 
 def main() -> int:

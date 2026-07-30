@@ -435,6 +435,51 @@ else
 fi
 
 echo
+echo "=== G2. a non-regular sink must never hang a hook (no env var needed) ==="
+# Measured 2026-07-30: `open(sink, "a")` blocks forever on a reader-less FIFO,
+# and the DEFAULT sink path reaches it with no environment variable — a project
+# shipping a FIFO at .agent/logs/verify-observed.jsonl hung every Bash call
+# (writer) and the Stop hook itself (reader), so the session could not end.
+# `timeout` is the assertion: rc=124 means the hang is back.
+FIFO_ROOT="$(mkproj fifo)"
+mkdir -p "$FIFO_ROOT/.agent/logs"
+mkfifo "$FIFO_ROOT/.agent/logs/verify-observed.jsonl"
+printf '%s' "$(post_event 'pytest -q' Bash sess-fifo "$FIFO_ROOT")" \
+  | timeout 10 python3 "$OBSERVER" >/dev/null 2>&1
+RC=$?
+if [[ $RC -ne 124 ]]; then
+  ok "fifo/writer-does-not-hang" "rc=$RC"
+else
+  bad "fifo/writer-does-not-hang" "TIMED OUT — blocking open regressed"
+fi
+printf '%s' "$(stop_event "$FIFO_ROOT" false sess-fifo)" \
+  | timeout 10 python3 "$GATE" >/dev/null 2>&1
+RC=$?
+if [[ $RC -ne 124 ]]; then
+  ok "fifo/reader-does-not-hang" "rc=$RC"
+else
+  bad "fifo/reader-does-not-hang" "TIMED OUT — Stop hook cannot end the session"
+fi
+# A character device must not be read forever either.
+printf '%s' "$(post_event 'pytest -q' Bash sess-dev)" \
+  | AGENT_VERIFY_OBSERVED_SINK=/dev/zero timeout 10 python3 "$OBSERVER" >/dev/null 2>&1
+RC=$?
+if [[ $RC -ne 124 ]]; then
+  ok "chardev/writer-does-not-hang" "rc=$RC"
+else
+  bad "chardev/writer-does-not-hang" "TIMED OUT"
+fi
+# ...and the FIFO must not be silently treated as a valid record store: the
+# advisory must still fire, because nothing was actually recorded.
+OUT=$(printf '%s' "$(stop_event "$FIFO_ROOT" false sess-fifo)" \
+  | timeout 10 python3 "$GATE" 2>&1)
+if printf '%s' "$OUT" | grep -q "no verification"; then
+  ok "fifo/fails-closed-to-advisory" "unwritable sink != verified"
+else
+  bad "fifo/fails-closed-to-advisory" "silently treated as verified"
+fi
+
+echo
 echo "=== H. confinement parity — writer and reader must agree on every path ==="
 # resolve_sink() (writer) and verify_sink_path() (reader) are byte-identical
 # confinement logic in two files, kept in sync by comment discipline. If they
