@@ -55,6 +55,7 @@ GATE plan-scope-allow | plan-scope-allow.py | allow | plan-scope-allow.jsonl | *
 GATE model-routing-observer | model-routing-observer.py | observe | model-routing.jsonl | * | 2026-07-11 | The call-time model-override convention (implementation=MID, fan-out=LOW) is not followed — unpinned dispatches silently inherit the session top model. Measured before enforced: 2026-07-11 audit found 7/7 dispatches at TOP. 2026-07-17: records gained a spend signal (prompt_chars, best-effort total_tokens) so manager-audit can rank relative dispatch cost.
 GATE model-routing-advisor | model-routing-advisor.py | advise | - | * | 2026-07-28 | Same leak model-routing-observer measures (unpinned dispatch inherits the session top model), caught only after the fact by that observer. This hook surfaces the reminder at the decision point — a one-line additionalContext nudge on PreToolUse Task/Agent — so the dispatcher can add a `model` override or confirm the inherit is intentional before the call goes out. Advisory only: never blocks, never switches a model, writes no log of its own (sink -; model-routing-observer's sink stays the sole measured record).
 GATE rubric-commit | rubric-commit-judge.sh | observe | rubric-score.jsonl | * | 2026-07-19 | A project's per-commit quality is never scored against its own rubric, so regressions land silently between on-demand verify-completion runs. Advisory by design (records, never blocks — the commit already happened); the deterministic half of the two-layer rubric design. Fires only where a consumer defines .agent/rubric.yml (conditional-path, like project-policy), so zero in-window firings means no consumer opted in, not dead wiring.
+GATE verify-observed | session-quality-gate.py | observe | verify-observed.jsonl | verify-observed | 2026-07-30 | A session rewrites code end to end, runs nothing, and ends clean. quality-completion only closes this where a consumer declares session.completion_tests ("Unset/empty => the gate does nothing"), which is why THAT gate shows zero local firings — so the unconditional half is missing. Layer 3 of session-quality-gate.py notes code-changes-with-no-observed-verification, fed by verify-observer.py's PostToolUse invocation records (which share this sink but carry hook=verify-observer.py, so the digest's hook filter counts firings only). OBSERVE-ONLY on purpose: it blocks only under AGENT_VERIFY_OBSERVER_BLOCK=1, because a gate whose net effect is unmeasured has not earned the right to block (see "Is the gate worth its noise?" below). Presence-only by necessity — this runtime supplies no exit status (measured 2026-07-30), so the advisory never claims anything passed.
 <!-- gate-registry:end -->
 
 ## Review discipline
@@ -64,3 +65,34 @@ it's proven extinct), bump its `last_reviewed` date here. The digest's STALE
 report is the reminder; this file is the record. Removing a gate is a code change
 *plus* deleting its row here — the registry must not name a gate that no longer
 ships (there is no separate drift gate for this file yet; keep it honest by hand).
+
+### Is the gate worth its noise?
+
+A healthy fire-rate is not the same as a positive contribution. Every firing
+spends context: the reason text, the retry, the re-read. A gate that fires often
+and correctly can still be **net-negative** if the noise it injects degrades the
+rest of a long session more than the failures it catches cost. So the review
+question is not "did it fire" but:
+
+> **Is the session better off with this gate on than off?**
+
+DEAD / FATIGUE / STALE do not answer that — they measure activity, not effect.
+When there is no data to answer it, say so and treat the gate exactly like
+`UNINSTRUMENTED`: unmeasured is not the same as fine. Two rules follow.
+
+- **Measure before enforcing.** A new gate lands as `observe` with a sink, and
+  earns `ask`/`deny`/`block` only once its firings can be shown to correspond to
+  real problems. The reverse order ships enforcement whose value is a guess.
+- **Sunset condition.** A gate that is DEAD across two consecutive review
+  windows, with no new evidence for its assumption, becomes a retirement
+  candidate — recorded on its row, the same way `project-policy` and `r4-mutex`
+  recorded KEEP with a reason. Conditional-path gates (fire only where a consumer
+  opts in) are exempt from the DEAD count but not from this question.
+
+Origin: this criterion is adopted from the measurement protocol of an external
+harness (the `fivetaku/fablize` plugin, its measurement-protocol doc §1/§7),
+which puts the harness-paradox question first and states plainly that a zero-lift
+result is a warning rather than a success. The counterfactual machinery that would answer it
+properly — an on/off holdout arm — is backlog X-1, deliberately unbuilt until
+designed: that same project shipped an unrun measurement layer, and an
+instrument nobody executes measures nothing.
