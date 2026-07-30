@@ -78,9 +78,37 @@ to **refute**, not confirm:
   (asserting `true`, testing nothing, or not exercising the new path)?
 - Is anything the claim omits that a reviewer would call incomplete (an
   unhandled case the summary implies is handled)?
+- If the artifact only reveals its correctness when **run**, was it run and
+  *looked at* — see the observation rule below?
 
 Default each open question to **REFUTED**. A confirmation needs a reason; a
 refutation is the resting state.
+
+**Observation rule — run-only artifacts.** Some artifacts cannot be verified by
+reading them: an HTML page, an SVG, a chart, a UI, a game, an animation, a script
+whose whole point is its observable output. For those, a completion claim that
+cites no observation evidence is **REFUTED**. Three distinctions do the work:
+
+- **Well-formed is not correct.** `xmllint`, `node --check`, `tsc --noEmit`, a
+  successful parse — each proves the file is syntactically valid, which is a
+  different claim from "it renders and behaves as intended". A static check
+  passes straight over an overlay covering the board, a console error, a collapsed
+  layout.
+- **Produced is not observed.** A screenshot that was generated but never read
+  back is not evidence. Neither is "the server started". The claim must cite what
+  was actually seen — rendered output read back, console output inspected, the
+  state the interaction reached.
+- **One clean observation is enough.** Re-rendering unchanged state to accumulate
+  confidence spends tokens and changes nothing. Re-render only *after* a change:
+  each defect the observation reveals gets one fix and one re-check, and it stops
+  again once that check is clean.
+
+Scope it honestly: pure prose, config, and logic that has its own test suite need
+no rendering — for those the relevant grounding is the test run, already covered
+by the deterministic pass. The trigger is precisely *"could this look or behave
+wrong in a way that only shows when it runs?"* The `browse` / `run` skills are the
+usual execution route; this rule is about whether the resulting evidence exists,
+not about which tool produced it.
 
 **Optional: a project rubric.** If the project defines `.agent/rubric.yml`
 (from `templates/rubric.yml.template`), its dimensions are the project's own bar
@@ -153,3 +181,13 @@ verify-completion <slug>: CONFIRMED | REFUTED   (score S)
   results) — check the run's journal/agent logs directly and re-run the dead
   reviews before accepting the aggregate. (Recurred twice in the field: the
   review never ran but looked passed.)
+- **A reviewer that goes idle without a report is a FAILED lane, not a clean
+  one.** This is the same trap by a different route: no session-limit error, no
+  crash — the lane simply ends and delivers nothing, so the absence of findings
+  reads as `raised: 0`. Judge a lane by its *artifact*: no report, no verdict.
+  Request the report explicitly, and if it still does not arrive, re-dispatch a
+  fresh lane and report the dimension as **unverified** until one completes.
+  (2026-07-30: four security dispatches in one batch produced zero reports —
+  two silent idles, one session-limit death, one spawn failure — while the code
+  lane in the same batch completed normally and raised three confirmed defects.
+  Machine-enforcing this is backlog X-4.)

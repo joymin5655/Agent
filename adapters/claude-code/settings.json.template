@@ -81,6 +81,7 @@
         "matcher": "Bash",
         "hooks": [
           { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh circuit-breaker.py" },
+          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh verify-observer.py" },
           { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh rubric-commit-judge.sh" }
         ]
       },

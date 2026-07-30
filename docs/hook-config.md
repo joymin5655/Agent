@@ -99,6 +99,64 @@ Behavior:
   self-attack at the project's own trust level, and its outcome is a fail-open
   non-blocking stop, never corruption or a weakened gate.
 
+## Unverified-session advisory (no config required)
+
+"Unset/empty ⇒ the gate does nothing" above is a real hole: a project that never
+declares `completion_tests` can have a session rewrite code from end to end, run
+nothing, and end clean. The gate registry recorded the consequence — the
+`quality-completion` gate shows zero local firings precisely because no consumer
+declares the key.
+
+`core/hooks/verify-observer.py` (PostToolUse, Bash) closes the unconditional half
+and needs **no project config at all**. It records that a verification command was
+*invoked* — family label only (`tests`, `battery`, `typecheck`, `lint`, `build`) —
+into `.agent/logs/verify-observed.jsonl`. Layer 3 of the Stop gate reads those
+records and, when the session diff carries changed **code** files and no
+verification was invoked in that session, emits an advisory.
+
+Behavior:
+
+- **Observe-only by default.** It reports and logs; it never blocks. Opt into
+  blocking with `AGENT_VERIFY_OBSERVER_BLOCK=1`. The registry entry is `observe`
+  so `telemetry-digest --gates` can measure the fire-rate *before* anyone argues
+  for enforcement (see `docs/gate-registry.md` → "Is the gate worth its noise?").
+- **It never claims a verification passed.** Claude Code's PostToolUse payload
+  carries no exit status — measured 2026-07-30 with a probe pair: `exit 3` with
+  quiet output went unrecorded by `circuit-breaker.py` while `exit 0` printing
+  "0 errors" was recorded as a failure. Inferring pass/fail from output text is
+  that same misclassification, so the signal is deliberately presence-only and
+  the advisory wording asserts no outcome.
+- **No command text is stored.** A command line can carry a token or a URL with
+  credentials; the family label is all the Stop gate needs, so the raw string is
+  never written and there is no redaction path to get wrong.
+- **Code-only, allowlisted.** Only known code extensions count as a change
+  (docs/config edits stay silent). An allowlist rather than a docs-denylist means
+  an unrecognised extension fails silent instead of firing.
+- **Family patterns match at invocation position only.** Containing a runner
+  name is not enough: `pip install pytest-mock`, `which eslint`, and
+  `cat core/tests/verify-all.sh` all contain one while running nothing. The
+  command is split on shell separators and normalised to `<program> <rest>`
+  (leading `VAR=val` assignments and wrapper prefixes such as `npx` / `uv run`
+  stripped, program reduced to its basename), and every pattern is anchored to
+  that. A false negative here can only produce the advisory that is already the
+  default posture; a false positive hides the gap the layer exists to find, so
+  exotic invocation forms are left unmatched rather than covered loosely.
+- Anti-loop and fail-safe follow the rest of the gate: a second Stop passes, and
+  an unreadable/unwritable sink degrades to silence rather than crashing Stop.
+- **The sink must be a regular file, and is opened without blocking.** A plain
+  append blocks forever on a FIFO with no reader, and the default sink path
+  reaches that with no environment variable at all — a project shipping a FIFO
+  at `.agent/logs/verify-observed.jsonl` hung every Bash tool call *and* the
+  Stop hook, so the session could not end (measured 2026-07-30). Both halves now
+  open with `O_NONBLOCK` and verify `S_ISREG` on the descriptor, which also
+  closes the stat-then-open race a symlink swap would otherwise win. A
+  non-regular sink records nothing and the advisory still fires — unwritable is
+  never read as verified.
+- Seams: `AGENT_VERIFY_OBSERVED_SINK` (override path, confined by realpath to the
+  project's `.agent/logs` or the system temp dir), `AGENT_REPRODUCE_TEST=1`
+  (marks battery-fed records `reproduce_test:true` so they never inflate the
+  measured fire-rate).
+
 ## Security guarantee — ADDITIVE ONLY
 
 The loader (`core/hooks/hook_config.py`) can **only make the scan stricter**:
