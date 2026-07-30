@@ -126,6 +126,36 @@ _WRAPPERS_2 = (
 _MAX_COMMAND_CHARS = 8192
 
 
+# A here-document body is DATA, not commands. `<<<` (here-string) is single-line
+# and deliberately not matched: the delimiter group requires a leading letter.
+_HEREDOC_RE = re.compile(r"<<-?\s*(?P<delim>['\"]?[A-Za-z_][A-Za-z0-9_]*['\"]?)")
+# Token separators INSIDE a segment: ASCII blanks only. Python's str.split() also
+# splits on NBSP and other unicode spaces, which a shell does not — that would
+# read `\xa0pytest` (a command that cannot even run) as an invocation of pytest.
+_TOKEN_WS_RE = re.compile(r"[ \t\r\f\v]+")
+_ASCII_BLANKS = " \t\r\f\v\n"
+
+
+def _strip_heredoc_bodies(command: str) -> str:
+    """Remove here-document bodies, keeping the command lines around them.
+
+    Without this, `cat <<EOF` / `pytest -q` / `EOF` — a session writing docs that
+    happen to SHOW a test command — records as if the tests had been run.
+    """
+    kept: list[str] = []
+    delimiter = None
+    for line in command.split("\n"):
+        if delimiter is not None:
+            if line.strip() == delimiter:
+                delimiter = None
+            continue
+        kept.append(line)
+        found = _HEREDOC_RE.search(line)
+        if found:
+            delimiter = found.group("delim").strip("\"'")
+    return "\n".join(kept)
+
+
 def _invocations(command: str) -> list[str]:
     """Normalise a command line into one `<program> <rest>` string per segment.
 
@@ -139,15 +169,21 @@ def _invocations(command: str) -> list[str]:
     # every pattern here runs over it. A verification invocation lives at the
     # head of a segment, so truncating cannot hide one that a shorter command
     # would have matched (same reasoning as circuit-breaker's result_text[:500]).
-    for raw in _SEGMENT_RE.split(command[:_MAX_COMMAND_CHARS]):
-        seg = raw.strip()
+    text = command[:_MAX_COMMAND_CHARS]
+    # A backslash-newline is a line CONTINUATION, not a command boundary:
+    # `pip install \` + newline + `pytest` is one `pip install pytest`, and
+    # splitting on the newline would read `pytest` as an invocation.
+    text = text.replace("\\\n", " ")
+    text = _strip_heredoc_bodies(text)
+    for raw in _SEGMENT_RE.split(text):
+        seg = raw.strip(_ASCII_BLANKS)
         # Bounded loop: each iteration removes a leading token, so it cannot spin.
         for _ in range(8):
             stripped = _ASSIGN_RE.sub("", seg, count=1)
             if stripped != seg:
-                seg = stripped.strip()
+                seg = stripped.strip(_ASCII_BLANKS)
                 continue
-            parts = seg.split()
+            parts = [t for t in _TOKEN_WS_RE.split(seg) if t]
             if len(parts) >= 3 and (parts[0].lower(), parts[1].lower()) in _WRAPPERS_2:
                 seg = " ".join(parts[2:])
                 continue
@@ -155,7 +191,7 @@ def _invocations(command: str) -> list[str]:
                 seg = " ".join(parts[1:])
                 continue
             break
-        parts = seg.split()
+        parts = [t for t in _TOKEN_WS_RE.split(seg) if t]
         if not parts:
             continue
         program = os.path.basename(parts[0])

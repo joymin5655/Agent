@@ -190,6 +190,40 @@ for spec in "/usr/local/bin/pytest -q:tests" \
 done
 
 echo
+echo "=== A4. shell syntax the parser must model (data vs. executed commands) ==="
+# Found by probing the seams a review flagged as unexamined. Each negative here
+# is the SAME defect class as the substring bug: text that merely LOOKS like a
+# verification run, marking an unverified session verified.
+#   - a here-doc body is data (writing docs that SHOW `pytest -q` is realistic)
+#   - `pip install \` + newline + `pytest` is ONE `pip install pytest`
+#   - NBSP is whitespace to Python's str.split()/strip() but not to a shell, so
+#     `\xa0pytest` (a command that cannot run) must not read as an invocation
+check_cmd() {  # check_cmd <label> <command> <expected family or "">
+  local label="$1"
+  local cmd="$2"
+  local want="$3"
+  local sink="$TMP_ROOT/syn-$RANDOM.jsonl"
+  observe "$cmd" "$sink" >/dev/null
+  local got
+  got="$(sink_families "$sink")"
+  if [[ "$got" == "$want" ]]; then
+    ok "syntax/$label" "${want:-no match}"
+  else
+    bad "syntax/$label" "want='${want}' got='$got'"
+  fi
+}
+check_cmd "heredoc-body-is-data"    "$(printf 'cat <<EOF\npytest -q\nEOF')" ""
+check_cmd "heredoc-quoted-delim"    "$(printf "cat > R.md <<'EOF'\nruff check .\nEOF")" ""
+check_cmd "heredoc-dash-delim"      "$(printf 'cat <<-END\nnpm test\nEND')" ""
+check_cmd "line-continuation"       "$(printf 'pip install \\\n  pytest')" ""
+check_cmd "nbsp-is-not-a-separator" "$(printf '\xc2\xa0pytest -q')" ""
+# ...while the real invocations around that syntax still record.
+check_cmd "heredoc-then-real-run"   "$(printf 'cat <<EOF\ndata\nEOF\npytest -q')" "tests"
+check_cmd "continuation-then-run"   "$(printf 'echo a \\\n b && pytest')" "tests"
+check_cmd "subshell-runs"           '(pytest -q)' "tests"
+check_cmd "newline-two-commands"    "$(printf 'echo hi\npytest -q')" "tests"
+
+echo
 echo "=== B. observer protocol: zero bytes, exit 0, no command text, confinement ==="
 SINK="$TMP_ROOT/proto.jsonl"
 OUT=$(observe "pytest -q" "$SINK"); RC=$?
