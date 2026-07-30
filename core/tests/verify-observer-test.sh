@@ -51,13 +51,16 @@ mkproj() {  # mkproj <name> [ext] — throwaway git repo with one untracked file
   echo "$d"
 }
 
-post_event() {  # post_event <command> [tool] — canonical PostToolUse JSON
-  CMD="$1" TOOL="${2:-Bash}" SID="${3:-sess-A}" python3 -c '
+post_event() {  # post_event <command> [tool] [session] [cwd]
+  # `cwd` is what the hook resolves the project root (and so the DEFAULT sink)
+  # from, so it must be a parameter — hardcoding it made the default-path checks
+  # in section G test /tmp instead of the fixture.
+  CMD="$1" TOOL="${2:-Bash}" SID="${3:-sess-A}" CWD="${4:-$TMP_ROOT}" python3 -c '
 import os, json
 print(json.dumps({
     "ai": "claude-code", "event": "PostToolUse", "session_id": os.environ["SID"],
     "tool_name": os.environ["TOOL"], "tool_input": {"command": os.environ["CMD"]},
-    "tool_response": {"stdout": "", "stderr": ""}, "cwd": "/tmp",
+    "tool_response": {"stdout": "", "stderr": ""}, "cwd": os.environ["CWD"],
 }))'
 }
 
@@ -117,11 +120,33 @@ done
 
 echo
 echo "=== A2. look-alikes must NOT record (a false positive hides a real gap) ==="
+# The second block is the eight cases a review reproduced against the first cut
+# of this hook, when the family patterns were `search`-based instead of anchored
+# at invocation position. Each one marked an unverified session "verified".
 for cmd in "git checkout main" \
            "cat test.txt" \
            "echo hello world" \
            "ls -la testing/" \
-           "grep -rn build src/"; do
+           "grep -rn build src/" \
+           "pip install pytest-mock" \
+           "which eslint" \
+           "grep -rn mypy setup.cfg" \
+           "git commit -m 'add pytest fixtures'" \
+           "cat core/tests/verify-all.sh" \
+           "wc -l core/tests/verify-all.sh" \
+           "npm i -D vitest" \
+           "apt-get install shellcheck" \
+           "git log --oneline -- core/tests/verify-all.sh" \
+           "echo 'run pytest later' >> TODO.md" \
+           "./pytest.md" \
+           "./eslint.txt" \
+           "less core/tests/verify-all.sh" \
+           "vim core/tests/x-test.sh" \
+           "cd pytest && ls" \
+           "VAR=pytest echo hi" \
+           "echo pytest" \
+           "sudo sudo sudo sudo sudo sudo sudo sudo sudo pytest" \
+           "X=1 Y=2 Z=3 A=4 B=5 C=6 D=7 E=8 F=9 pytest"; do
   SINK="$TMP_ROOT/neg-$RANDOM.jsonl"
   observe "$cmd" "$SINK" >/dev/null
   GOT="$(sink_families "$SINK")"
@@ -129,6 +154,38 @@ for cmd in "git checkout main" \
     ok "no-match/$cmd"
   else
     bad "no-match/$cmd" "recorded '$GOT'"
+  fi
+done
+
+echo
+echo "=== A3. invocation-position normalisation (real runs behind wrappers) ==="
+# Anchoring at invocation position is only correct if the normaliser actually
+# reaches the program: absolute/relative paths, env assignments, wrapper
+# prefixes, and runners after a shell separator.
+# `echo $(pytest)` is a TRUE positive, not a leak in the anchoring: command
+# substitution executes pytest, so the session really did run it. `npm run
+# test:unit` is why the npm-script alternatives keep \b instead of (?=\s|$) —
+# colon-suffixed script names are the common form.
+for spec in "/usr/local/bin/pytest -q:tests" \
+            "./node_modules/.bin/jest --ci:tests" \
+            "CI=1 pytest -q:tests" \
+            "sudo make build:build" \
+            "uv run pytest:tests" \
+            "pnpm exec tsc --noEmit:typecheck" \
+            "git add -A && pytest -q:tests" \
+            "cd /tmp; ruff check .:lint" \
+            "bash /abs/path/core/tests/x-test.sh:battery" \
+            "./core/tests/verify-all.sh:battery" \
+            "echo \$(pytest):tests" \
+            "npm run test:unit:tests"; do
+  CMD="${spec%:*}"; WANT="${spec##*:}"
+  SINK="$TMP_ROOT/norm-$WANT-$RANDOM.jsonl"
+  observe "$CMD" "$SINK" >/dev/null
+  GOT="$(sink_families "$SINK")"
+  if [[ "$GOT" == "$WANT" ]]; then
+    ok "normalise/$CMD" "-> $WANT"
+  else
+    bad "normalise/$CMD" "want=$WANT got='$GOT'"
   fi
 done
 
@@ -342,7 +399,80 @@ else
   fi
 fi
 
-M2=$(mutate no-code-filter 'if pattern.search(command):' 'if False:' "$OBSERVER")
+echo
+echo "=== G. writer/reader convergence — the DEFAULT sink path, no override ==="
+# Every other check passes AGENT_VERIFY_OBSERVED_SINK, so the default path
+# construction (observer SINK_NAME vs gate VERIFY_SINK_NAME) was never exercised
+# end to end: renaming either constant would silently degrade the feature to
+# "always advisory" in real sessions while the battery stayed green.
+CONV="$(mkproj conv)"
+printf '%s' "$(post_event 'pytest -q' Bash sess-conv "$CONV")" \
+  | (cd "$CONV" && AGENT_REPRODUCE_TEST=1 python3 "$OBSERVER" >/dev/null 2>&1)
+DEFAULT_SINK="$CONV/.agent/logs/verify-observed.jsonl"
+if [[ -f "$DEFAULT_SINK" ]]; then
+  ok "default-sink/writer-lands-in-project" ".agent/logs under the event cwd"
+else
+  bad "default-sink/writer-lands-in-project" "no sink at $DEFAULT_SINK"
+fi
+# ...and the reader must find THAT file with no override either: the advisory
+# must be absent because the writer's record satisfied it.
+OUT=$(printf '%s' "$(stop_event "$CONV" false sess-conv)" \
+  | (cd "$CONV" && python3 "$GATE" 2>&1))
+if ! printf '%s' "$OUT" | grep -q "no verification"; then
+  ok "default-sink/reader-reads-same-file" "record suppresses the advisory"
+else
+  bad "default-sink/reader-reads-same-file" "reader missed the writer's record"
+fi
+# Control: without the record the same fixture DOES advise — proves the check
+# above is not passing merely because the advisory never fires here.
+CONV2="$(mkproj conv2)"
+OUT=$(printf '%s' "$(stop_event "$CONV2" false sess-conv2)" \
+  | (cd "$CONV2" && python3 "$GATE" 2>&1))
+if printf '%s' "$OUT" | grep -q "no verification"; then
+  ok "default-sink/control-advises" "same path, no record -> advisory fires"
+else
+  bad "default-sink/control-advises" "advisory silent even with no record"
+fi
+
+echo
+echo "=== H. confinement parity — writer and reader must agree on every path ==="
+# resolve_sink() (writer) and verify_sink_path() (reader) are byte-identical
+# confinement logic in two files, kept in sync by comment discipline. If they
+# ever disagree, records land somewhere the reader will not look. Assert the
+# accept/reject decision matches for adversarial paths.
+PARITY_ROOT="$(mkproj parity)"
+mkdir -p "$PARITY_ROOT/.agent/logs"
+for cand in "$PARITY_ROOT/.agent/logs/ok.jsonl" \
+            "$PARITY_ROOT/.agent/logs/../../escape.jsonl" \
+            "$PARITY_ROOT/.agent/logs/sub/deep.jsonl" \
+            "${TMPDIR:-/tmp}/tmp-ok.jsonl" \
+            "/etc/passwd" \
+            "$HOME/.claude/settings.json" \
+            "$PARITY_ROOT/notlogs.jsonl"; do
+  RES=$(OBS="$OBSERVER" GT="$GATE" R="$PARITY_ROOT" C="$cand" python3 -c '
+import importlib.util, os, sys
+def load(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+os.environ["AGENT_VERIFY_OBSERVED_SINK"] = os.environ["C"]
+w = load("obs", os.environ["OBS"])
+g = load("gate", os.environ["GT"])
+root = os.environ["R"]
+# accepted == the resolver returned the override rather than the default
+wa = w.resolve_sink(root) == os.environ["C"]
+ga = g.verify_sink_path(root) == os.environ["C"]
+print("MATCH" if wa == ga else "DIVERGE", "accepted" if wa else "rejected")
+' 2>&1)
+  case "$RES" in
+    MATCH*) ok "confinement-parity" "$(basename "$cand") -> ${RES#MATCH }" ;;
+    *)      bad "confinement-parity" "$cand -> $RES" ;;
+  esac
+done
+
+echo
+M2=$(mutate no-code-filter 'if pattern.match(invocation):' 'if False:' "$OBSERVER")
 if [[ -z "$M2" ]]; then
   bad "mutation/anchor-family-match" "anchor missing — probe is inert"
 else

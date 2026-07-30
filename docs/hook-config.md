@@ -132,11 +132,15 @@ Behavior:
 - **Code-only, allowlisted.** Only known code extensions count as a change
   (docs/config edits stay silent). An allowlist rather than a docs-denylist means
   an unrecognised extension fails silent instead of firing.
-- **Family patterns are narrow on purpose.** A bare `\btest\b` would match
-  `cat test.txt` and a bare `\bcheck\b` would match `git checkout`, which would
-  mark an unverified session as verified. A false negative here can only produce
-  the advisory that is already the default posture; a false positive hides the
-  gap the layer exists to find.
+- **Family patterns match at invocation position only.** Containing a runner
+  name is not enough: `pip install pytest-mock`, `which eslint`, and
+  `cat core/tests/verify-all.sh` all contain one while running nothing. The
+  command is split on shell separators and normalised to `<program> <rest>`
+  (leading `VAR=val` assignments and wrapper prefixes such as `npx` / `uv run`
+  stripped, program reduced to its basename), and every pattern is anchored to
+  that. A false negative here can only produce the advisory that is already the
+  default posture; a false positive hides the gap the layer exists to find, so
+  exotic invocation forms are left unmatched rather than covered loosely.
 - Anti-loop and fail-safe follow the rest of the gate: a second Stop passes, and
   an unreadable/unwritable sink degrades to silence rather than crashing Stop.
 - Seams: `AGENT_VERIFY_OBSERVED_SINK` (override path, confined by realpath to the

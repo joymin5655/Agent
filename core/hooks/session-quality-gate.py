@@ -451,13 +451,19 @@ def main() -> None:
         or (style_block and total_issues > 0)
         or (verify_block and bool(verify_text))
     )
-    if enforcing and verify_text and not (verify_block and should_block):
-        # Layer 3 rode along with someone else's block (or with a non-blocking
-        # style report): still record it as an advisory firing so the registry
-        # fire-rate counts it exactly once.
-        record_verify_firing(root, session_id, verify_files_n, "advisory")
-    elif enforcing and verify_block and verify_text:
-        record_verify_firing(root, session_id, verify_files_n, "blocked")
+    if verify_text:
+        # Recording is MEASUREMENT, not enforcement — so it must NOT be gated on
+        # `enforcing`. The second Stop (anti-loop, enforcing=False) and advisory
+        # mode (AGENT_QUALITY_GATE_BLOCK=0) both still surface verify_text to the
+        # user above, and a second Stop is the routine case precisely because
+        # layer-2 findings are usually what produced the first one. Gating the
+        # record on `enforcing` therefore undercounted exactly the fire-rate the
+        # registry's measure-before-enforcing rule depends on. Exactly once: the
+        # layers-1+2-clean branch above already returned.
+        record_verify_firing(
+            root, session_id, verify_files_n,
+            "blocked" if (enforcing and verify_block and should_block) else "advisory",
+        )
     if enforcing and should_block:
         # Teaching format (T-1): WHY + FIX so the agent can self-correct. The
         # remedy list names only the layer(s) that actually triggered the block
