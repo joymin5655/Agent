@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.7] - 2026-08-02
+
+Release-only version bump: ships the already-merged #101 (decision-time
+model-routing advisory + `telemetry-digest.sh --model`), #102 (cross-runtime
+harness docs), and #103 (circuit-breaker exit-code fix + verify-observer) to
+plugin consumers. The installed-plugin cache is keyed by manifest version, so
+without this bump `claude plugin update` was a no-op and the PreToolUse
+model-routing advisor never reached live sessions (measured: dispatches still
+inheriting the session top model four days after #101 merged).
+
 ### Added
 - **Decision-time model-routing advisory hook (`core/hooks/model-routing-advisor.py`).**
   The 2026-07-11 audit measured 7/7 dispatches silently inheriting the session

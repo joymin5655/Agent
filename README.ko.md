@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/joymin5655/Agent/actions/workflows/ci.yml/badge.svg)](https://github.com/joymin5655/Agent/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-![Version](https://img.shields.io/badge/version-0.5.6-blue.svg)
+![Version](https://img.shields.io/badge/version-0.5.7-blue.svg)
 ![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-7c3aed.svg)
 ![AI-agnostic](https://img.shields.io/badge/AI-Claude%20%7C%20Codex%20%7C%20Gemini-orange.svg)
 
@@ -36,7 +36,7 @@
 증명합니다. 런타임마다 다른 것은 CLI 활동 중 얼마나 많은 부분이 그 코어에
 도달하는가입니다 — [런타임 커버리지](#런타임-커버리지) 참고.
 
-> 상태: v0.5.6 · 라이선스: **MIT**
+> 상태: v0.5.7 · 라이선스: **MIT**
 
 ---
 
