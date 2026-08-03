@@ -8,6 +8,10 @@
 
 **English** | [한국어](README.ko.md)
 
+<p align="center">
+  <img src="assets/readme/hero.svg" alt="The harness pipeline: /spec, the spec-gate.py machine gate, /supervise, the goal-audit gate, /verify-completion, the gitleaks and risk gates, then /wrap — a pulse travels the pipeline and each gate lights green as it passes." width="1200" />
+</p>
+
 **Your AI agent will eventually tell you the tests pass when they don't, read a
 secret it shouldn't, or skip the plan and start editing. This harness catches
 each of those with machine gates, not prompt wording.** At the tool boundary: a

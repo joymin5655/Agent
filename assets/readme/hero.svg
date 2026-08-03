@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 300" width="1200" height="300" role="img"
+     aria-label="Agent harness pipeline: /spec, then the spec-gate.py machine gate, /supervise, the goal-audit gate, /verify-completion, the gitleaks and risk gates, and /wrap. A pulse travels the pipeline and each gate lights green as it passes.">
+  <style>
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .b { font-size: 15px; font-weight: 600; }
+    .s { font-size: 10.5px; letter-spacing: .04em; }
+    .t { font-size: 12px; letter-spacing: .06em; }
+    .flow { animation: dash 1.2s linear infinite; }
+    @keyframes dash { to { stroke-dashoffset: -12; } }
+    .cur { animation: blink 1.3s steps(1) infinite; }
+    @keyframes blink { 50% { opacity: 0; } }
+    @keyframes gl0 { 0%,18.7% { stroke: #d29922; } 20.7% { stroke: #3fb950; } 34.7% { stroke: #d29922; } 100% { stroke: #d29922; } }
+@keyframes led0 { 0%,18.7% { fill: #21262d; } 20.7% { fill: #3fb950; } 34.7% { fill: #21262d; } 100% { fill: #21262d; } }
+.gate0 { animation: gl0 12.0s linear infinite; }
+.led0 { animation: led0 12.0s linear infinite; }
+@keyframes gl1 { 0%,41.5% { stroke: #d29922; } 43.5% { stroke: #3fb950; } 57.5% { stroke: #d29922; } 100% { stroke: #d29922; } }
+@keyframes led1 { 0%,41.5% { fill: #21262d; } 43.5% { fill: #3fb950; } 57.5% { fill: #21262d; } 100% { fill: #21262d; } }
+.gate1 { animation: gl1 12.0s linear infinite; }
+.led1 { animation: led1 12.0s linear infinite; }
+@keyframes gl2 { 0%,63.7% { stroke: #d29922; } 65.7% { stroke: #3fb950; } 79.7% { stroke: #d29922; } 100% { stroke: #d29922; } }
+@keyframes led2 { 0%,63.7% { fill: #21262d; } 65.7% { fill: #3fb950; } 79.7% { fill: #21262d; } 100% { fill: #21262d; } }
+.gate2 { animation: gl2 12.0s linear infinite; }
+.led2 { animation: led2 12.0s linear infinite; }
+    @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+  </style>
+
+  <rect width="1200" height="300" fill="#0d1117"/>
+  <rect x="0.5" y="0.5" width="1199" height="299" fill="none" stroke="#30363d"/>
+
+  <text class="mono t" x="36" y="42" fill="#3fb950">$ agent-harness</text>
+  <text class="mono t" x="188" y="42" fill="#8b949e">— machine gates, not prompt wording · Claude Code | Codex | Gemini</text>
+
+  <line class="flow" x1="70" y1="132" x2="1130" y2="132" stroke="#30363d" stroke-width="2" stroke-dasharray="6 6"/>
+  <rect x="106" y="100" width="168" height="64" rx="6" fill="#161b22" stroke="#30363d"/><text class="mono b" x="190" y="128" text-anchor="middle" fill="#e6edf3">/spec</text><text class="mono s" x="190" y="148" text-anchor="middle" fill="#8b949e">spec.md + plan.md</text><rect x="380" y="100" width="190" height="64" rx="6" fill="#161b22" stroke="#30363d"/><text class="mono b" x="475" y="128" text-anchor="middle" fill="#e6edf3">/supervise</text><text class="mono s" x="475" y="148" text-anchor="middle" fill="#8b949e">wave dispatch</text><rect x="670" y="100" width="200" height="64" rx="6" fill="#161b22" stroke="#30363d"/><text class="mono b" x="770" y="128" text-anchor="middle" fill="#e6edf3">/verify-completion</text><text class="mono s" x="770" y="148" text-anchor="middle" fill="#8b949e">refute-by-default</text><rect x="965" y="100" width="150" height="64" rx="6" fill="#161b22" stroke="#30363d"/><text class="mono b" x="1040" y="128" text-anchor="middle" fill="#e6edf3">/wrap</text><text class="mono s" x="1040" y="148" text-anchor="middle" fill="#8b949e">commit + PR</text>
+  <polygon class="gate0" points="303,132 315,106 351,106 363,132 351,158 315,158" fill="#161b22" stroke="#d29922" stroke-width="1.5"/><circle class="led0" cx="333" cy="132" r="5" fill="#21262d" stroke="#30363d" stroke-width="1"/><text class="mono s" x="333" y="180" text-anchor="middle" fill="#8b949e">spec-gate.py</text><polygon class="gate1" points="593,132 605,106 641,106 653,132 641,158 605,158" fill="#161b22" stroke="#d29922" stroke-width="1.5"/><circle class="led1" cx="623" cy="132" r="5" fill="#21262d" stroke="#30363d" stroke-width="1"/><text class="mono s" x="623" y="180" text-anchor="middle" fill="#8b949e">goal-audit.sh</text><polygon class="gate2" points="876,132 888,106 924,106 936,132 924,158 888,158" fill="#161b22" stroke="#d29922" stroke-width="1.5"/><circle class="led2" cx="906" cy="132" r="5" fill="#21262d" stroke="#30363d" stroke-width="1"/><text class="mono s" x="906" y="180" text-anchor="middle" fill="#8b949e">gitleaks + risk gates</text>
+
+  <!-- pulse traveling the pipeline: 10s travel + 2s rest, 12s cycle -->
+  <circle r="6" fill="#3fb950">
+    <animateMotion dur="12.0s" repeatCount="indefinite"
+      path="M 70 132 L 1130 132" keyPoints="0;1;1" keyTimes="0;0.8333;1" calcMode="linear"/>
+  </circle>
+  <circle r="11" fill="none" stroke="#3fb950" stroke-width="1.5" opacity="0.5">
+    <animateMotion dur="12.0s" repeatCount="indefinite"
+      path="M 70 132 L 1130 132" keyPoints="0;1;1" keyTimes="0;0.8333;1" calcMode="linear"/>
+  </circle>
+
+  <text class="mono t" x="36" y="258" fill="#8b949e">allow / ask / deny — the same answer, whichever AI is driving</text>
+  <text class="mono t" x="36" y="278" fill="#8b949e">deny: cat secrets/*  ·  deny: git push --force main  ·  ask: supabase db push</text>
+  <rect class="cur" x="642" y="268" width="7" height="13" fill="#3fb950"/>
+  <text class="mono t" x="1164" y="278" text-anchor="end" fill="#f85149">fail-closed</text>
+</svg>

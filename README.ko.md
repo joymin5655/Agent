@@ -8,6 +8,10 @@
 
 [English](README.md) | **한국어**
 
+<p align="center">
+  <img src="assets/readme/hero.svg" alt="하네스 파이프라인: /spec → spec-gate.py 기계 게이트 → /supervise → goal-audit 게이트 → /verify-completion → gitleaks·리스크 게이트 → /wrap — 펄스가 지나갈 때마다 게이트가 초록으로 점등" width="1200" />
+</p>
+
 **당신의 AI 에이전트는 언젠가 테스트가 통과하지 않았는데 통과했다고 말하고, 읽으면 안
 되는 시크릿을 읽고, 계획 없이 편집을 시작합니다. 이 하네스는 그 각각을 프롬프트 문구가
 아니라 기계 게이트로 잡습니다.** 툴 경계에서: 모든 "완료" 주장을 신선한 컨텍스트에서
