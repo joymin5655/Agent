@@ -559,6 +559,14 @@ see [`docs/specializing-agents.md`](docs/specializing-agents.md).
 - [`docs/harness-improvement-plan.md`](docs/harness-improvement-plan.md) — audit + improvement roadmap *(Korean)*
 - Migrating from the pre-2026-05 mirror? The v0 mirror left the shipped tree in 0.2.9 (its retired agent providers were a ghost-specialist trap). It lives on the `archive/v0-mirror` tag: `git show archive/v0-mirror:legacy/v0-mirror-2026-05-12/ARCHIVE-NOTE.md`.
 
+## How this repo is built
+
+Agent is dogfooded: most of its implementation code is written by AI agents running under
+this very harness. The maintainer owns the threat model (what must be blocked), the hook
+protocol and policy rules, the verification design — including the blind benchmark — and
+every release decision. Every AI-written change passes the same machine gates it ships:
+gitleaks, policy hooks, and CI.
+
 ## Contributing
 
 Start with [CONTRIBUTING.md](CONTRIBUTING.md) — install walkthrough, ground

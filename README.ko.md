@@ -535,6 +535,14 @@ risk_areas:
 - [`docs/harness-improvement-plan.md`](docs/harness-improvement-plan.md) — 감사 + 개선 로드맵 *(한국어)*
 - 2026-05 이전 미러에서 마이그레이션하나요? v0 미러는 배포 트리를 0.2.9에 남겨뒀습니다(은퇴한 에이전트 프로바이더가 유령 전문가 함정이었음). `archive/v0-mirror` 태그에 보존: `git show archive/v0-mirror:legacy/v0-mirror-2026-05-12/ARCHIVE-NOTE.md`.
 
+## 이 레포는 어떻게 만들어지나
+
+Agent는 도그푸딩됩니다: 구현 코드의 대부분은 바로 이 하네스 아래에서 동작하는 AI
+에이전트가 작성합니다. 메인테이너는 위협 모델(무엇을 차단해야 하는가), 훅 프로토콜과
+정책 룰, 블라인드 벤치마크를 포함한 검증 설계, 그리고 모든 릴리스 결정을 책임집니다.
+AI가 작성한 모든 변경은 이 레포가 배포하는 것과 같은 기계 게이트 — gitleaks · 정책
+훅 · CI — 를 통과합니다.
+
 ## 기여
 
 [CONTRIBUTING.md](CONTRIBUTING.md)부터 시작하세요 — 설치 안내, 기본 규칙, 로컬 검증
