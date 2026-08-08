@@ -10,6 +10,9 @@
 #   bash setup.sh --hooks-only     # install git-hooks (pre-commit, pre-push) only
 #   bash setup.sh --all            # alias for default (all 3 AIs)
 #   bash setup.sh --doctor         # environment diagnosis only — no installs, read-only
+#   bash setup.sh --bootstrap      # install MISSING deps (gitleaks/sqlite3/jq/gh) via
+#                                   # brew/apt, one y/N prompt per package — never auto-yes
+#   bash setup.sh --bootstrap --dry-run   # print the install plan only, install nothing
 #
 # Combinations OK:
 #   bash setup.sh --claude --project
@@ -25,6 +28,8 @@ DO_GEMINI=0
 DO_PROJECT=0
 DO_HOOKS=0
 DO_DOCTOR=0
+DO_BOOTSTRAP=0
+BOOTSTRAP_DRY_RUN=0
 
 if [[ $# -eq 0 ]]; then
     DO_CLAUDE=1
@@ -40,6 +45,8 @@ for arg in "$@"; do
         --project)     DO_PROJECT=1 ;;
         --hooks-only)  DO_HOOKS=1 ;;
         --doctor)      DO_DOCTOR=1 ;;
+        --bootstrap)   DO_BOOTSTRAP=1 ;;
+        --dry-run)     BOOTSTRAP_DRY_RUN=1 ;;
         --all)         DO_CLAUDE=1; DO_CODEX=1; DO_GEMINI=1 ;;
         -h|--help)
             sed -n '3,16p' "$0" | sed 's/^# \{0,1\}//'
@@ -840,6 +847,132 @@ PY
 }
 
 # ---------------------------------------------------------------------------
+# Dependency bootstrap (--bootstrap [--dry-run]) — installs what doctor only
+# WARNs about (checks 3/14/19: gitleaks, sqlite3, jq, gh). Unlike every other
+# install_* function above, this one mutates the SYSTEM (package manager), not
+# just $HOME config files — so its consent model is deliberately stricter and
+# does NOT read AGENT_SETUP_YES (that var means "skip template-overwrite
+# prompts", not "install system packages without asking"; conflating the two
+# would make an unrelated env var silently authorize package installs). Every
+# missing dependency gets its OWN y/N prompt; --dry-run (or non-interactive
+# stdin, detected and forced) never installs anything.
+# ---------------------------------------------------------------------------
+
+# bootstrap_stdin_is_tty — real `[[ -t 0 ]]`, overridable only for tests via
+# AGENT_BOOTSTRAP_STDIN_IS_TTY (a piped/redirected stdin is never a tty, so a
+# test that wants to drive the interactive per-package prompts with scripted
+# answers has no other way to simulate "yes this is a real terminal").
+bootstrap_stdin_is_tty() {
+    if [[ -n "${AGENT_BOOTSTRAP_STDIN_IS_TTY:-}" ]]; then
+        [[ "$AGENT_BOOTSTRAP_STDIN_IS_TTY" == "1" ]]
+        return
+    fi
+    [[ -t 0 ]]
+}
+
+# confirm_bootstrap — intentionally separate from confirm() above: does NOT
+# consult AGENT_SETUP_YES. A package install is a system-level mutation, not a
+# config-template overwrite, and the delegation contract for this feature is
+# explicit — "auto-yes absolutely forbidden". The only way to skip a prompt is
+# --dry-run (prints the plan, installs nothing) or genuinely answering y.
+confirm_bootstrap() {
+    local prompt="$1" ans
+    read -r -p "$prompt [y/N] " ans
+    [[ "$ans" =~ ^[Yy] ]]
+}
+
+bootstrap() {
+    echo "=== Dependency bootstrap (--bootstrap) ==="
+    local -a deps=(gitleaks sqlite3 jq gh)
+    local -a missing=()
+    local d
+    for d in "${deps[@]}"; do
+        command -v "$d" >/dev/null 2>&1 || missing+=("$d")
+    done
+
+    if [[ ${#missing[@]} -eq 0 ]]; then
+        echo "All bootstrap-managed dependencies already present: ${deps[*]}"
+        return 0
+    fi
+
+    # AGENT_BOOTSTRAP_PKG_MGR (test seam): SET (even to "") short-circuits real
+    # OS/package-manager detection — the only way to exercise the apt branch
+    # (or the unsupported-OS branch) from a macOS dev/CI box, since `uname -s`
+    # itself can't be usefully faked without root or a PATH-stub arms race.
+    local pkg_mgr
+    if [[ -n "${AGENT_BOOTSTRAP_PKG_MGR+x}" ]]; then
+        pkg_mgr="$AGENT_BOOTSTRAP_PKG_MGR"
+    else
+        case "$(uname -s)" in
+            Darwin) pkg_mgr="brew" ;;
+            Linux)  command -v apt-get >/dev/null 2>&1 && pkg_mgr="apt" || pkg_mgr="" ;;
+            *)      pkg_mgr="" ;;
+        esac
+    fi
+
+    if [[ -z "$pkg_mgr" ]]; then
+        echo "No supported package manager detected (supported: macOS/brew, Linux/apt)."
+        echo "Missing: ${missing[*]} — install manually. See docs/getting-started.md prerequisites."
+        return 1
+    fi
+    if [[ "$pkg_mgr" == "brew" ]] && ! command -v brew >/dev/null 2>&1; then
+        echo "macOS detected but Homebrew not found. Install from https://brew.sh, then re-run --bootstrap."
+        echo "Missing: ${missing[*]}"
+        return 1
+    fi
+
+    echo "Missing dependencies: ${missing[*]}"
+    echo "Package manager: $pkg_mgr"
+    echo
+
+    # Non-interactive stdin -> forced dry-run downgrade. This is unconditional
+    # (checked even if the caller didn't pass --dry-run) — a script piping into
+    # this command (CI, another tool, `echo | setup.sh --bootstrap`) must NEVER
+    # be able to trigger a real system install just by having something, or
+    # nothing, on the other end of the pipe.
+    local effective_dry_run=$BOOTSTRAP_DRY_RUN
+    local downgrade_note=""
+    if [[ $effective_dry_run -eq 0 ]] && ! bootstrap_stdin_is_tty; then
+        effective_dry_run=1
+        downgrade_note="NOTE: stdin is not a terminal (non-interactive) — downgraded to --dry-run. Nothing was installed. Re-run interactively (or pass --dry-run explicitly to suppress this note)."
+    fi
+
+    local -a installed=() skipped=()
+    for d in "${missing[@]}"; do
+        local install_cmd
+        case "$pkg_mgr" in
+            brew) install_cmd="brew install $d" ;;
+            apt)  install_cmd="sudo apt-get install -y $d" ;;
+        esac
+        if [[ $effective_dry_run -eq 1 ]]; then
+            echo "  [dry-run] would run: $install_cmd"
+            continue
+        fi
+        if confirm_bootstrap "  Install $d via $pkg_mgr? ($install_cmd)"; then
+            echo "  Installing $d ..."
+            if eval "$install_cmd"; then
+                installed+=("$d")
+            else
+                echo "  ERROR: install failed for $d (command: $install_cmd)" >&2
+                skipped+=("$d")
+            fi
+        else
+            echo "  ... skipped: $d"
+            skipped+=("$d")
+        fi
+    done
+
+    echo
+    if [[ $effective_dry_run -eq 1 ]]; then
+        echo "=== Dry run complete — no installs performed ==="
+        [[ -n "$downgrade_note" ]] && echo "$downgrade_note"
+    else
+        echo "=== Bootstrap complete — installed: ${installed[*]:-none}; skipped: ${skipped[*]:-none} ==="
+    fi
+    return 0
+}
+
+# ---------------------------------------------------------------------------
 # Run
 # ---------------------------------------------------------------------------
 
@@ -848,6 +981,11 @@ echo
 
 if [[ $DO_DOCTOR -eq 1 ]]; then
     doctor
+    exit $?
+fi
+
+if [[ $DO_BOOTSTRAP -eq 1 ]]; then
+    bootstrap
     exit $?
 fi
 

@@ -1,0 +1,271 @@
+#!/usr/bin/env bash
+# bootstrap-test.sh — the dependency-bootstrap + local-layer-export battery (Wave 2).
+#
+# Covers `setup.sh --bootstrap` (missing-dependency installer with per-package
+# consent) and `core/infra/local-layer-export.sh` (global-layer -> generic YAML
+# manifest, gitleaks-gated save). NO real package manager is ever invoked here —
+# brew/apt-get/sudo are all PATH-stub mocks that log their invocation and exit 0;
+# a test that actually shelled out to a real installer would not be a test, it
+# would be a system mutation.
+#
+#   (a) all-dependencies-present short-circuit (no OS/pkg-mgr detection needed).
+#   (b) --dry-run: prints the install plan, calls the mocked installer ZERO times,
+#       zero filesystem mutation under a scratch $HOME (same snapshot-diff pattern
+#       Wave 1's plugin-path-install-test.sh established).
+#   (c) non-interactive stdin (`echo | ...`, no seam involved — this is what a
+#       real pipe naturally is) forces the SAME dry-run downgrade, zero installs.
+#   (d) interactive consent (AGENT_BOOTSTRAP_STDIN_IS_TTY=1 test seam + scripted
+#       y/n answers): a "n" answer must NOT invoke the mock installer, a "y"
+#       answer MUST — in the SAME run, across two different missing deps. This is
+#       the RED-probe-shaped assertion: if per-package gating were broken (e.g.
+#       consent ignored, or all-or-nothing), either half of this pairing would
+#       fail. Verified by manual mutation during development (see lane report).
+#   (e) apt branch (AGENT_BOOTSTRAP_PKG_MGR=apt seam, mocked apt-get+sudo) gets
+#       the same coverage as the brew branch, so the Linux path isn't unexercised
+#       just because this suite likely runs on macOS.
+#   (f) unsupported package manager -> exit 1, missing deps named, zero installs.
+#   (g) local-layer-export.sh happy path: hooks/plugins/skills all render
+#       correctly from synthetic fixtures (never the real global config).
+#   (h) local-layer-export.sh ANTI-VACUOUS RED PROBE: a secret embedded in a
+#       hook command string must make the exporter REFUSE to save (file never
+#       created), paired with the (g) clean-fixture CONTROL proving the probe
+#       isn't an always-fail.
+#   (i) local-layer-export.sh fail-closed when gitleaks itself is absent (cannot
+#       claim "0 findings" without running the scanner).
+#   (j) setup.sh --doctor is unaffected by any of the above — still exit 0, still
+#       read-only under a scratch-HOME snapshot (regression guard: bootstrap must
+#       never leak side effects into the diagnosis path).
+#
+# Usage: bash core/tests/bootstrap-test.sh
+set -u
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+SETUP="$REPO_ROOT/setup.sh"
+EXPORTER="$REPO_ROOT/core/infra/local-layer-export.sh"
+
+PASS=0
+FAIL=0
+
+check() {
+  local name="$1" cond="$2"
+  if [[ "$cond" -eq 0 ]]; then
+    echo "  ok   [$name]"
+    PASS=$((PASS + 1))
+  else
+    echo "  FAIL [$name]"
+    FAIL=$((FAIL + 1))
+  fi
+}
+
+safe_mktemp_d() {
+  local d
+  d="$(mktemp -d)" || return 1
+  [[ -n "$d" && -d "$d" ]] || return 1
+  printf '%s\n' "$d"
+}
+
+# build_stub <dir> <extra-cmd-list...> — populate <dir> with symlinks to every
+# real absolute-path command bootstrap()/doctor() need, EXCLUDING whatever the
+# caller wants to simulate as missing (by simply not listing it). Mirrors the
+# allowlist-only PATH stub pattern from plugin-path-install-test.sh.
+BASE_CMDS="mkdir dirname basename cat chmod cmp date git grep head paste python3 rm sed tail tr xargs cp sort cut wc uname find"
+build_stub() {
+  local dir="$1"; shift
+  local c p
+  for c in $BASE_CMDS "$@"; do
+    p="$(command -v "$c" 2>/dev/null || true)"
+    [[ "$p" == /* ]] && ln -sf "$p" "$dir/$c"
+  done
+}
+BASH_BIN="$(command -v bash)"
+
+echo "=== (a) all dependencies present -> short-circuit message, no OS detection needed ==="
+STUB_A="$(safe_mktemp_d)" || { echo "FAIL: mktemp -d"; exit 1; }
+build_stub "$STUB_A" sqlite3 jq gitleaks gh
+OUT_A="$(PATH="$STUB_A" "$BASH_BIN" "$SETUP" --bootstrap 2>&1)"
+RC_A=$?
+[[ $RC_A -eq 0 && "$OUT_A" == *"All bootstrap-managed dependencies already present"* ]]
+check "all-present-short-circuit" $?
+rm -rf "$STUB_A"
+
+# --- shared fixture for (b)-(f): gh missing, everything else present, mocked brew ---
+setup_missing_gh_fixture() {
+  local dir="$1" log="$2"
+  build_stub "$dir" sqlite3 jq gitleaks
+  cat > "$dir/brew" <<EOF
+#!/bin/sh
+echo "MOCK_BREW: \$*" >> "$log"
+exit 0
+EOF
+  chmod +x "$dir/brew"
+}
+
+echo
+echo "=== (b) --dry-run: plan printed, ZERO installer calls, zero fs mutation under scratch HOME ==="
+STUB_B="$(safe_mktemp_d)" || { echo "FAIL: mktemp -d"; exit 1; }
+LOG_B="$(mktemp)" || { echo "FAIL: mktemp"; exit 1; }
+setup_missing_gh_fixture "$STUB_B" "$LOG_B"
+SCRATCH_B="$(safe_mktemp_d)" || { echo "FAIL: mktemp -d"; exit 1; }
+BEFORE_B="$(find "$SCRATCH_B" -mindepth 1 | sort)"
+OUT_B="$(HOME="$SCRATCH_B" PYTHONDONTWRITEBYTECODE=1 PATH="$STUB_B" "$BASH_BIN" "$SETUP" --bootstrap --dry-run 2>&1)"
+RC_B=$?
+AFTER_B="$(find "$SCRATCH_B" -mindepth 1 | sort)"
+[[ $RC_B -eq 0 ]]
+check "dry-run-exit-0" $?
+[[ "$OUT_B" == *"[dry-run] would run: brew install gh"* ]]
+check "dry-run-prints-plan" $?
+[[ ! -s "$LOG_B" ]]
+check "dry-run-zero-installer-calls" $?
+[[ "$BEFORE_B" == "$AFTER_B" ]]
+check "dry-run-zero-fs-mutation" $?
+rm -rf "$STUB_B" "$SCRATCH_B" "$LOG_B"
+
+echo
+echo "=== (c) non-interactive stdin (real pipe, no seam) -> forced dry-run downgrade, zero installs ==="
+STUB_C="$(safe_mktemp_d)" || { echo "FAIL: mktemp -d"; exit 1; }
+LOG_C="$(mktemp)" || { echo "FAIL: mktemp"; exit 1; }
+setup_missing_gh_fixture "$STUB_C" "$LOG_C"
+OUT_C="$(echo | env PATH="$STUB_C" "$BASH_BIN" "$SETUP" --bootstrap 2>&1)"
+RC_C=$?
+[[ $RC_C -eq 0 && "$OUT_C" == *"downgraded to --dry-run"* ]]
+check "noninteractive-downgrade-note" $?
+[[ ! -s "$LOG_C" ]]
+check "noninteractive-zero-installer-calls" $?
+rm -rf "$STUB_C" "$LOG_C"
+
+echo
+echo "=== (d) interactive consent (seam-forced), mixed y/n across 2 missing deps: n skips, y installs -> RED-probe-shaped pairing ==="
+STUB_D="$(safe_mktemp_d)" || { echo "FAIL: mktemp -d"; exit 1; }
+LOG_D="$(mktemp)" || { echo "FAIL: mktemp"; exit 1; }
+build_stub "$STUB_D" sqlite3 jq
+cat > "$STUB_D/brew" <<EOF
+#!/bin/sh
+echo "MOCK_BREW: \$*" >> "$LOG_D"
+exit 0
+EOF
+chmod +x "$STUB_D/brew"
+# gitleaks AND gh both excluded from the stub -> both missing. Answer "n" to the
+# first prompt, "y" to the second (order follows the deps array: gitleaks, sqlite3,
+# jq, gh — with sqlite3/jq present, only gitleaks then gh are ever prompted).
+OUT_D="$(printf 'n\ny\n' | AGENT_BOOTSTRAP_STDIN_IS_TTY=1 PATH="$STUB_D" "$BASH_BIN" "$SETUP" --bootstrap 2>&1)"
+RC_D=$?
+[[ $RC_D -eq 0 ]]
+check "interactive-exit-0" $?
+[[ "$OUT_D" == *"... skipped: gitleaks"* ]]
+check "interactive-n-answer-skips" $?
+[[ "$OUT_D" == *"Installing gh"* ]]
+check "interactive-y-answer-installs" $?
+# The pairing that actually catches a broken gate: exactly ONE mock call, and it
+# must be for "gh", never for "gitleaks" (a broken all-or-nothing gate, or one
+# that ignores the answer entirely, would fail one of these two).
+[[ "$(cat "$LOG_D")" == "MOCK_BREW: install gh" ]]
+check "interactive-exactly-one-call-for-consented-pkg-only" $?
+rm -rf "$STUB_D" "$LOG_D"
+
+echo
+echo "=== (e) apt branch (AGENT_BOOTSTRAP_PKG_MGR seam, mocked apt-get+sudo): same y-consent -> install coverage ==="
+STUB_E="$(safe_mktemp_d)" || { echo "FAIL: mktemp -d"; exit 1; }
+LOG_E="$(mktemp)" || { echo "FAIL: mktemp"; exit 1; }
+build_stub "$STUB_E" sqlite3 jq gitleaks
+cat > "$STUB_E/sudo" <<'EOF'
+#!/bin/sh
+exec "$@"
+EOF
+chmod +x "$STUB_E/sudo"
+cat > "$STUB_E/apt-get" <<EOF
+#!/bin/sh
+echo "MOCK_APT: \$*" >> "$LOG_E"
+exit 0
+EOF
+chmod +x "$STUB_E/apt-get"
+OUT_E="$(printf 'y\n' | AGENT_BOOTSTRAP_STDIN_IS_TTY=1 AGENT_BOOTSTRAP_PKG_MGR=apt PATH="$STUB_E" "$BASH_BIN" "$SETUP" --bootstrap 2>&1)"
+RC_E=$?
+[[ $RC_E -eq 0 && "$OUT_E" == *"Package manager: apt"* ]]
+check "apt-branch-detected-via-seam" $?
+[[ "$(cat "$LOG_E")" == "MOCK_APT: install -y gh" ]]
+check "apt-branch-invokes-mocked-apt-get-via-sudo" $?
+rm -rf "$STUB_E" "$LOG_E"
+
+echo
+echo "=== (f) unsupported package manager (AGENT_BOOTSTRAP_PKG_MGR=\"\" seam) -> exit 1, missing deps named, zero installs ==="
+STUB_F="$(safe_mktemp_d)" || { echo "FAIL: mktemp -d"; exit 1; }
+build_stub "$STUB_F" sqlite3 jq gitleaks
+OUT_F="$(AGENT_BOOTSTRAP_PKG_MGR="" PATH="$STUB_F" "$BASH_BIN" "$SETUP" --bootstrap 2>&1)"
+RC_F=$?
+[[ $RC_F -eq 1 && "$OUT_F" == *"No supported package manager detected"*"gh"* ]]
+check "unsupported-pkg-mgr-exit-1-named" $?
+rm -rf "$STUB_F"
+
+echo
+echo "=== (g) local-layer-export.sh happy path: hooks/plugins/skills all render from synthetic fixtures ==="
+FIX_G="$(safe_mktemp_d)" || { echo "FAIL: mktemp -d"; exit 1; }
+cat > "$FIX_G/settings.json" <<'JSON'
+{"hooks":{"SessionStart":[{"matcher":"*","hooks":[
+  {"type":"command","command":"\"/some/path/adapter.sh\" agent-session-start.sh"}
+]}]}}
+JSON
+mkdir -p "$FIX_G/cache/market/agent-harness/0.5.4" "$FIX_G/cache/market/agent-harness/0.5.5"
+mkdir -p "$FIX_G/skills/spec" "$FIX_G/skills/supervise"
+OUT_G_FILE="$FIX_G/out.yml"
+OUT_G="$(AGENT_GLOBAL_SETTINGS="$FIX_G/settings.json" AGENT_PLUGIN_CACHE_ROOT="$FIX_G/cache" AGENT_GLOBAL_SKILLS_DIR="$FIX_G/skills" bash "$EXPORTER" "$OUT_G_FILE" 2>&1)"
+RC_G=$?
+[[ $RC_G -eq 0 && -f "$OUT_G_FILE" ]]
+check "export-happy-path-exit-0-file-written" $?
+[[ "$(cat "$OUT_G_FILE")" == *'event: "SessionStart"'* && "$(cat "$OUT_G_FILE")" == *'command: "agent-session-start.sh"'* ]]
+check "export-hooks-rendered" $?
+[[ "$(cat "$OUT_G_FILE")" == *'name: "agent-harness"'* && "$(cat "$OUT_G_FILE")" == *'version: "0.5.5"'* ]]
+check "export-plugins-rendered-latest-version" $?
+[[ "$(cat "$OUT_G_FILE")" == *'- "spec"'* && "$(cat "$OUT_G_FILE")" == *'- "supervise"'* ]]
+check "export-skills-rendered" $?
+[[ "$(cat "$OUT_G_FILE")" != *"/some/path/"* ]]
+check "export-no-absolute-paths-leaked" $?
+
+echo
+echo "=== (h) ANTI-VACUOUS RED PROBE: secret in a hook command -> export REFUSES to save (paired with (g)'s clean control) ==="
+# gitleaks-safe fixture: assemble the synthetic key at runtime (${Z} splice
+# convention, cf. PR#103) so the contiguous sk-ant- pattern — which this repo's
+# own gitleaks.toml rule (added by this very wave) now catches — never exists
+# as a literal in this committed file. The rendered fixture still carries the
+# full pattern, so the exporter's refusal path is exercised unchanged.
+Z="ant"
+FAKE_KEY="sk-${Z}-api03-mOCegejpkfgCrZiEYKwqG0EIwv31lctdBUbkfLnirNrujjqAXVZQ8N52CWiQDaFXWDivw5TJfAMXJL4uQFyrdHjWfJz1R4B"
+printf '{"hooks":{"SessionStart":[{"matcher":"*","hooks":[\n  {"type":"command","command":"\\"/some/path/adapter.sh\\" leaky-hook.sh --key=%s"}\n]}]}}\n' "$FAKE_KEY" > "$FIX_G/leaky-settings.json"
+OUT_H_FILE="$FIX_G/leaky-out.yml"
+OUT_H="$(AGENT_GLOBAL_SETTINGS="$FIX_G/leaky-settings.json" AGENT_PLUGIN_CACHE_ROOT="$FIX_G/no-cache" AGENT_GLOBAL_SKILLS_DIR="$FIX_G/no-skills" bash "$EXPORTER" "$OUT_H_FILE" 2>&1)"
+RC_H=$?
+[[ $RC_H -eq 1 && "$OUT_H" == *"REFUSED"* ]]
+check "red-probe-secret-injection-refused-exit-1" $?
+[[ ! -f "$OUT_H_FILE" ]]
+check "red-probe-secret-injection-file-not-written" $?
+rm -rf "$FIX_G"
+
+echo
+echo "=== (i) local-layer-export.sh fail-closed when gitleaks itself is absent ==="
+STUB_I="$(safe_mktemp_d)" || { echo "FAIL: mktemp -d"; exit 1; }
+build_stub "$STUB_I" sqlite3 jq
+FIX_I="$(safe_mktemp_d)" || { echo "FAIL: mktemp -d"; exit 1; }
+OUT_I_FILE="$FIX_I/out.yml"
+OUT_I="$(PATH="$STUB_I" AGENT_GLOBAL_SETTINGS=/nonexistent/settings.json AGENT_PLUGIN_CACHE_ROOT=/nonexistent/cache AGENT_GLOBAL_SKILLS_DIR=/nonexistent/skills "$BASH_BIN" "$EXPORTER" "$OUT_I_FILE" 2>&1)"
+RC_I=$?
+[[ $RC_I -eq 2 && "$OUT_I" == *"gitleaks not installed"* ]]
+check "export-failclosed-no-gitleaks" $?
+[[ ! -f "$OUT_I_FILE" ]]
+check "export-failclosed-file-not-written" $?
+rm -rf "$STUB_I" "$FIX_I"
+
+echo
+echo "=== (j) setup.sh --doctor is unaffected: still exit 0, still read-only (scratch-HOME snapshot) ==="
+SCRATCH_J="$(safe_mktemp_d)" || { echo "FAIL: mktemp -d"; exit 1; }
+BEFORE_J="$(find "$SCRATCH_J" -mindepth 1 | sort)"
+OUT_J="$(HOME="$SCRATCH_J" PYTHONDONTWRITEBYTECODE=1 AGENT_PLUGIN_CACHE_ROOT="$SCRATCH_J/no-cache" AGENT_GLOBAL_SETTINGS=/nonexistent/settings.json AGENT_CLAUDE_USER_CONFIG="$SCRATCH_J/.claude.json" "$BASH_BIN" "$SETUP" --doctor 2>&1)"
+RC_J=$?
+AFTER_J="$(find "$SCRATCH_J" -mindepth 1 | sort)"
+[[ $RC_J -eq 0 ]]
+check "doctor-still-exit-0-after-bootstrap-changes" $?
+[[ "$BEFORE_J" == "$AFTER_J" ]]
+check "doctor-still-read-only-after-bootstrap-changes" $?
+rm -rf "$SCRATCH_J"
+
+echo
+echo "=== Results: $PASS passed, $FAIL failed ==="
+[[ "$FAIL" -eq 0 ]]
