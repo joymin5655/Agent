@@ -423,8 +423,20 @@ OUT_O="$(bash "$SETUP" --doctor 2>&1)"
 GH_PATH="$(command -v gh)"
 [[ "$OUT_O" == *"[PASS"*"gh — $GH_PATH"* ]]
 check "gh-present-pass" $?
-OUT_O2="$(PATH=/usr/bin:/bin bash "$SETUP" --doctor 2>&1)"
+# PATH=/usr/bin:/bin alone is not a reliable "gh absent" simulation: GitHub-hosted
+# ubuntu runners ship gh preinstalled at /usr/bin/gh (unlike a Homebrew-installed
+# gh on macOS, which lives outside /usr/bin and /bin). Build an explicit sandbox
+# PATH that mirrors every other /usr/bin and /bin binary via symlink but omits gh,
+# so the "absent" case holds regardless of where the host happens to put gh.
+GH_LESS_PATH="$(mktemp -d)"
+for bin in /usr/bin/* /bin/*; do
+    name="$(basename "$bin")"
+    [[ "$name" == "gh" ]] && continue
+    ln -sf "$bin" "$GH_LESS_PATH/$name" 2>/dev/null
+done
+OUT_O2="$(PATH="$GH_LESS_PATH" bash "$SETUP" --doctor 2>&1)"
 RC_O2=$?
+rm -rf "$GH_LESS_PATH"
 [[ $RC_O2 -eq 0 && "$OUT_O2" == *"[WARN"*"gh — not found"*"brew install gh"* ]]
 check "gh-absent-warn-not-fail" $?
 
