@@ -131,6 +131,30 @@ printf '%s\n' "$OUT" | tail -n1 | grep -qE '^harness_score: 0$'; check "target-a
 # unanchored bypass closed: substring-y 'agents' must NOT classify agents/reviewer.md as on-target
 OUT="$(cd "$G" && GRADE_SKIP_GITLEAKS=1 bash core/tests/grade.sh --base "$BASE" --target 'agents' 2>&1)"
 printf '%s\n' "$OUT" | grep -qE '^harness_score: 0$'; check "unanchored-target-not-fooled" $?
+# C4 RESIDUAL (round-3): a target admitting a BATTERY but not grade.sh itself must
+# still be refused — every file under core/tests/ is executed as scoring code. The
+# old 6-named-file list let 'core/tests/sneaky\.sh' through; the ls-files enumeration
+# now catches it (sneaky.sh is tracked under the surface).
+OUT="$(cd "$G" && GRADE_SKIP_GITLEAKS=1 bash core/tests/grade.sh --base "$BASE2" --target 'core/tests/sneaky\.sh' 2>&1)"
+printf '%s\n' "$OUT" | grep -qE 'admits the grader/verifier surface'; check "target-admits-battery-refused" $?
+printf '%s\n' "$OUT" | tail -n1 | grep -qE '^harness_score: 0$'; check "target-admits-battery-score-0" $?
+# a surface file that lands in the actual DIFF is refused even if a (hypothetically
+# mis-scoped) target matched it — the authoritative per-file check (Layer 2). Here a
+# committed edit to core/tests/grade.sh is caught as a surface violation, not merely
+# off-target, with the dedicated message.
+( cd "$G" && printf '\n# tamper\n' >> core/tests/grade.sh && git add -A && git commit -qm surface-edit )
+BASE3="$(cd "$G" && git rev-parse HEAD~1)"
+OUT="$(cd "$G" && GRADE_SKIP_GITLEAKS=1 bash core/tests/grade.sh --base "$BASE3" --target 'agents/.*' 2>&1)"
+printf '%s\n' "$OUT" | grep -qE 'changed grader/verifier surface file'; check "surface-file-in-diff-refused" $?
+( cd "$G" && git reset -q --hard HEAD~1 )   # drop the tamper commit; restore grade.sh
+# git failure inside INTEGRITY fails CLOSED, not open (round-3 LOW): a git stub that
+# errors must not let the phase proceed. A PATH-first fake git returning 1 trips the
+# first INTEGRITY git call (surface enumeration).
+FAKEBIN="$TMP_ROOT/fakebin"; mkdir -p "$FAKEBIN"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 1' > "$FAKEBIN/git"; chmod +x "$FAKEBIN/git"
+OUT="$(cd "$G" && PATH="$FAKEBIN:$PATH" GRADE_SKIP_GITLEAKS=1 bash core/tests/grade.sh --base "$BASE" --target 'agents/.*' 2>&1)"
+printf '%s\n' "$OUT" | grep -qiE 'fail-closed'; check "git-error-fails-closed" $?
+printf '%s\n' "$OUT" | tail -n1 | grep -qE '^harness_score: 0$'; check "git-error-score-0" $?
 
 echo
 echo "=== (f2) INTEGRITY fail-closed: no boundary (C1), assume-unchanged (C2), dirty, untracked, bad base ==="
@@ -241,7 +265,11 @@ echo
 echo "=== (g3) DRIFT GATE: no GATE battery may appear as a guard_for target ==="
 # A guard that is also a GATE battery creates a second, unreachable verdict path
 # (the GATE short-circuit runs first) — the 2026-08-09 vacuous-parity decision.
-GATE_SET="sanitize-audit.sh adapter-parity.sh hook-config-test.sh post-commit-autosync-test.sh"
+# Extract GATE_SET straight from grade.sh's GATE_BATTERIES array rather than mirror
+# it here, so the C8 additions (loop-write-guard-test / loop-ledger-test) can't drift
+# out of this drift-gate (round-3 review Major).
+GATE_SET="$(sed -n 's/^GATE_BATTERIES=(\(.*\))/\1/p' "$GRADE")"
+[[ -n "$GATE_SET" ]]; check "gate-set-extracted-from-grade" $?
 gate_in_map=0
 while IFS= read -r b; do
   for g in $GATE_SET; do

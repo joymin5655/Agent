@@ -163,6 +163,9 @@ cmd_append() {
     # (5 TSV columns, hex-or-'-' commit, numeric score, integer duration, status
     # enum). Without this, a row hand-appended past the CLI (byte-pure append, so
     # the write guard allows it) is laundered into notarized history (sec C6).
+    # Field 5 (description) is NOT re-checked for the write-path 80-char cap: a long
+    # description is cosmetic, not a TSV-injection vector (an embedded tab pushes
+    # NF>5 and is already rejected). Accepted gap (round-3 review minor).
     if [[ "$have_lines" -gt "$want_lines" ]]; then
       local bad_row
       bad_row="$(tail -n +"$((want_lines + 1))" "$file" | awk -F'\t' '

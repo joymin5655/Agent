@@ -211,16 +211,30 @@ if [[ "$HERMETIC" != "1" ]]; then
     printf 'INTEGRITY — real grading requires --base <ref> and --target <regex> (or GRADE_HERMETIC=1 for scoring-logic tests); refusing to score without a boundary (fail-closed)\n' >&2
     emit_score_and_exit 0
   fi
-  # C4: a TARGET that admits the grader/verifier surface would let a candidate edit
-  # the code that scores it and still clear the boundary. Reject such a target.
-  for surface in core/tests/grade.sh evals/failure-modes.yaml \
-                 core/hooks/loop-write-guard.py core/infra/loop-ledger.sh \
-                 hooks/hooks.json adapters/claude-code/adapter.sh; do
+  # C4: a TARGET must not admit ANY path grade.sh executes or reads as scoring input.
+  # EVERY battery under core/tests/ is executed against the WORKING TREE (run_battery),
+  # and evals/ holds the rubric + datasets — all of it is scoring code, not just the
+  # six enforcement files the first fix named. A regex like 'core/tests/.*-test\.sh'
+  # admits a guard battery (but not grade.sh), so it slipped the named-file list yet
+  # let a candidate neuter the code that scores it. Enumerate the TRACKED surface and
+  # reject a target that fully-matches any of it. (Round-3 security review 2026-08-10;
+  # untracked additions are already caught by the dirty-tree check below.)
+  surface_list="$(git -C "$REPO_ROOT" ls-files -- \
+      'core/tests/*' 'evals/*' \
+      'core/hooks/loop-write-guard.py' 'core/hooks/pre-tool-guard.sh' \
+      'core/infra/loop-ledger.sh' 'hooks/hooks.json' \
+      'adapters/claude-code/adapter.sh' 2>/dev/null)"
+  if [[ $? -ne 0 ]]; then
+    printf 'INTEGRITY — git ls-files failed; cannot enumerate the grader surface (fail-closed)\n' >&2
+    emit_score_and_exit 0
+  fi
+  while IFS= read -r surface; do
+    [[ -z "$surface" ]] && continue
     if printf '%s' "$surface" | grep -qxE "$TARGET_RE"; then
       printf 'INTEGRITY — --target regex admits the grader/verifier surface (%s); a loop must not target the code that scores it (fail-closed)\n' "$surface" >&2
       emit_score_and_exit 0
     fi
-  done
+  done <<< "$surface_list"
   tree_state="$(git -C "$REPO_ROOT" status --porcelain 2>/dev/null)"
   if [[ $? -ne 0 ]]; then
     printf 'INTEGRITY — git status failed; cannot verify a clean tree (fail-closed)\n' >&2
@@ -231,8 +245,15 @@ if [[ "$HERMETIC" != "1" ]]; then
     emit_score_and_exit 0
   fi
   # C2: assume-unchanged (lowercase tag) / skip-worktree (S) make a modified file
-  # invisible to both `status` and `diff`. `git ls-files -v` reveals the bit.
-  if git -C "$REPO_ROOT" ls-files -v | grep -qE '^([a-z]|S)'; then
+  # invisible to both `status` and `diff`. `git ls-files -v` reveals the bit. Capture
+  # first (not `git ... | grep` inline) so a git error is not masked by grep's exit —
+  # the surrounding phase is fail-closed, this step must be too (round-3 review LOW).
+  au_bits="$(git -C "$REPO_ROOT" ls-files -v 2>/dev/null)"
+  if [[ $? -ne 0 ]]; then
+    printf 'INTEGRITY — git ls-files -v failed; cannot verify assume-unchanged/skip-worktree bits (fail-closed)\n' >&2
+    emit_score_and_exit 0
+  fi
+  if printf '%s\n' "$au_bits" | grep -qE '^([a-z]|S)'; then
     printf 'INTEGRITY — assume-unchanged/skip-worktree bit(s) set; a modified file could hide from status and diff (fail-closed)\n' >&2
     emit_score_and_exit 0
   fi
@@ -241,13 +262,26 @@ if [[ "$HERMETIC" != "1" ]]; then
     printf 'INTEGRITY — git diff %s..HEAD failed; cannot verify boundary (fail-closed)\n' "$BASE_REF" >&2
     emit_score_and_exit 0
   fi
+  # Authoritative surface check (round-3 review, C4 blocker): the up-front TARGET_RE
+  # test above rejects a mis-scoped target, but the guarantee that a candidate never
+  # edits the code that scores it must rest on the ACTUAL diff, not on reasoning about
+  # a regex. Any changed file under the executed/scoring surface is a violation even
+  # if it matches TARGET_RE. Mirrors loop-write-guard.py's _guarded_dirs/_guarded_files.
+  guarded_surface_re='^(core/tests/|evals/|core/hooks/loop-write-guard\.py$|core/hooks/pre-tool-guard\.sh$|core/infra/loop-ledger\.sh$|hooks/hooks\.json$|adapters/claude-code/adapter\.sh$)'
   offtarget=""
+  onsurface=""
   while IFS= read -r f; do
     [[ -z "$f" ]] && continue
-    if ! printf '%s' "$f" | grep -qxE "$TARGET_RE"; then
+    if printf '%s' "$f" | grep -qE "$guarded_surface_re"; then
+      onsurface="$onsurface $f"
+    elif ! printf '%s' "$f" | grep -qxE "$TARGET_RE"; then
       offtarget="$offtarget $f"
     fi
   done <<< "$changed"
+  if [[ -n "$onsurface" ]]; then
+    printf 'TARGET-VIOLATION — candidate changed grader/verifier surface file(s):%s (a loop must not edit the code that scores it)\n' "$onsurface" >&2
+    emit_score_and_exit 0
+  fi
   if [[ -n "$offtarget" ]]; then
     printf 'TARGET-VIOLATION — off-target file(s) changed:%s\n' "$offtarget" >&2
     emit_score_and_exit 0
@@ -259,6 +293,14 @@ if [[ "$HERMETIC" != "1" ]]; then
   # vouches for (security review 2026-08-10, unfinished item #2).
   find "$REPO_ROOT/core" "$REPO_ROOT/evals" "$REPO_ROOT/adapters" -name __pycache__ -type d -prune -exec rm -rf {} + 2>/dev/null
   find "$REPO_ROOT/core" "$REPO_ROOT/evals" "$REPO_ROOT/adapters" -name '*.pyc' -type f -delete 2>/dev/null
+  # verify the purge actually landed — a swallowed rm failure (permissions) would
+  # leave a poisoned cache that python still loads. Fail closed rather than trust it
+  # (round-3 review minor). Loose *.pyc are best-effort; a lingering __pycache__ dir
+  # is the shadowing vector, so its survival is the fail-closed condition.
+  if find "$REPO_ROOT/core" "$REPO_ROOT/evals" "$REPO_ROOT/adapters" -name __pycache__ -type d -print 2>/dev/null | grep -q .; then
+    printf 'INTEGRITY — could not purge __pycache__ under the executed surface; a stale .pyc could shadow verified source (fail-closed)\n' >&2
+    emit_score_and_exit 0
+  fi
 fi
 
 # --- GATE phase: the regression floor. Any failure => harness_score 0 (discard). ---
