@@ -24,6 +24,12 @@
 #   AGENT_PLUGIN_CACHE_ROOT   plugin cache root (default: $HOME/.claude/plugins/cache)
 #   AGENT_GLOBAL_SKILLS_DIR   skills dir (default: $HOME/.claude/skills)
 #   AGENT_GITLEAKS_CONFIG     gitleaks config (default: <repo-root>/gitleaks.toml)
+#   AGENT_EXPORT_SCANNER      scanner binary/path (default: gitleaks) — a test seam
+#                             ONLY: production behavior (fail-closed if the named
+#                             scanner is absent) is unchanged; this just lets a
+#                             gitleaks-less CI runner point at a deterministic stub
+#                             that speaks the same `detect --no-git --source <f>`
+#                             CLI surface, instead of skipping real coverage.
 #
 # Exit 0: manifest rendered, scanned clean, written to <output-file>.
 # Exit 1: rendered manifest failed the gitleaks scan — NOT written; findings printed.
@@ -39,8 +45,9 @@ if [[ -z "$OUT" ]]; then
     exit 2
 fi
 
-if ! command -v gitleaks >/dev/null 2>&1; then
-    echo "ERROR: gitleaks not installed — refusing to export (cannot verify 0 findings without it)." >&2
+SCANNER="${AGENT_EXPORT_SCANNER:-gitleaks}"
+if ! command -v "$SCANNER" >/dev/null 2>&1; then
+    echo "ERROR: $SCANNER not installed — refusing to export (cannot verify 0 findings without it)." >&2
     echo "Install: brew install gitleaks (macOS) or https://github.com/gitleaks/gitleaks/releases" >&2
     exit 2
 fi
@@ -165,7 +172,7 @@ fi
 # --- save gate: gitleaks-scan the RENDERED file before it ever reaches $OUT ---
 CONFIG_ARGS=()
 [[ -f "$GITLEAKS_CONFIG" ]] && CONFIG_ARGS=(--config "$GITLEAKS_CONFIG")
-GL_OUT="$(gitleaks detect --no-git --source "$RENDERED" "${CONFIG_ARGS[@]}" 2>&1)"
+GL_OUT="$("$SCANNER" detect --no-git --source "$RENDERED" "${CONFIG_ARGS[@]}" 2>&1)"
 GL_RC=$?
 
 if [[ $GL_RC -ne 0 ]]; then

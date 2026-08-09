@@ -25,13 +25,25 @@
 #       just because this suite likely runs on macOS.
 #   (f) unsupported package manager -> exit 1, missing deps named, zero installs.
 #   (g) local-layer-export.sh happy path: hooks/plugins/skills all render
-#       correctly from synthetic fixtures (never the real global config).
+#       correctly from synthetic fixtures (never the real global config). Uses
+#       real gitleaks when the host has it; on a gitleaks-less host (CI), the
+#       AGENT_EXPORT_SCANNER seam points the exporter at a deterministic stub
+#       (see build_scanner_stub below) so this stays a real pass/fail check
+#       instead of universally failing closed — mirrors gitleaks-fire-test.sh's
+#       "SKIP loud, don't silently pass" spirit, but here we CAN keep exercising
+#       the code path via the seam rather than skipping it outright.
 #   (h) local-layer-export.sh ANTI-VACUOUS RED PROBE: a secret embedded in a
 #       hook command string must make the exporter REFUSE to save (file never
 #       created), paired with the (g) clean-fixture CONTROL proving the probe
-#       isn't an always-fail.
+#       isn't an always-fail. Same real-or-stub scanner choice as (g) — the stub
+#       matches on the identical sk-ant- pattern this repo's own gitleaks.toml
+#       rule catches, so the refusal path is exercised for the right reason on
+#       either host.
 #   (i) local-layer-export.sh fail-closed when gitleaks itself is absent (cannot
-#       claim "0 findings" without running the scanner).
+#       claim "0 findings" without running the scanner). Deliberately does NOT
+#       use the AGENT_EXPORT_SCANNER seam — it PATH-stubs gitleaks out instead,
+#       so this section always exercises the genuine absent-scanner code path
+#       regardless of what (g)/(h) chose.
 #   (j) setup.sh --doctor is unaffected by any of the above — still exit 0, still
 #       read-only under a scratch-HOME snapshot (regression guard: bootstrap must
 #       never leak side effects into the diagnosis path).
@@ -68,16 +80,75 @@ safe_mktemp_d() {
 # real absolute-path command bootstrap()/doctor() need, EXCLUDING whatever the
 # caller wants to simulate as missing (by simply not listing it). Mirrors the
 # allowlist-only PATH stub pattern from plugin-path-install-test.sh.
+#
+# BASE_CMDS (tools this script's OWN plumbing genuinely executes — mkdir, cat,
+# sed, ...) are symlinked to the real host binary only, same as always: if one
+# is truly absent the caller has a bigger problem than this test. The EXTRA
+# args (bootstrap-managed deps: gitleaks/sqlite3/jq/gh), by contrast, are only
+# ever PRESENCE-checked by setup.sh's bootstrap()/doctor() (`command -v`, never
+# invoked) when a caller lists them here to mean "this dep already exists" —
+# so on a host that genuinely lacks one (e.g. a CI runner with no gitleaks
+# binary at all), a harmless no-op placeholder satisfies that same contract
+# without depending on host tooling the fixture never actually needed to run.
 BASE_CMDS="mkdir dirname basename cat chmod cmp date git grep head paste python3 rm sed tail tr xargs cp sort cut wc uname find"
 build_stub() {
   local dir="$1"; shift
   local c p
-  for c in $BASE_CMDS "$@"; do
+  for c in $BASE_CMDS; do
     p="$(command -v "$c" 2>/dev/null || true)"
     [[ "$p" == /* ]] && ln -sf "$p" "$dir/$c"
   done
+  for c in "$@"; do
+    p="$(command -v "$c" 2>/dev/null || true)"
+    if [[ "$p" == /* ]]; then
+      ln -sf "$p" "$dir/$c"
+    else
+      printf '#!/bin/sh\nexit 0\n' > "$dir/$c"
+      chmod +x "$dir/$c"
+    fi
+  done
 }
 BASH_BIN="$(command -v bash)"
+
+# build_scanner_stub <dir> — a deterministic stand-in for gitleaks that speaks
+# just enough of its CLI surface for local-layer-export.sh's call site
+# (`detect --no-git --source <file> [--config <path>]`): find the --source
+# file, grep it for the exact pattern this repo's OWN gitleaks.toml
+# anthropic-api-key rule catches (sk-ant-[A-Za-z0-9_-]{20,}), exit 1 (leak
+# found — same as real gitleaks) if present, exit 0 (clean) otherwise. Used
+# ONLY when the host has no real gitleaks (see the seam selection below) —
+# CI-portability fix, not a permanent replacement for the real fire-test.
+build_scanner_stub() {
+  local dir="$1"
+  cat > "$dir/stub-scanner.sh" <<'EOF'
+#!/bin/sh
+src=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --source) src="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+[ -n "$src" ] || exit 2
+grep -qE 'sk-ant-[A-Za-z0-9_-]{20,}' "$src" && exit 1
+exit 0
+EOF
+  chmod +x "$dir/stub-scanner.sh"
+}
+
+# Seam selection: real gitleaks when the host has it (so this battery still
+# doubles as a real fire-test locally), the deterministic stub otherwise (so
+# a gitleaks-less CI runner exercises the same pass/fail branches instead of
+# universally failing closed on every (g)/(h) call). A plain scalar (not an
+# array) — macOS ships bash 3.2, where `"${arr[@]}"` on an EMPTY array under
+# `set -u` throws "unbound variable" (fixed only in bash 4.4+); a scalar has
+# no such trap and needs no conditional-expansion idiom at the call sites.
+SCANNER_SEAM_VALUE="gitleaks"
+if ! command -v gitleaks >/dev/null 2>&1; then
+  STUB_SCANNER_DIR="$(safe_mktemp_d)" || { echo "FAIL: mktemp -d"; exit 1; }
+  build_scanner_stub "$STUB_SCANNER_DIR"
+  SCANNER_SEAM_VALUE="$STUB_SCANNER_DIR/stub-scanner.sh"
+fi
 
 echo "=== (a) all dependencies present -> short-circuit message, no OS detection needed ==="
 STUB_A="$(safe_mktemp_d)" || { echo "FAIL: mktemp -d"; exit 1; }
@@ -207,7 +278,7 @@ JSON
 mkdir -p "$FIX_G/cache/market/agent-harness/0.5.4" "$FIX_G/cache/market/agent-harness/0.5.5"
 mkdir -p "$FIX_G/skills/spec" "$FIX_G/skills/supervise"
 OUT_G_FILE="$FIX_G/out.yml"
-OUT_G="$(AGENT_GLOBAL_SETTINGS="$FIX_G/settings.json" AGENT_PLUGIN_CACHE_ROOT="$FIX_G/cache" AGENT_GLOBAL_SKILLS_DIR="$FIX_G/skills" bash "$EXPORTER" "$OUT_G_FILE" 2>&1)"
+OUT_G="$(AGENT_GLOBAL_SETTINGS="$FIX_G/settings.json" AGENT_PLUGIN_CACHE_ROOT="$FIX_G/cache" AGENT_GLOBAL_SKILLS_DIR="$FIX_G/skills" AGENT_EXPORT_SCANNER="$SCANNER_SEAM_VALUE" bash "$EXPORTER" "$OUT_G_FILE" 2>&1)"
 RC_G=$?
 [[ $RC_G -eq 0 && -f "$OUT_G_FILE" ]]
 check "export-happy-path-exit-0-file-written" $?
@@ -231,7 +302,7 @@ Z="ant"
 FAKE_KEY="sk-${Z}-api03-mOCegejpkfgCrZiEYKwqG0EIwv31lctdBUbkfLnirNrujjqAXVZQ8N52CWiQDaFXWDivw5TJfAMXJL4uQFyrdHjWfJz1R4B"
 printf '{"hooks":{"SessionStart":[{"matcher":"*","hooks":[\n  {"type":"command","command":"\\"/some/path/adapter.sh\\" leaky-hook.sh --key=%s"}\n]}]}}\n' "$FAKE_KEY" > "$FIX_G/leaky-settings.json"
 OUT_H_FILE="$FIX_G/leaky-out.yml"
-OUT_H="$(AGENT_GLOBAL_SETTINGS="$FIX_G/leaky-settings.json" AGENT_PLUGIN_CACHE_ROOT="$FIX_G/no-cache" AGENT_GLOBAL_SKILLS_DIR="$FIX_G/no-skills" bash "$EXPORTER" "$OUT_H_FILE" 2>&1)"
+OUT_H="$(AGENT_GLOBAL_SETTINGS="$FIX_G/leaky-settings.json" AGENT_PLUGIN_CACHE_ROOT="$FIX_G/no-cache" AGENT_GLOBAL_SKILLS_DIR="$FIX_G/no-skills" AGENT_EXPORT_SCANNER="$SCANNER_SEAM_VALUE" bash "$EXPORTER" "$OUT_H_FILE" 2>&1)"
 RC_H=$?
 [[ $RC_H -eq 1 && "$OUT_H" == *"REFUSED"* ]]
 check "red-probe-secret-injection-refused-exit-1" $?
@@ -265,6 +336,8 @@ check "doctor-still-exit-0-after-bootstrap-changes" $?
 [[ "$BEFORE_J" == "$AFTER_J" ]]
 check "doctor-still-read-only-after-bootstrap-changes" $?
 rm -rf "$SCRATCH_J"
+
+[[ -n "${STUB_SCANNER_DIR:-}" ]] && rm -rf "$STUB_SCANNER_DIR"
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
