@@ -137,7 +137,7 @@ echo "=== 6d. control bytes in model id -> stripped from stderr and record ==="
 # \u001b = ESC (ANSI), \u009b = C1 single-byte CSI. JSON-escaped because the
 # strict JSON parser rejects raw control bytes — the escapes decode to the real
 # characters, which is exactly what the sanitizer must strip.
-printf '{"model":{"id":"claude-fable\\u001b[31m-x\\u009bZ"}}' | env \
+printf '{"model":{"id":"claude-fable\\u001b[31m-x\\u009bZ\\u202eRTL"}}' | env \
   AGENT_SESSION_TIER_SINK="$SINK" \
   AGENT_CLAUDE_SETTINGS="$EMPTY_SETTINGS" \
   python3 "$HOOK" >/dev/null 2>"$WORK/err6d"; rc=$?
