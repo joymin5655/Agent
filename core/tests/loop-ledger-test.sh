@@ -30,14 +30,14 @@ bash "$LEDGER" append --file "$F" --commit abc1234 --score 11.0 --duration 42 --
 [[ -f "$F" ]]; check "file-created" $?
 head -n1 "$F" | grep -qxF $'commit\tharness_score\tduration_s\tstatus\tdescription'; check "header-schema" $?
 [[ "$(wc -l < "$F" | tr -d ' ')" -eq 2 ]]; check "one-header-one-row" $?
-sed -n '2p' "$F" | grep -qE '^abc1234\t11\.0\t42\tkeep\tbaseline run$'; check "row-content" $?
+sed -n '2p' "$F" | grep -qE $'^abc1234\t11\\.0\t42\tkeep\tbaseline run$'; check "row-content" $?
 
 echo
 echo "=== (b) second append adds a row; header NOT duplicated (append-only) ==="
 bash "$LEDGER" append --file "$F" --commit def5678 --score 10.5 --duration 30 --status discard --desc "regressed silent-drop"
 [[ "$(wc -l < "$F" | tr -d ' ')" -eq 3 ]]; check "three-lines-after-second" $?
 [[ "$(grep -c $'^commit\t' "$F")" -eq 1 ]]; check "header-once" $?
-grep -qE '^def5678\t10\.5\t30\tdiscard\t' "$F"; check "keep-and-discard-both-recorded" $?
+grep -qE $'^def5678\t10\\.5\t30\tdiscard\t' "$F"; check "keep-and-discard-both-recorded" $?
 
 echo
 echo "=== (c) status enum enforced (no silent accept of a bad status) ==="
