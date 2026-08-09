@@ -110,6 +110,14 @@ BASE="$(cd "$G" && git rev-parse HEAD~1)"
 # on-target-only candidate under a SAFE target -> real checklist score 10.0
 OUT="$(cd "$G" && GRADE_SKIP_GITLEAKS=1 bash core/tests/grade.sh --base "$BASE" --target 'agents/.*' 2>&1)"
 printf '%s\n' "$OUT" | grep -qE '^harness_score: 10\.0$'; check "on-target-passes-boundary" $?
+# planted __pycache__ under the executed surface is GITIGNORED — invisible to the
+# clean-tree check — yet python would load a crafted .pyc instead of the verified
+# source. The INTEGRITY phase purges it BEFORE any battery executes.
+( cd "$G" && printf '__pycache__/\n*.pyc\n' > .gitignore && git add .gitignore && git commit -qm gitignore
+  mkdir -p core/hooks/__pycache__ && echo poison > core/hooks/__pycache__/hook_config.cpython-312.pyc )
+OUT="$(cd "$G" && GRADE_SKIP_GITLEAKS=1 bash core/tests/grade.sh --base HEAD --target 'agents/.*' 2>&1)"
+printf '%s\n' "$OUT" | grep -qE '^harness_score: 10\.0$'; check "ignored-pycache-does-not-block" $?
+[[ ! -d "$G/core/hooks/__pycache__" ]]; check "planted-pycache-purged" $?
 # add an OFF-target commit; the same safe target must discard and name it
 ( cd "$G" && echo drift > core/tests/sneaky.sh && git add -A && git commit -qm off-target )
 BASE2="$(cd "$G" && git rev-parse HEAD~1)"

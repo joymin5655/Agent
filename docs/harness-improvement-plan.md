@@ -324,9 +324,9 @@ autoresearch 패턴을 이 레포 자신에게 적용한다: **에이전트가 �
 1. git 상태 확인(현재 브랜치/커밋)
 2. 개선 아이디어 1건 선택 → **TARGET 파일만** 편집
 3. `git commit`
-4. `bash core/tests/grade.sh > run.log 2>&1` (출력 리다이렉트 — 컨텍스트 오염 금지)
+4. `bash core/tests/grade.sh --base <미션 시작 ref> --target '<TARGET regex>' > run.log 2>&1` (출력 리다이렉트 — 컨텍스트 오염 금지. **--base/--target 필수** — 무인자 호출은 boundary 기둥③이 실행되지 않아 grade.sh가 fail-closed 0점을 방출한다, 보안리뷰 C1)
 5. `grep '^harness_score:' run.log` — 빈 출력이면 크래시 → `tail -n 50 run.log`로 원인 확인, 크래시 정책 적용
-6. TARGET-외 diff 검사에 걸리면 무조건 discard
+6. TARGET-외 diff 검사(INTEGRITY phase — step 4의 --base/--target이 활성화)에 걸리면 무조건 discard
 7. `.agent/loop/results.tsv`에 기록 (results.tsv는 커밋하지 않음)
 8. 점수 개선(또는 동률+단순화)이면 keep — 브랜치 전진 / 아니면 `git reset --hard`
 9. 시도 캡(N=5)·타임아웃·circuit-breaker 조건 확인 후 반복 또는 종료 → 종료 시 요약 보고 + `/wrap` 제안

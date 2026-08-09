@@ -192,36 +192,6 @@ run_battery() {
   ( bash "$script" ) >/dev/null 2>&1
 }
 
-# --- GATE phase: the regression floor. Any failure => harness_score 0 (discard). ---
-# GATE set per §5.1: sanitize-audit, adapter-parity, hook-config-test,
-# post-commit-autosync, gitleaks. gitleaks is present-or-SKIP (a missing scanner is
-# not a pass, but its absence must not silently fail the loop offline).
-# The L-2 enforcement surface (loop-write-guard, loop-ledger) is in the GATE floor
-# too (C8, security review 2026-08-10): without it a candidate could silently break
-# the very guards that keep it from tampering, at zero score cost. GATE (not guard
-# map) keeps the 2026-08-09 "no GATE battery in the guard map" rule intact.
-GATE_BATTERIES=(sanitize-audit.sh adapter-parity.sh hook-config-test.sh post-commit-autosync-test.sh loop-write-guard-test.sh loop-ledger-test.sh)
-for g in "${GATE_BATTERIES[@]}"; do
-  if ! run_battery "$g"; then
-    printf 'GATE: FAIL — %s (regression floor breached)\n' "$g" >&2
-    emit_score_and_exit 0
-  fi
-done
-if [[ "${GRADE_SKIP_GITLEAKS:-}" != "1" ]]; then
-  if command -v gitleaks >/dev/null 2>&1; then
-    if ! ( gitleaks detect --no-git --source "$REPO_ROOT" --config "$REPO_ROOT/gitleaks.toml" ) >/dev/null 2>&1; then
-      printf 'GATE: FAIL — gitleaks (secret detected)\n' >&2
-      emit_score_and_exit 0
-    fi
-  else
-    # Surface the SKIP on STDOUT too (not only stderr): the loop consumes run.log,
-    # and a silently-absent secret scan reported alongside a clean score is exactly
-    # the vacuous-green/infra-as-verdict trap. A SKIP is visible and is not a pass.
-    printf 'gitleaks: SKIP (not installed) — regression floor has a gap this run\n'
-    printf 'GATE: SKIP — gitleaks not installed (not a pass)\n' >&2
-  fi
-fi
-
 # --- INTEGRITY phase (§5.1 pillar ③): the batteries execute the WORKING TREE, so
 # before trusting ANY verdict the grader must prove the tree it runs IS the
 # committed candidate, confined to its declared TARGET. This phase is now
@@ -234,6 +204,8 @@ fi
 # is clean incl. untracked (an untracked tamper executes yet hides from the diff);
 # (C2) no assume-unchanged/skip-worktree bit (which hides a modified file from BOTH
 # status and diff); (3) git failure fails CLOSED; (4) full-path anchored match.
+# This phase runs BEFORE the GATE phase: a tree that fails integrity must not get
+# to EXECUTE its (possibly tampered) batteries at all, not merely lose its score.
 if [[ "$HERMETIC" != "1" ]]; then
   if [[ $TARGET_SET -eq 0 || -z "$BASE_REF" ]]; then
     printf 'INTEGRITY — real grading requires --base <ref> and --target <regex> (or GRADE_HERMETIC=1 for scoring-logic tests); refusing to score without a boundary (fail-closed)\n' >&2
@@ -279,6 +251,43 @@ if [[ "$HERMETIC" != "1" ]]; then
   if [[ -n "$offtarget" ]]; then
     printf 'TARGET-VIOLATION — off-target file(s) changed:%s\n' "$offtarget" >&2
     emit_score_and_exit 0
+  fi
+  # gitignored run-state can still poison execution: a crafted __pycache__/*.pyc is
+  # invisible to every git check above (ignored), yet python loads it INSTEAD of the
+  # verified .py source when mtime/size match. Purge the caches under the executed
+  # surface (regenerable state, not source) so the batteries run only bytes git
+  # vouches for (security review 2026-08-10, unfinished item #2).
+  find "$REPO_ROOT/core" "$REPO_ROOT/evals" "$REPO_ROOT/adapters" -name __pycache__ -type d -prune -exec rm -rf {} + 2>/dev/null
+  find "$REPO_ROOT/core" "$REPO_ROOT/evals" "$REPO_ROOT/adapters" -name '*.pyc' -type f -delete 2>/dev/null
+fi
+
+# --- GATE phase: the regression floor. Any failure => harness_score 0 (discard). ---
+# GATE set per §5.1: sanitize-audit, adapter-parity, hook-config-test,
+# post-commit-autosync, gitleaks. gitleaks is present-or-SKIP (a missing scanner is
+# not a pass, but its absence must not silently fail the loop offline).
+# The L-2 enforcement surface (loop-write-guard, loop-ledger) is in the GATE floor
+# too (C8, security review 2026-08-10): without it a candidate could silently break
+# the very guards that keep it from tampering, at zero score cost. GATE (not guard
+# map) keeps the 2026-08-09 "no GATE battery in the guard map" rule intact.
+GATE_BATTERIES=(sanitize-audit.sh adapter-parity.sh hook-config-test.sh post-commit-autosync-test.sh loop-write-guard-test.sh loop-ledger-test.sh)
+for g in "${GATE_BATTERIES[@]}"; do
+  if ! run_battery "$g"; then
+    printf 'GATE: FAIL — %s (regression floor breached)\n' "$g" >&2
+    emit_score_and_exit 0
+  fi
+done
+if [[ "${GRADE_SKIP_GITLEAKS:-}" != "1" ]]; then
+  if command -v gitleaks >/dev/null 2>&1; then
+    if ! ( gitleaks detect --no-git --source "$REPO_ROOT" --config "$REPO_ROOT/gitleaks.toml" ) >/dev/null 2>&1; then
+      printf 'GATE: FAIL — gitleaks (secret detected)\n' >&2
+      emit_score_and_exit 0
+    fi
+  else
+    # Surface the SKIP on STDOUT too (not only stderr): the loop consumes run.log,
+    # and a silently-absent secret scan reported alongside a clean score is exactly
+    # the vacuous-green/infra-as-verdict trap. A SKIP is visible and is not a pass.
+    printf 'gitleaks: SKIP (not installed) — regression floor has a gap this run\n'
+    printf 'GATE: SKIP — gitleaks not installed (not a pass)\n' >&2
   fi
 fi
 
