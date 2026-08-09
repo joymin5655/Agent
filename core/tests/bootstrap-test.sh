@@ -329,6 +329,24 @@ check "export-failclosed-file-not-written" $?
 rm -rf "$STUB_I" "$FIX_I"
 
 echo
+echo "=== (i2) REGRESSION: missing AGENT_GITLEAKS_CONFIG path must scan without --config, not crash ==="
+# bash 3.2 + set -u: "${arr[@]}" on an empty array is an unbound-variable crash
+# inside the scan subshell, which used to masquerade as a scan REFUSAL (GL_RC=1,
+# empty findings). A missing config file must fall back to a config-less scan.
+FIX_I2="$(safe_mktemp_d)" || { echo "FAIL: mktemp -d"; exit 1; }
+cat > "$FIX_I2/settings.json" <<'JSON'
+{"hooks":{"SessionStart":[{"matcher":"*","hooks":[
+  {"type":"command","command":"\"/some/path/adapter.sh\" agent-session-start.sh"}
+]}]}}
+JSON
+OUT_I2_FILE="$FIX_I2/out.yml"
+OUT_I2="$(AGENT_GLOBAL_SETTINGS="$FIX_I2/settings.json" AGENT_PLUGIN_CACHE_ROOT="$FIX_I2/no-cache" AGENT_GLOBAL_SKILLS_DIR="$FIX_I2/no-skills" AGENT_GITLEAKS_CONFIG=/nonexistent/gitleaks.toml AGENT_EXPORT_SCANNER="$SCANNER_SEAM_VALUE" bash "$EXPORTER" "$OUT_I2_FILE" 2>&1)"
+RC_I2=$?
+[[ $RC_I2 -eq 0 && -f "$OUT_I2_FILE" && "$OUT_I2" != *"unbound variable"* ]]
+check "export-missing-config-falls-back-not-crash" $?
+rm -rf "$FIX_I2"
+
+echo
 echo "=== (j) setup.sh --doctor is unaffected: still exit 0, still read-only (scratch-HOME snapshot) ==="
 SCRATCH_J="$(safe_mktemp_d)" || { echo "FAIL: mktemp -d"; exit 1; }
 BEFORE_J="$(find "$SCRATCH_J" -mindepth 1 | sort)"

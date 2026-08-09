@@ -937,12 +937,20 @@ bootstrap() {
         downgrade_note="NOTE: stdin is not a terminal (non-interactive) — downgraded to --dry-run. Nothing was installed. Re-run interactively (or pass --dry-run explicitly to suppress this note)."
     fi
 
-    local -a installed=() skipped=()
+    local -a installed=() skipped=() failed=()
     for d in "${missing[@]}"; do
-        local install_cmd
+        local install_cmd=""
         case "$pkg_mgr" in
             brew) install_cmd="brew install $d" ;;
             apt)  install_cmd="sudo apt-get install -y $d" ;;
+            *)
+                # Unreachable via real OS detection (brew/apt/"" only) — but the
+                # AGENT_BOOTSTRAP_PKG_MGR seam is a public test hook, and a bogus
+                # value must fail loud, not eval "" and report "installed".
+                echo "  ERROR: unrecognized package manager '$pkg_mgr' — cannot install $d" >&2
+                failed+=("$d")
+                continue
+                ;;
         esac
         if [[ $effective_dry_run -eq 1 ]]; then
             echo "  [dry-run] would run: $install_cmd"
@@ -954,7 +962,7 @@ bootstrap() {
                 installed+=("$d")
             else
                 echo "  ERROR: install failed for $d (command: $install_cmd)" >&2
-                skipped+=("$d")
+                failed+=("$d")
             fi
         else
             echo "  ... skipped: $d"
@@ -967,7 +975,7 @@ bootstrap() {
         echo "=== Dry run complete — no installs performed ==="
         [[ -n "$downgrade_note" ]] && echo "$downgrade_note"
     else
-        echo "=== Bootstrap complete — installed: ${installed[*]:-none}; skipped: ${skipped[*]:-none} ==="
+        echo "=== Bootstrap complete — installed: ${installed[*]:-none}; skipped: ${skipped[*]:-none}; failed: ${failed[*]:-none} ==="
     fi
     return 0
 }

@@ -170,9 +170,14 @@ if [[ $RENDER_RC -ne 0 ]]; then
 fi
 
 # --- save gate: gitleaks-scan the RENDERED file before it ever reaches $OUT ---
-CONFIG_ARGS=()
-[[ -f "$GITLEAKS_CONFIG" ]] && CONFIG_ARGS=(--config "$GITLEAKS_CONFIG")
-GL_OUT="$("$SCANNER" detect --no-git --source "$RENDERED" "${CONFIG_ARGS[@]}" 2>&1)"
+# WHY: no array here — bash 3.2 (macOS /bin/bash) treats "${arr[@]}" on an
+# empty array as unbound under set -u, and the crash inside the $() subshell
+# would masquerade as a scan refusal (GL_RC=1, empty findings body).
+if [[ -f "$GITLEAKS_CONFIG" ]]; then
+    GL_OUT="$("$SCANNER" detect --no-git --source "$RENDERED" --config "$GITLEAKS_CONFIG" 2>&1)"
+else
+    GL_OUT="$("$SCANNER" detect --no-git --source "$RENDERED" 2>&1)"
+fi
 GL_RC=$?
 
 if [[ $GL_RC -ne 0 ]]; then
