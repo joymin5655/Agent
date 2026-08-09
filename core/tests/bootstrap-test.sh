@@ -398,6 +398,64 @@ check "export-hook-args-and-pii-not-leaked" $?
 rm -rf "$FIX_I3"
 
 echo
+echo "=== (i4) MED-3 followup: an ARG value ending in a script extension must NOT displace the script name ==="
+FIX_I4="$(safe_mktemp_d)" || { echo "FAIL: mktemp -d"; exit 1; }
+# last-token / last-extension heuristics would export "leaked.py" (the arg value);
+# stopping at the first flag keeps only the real script "real-hook.sh".
+cat > "$FIX_I4/settings.json" <<'JSON'
+{"hooks":{"SessionStart":[{"matcher":"*","hooks":[
+  {"type":"command","command":"\"/opt/x/real-hook.sh\" --config=/tmp/leaked.py"}
+]}]}}
+JSON
+OUT_I4_FILE="$FIX_I4/out.yml"
+OUT_I4="$(AGENT_GLOBAL_SETTINGS="$FIX_I4/settings.json" AGENT_PLUGIN_CACHE_ROOT="$FIX_I4/no-cache" AGENT_GLOBAL_SKILLS_DIR="$FIX_I4/no-skills" AGENT_EXPORT_SCANNER="$SCANNER_SEAM_VALUE" bash "$EXPORTER" "$OUT_I4_FILE" 2>&1)"
+RC_I4=$?
+[[ $RC_I4 -eq 0 && "$(cat "$OUT_I4_FILE")" == *'command: "real-hook.sh"'* && "$(cat "$OUT_I4_FILE")" != *leaked.py* ]]
+check "export-arg-extension-does-not-win" $?
+rm -rf "$FIX_I4"
+
+echo
+echo "=== (i5) an extension-less / piped-shell hook must stay VISIBLE (first-token basename), not silently vanish ==="
+FIX_I5="$(safe_mktemp_d)" || { echo "FAIL: mktemp -d"; exit 1; }
+cat > "$FIX_I5/settings.json" <<'JSON'
+{"hooks":{"PreToolUse":[{"matcher":"*","hooks":[
+  {"type":"command","command":"rtk hook claude"}
+]}],"UserPromptSubmit":[{"matcher":"*","hooks":[
+  {"type":"command","command":"node /opt/x/binary-hook --flag v"}
+]}]}}
+JSON
+OUT_I5_FILE="$FIX_I5/out.yml"
+OUT_I5="$(AGENT_GLOBAL_SETTINGS="$FIX_I5/settings.json" AGENT_PLUGIN_CACHE_ROOT="$FIX_I5/no-cache" AGENT_GLOBAL_SKILLS_DIR="$FIX_I5/no-skills" AGENT_EXPORT_SCANNER="$SCANNER_SEAM_VALUE" bash "$EXPORTER" "$OUT_I5_FILE" 2>&1)"
+RC_I5=$?
+# both hooks present (executable basenames rtk / node), no argument values leaked
+[[ $RC_I5 -eq 0 ]] && \
+  [[ "$(cat "$OUT_I5_FILE")" == *'command: "rtk"'* && "$(cat "$OUT_I5_FILE")" == *'command: "node"'* ]] && \
+  [[ "$(cat "$OUT_I5_FILE")" != *claude* && "$(cat "$OUT_I5_FILE")" != *binary-hook* && "$(cat "$OUT_I5_FILE")" != *"--flag"* ]]
+check "export-extensionless-hook-stays-visible" $?
+rm -rf "$FIX_I5"
+
+echo
+echo "=== (i6) gate liveness canary: a DEAD gate (existing-but-ruleless config) fails closed, secret never written ==="
+FIX_I6="$(safe_mktemp_d)" || { echo "FAIL: mktemp -d"; exit 1; }
+Z6="ant"
+FAKE6="sk-${Z6}-api03-mOCegejpkfgCrZiEYKwqG0EIwv31lctdBUbkfLnirNrujjqAXVZQ8N52CWiQDaFXWDivw5TJfAMXJL4uQFyrdHjWfJz1R4B"
+printf '{"hooks":{"SessionStart":[{"matcher":"*","hooks":[\n  {"type":"command","command":"\\"/x/adapter.sh\\" leaky-%s.sh"}\n]}]}}\n' "$FAKE6" > "$FIX_I6/settings.json"
+: > "$FIX_I6/empty.toml"   # exists (-f true) but carries NO rules -> gate is dead
+OUT_I6_FILE="$FIX_I6/out.yml"
+# NOTE: real gitleaks with an empty ruleset finds nothing; the stub always matches
+# sk-ant- regardless of --config, so the canary only proves "dead gate" against a
+# real scanner. Run this section ONLY when real gitleaks is present.
+if [[ "$SCANNER_SEAM_VALUE" == "gitleaks" ]]; then
+  OUT_I6="$(AGENT_GLOBAL_SETTINGS="$FIX_I6/settings.json" AGENT_PLUGIN_CACHE_ROOT="$FIX_I6/no-cache" AGENT_GLOBAL_SKILLS_DIR="$FIX_I6/no-skills" AGENT_GITLEAKS_CONFIG="$FIX_I6/empty.toml" bash "$EXPORTER" "$OUT_I6_FILE" 2>&1)"
+  RC_I6=$?
+  [[ $RC_I6 -eq 2 && ! -f "$OUT_I6_FILE" && "$OUT_I6" == *"gate is not functioning"* ]]
+  check "export-dead-gate-canary-fails-closed" $?
+else
+  check "export-dead-gate-canary-fails-closed (skipped: stub scanner cannot model a dead ruleset)" 0
+fi
+rm -rf "$FIX_I6"
+
+echo
 echo "=== (j) setup.sh --doctor is unaffected: still exit 0, still read-only (scratch-HOME snapshot) ==="
 SCRATCH_J="$(safe_mktemp_d)" || { echo "FAIL: mktemp -d"; exit 1; }
 BEFORE_J="$(find "$SCRATCH_J" -mindepth 1 | sort)"
