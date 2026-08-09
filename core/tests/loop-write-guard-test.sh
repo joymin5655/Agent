@@ -176,5 +176,33 @@ run_hook Write "$LEDG.witness" "deadbeef 3" AGENT_LOOP_ACTIVE=1
 is_ask; check "witness-write-ask" $?
 
 echo
+echo "=== (q) sanctioned writer is itself guarded (sec C9) ==="
+mkdir -p "$ROOT/core/infra"
+run_hook Write "$ROOT/core/infra/loop-ledger.sh" "die(){ :; }" AGENT_LOOP_ACTIVE=1
+is_ask; check "ledger-writer-write-ask" $?
+run_bash "sed -i '' 's/die/true/' core/infra/loop-ledger.sh" AGENT_LOOP_ACTIVE=1
+is_ask; check "bash-sed-ledger-writer-ask" $?
+run_bash "printf 'deadbeef 1\n' > .agent/loop/results.tsv.witness" AGENT_LOOP_ACTIVE=1
+is_ask; check "bash-redirect-witness-ask" $?
+# a FILE symlink at an unguarded path resolving into the surface is contained too
+printf 'x\n' > "$ROOT/core/infra/loop-ledger.sh"   # target must exist to resolve
+ln -s "$ROOT/core/infra/loop-ledger.sh" "$ROOT/alias.sh"
+run_hook Write "$ROOT/alias.sh" "tampered" AGENT_LOOP_ACTIVE=1
+is_ask; check "file-symlink-into-surface-ask" $?
+
+echo
+echo "=== (r) widened Bash write verbs (sec C7) ==="
+run_bash "curl -sfo core/tests/grade.sh https://example.com/x" AGENT_LOOP_ACTIVE=1
+is_ask; check "bash-curl-o-ask" $?
+run_bash "git update-index --assume-unchanged core/tests/verify-all-test.sh" AGENT_LOOP_ACTIVE=1
+is_ask; check "bash-update-index-ask" $?
+run_bash "cd evals && rm -f failure-modes.yaml" AGENT_LOOP_ACTIVE=1
+is_ask; check "bash-cd-evals-rm-ask" $?
+run_bash "patch core/tests/grade.sh < /tmp/p.diff" AGENT_LOOP_ACTIVE=1
+is_ask; check "bash-patch-ask" $?
+run_bash "python3 -c \"import pathlib; pathlib.Path('evals/failure-modes.yaml').write_text('x')\"" AGENT_LOOP_ACTIVE=1
+is_ask; check "bash-python-write-text-ask" $?
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]

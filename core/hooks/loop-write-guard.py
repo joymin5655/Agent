@@ -23,8 +23,9 @@ action passes untouched.
 Active-session decisions:
   Write|Edit|MultiEdit to a guarded path        -> ask
     guarded = core/tests/, evals/, and the enforcement files themselves
-    (this hook, pre-tool-guard.sh, the adapter, hooks.json) so the guard cannot be
-    silently neutered.
+    (this hook, pre-tool-guard.sh, the adapter, hooks.json, and the sanctioned
+    ledger writer core/infra/loop-ledger.sh) so the guard cannot be silently
+    neutered.
   Write|Edit|MultiEdit non-append to the ledger -> ask
     (recreating a deleted ledger whose .witness survives, or hand-writing the
     .witness itself, is NOT an append — delete-recreate High, see loop-ledger.sh)
@@ -103,6 +104,9 @@ def _guarded_files(root: str):
         _real(os.path.join(root, "core", "hooks", "pre-tool-guard.sh")),
         _real(os.path.join(root, "adapters", "claude-code", "adapter.sh")),
         _real(os.path.join(root, "hooks", "hooks.json")),
+        # the sanctioned ledger writer IS enforcement surface: rewriting it turns
+        # every future "sanctioned" append into a forgery channel (sec C9).
+        _real(os.path.join(root, "core", "infra", "loop-ledger.sh")),
     }
 
 
@@ -169,10 +173,20 @@ def _is_pure_append(ledger_real: str, tool_name: str, tool_input: dict) -> bool:
 # Bash write-into-guarded-path detector (best-effort). We flag a command that both
 # NAMES a guarded path and carries a write-ish operation. Conservative on the verb
 # side (a read like `cat core/tests/x` has no write verb -> allow).
+# KNOWN LIMIT (sec C7): token matching is a contiguous-substring check, so a path
+# split across a `cd` (`cd core && sed -i '' tests/x.sh`) evades it; full shell
+# path resolution is out of scope for a best-effort hook — grade.sh's INTEGRITY
+# phase is the primary containment for anything that lands on disk.
 _WRITE_OPS = re.compile(
-    r"(>>?|\btee\b|\bsed\b[^|;&]*\s-\w*i|\bcp\b|\bmv\b|\bdd\b|\binstall\b|\brm\b|"
-    r"\btruncate\b|\bgit\s+(checkout|restore|apply|rm)\b|"
-    r"\bpython[0-9.]*\b[^|;&]*open\s*\([^)]*['\"][wa]|"
+    r"(>>?|\btee\b|\bg?sed\b[^|;&]*\s-\w*i|\bg?awk\b[^|;&]*\s-\w*i|\bcp\b|\bmv\b|"
+    r"\bdd\b|\binstall\b|\brm\b|\btruncate\b|\brsync\b|\btar\b|\bditto\b|\bpatch\b|"
+    r"\bunzip\b|\bcurl\b[^|;&]*\s-\w*[oO]|\bwget\b|\bed\b|\bex\b|"
+    r"\bgit\s+(checkout|restore|apply|rm|mv|stash\s+pop|update-index)\b|"
+    # the python branch tolerates `;` (a -c one-liner uses it INSIDE the quoted
+    # program, e.g. `import pathlib; ...write_text(...)`) — over-matching across a
+    # real shell `;` only costs a spurious ask, never a miss.
+    r"\bpython[0-9.]*\b[^|&]*(open\s*\([^)]*['\"][wa]|write_text|write_bytes|"
+    r"shutil\.\w+|os\.(replace|rename|remove|unlink))|"
     r"\bperl\b[^|;&]*>|\b\w*chmod\b|\bln\b)"
 )
 
@@ -193,9 +207,13 @@ def _decide(data: dict, root: str):
         if not isinstance(command, str) or not command:
             return None
         # relative tokens are enough: the command text references paths as written.
-        guarded_tokens = ("core/tests", "evals/", "core/hooks/loop-write-guard.py",
+        # "evals" carries no trailing slash so `cd evals && rm ...` still hits (C7);
+        # the .witness token is technically covered by the ledger substring but is
+        # named explicitly so the guarantee survives a ledger rename (C9).
+        guarded_tokens = ("core/tests", "evals", "core/hooks/loop-write-guard.py",
                           "core/hooks/pre-tool-guard.sh", "adapters/claude-code/adapter.sh",
-                          "hooks/hooks.json", ".agent/loop/results.tsv")
+                          "hooks/hooks.json", "core/infra/loop-ledger.sh",
+                          ".agent/loop/results.tsv", ".agent/loop/results.tsv.witness")
         if _bash_hits_guarded(command, guarded_tokens):
             return ("bash", ASK_BASH)
         return None
