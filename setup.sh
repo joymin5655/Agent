@@ -239,6 +239,44 @@ install_git_hooks() {
 }
 
 # ---------------------------------------------------------------------------
+# Display sanitizer
+# ---------------------------------------------------------------------------
+# Strip terminal-ACTIVE characters from untrusted text (config-derived paths,
+# python error text) before it is interpolated into a doctor row.
+#
+# Every call site used to run `tr -d '\000-\037\177'`, which covers C0 + DEL and
+# nothing else. That leaves live display primitives in place:
+#   U+0085 NEL              — a line break on terminals that honour C1
+#   U+009B CSI              — a single character equivalent to "ESC[", i.e. the
+#                             row-spoofing primitive the C0 strip was added for
+#   U+202A-U+202E, U+2066-U+2069, U+200E, U+200F
+#                           — bidi embedding/override: reverses displayed text,
+#                             so a WARN row can be made to read as something else
+# `tr` cannot fix this: it deletes BYTES, so deleting \200-\237 in the C locale
+# would shred every multi-byte UTF-8 sequence — and this repo's own output
+# contains Korean. Hence a character-aware python3 filter; python3 is already a
+# hard dependency of the checks that call this (and doctor check 2 verifies it).
+#
+# Invalid UTF-8 must not blank a row: input is decoded with surrogateescape and
+# the resulting lone surrogates are removed by the same character class, so a
+# malformed byte sequence costs only the malformed bytes.
+sanitize_display() {
+    local raw="${1-}" out
+    if out="$(printf '%s' "$raw" | python3 -c '
+import re, sys
+s = sys.stdin.buffer.read().decode("utf-8", "surrogateescape")
+s = re.sub("[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069\ud800-\udfff]", "", s)
+sys.stdout.buffer.write(s.encode("utf-8", "replace"))
+' 2>/dev/null)"; then
+        printf '%s' "$out"
+    else
+        # python3 absent or crashed (doctor check 2 reports that on its own row):
+        # degrade to the byte-level C0+DEL strip rather than emit raw bytes.
+        printf '%s' "$raw" | tr -d '\000-\037\177'
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # Environment diagnosis (--doctor) — pure read-only checks, no side effects.
 # ---------------------------------------------------------------------------
 doctor() {
@@ -540,9 +578,11 @@ for f in files:
         if not any(os.path.isfile(c) for c in cands):
             phantoms.append(f"{os.path.basename(f)} -> {ref}")
 if phantoms:
-    # strip control chars before echoing untrusted md content back to a
-    # terminal (escape-sequence display spoofing hardening)
-    print(re.sub(r"[\x00-\x1f\x7f]", "?", "; ".join(phantoms)))
+    # strip terminal-active chars before echoing untrusted md content back to a
+    # terminal (display-spoofing hardening): C0+DEL, the C1 block (U+0085 NEL,
+    # U+009B = a one-character "ESC[") and the bidi overrides.
+    print(re.sub(r"[\x00-\x1f\x7f-\x9f\u200e\u200f\u202a-\u202e\u2066-\u2069]", "?",
+                 "; ".join(phantoms)))
     sys.exit(1)
 print(f"{len(files)} command file(s), all script refs resolve")
 PY
@@ -618,10 +658,10 @@ PY
             if [[ -z "$cx_path" ]]; then
                 cx_missing="brain MCP ([mcp_servers.brain] present but no quoted brain-mcp.py path in its section)"
             elif [[ ! -f "$cx_path" ]]; then
-                # strip control chars before echoing config-derived bytes back
-                # to a terminal (escape-sequence display spoofing — same
-                # hardening as check 12)
-                cx_shown="$(printf '%s' "$cx_path" | tr -d '\000-\037\177')"
+                # strip terminal-active chars before echoing config-derived
+                # bytes back to a terminal (escape-sequence display spoofing —
+                # same hardening as check 12)
+                cx_shown="$(sanitize_display "$cx_path")"
                 cx_broken="brain-mcp.py -> $cx_shown"
             fi
         else
@@ -636,7 +676,7 @@ PY
             if [[ -z "$cx_path" ]]; then
                 cx_missing="${cx_missing:+$cx_missing, }shell wrapper (codex-shell-wrap.sh mentioned but no quoted path)"
             elif [[ ! -f "$cx_path" ]]; then
-                cx_shown="$(printf '%s' "$cx_path" | tr -d '\000-\037\177')"
+                cx_shown="$(sanitize_display "$cx_path")"
                 cx_broken="${cx_broken:+$cx_broken; }shell wrapper -> $cx_shown"
             fi
         else
@@ -659,35 +699,71 @@ PY
         add_row PASS "gemini wiring — no gemini settings at ${gemini_settings/#$HOME/~} (check skipped)"
     else
         local gm_out gm_rc
-        if gm_out="$(GEMINI_SETTINGS_FILE="$gemini_settings" python3 - <<'PY' 2>&1
+        if gm_out="$(GEMINI_SETTINGS_FILE="$gemini_settings" AGENT_FRAMEWORK_ROOT="$FRAMEWORK_ROOT" python3 - <<'PY' 2>&1
 import json, os, re, sys
 
 def clean(s):
-    # strip control chars before echoing settings-derived strings back to a
-    # terminal (escape-sequence display spoofing — same hardening as check 12);
-    # JSON \u-escapes can decode to live ESC bytes.
-    return re.sub(r"[\x00-\x1f\x7f]", "?", s)
+    # strip terminal-active chars before echoing settings-derived strings back to
+    # a terminal (display spoofing — same hardening as check 12); JSON
+    # \u-escapes can decode to a live ESC, to U+009B (a one-character "ESC[") or
+    # to a bidi override that reverses the rest of the row.
+    return re.sub(r"[\x00-\x1f\x7f-\x9f\u200e\u200f\u202a-\u202e\u2066-\u2069]", "?", s)
+
+def resolved(p):
+    # canonical, symlink-resolved form; realpath raises on an embedded NUL
+    # (a crafted config can carry \u0000) and an unresolvable arg is simply
+    # not the framework server.
+    #
+    # NOT a security boundary: this resolution (and the isfile() below) is
+    # inherently TOCTOU — a path validated here can be retargeted before the MCP
+    # client ever launches it. Doctor is an observational check, not an
+    # enforcement point; do not build locking or re-validation on top of it.
+    try:
+        return os.path.realpath(os.path.expanduser(p))
+    except (OSError, ValueError):
+        return ""
 
 try:
     s = json.load(open(os.environ["GEMINI_SETTINGS_FILE"], encoding="utf-8"))
 except Exception as e:
     print(clean(f"settings parse failed: {e}"))
     sys.exit(2)
-missing, broken = [], []
+missing, broken, foreign, relative = [], [], [], []
 brain = (s.get("mcpServers") or {}).get("brain") or {}
+# a suffix test (a.endswith("brain-mcp.py")) accepted any string merely ENDING
+# in the filename — "--payload=brain-mcp.py", "/tmp/evil/brain-mcp.py" — as the
+# framework server. Select by path shape, then require the RESOLVED path to equal
+# the FRAMEWORK_ROOT core/brain/brain-mcp.py.
+brain_mcp = resolved(os.path.join(os.environ["AGENT_FRAMEWORK_ROOT"], "core/brain/brain-mcp.py"))
 mcp = next((a for a in (brain.get("args") or [])
-            if isinstance(a, str) and a.endswith("brain-mcp.py")), None)
+            if isinstance(a, str)
+            and os.path.basename(os.path.expanduser(a)) == "brain-mcp.py"), None)
 if mcp is None:
     missing.append("brain MCP (mcpServers.brain -> brain-mcp.py)")
+elif not os.path.isabs(os.path.expanduser(mcp)):
+    # a RELATIVE arg gets resolved against whatever directory doctor happens to
+    # run in — never the runtime CWD of the MCP client, so blessing it would bless
+    # a file the client may not even have. setup.sh writes absolute paths.
+    # (no apostrophes in this heredoc: bash 3.2 mis-parses them here — see check 12)
+    relative.append(clean(f"brain-mcp.py -> {mcp}"))
 elif not os.path.isfile(os.path.expanduser(mcp)):
     broken.append(clean(f"brain-mcp.py -> {mcp}"))
+elif resolved(mcp) != brain_mcp:
+    foreign.append(clean(f"brain-mcp.py -> {mcp}"))
 wrap = ((s.get("tools") or {}).get("shell") or {}).get("command") or ""
 if "gemini-shell-wrap.sh" not in wrap:
     missing.append("shell wrapper (gemini-shell-wrap.sh)")
 elif not os.path.isfile(os.path.expanduser(wrap)):
     broken.append(clean(f"shell wrapper -> {wrap}"))
+if relative:
+    print("wired to a non-absolute path (resolved against the CWD of doctor, not "
+          "of the MCP client): " + "; ".join(relative))
+    sys.exit(1)
 if broken:
     print("wired path missing on disk: " + "; ".join(broken))
+    sys.exit(1)
+if foreign:
+    print("wired to a brain-mcp.py outside this framework: " + "; ".join(foreign))
     sys.exit(1)
 if missing:
     print("not wired: " + ", ".join(missing))
@@ -699,6 +775,11 @@ PY
         else
             gm_rc=$?
         fi
+        # $gm_out is python output derived from a user-controlled settings.json;
+        # clean() covers the strings this block interpolates itself, but an
+        # unexpected python traceback reaches this row unfiltered — strip at the
+        # boundary too (same treatment as $bm_out in check 20).
+        gm_out="$(sanitize_display "$gm_out")"
         case $gm_rc in
             0) add_row PASS "gemini wiring — $gm_out in ${gemini_settings/#$HOME/~}" ;;
             1) add_row FAIL "gemini wiring — $gm_out" ;;
@@ -789,18 +870,33 @@ PY
     # containing shell metacharacters (spaces, $(), backticks, ;) — install_claude()
     # (line ~120) already quotes its own brain_mcp path for the same reason.
     local brain_reg_cmd="claude mcp add brain --scope user -- python3 $(printf '%q' "$FRAMEWORK_ROOT")/core/brain/brain-mcp.py"
-    # strip control chars before echoing a config-derived path back to a terminal
-    # (escape-sequence display spoofing — same hardening as checks 12/15/16).
+    # strip terminal-active chars before echoing a config-derived path back to a
+    # terminal (display spoofing — same hardening as checks 12/15/16).
     local claude_user_cfg_shown
-    claude_user_cfg_shown="$(printf '%s' "${claude_user_cfg/#$HOME/~}" | tr -d '\000-\037\177')"
+    claude_user_cfg_shown="$(sanitize_display "${claude_user_cfg/#$HOME/~}")"
     if [[ $plugin_active -ne 1 || $shell_active -eq 1 ]]; then
         add_row PASS "brain MCP (plugin path) — not a plugin-only install (check scoped to plugin-path installs)"
     elif [[ ! -f "$claude_user_cfg" ]]; then
         add_row WARN "brain MCP (plugin path) — no user config at $claude_user_cfg_shown; opt in with: $brain_reg_cmd (never auto-registered)"
     else
         local bm_out bm_rc
-        if bm_out="$(CLAUDE_USER_CFG="$claude_user_cfg" python3 - <<'PY' 2>&1
+        if bm_out="$(CLAUDE_USER_CFG="$claude_user_cfg" AGENT_FRAMEWORK_ROOT="$FRAMEWORK_ROOT" python3 - <<'PY' 2>&1
 import json, os, sys
+
+def resolved(p):
+    # canonical, symlink-resolved form; realpath raises on an embedded NUL
+    # (a crafted config can carry \u0000) and an unresolvable arg is simply
+    # not the framework server.
+    #
+    # NOT a security boundary: resolution here is inherently TOCTOU — a path
+    # validated here can be retargeted before the MCP client launches it. Doctor
+    # is an observational check, not an enforcement point; do not build locking
+    # or re-validation on top of it.
+    try:
+        return os.path.realpath(os.path.expanduser(p))
+    except (OSError, ValueError):
+        return ""
+
 try:
     d = json.load(open(os.environ["CLAUDE_USER_CFG"], encoding="utf-8"))
 except Exception as e:
@@ -817,7 +913,22 @@ if brain is None:
 args = brain.get("args")
 if not isinstance(args, list):
     args = []
-if not any(isinstance(a, str) and a.endswith("brain-mcp.py") for a in args):
+# a suffix test (a.endswith("brain-mcp.py")) accepted any string merely ENDING
+# in the filename — "--payload=brain-mcp.py", "/tmp/evil/brain-mcp.py" — as a
+# legitimate registration. Compare the RESOLVED path against the FRAMEWORK_ROOT
+# core/brain/brain-mcp.py instead.
+brain_mcp = resolved(os.path.join(os.environ["AGENT_FRAMEWORK_ROOT"], "core/brain/brain-mcp.py"))
+hits = [a for a in args if isinstance(a, str) and resolved(a) == brain_mcp]
+# a RELATIVE arg only resolved to that file because doctor happened to run in the
+# right directory; the MCP client is launched elsewhere and would execute a
+# different file, or none. Never report it as a valid registration. setup.sh and
+# claude mcp add both write absolute paths, so nothing legitimate regresses.
+# (no apostrophes in this heredoc: bash 3.2 mis-parses them — see check 12)
+if not any(os.path.isabs(os.path.expanduser(a)) for a in hits):
+    if hits:
+        print("registered with a non-absolute path (resolved against the CWD of "
+              f"doctor, not of the MCP client): {hits[0]}")
+        sys.exit(3)
     print("registered but does not point at brain-mcp.py")
     sys.exit(3)
 print("registered")
@@ -827,6 +938,10 @@ PY
         else
             bm_rc=$?
         fi
+        # $bm_out carries python stderr derived from user-controlled ~/.claude.json
+        # content — strip terminal-active chars before it reaches a terminal row
+        # (same hardening as $claude_user_cfg_shown above and checks 12/15/16).
+        bm_out="$(sanitize_display "$bm_out")"
         case $bm_rc in
             0) add_row PASS "brain MCP (plugin path) — registered in $claude_user_cfg_shown" ;;
             2) add_row WARN "brain MCP (plugin path) — $bm_out" ;;
