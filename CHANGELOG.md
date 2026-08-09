@@ -24,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind the GATE short-circuit, so it is reported N/A on the single GATE path —
   and `review-false-clean` is N/A), superseding the retired single-scalar 8.0. It is
   a loop-time tool (re-runs batteries; ~1 min) and is excluded from `verify-all` to
-  avoid recursion; `grade-test.sh` (35 checks) drives it hermetically and gates
+  avoid recursion; `grade-test.sh` (36 checks) drives it hermetically and gates
   mode↔guard-map drift, including a ban on GATE batteries in the guard map. The
   TARGET clean-tree check uses `git status --porcelain`, so an UNTRACKED tamper
   file (which the batteries would execute but a committed-range diff cannot see)
@@ -35,11 +35,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (keep|discard|crash|timeout), numeric validation that rejects rather than coerces
   a malformed score/duration, and free-text sanitization. It only ever appends —
   the header is written once. Every successful append notarizes the ledger in a
-  sidecar witness (`<ledger>.witness` = sha256 + line count); the next append
-  REFUSES a ledger that is missing (delete-recreate) or does not hash to its
-  witness (rewrite/truncate) — tamper-evident, honestly bounded (a shell can
-  still delete both files; that two-target act is what loop-write-guard
-  escalates during a loop). `loop-ledger-test.sh` (25 checks).
+  sidecar witness (`<ledger>.witness` = sha256 + line count) that notarizes a
+  PREFIX: the next append REFUSES a ledger that is missing (delete-recreate),
+  shorter than the witness (truncation), or whose first witnessed lines no
+  longer hash to it (rewritten history), while rows beyond the prefix are
+  append-only extension and are accepted — which self-heals the crash window
+  where an append landed but the process died before the witness update
+  (P2-4 kills runs on timeout, so that window is real). Tamper-evident,
+  honestly bounded (a shell can still delete both files; that two-target act
+  is what loop-write-guard escalates during a loop). `loop-ledger-test.sh`
+  (30 checks).
 - **Loop write-ban `core/hooks/loop-write-guard.py` (L-2).** While an improvement
   loop is active (env `AGENT_LOOP_ACTIVE=1` or a flag file), a Write/Edit to the
   grader/verifier surface (`core/tests/`, `evals/`) or a non-append rewrite of the

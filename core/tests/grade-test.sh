@@ -168,6 +168,12 @@ while IFS= read -r id; do
   grep -qE "^[[:space:]]*${id}\)" "$GRADE" || { echo "    unmapped: $id"; unmapped=$((unmapped + 1)); }
 done < <(GRADE_RUBRIC="$RUBRIC" bash "$GRADE" --list-modes)
 [[ $unmapped -eq 0 ]]; check "every-mode-has-case-arm" $?
+# extraction floor: (g)/(g3) share this grep to enumerate mapped batteries — if a
+# guard_for refactor breaks the extraction, both checks would pass VACUOUSLY on an
+# empty list (the vacuous-green mode this repo names). A clean tree maps >=8
+# batteries, so an extraction below that floor is a broken extractor, not a clean map.
+mapped_count="$(grep -oE 'echo "[a-z0-9-]+\.sh"' "$GRADE" | wc -l | tr -d ' ')"
+[[ "$mapped_count" -ge 8 ]]; check "extraction-floor-8-mapped-batteries" $?
 missing=0
 while IFS= read -r b; do
   [[ -f "$REAL_TESTS/$b" ]] || { echo "    missing real battery: $b"; missing=$((missing + 1)); }

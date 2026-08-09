@@ -100,5 +100,25 @@ bash "$LEDGER" append --file "$FL" --commit bbb --score 6.0 --duration 1 --statu
 [[ $rc -eq 0 && -s "$FL.witness" && "$(wc -l < "$FL" | tr -d ' ')" -eq 3 ]]; check "legacy-ledger-adopted" $?
 
 echo
+echo "=== (i) crash window self-heal: append landed, witness stale -> next append OK ==="
+# Simulates: `>>` append succeeded, process was killed before write_witness
+# (P2-4 kills runs on timeout — this window is real). The extra row is an
+# append-only EXTENSION of the witnessed prefix, not tampering: the next
+# sanctioned append must accept it and refresh the witness, not brick the ledger.
+FC="$TMP_ROOT/crash.tsv"
+bash "$LEDGER" append --file "$FC" --commit aaa111 --score 3.0 --duration 1 --status keep --desc one
+printf 'bbb222\t4.0\t1\tkeep\tcrashed-before-witness\n' >> "$FC"   # landed row, stale witness
+bash "$LEDGER" append --file "$FC" --commit ccc333 --score 5.0 --duration 1 --status keep --desc two; rc=$?
+[[ $rc -eq 0 ]]; check "stale-witness-extension-accepted" $?
+[[ "$(wc -l < "$FC" | tr -d ' ')" -eq 4 ]]; check "all-rows-preserved" $?
+w_lines="$(awk '{print $2}' "$FC.witness")"
+[[ "$w_lines" -eq 4 ]]; check "witness-healed-to-current" $?
+# TRUNCATION is still refused: drop the last row below the witnessed line count
+sed -i.bak '$d' "$FC" && rm -f "$FC.bak"
+bash "$LEDGER" append --file "$FC" --commit ddd444 --score 6.0 --duration 1 --status keep --desc three 2>"$TMP_ROOT/i.err"; rc=$?
+[[ $rc -ne 0 ]]; check "truncation-still-refused" $?
+grep -q "truncated" "$TMP_ROOT/i.err"; check "truncation-named" $?
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]

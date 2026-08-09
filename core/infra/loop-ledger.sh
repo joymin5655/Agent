@@ -21,11 +21,15 @@
 # absent; the directory is created as needed.
 #
 # Tamper evidence (High: delete-recreate): every successful append records a
-# WITNESS (`<ledger>.witness` = sha256 + line count of the ledger). On the next
-# append, a witness with no ledger (delete-then-recreate) or a ledger that does
-# not hash to its witness (rewrite/truncate) is REFUSED, not silently adopted as
-# a fresh first creation. A pre-witness ledger is adopted on its first sanctioned
-# append (protection starts there). This is tamper-EVIDENT, not tamper-proof — a
+# WITNESS (`<ledger>.witness` = sha256 + line count of the ledger). The witness
+# notarizes a PREFIX: on the next append, a witness with no ledger
+# (delete-then-recreate), a ledger with fewer lines than the witness (truncation),
+# or a first-N-lines hash that no longer matches (rewritten history) is REFUSED —
+# not silently adopted as a fresh first creation. Extra rows beyond the witnessed
+# prefix are append-only extension and are accepted (this self-heals the crash
+# window where an append landed but the process died before the witness update).
+# A pre-witness ledger is adopted on its first sanctioned append (protection
+# starts there). This is tamper-EVIDENT, not tamper-proof — a
 # shell can still delete both files, but that is a two-target act that
 # loop-write-guard.py escalates during a loop; the honest bound is documented
 # (defense-in-depth framing, L-2).
@@ -46,12 +50,19 @@ die() { printf 'loop-ledger: %s\n' "$1" >&2; exit 1; }
 
 cmd_path() { printf '%s\n' "$DEFAULT_LEDGER"; }
 
-# sha256 of a file, portable (macOS shasum / GNU sha256sum / python3 fallback —
-# python3 is already a hard dependency of the harness).
+# sha256, portable (macOS shasum / GNU sha256sum / python3 fallback — python3 is
+# already a hard dependency of the harness). file_sha hashes a file;
+# prefix_stream_sha hashes stdin (used to verify the witnessed prefix).
 file_sha() {
   if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | awk '{print $1}'
   elif command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'
   else python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$1"
+  fi
+}
+prefix_stream_sha() {
+  if command -v shasum >/dev/null 2>&1; then shasum -a 256 | awk '{print $1}'
+  elif command -v sha256sum >/dev/null 2>&1; then sha256sum | awk '{print $1}'
+  else python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'
   fi
 }
 
@@ -99,16 +110,32 @@ cmd_append() {
   mkdir -p "$(dirname "$file")" || die "cannot create ledger dir for $file"
 
   # --- tamper-evidence check (High: delete-recreate). Fail closed BEFORE any write.
+  # The witness notarizes a PREFIX (sha256 + line count at the last sanctioned
+  # append): a ledger whose first N lines still hash to the witness is untampered
+  # history — extra rows beyond N are append-only extension, which is exactly what
+  # the ledger permits (this also self-heals the crash window where the `>>` append
+  # landed but the process died before write_witness — the row is a legitimate
+  # extension, not tampering; the stale witness is refreshed by this append).
+  # Refused: missing/empty file (delete-recreate), fewer lines than N (truncation),
+  # or a prefix that no longer hashes to the witness (rewritten history).
   local witness="$file.witness"
   if [[ -f "$witness" ]]; then
     if [[ ! -s "$file" ]]; then
       die "witness exists but ledger $file is missing/empty — delete-recreate refused (restore the ledger, or remove the witness as an explicit human reset)"
     fi
-    local want_sha have_sha
+    local want_sha want_lines have_lines prefix_sha
     want_sha="$(awk '{print $1}' "$witness")"
-    have_sha="$(file_sha "$file")"
-    if [[ -z "$want_sha" || "$have_sha" != "$want_sha" ]]; then
-      die "ledger $file does not match its witness (rewritten or truncated since the last sanctioned append) — refused"
+    want_lines="$(awk '{print $2}' "$witness")"
+    have_lines="$(wc -l < "$file" | tr -d ' ')"
+    if ! printf '%s' "$want_lines" | grep -qE '^[0-9]+$'; then
+      die "witness $witness is malformed — refused (restore it from a backup, or remove it as an explicit human reset)"
+    fi
+    if [[ "$have_lines" -lt "$want_lines" ]]; then
+      die "ledger $file has fewer lines than its witness (truncated) — refused (restore the ledger, or remove the witness as an explicit human reset)"
+    fi
+    prefix_sha="$(head -n "$want_lines" "$file" | prefix_stream_sha)"
+    if [[ -z "$want_sha" || "$prefix_sha" != "$want_sha" ]]; then
+      die "ledger $file does not match its witness (history rewritten since the last sanctioned append) — refused (restore the ledger, or remove the witness as an explicit human reset)"
     fi
   fi
 
