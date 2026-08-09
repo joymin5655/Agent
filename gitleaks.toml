@@ -76,3 +76,14 @@ description = "NVIDIA NIM API key"
 regex = '''nvapi-[A-Za-z0-9_-]{20,}'''
 keywords = ["nvapi-"]
 tags = ["nvidia", "ai", "api"]
+
+# Anthropic API key — built-in default rule format doesn't reliably match every
+# sk-ant- variant (observed empirically: synthetic sk-ant-api03-<random> tokens
+# went undetected under useDefault alone). Deterministic coverage for the
+# secret-injection probe every export-style gate in this repo relies on.
+[[rules]]
+id = "anthropic-api-key"
+description = "Anthropic API key"
+regex = '''sk-ant-[A-Za-z0-9_-]{20,}'''
+keywords = ["sk-ant-"]
+tags = ["anthropic", "ai", "api"]

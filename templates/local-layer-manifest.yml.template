@@ -1,0 +1,50 @@
+# local-layer-manifest.yml — generic schema for a portable, exported global
+# AI-runtime layer (registered hooks + cached plugins + installed skills).
+#
+# This file is a SCHEMA REFERENCE, not something to hand-edit and ship as your
+# own manifest. Generate a real one with:
+#
+#   bash core/infra/local-layer-export.sh <output-file>
+#
+# The exporter is read-only on your global config and writes to exactly the
+# <output-file> you name; it refuses to save if the rendered manifest fails a
+# gitleaks scan (fail-closed — including when gitleaks itself isn't installed).
+#
+# Personal L3 glue (the actual paths, machine-specific env vars, private
+# credentials your hooks reference) does NOT belong in this manifest and does
+# NOT belong in this repo — that's what a private dotfiles repo is for. This
+# manifest only ever carries generic, shareable identifiers: hook EVENT names
+# and script BASENAMES (no absolute paths), plugin marketplace/name/version
+# triples, and skill names.
+#
+# schema_version bumps whenever a field is added, removed, or its meaning
+# changes — a consumer (e.g. a future `local-layer-import.sh`) should refuse an
+# unrecognized schema_version rather than guess.
+
+schema_version: 1
+
+# ISO-8601 UTC timestamp of the export, e.g. "2026-07-25T00:00:00Z".
+exported_at: "<ISO-8601-UTC-TIMESTAMP>"
+
+# Every hook registered in the global AI-runtime settings (e.g. ~/.claude/settings.json),
+# as (event, script basename) pairs. No absolute paths, no matcher patterns, no
+# machine-specific detail — just enough to answer "what hooks were installed."
+hooks:
+  - event: "<HookEventName>"        # e.g. SessionStart, PreToolUse, Stop
+    command: "<hook-script-basename.sh>"  # e.g. pre-tool-guard.sh (basename only)
+
+# Every plugin found in the plugin install cache, one entry per (marketplace,
+# plugin) pair. If multiple versions of the same plugin are cached, the exporter
+# reports the lexicographically-highest version — a "latest wins" heuristic, not
+# a claim that older cached versions don't also exist (see `setup.sh --doctor`
+# check 10 for multi-version staleness detection, which this manifest does not
+# replace).
+plugins:
+  - marketplace: "<marketplace-name>"
+    name: "<plugin-name>"
+    version: "<version-string>"
+
+# Every top-level skill directory name found under the global skills dir (e.g.
+# ~/.claude/skills/*/SKILL.md) — names only, no paths, no descriptions.
+skills:
+  - "<skill-name>"
