@@ -27,7 +27,8 @@ Family → tier map: fable/opus → TOP, sonnet → MID, haiku → LOW, else unk
 
 Output: one stderr advisory line when a tier is detected (stdout stays empty —
 SessionStart stdout injects session context, and an observer must not add
-decision surface), plus a JSONL record for /manager-audit cross-checks.
+decision surface), plus a JSONL audit-trail record (no consumer yet —
+/manager-audit wiring is future work; it does not read this sink today).
 
 Pure observer: never blocks, always exits 0, all exceptions swallowed.
 
