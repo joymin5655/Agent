@@ -90,13 +90,64 @@ run_hook '{"transcript_path": "/nonexistent/path/x.jsonl"}' >/dev/null 2>&1; rc=
 [[ $rc -eq 0 ]];                                   check "missing-transcript-exit-0" $?
 
 echo
-echo "=== 6. unwritable sink -> exit 0, silent ==="
-printf '{"model":{"id":"claude-fable-5"}}' | env \
+echo "=== 6. out-of-bounds sink override -> confined fallback, exit 0 ==="
+# Confinement contract: an override outside <cwd>/.agent/logs and the temp dir
+# must NOT be written; the record falls back to <cwd>/.agent/logs. Run from a
+# scratch cwd so the fallback is assertable without touching the live repo.
+CONF="$WORK/conf-cwd"; mkdir -p "$CONF"
+( cd "$CONF" && printf '{"model":{"id":"claude-fable-5"}}' | env \
   AGENT_SESSION_TIER_SINK="/nonexistent-root-dir/deny/sink.jsonl" \
   AGENT_CLAUDE_SETTINGS="$EMPTY_SETTINGS" \
-  python3 "$HOOK" >"$WORK/out6" 2>>"$WORK/err6"; rc=$?
-[[ $rc -eq 0 ]];                                   check "unwritable-sink-exit-0" $?
-[[ -z "$(cat "$WORK/out6")" ]];                    check "unwritable-sink-stdout-empty" $?
+  python3 "$HOOK" >"$WORK/out6" 2>>"$WORK/err6" ); rc=$?
+[[ $rc -eq 0 ]];                                   check "oob-sink-exit-0" $?
+[[ -z "$(cat "$WORK/out6")" ]];                    check "oob-sink-stdout-empty" $?
+[[ ! -e "/nonexistent-root-dir" ]];                check "oob-sink-not-written" $?
+grep -q '"tier": "TOP"' "$CONF/.agent/logs/session-tier.jsonl" 2>/dev/null
+check "oob-sink-falls-back-to-cwd-logs" $?
+
+echo
+echo "=== 6b. FIFO sink -> completes fast, no hang, FIFO rejected (2026-07-30 class) ==="
+FIFO_SINK="$WORK/fifo-sink.jsonl"; mkfifo "$FIFO_SINK"
+printf '{"model":{"id":"claude-fable-5"}}' | env \
+  AGENT_SESSION_TIER_SINK="$FIFO_SINK" \
+  AGENT_CLAUDE_SETTINGS="$EMPTY_SETTINGS" \
+  timeout 5 python3 "$HOOK" >/dev/null 2>&1; rc=$?
+[[ $rc -eq 0 ]];                                   check "fifo-sink-no-hang-exit-0" $?
+
+echo
+echo "=== 6c. FIFO transcript_path -> completes fast, no hang ==="
+FIFO_TR="$WORK/fifo-transcript.jsonl"; mkfifo "$FIFO_TR"
+printf '%s' "{\"transcript_path\":\"$FIFO_TR\"}" | env \
+  AGENT_SESSION_TIER_SINK="$SINK" \
+  AGENT_CLAUDE_SETTINGS="$EMPTY_SETTINGS" \
+  timeout 5 python3 "$HOOK" >/dev/null 2>&1; rc=$?
+[[ $rc -eq 0 ]];                                   check "fifo-transcript-no-hang-exit-0" $?
+
+echo
+echo "=== 6e. FIFO settings path -> completes fast, no hang (3rd trusted path) ==="
+FIFO_SET="$WORK/fifo-settings.json"; mkfifo "$FIFO_SET"
+printf '{"session_id":"s6e"}' | env \
+  AGENT_SESSION_TIER_SINK="$SINK" \
+  AGENT_CLAUDE_SETTINGS="$FIFO_SET" \
+  timeout 5 python3 "$HOOK" >/dev/null 2>&1; rc=$?
+[[ $rc -eq 0 ]];                                   check "fifo-settings-no-hang-exit-0" $?
+
+echo
+echo "=== 6d. control bytes in model id -> stripped from stderr and record ==="
+# \u001b = ESC (ANSI), \u009b = C1 single-byte CSI. JSON-escaped because the
+# strict JSON parser rejects raw control bytes — the escapes decode to the real
+# characters, which is exactly what the sanitizer must strip.
+printf '{"model":{"id":"claude-fable\\u001b[31m-x\\u009bZ"}}' | env \
+  AGENT_SESSION_TIER_SINK="$SINK" \
+  AGENT_CLAUDE_SETTINGS="$EMPTY_SETTINGS" \
+  python3 "$HOOK" >/dev/null 2>"$WORK/err6d"; rc=$?
+last="$(tail -1 "$SINK")"
+[[ $rc -eq 0 ]];                                   check "ctrl-model-exit-0" $?
+grep -q "session=TOP" "$WORK/err6d" && ! grep -q $'\x1b' "$WORK/err6d" \
+  && ! LC_ALL=C grep -q $'\xe2\x80\xae' "$WORK/err6d"
+check "ctrl-model-stderr-sanitized" $?
+[[ "$last" == *'"tier": "TOP"'* ]] && ! tail -1 "$SINK" | grep -q $'\x1b' && ! tail -1 "$SINK" | LC_ALL=C grep -q $'\xc2\x9b'
+check "ctrl-model-record-sanitized" $?
 
 echo
 echo "=== 7. never a hook decision: no permissionDecision in any output ==="
