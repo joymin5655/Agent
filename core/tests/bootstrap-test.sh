@@ -272,6 +272,30 @@ check "unsupported-pkg-mgr-exit-1-named" $?
 rm -rf "$STUB_F"
 
 echo
+echo "=== (f2) MED-2: AGENT_BOOTSTRAP_STDIN_IS_TTY=1 ALONE (no pkg-mgr seam) must NOT enable installs on a piped stdin ==="
+# On a real host pkg_mgr is auto-detected (seam unset), so the tty override must
+# be inert — else `yes y | AGENT_BOOTSTRAP_STDIN_IS_TTY=1 setup.sh --bootstrap`
+# would auto-consent to a real `sudo apt-get install` on a NOPASSWD host. Piped
+# stdin + tty-seam-only must still downgrade to dry-run with zero installer calls.
+STUB_F2="$(safe_mktemp_d)" || { echo "FAIL: mktemp -d"; exit 1; }
+build_stub "$STUB_F2" sqlite3 jq gh
+CALLLOG_F2="$STUB_F2/install-calls.log"
+# mock whichever real manager this platform auto-detects (brew on macOS, apt-get
+# +sudo on Linux) so pkg_mgr resolves WITHOUT the seam; any invocation logs.
+for m in brew apt-get sudo; do
+  cat > "$STUB_F2/$m" <<EOF
+#!/bin/sh
+echo "INSTALL_INVOKED: $m \$*" >> "$CALLLOG_F2"
+EOF
+  chmod +x "$STUB_F2/$m"
+done
+OUT_F2="$(printf 'y\ny\n' | env AGENT_BOOTSTRAP_STDIN_IS_TTY=1 PATH="$STUB_F2" "$BASH_BIN" "$SETUP" --bootstrap 2>&1)"
+RC_F2=$?
+[[ $RC_F2 -eq 0 && "$OUT_F2" == *"dry-run"* && ! -f "$CALLLOG_F2" ]]
+check "tty-seam-alone-cannot-force-real-install" $?
+rm -rf "$STUB_F2"
+
+echo
 echo "=== (g) local-layer-export.sh happy path: hooks/plugins/skills all render from synthetic fixtures ==="
 FIX_G="$(safe_mktemp_d)" || { echo "FAIL: mktemp -d"; exit 1; }
 cat > "$FIX_G/settings.json" <<'JSON'
@@ -296,15 +320,19 @@ check "export-skills-rendered" $?
 check "export-no-absolute-paths-leaked" $?
 
 echo
-echo "=== (h) ANTI-VACUOUS RED PROBE: secret in a hook command -> export REFUSES to save (paired with (g)'s clean control) ==="
+echo "=== (h) ANTI-VACUOUS RED PROBE: secret in a hook script name -> export REFUSES to save (paired with (g)'s clean control) ==="
 # gitleaks-safe fixture: assemble the synthetic key at runtime (${Z} splice
 # convention, cf. PR#103) so the contiguous sk-ant- pattern — which this repo's
-# own gitleaks.toml rule (added by this very wave) now catches — never exists
-# as a literal in this committed file. The rendered fixture still carries the
-# full pattern, so the exporter's refusal path is exercised unchanged.
+# own gitleaks.toml rule now catches — never exists as a literal in this
+# committed file. The secret rides in the hook SCRIPT FILENAME (…​.sh): the
+# emitter now emits only script-extension tokens (never trailing args — see the
+# MED-3 fix / (i4)), so a leaky --key=arg would NOT reach the manifest; the
+# realistic residual vector is a secret embedded in a filename, which does. The
+# rendered fixture still carries the full sk-ant- pattern, exercising the
+# refusal path.
 Z="ant"
 FAKE_KEY="sk-${Z}-api03-mOCegejpkfgCrZiEYKwqG0EIwv31lctdBUbkfLnirNrujjqAXVZQ8N52CWiQDaFXWDivw5TJfAMXJL4uQFyrdHjWfJz1R4B"
-printf '{"hooks":{"SessionStart":[{"matcher":"*","hooks":[\n  {"type":"command","command":"\\"/some/path/adapter.sh\\" leaky-hook.sh --key=%s"}\n]}]}}\n' "$FAKE_KEY" > "$FIX_G/leaky-settings.json"
+printf '{"hooks":{"SessionStart":[{"matcher":"*","hooks":[\n  {"type":"command","command":"\\"/some/path/adapter.sh\\" leaky-%s.sh"}\n]}]}}\n' "$FAKE_KEY" > "$FIX_G/leaky-settings.json"
 OUT_H_FILE="$FIX_G/leaky-out.yml"
 OUT_H="$(AGENT_GLOBAL_SETTINGS="$FIX_G/leaky-settings.json" AGENT_PLUGIN_CACHE_ROOT="$FIX_G/no-cache" AGENT_GLOBAL_SKILLS_DIR="$FIX_G/no-skills" AGENT_EXPORT_SCANNER="$SCANNER_SEAM_VALUE" bash "$EXPORTER" "$OUT_H_FILE" 2>&1)"
 RC_H=$?
@@ -329,10 +357,12 @@ check "export-failclosed-file-not-written" $?
 rm -rf "$STUB_I" "$FIX_I"
 
 echo
-echo "=== (i2) REGRESSION: missing AGENT_GITLEAKS_CONFIG path must scan without --config, not crash ==="
-# bash 3.2 + set -u: "${arr[@]}" on an empty array is an unbound-variable crash
-# inside the scan subshell, which used to masquerade as a scan REFUSAL (GL_RC=1,
-# empty findings). A missing config file must fall back to a config-less scan.
+echo "=== (i2) missing AGENT_GITLEAKS_CONFIG must FAIL CLOSED (exit 2), not down-scan with built-in rules ==="
+# gitleaks' built-in rules miss the sk-ant- session/oauth/variant shapes the repo
+# gitleaks.toml catches (measured 0/3 vs 3/3), so a config-less scan is a weaker
+# gate — "ruleset absent" is the same epistemic state as "scanner absent": exit 2.
+# (Also guards the old bash-3.2 empty-array crash: exit 2 with a real error, never
+# a crash masquerading as a refusal.)
 FIX_I2="$(safe_mktemp_d)" || { echo "FAIL: mktemp -d"; exit 1; }
 cat > "$FIX_I2/settings.json" <<'JSON'
 {"hooks":{"SessionStart":[{"matcher":"*","hooks":[
@@ -342,9 +372,30 @@ JSON
 OUT_I2_FILE="$FIX_I2/out.yml"
 OUT_I2="$(AGENT_GLOBAL_SETTINGS="$FIX_I2/settings.json" AGENT_PLUGIN_CACHE_ROOT="$FIX_I2/no-cache" AGENT_GLOBAL_SKILLS_DIR="$FIX_I2/no-skills" AGENT_GITLEAKS_CONFIG=/nonexistent/gitleaks.toml AGENT_EXPORT_SCANNER="$SCANNER_SEAM_VALUE" bash "$EXPORTER" "$OUT_I2_FILE" 2>&1)"
 RC_I2=$?
-[[ $RC_I2 -eq 0 && -f "$OUT_I2_FILE" && "$OUT_I2" != *"unbound variable"* ]]
-check "export-missing-config-falls-back-not-crash" $?
+[[ $RC_I2 -eq 2 && ! -f "$OUT_I2_FILE" && "$OUT_I2" == *"ruleset not found"* && "$OUT_I2" != *"unbound variable"* ]]
+check "export-missing-config-fails-closed-exit-2" $?
 rm -rf "$FIX_I2"
+
+echo
+echo "=== (i3) MED-3: hook trailing args (secret/PII) never reach the manifest — only the script name does ==="
+FIX_I3="$(safe_mktemp_d)" || { echo "FAIL: mktemp -d"; exit 1; }
+# a hook whose command carries a PII arg (--user alice) and a --home path; the
+# emitter must export only the .sh script basename, dropping every argument.
+# synthetic /home/ path (not /Users/, which the sanitize gate reserves for REAL
+# home paths); still a home-shaped arg whose basename would be PII if leaked.
+cat > "$FIX_I3/settings.json" <<'JSON'
+{"hooks":{"SessionStart":[{"matcher":"*","hooks":[
+  {"type":"command","command":"\"/home/synthuser/.claude/adapter.sh\" real-hook.sh --user synthuser --home /home/synthuser"}
+]}]}}
+JSON
+OUT_I3_FILE="$FIX_I3/out.yml"
+OUT_I3="$(AGENT_GLOBAL_SETTINGS="$FIX_I3/settings.json" AGENT_PLUGIN_CACHE_ROOT="$FIX_I3/no-cache" AGENT_GLOBAL_SKILLS_DIR="$FIX_I3/no-skills" AGENT_EXPORT_SCANNER="$SCANNER_SEAM_VALUE" bash "$EXPORTER" "$OUT_I3_FILE" 2>&1)"
+RC_I3=$?
+[[ $RC_I3 -eq 0 && -f "$OUT_I3_FILE" ]] && \
+  [[ "$(cat "$OUT_I3_FILE")" == *'command: "real-hook.sh"'* ]] && \
+  [[ "$(cat "$OUT_I3_FILE")" != *synthuser* && "$(cat "$OUT_I3_FILE")" != *"/home/"* ]]
+check "export-hook-args-and-pii-not-leaked" $?
+rm -rf "$FIX_I3"
 
 echo
 echo "=== (j) setup.sh --doctor is unaffected: still exit 0, still read-only (scratch-HOME snapshot) ==="

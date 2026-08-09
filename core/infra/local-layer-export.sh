@@ -46,6 +46,13 @@ if [[ -z "$OUT" ]]; then
 fi
 
 SCANNER="${AGENT_EXPORT_SCANNER:-gitleaks}"
+# The scanner override is a TEST-ONLY seam. Announce loudly on stderr whenever it
+# is not the production gitleaks binary, so a stray exported var or a copy-pasted
+# CI wrapper can never SILENTLY neutralize the save gate (it stays visible in the
+# terminal and in any transcript that captures this run).
+if [[ "$SCANNER" != "gitleaks" ]]; then
+    echo "WARNING: secret gate is using a NON-DEFAULT scanner ('$SCANNER') via AGENT_EXPORT_SCANNER — this is a test-only seam and is NOT the production gitleaks gate." >&2
+fi
 if ! command -v "$SCANNER" >/dev/null 2>&1; then
     echo "ERROR: $SCANNER not installed — refusing to export (cannot verify 0 findings without it)." >&2
     echo "Install: brew install gitleaks (macOS) or https://github.com/gitleaks/gitleaks/releases" >&2
@@ -67,14 +74,41 @@ RENDERED="$WORK/local-layer-manifest.yml"
 #     than requiring a non-stdlib import on every machine this ever runs on) ---
 SETTINGS="$SETTINGS" CACHE_ROOT="$CACHE_ROOT" SKILLS_DIR="$SKILLS_DIR" \
     python3 - > "$RENDERED" <<'PY'
-import json, os, sys
+import json, os, re, sys
 from datetime import datetime, timezone
+
+_SCRIPT_EXT = re.compile(r"\.(sh|py|js|mjs|cjs|ts|rb|pl)$")
 
 
 def yaml_str(s):
     # minimal, safe scalar quoting: always double-quote and escape backslash/quote
     # so a value containing YAML-special characters can never break the structure.
-    return '"' + str(s).replace("\\", "\\\\").replace('"', '\\"') + '"'
+    # Control bytes (newline/CR/tab) are C-escaped too — a raw newline in a
+    # double-quoted scalar is invalid per the YAML spec (parser-dependent) and
+    # would also skew the grep-based counts this script prints.
+    return '"' + (
+        str(s)
+        .replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+        .replace("\t", "\\t")
+    ) + '"'
+
+
+def hook_script_name(cmd):
+    # Emit only a SCRIPT identifier, never a trailing argument. Taking the last
+    # whitespace token leaks arg values into the manifest — a secret in
+    # `--key=…` or PII in `--user <name>` / `--home /home/<name>`. Restrict to
+    # tokens whose basename ends in a known script extension; take the last such
+    # (adapter-wrapped hooks put the real script last). No script token -> skip.
+    cand = ""
+    for tok in cmd.split():
+        tok = tok.strip('"')
+        base = tok.rsplit("/", 1)[-1]
+        if _SCRIPT_EXT.search(base):
+            cand = base
+    return cand
 
 
 settings_path = os.environ["SETTINGS"]
@@ -90,11 +124,7 @@ try:
     for event, groups in (s.get("hooks") or {}).items():
         for g in groups or []:
             for c in g.get("hooks") or []:
-                cmd = c.get("command", "")
-                # last whitespace-separated token, quote-stripped — the actual
-                # hook script name, same extraction doctor's manifest check uses.
-                base = cmd.split()[-1].strip('"') if cmd.split() else ""
-                base = base.rsplit("/", 1)[-1]
+                base = hook_script_name(c.get("command", ""))
                 if base:
                     hooks.append((event, base))
 except (FileNotFoundError, json.JSONDecodeError, AttributeError, TypeError):
@@ -170,14 +200,24 @@ if [[ $RENDER_RC -ne 0 ]]; then
 fi
 
 # --- save gate: gitleaks-scan the RENDERED file before it ever reaches $OUT ---
-# WHY: no array here — bash 3.2 (macOS /bin/bash) treats "${arr[@]}" on an
-# empty array as unbound under set -u, and the crash inside the $() subshell
-# would masquerade as a scan refusal (GL_RC=1, empty findings body).
-if [[ -f "$GITLEAKS_CONFIG" ]]; then
-    GL_OUT="$("$SCANNER" detect --no-git --source "$RENDERED" --config "$GITLEAKS_CONFIG" 2>&1)"
-else
-    GL_OUT="$("$SCANNER" detect --no-git --source "$RENDERED" 2>&1)"
+# WHY fail-closed on an absent ruleset: gitleaks' BUILT-IN rules MISS the sk-ant-
+# session/oauth/variant credential shapes that this repo's gitleaks.toml catches
+# (measured — built-in flags 0/3, repo config 3/3). A config-less scan is a
+# materially weaker gate, not an equivalent one, so "could not load the ruleset"
+# is the same epistemic state as "could not run the scanner": both exit 2. This
+# also neutralizes a symlink invocation (REPO_ROOT via dirname would miss
+# gitleaks.toml) — it fails closed instead of silently down-scanning.
+# (No array for the args — bash 3.2 treats "${arr[@]}" on an empty array as
+# unbound under set -u, and that crash inside $() would masquerade as a refusal.)
+if [[ ! -f "$GITLEAKS_CONFIG" ]]; then
+    echo "ERROR: gitleaks ruleset not found at $GITLEAKS_CONFIG — refusing to export." >&2
+    echo "The built-in rules miss sk-ant- credential shapes; cannot prove 0 findings without the repo ruleset." >&2
+    echo "(If invoked via a symlink, run the script at its real path so \$REPO_ROOT/gitleaks.toml resolves, or set AGENT_GITLEAKS_CONFIG to a real config.)" >&2
+    exit 2
 fi
+# --redact: the refusal path echoes $GL_OUT to stderr, which /record can capture
+# into the brain vault — never let a finding body carry a cleartext secret there.
+GL_OUT="$("$SCANNER" detect --no-git --source "$RENDERED" --config "$GITLEAKS_CONFIG" --redact 2>&1)"
 GL_RC=$?
 
 if [[ $GL_RC -ne 0 ]]; then
@@ -187,8 +227,8 @@ if [[ $GL_RC -ne 0 ]]; then
     exit 1
 fi
 
-mkdir -p "$(dirname "$OUT")"
-cp "$RENDERED" "$OUT"
+mkdir -p "$(dirname "$OUT")" || { echo "ERROR: cannot create output directory for $OUT" >&2; exit 2; }
+cp "$RENDERED" "$OUT" || { echo "ERROR: failed to write $OUT (the scan passed, but the file was not saved)." >&2; exit 2; }
 echo "Exported: $OUT"
 echo "  hooks:   $(grep -c '^  - event:' "$RENDERED" || true)"
 echo "  plugins: $(grep -c '^  - marketplace:' "$RENDERED" || true)"
