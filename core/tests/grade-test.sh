@@ -50,11 +50,12 @@ run_grade() {  # <tests_dir> [extra args...] -> stdout+stderr, sets RC
   RC=$?
 }
 
-echo "=== (a) clean tree: GATE pass + all guards green -> harness_score 11.0 ==="
+echo "=== (a) clean tree: GATE pass + all guards green -> harness_score 10.0 ==="
 D="$(mktemp -d "$TMP_ROOT/aXXXX")"; seed_pass_dir "$D"
 run_grade "$D"
-printf '%s\n' "$OUT" | grep -qE '^harness_score: 11\.0$'; check "baseline-score-11.0" $?
+printf '%s\n' "$OUT" | grep -qE '^harness_score: 10\.0$'; check "baseline-score-10.0" $?
 printf '%s\n' "$OUT" | grep -qE '^mode:review-false-clean N/A'; check "process-mode-is-NA" $?
+printf '%s\n' "$OUT" | grep -qE '^mode:vacuous-parity N/A .*GATE floor'; check "gate-covered-mode-is-NA" $?
 printf '%s\n' "$OUT" | grep -qE '^mode:silent-drop PASS'; check "silent-drop-PASS-when-green" $?
 # exactly one harness_score line, and it is the LAST line (output contract)
 [[ "$(printf '%s\n' "$OUT" | grep -c '^harness_score:')" -eq 1 ]]; check "exactly-one-score-line" $?
@@ -69,18 +70,18 @@ printf '%s\n' "$OUT" | grep -qE 'GATE: FAIL'; check "gate-fail-message" $?
 ! printf '%s\n' "$OUT" | grep -qE '^mode:'; check "gate-fail-skips-checklist" $?
 
 echo
-echo "=== (c) one guard red -> that mode FAIL, score drops to 10.0 ==="
+echo "=== (c) one guard red -> that mode FAIL, score drops to 9.0 ==="
 D="$(mktemp -d "$TMP_ROOT/cXXXX")"; seed_pass_dir "$D"; make_fail "$D/completion-verify-test.sh"
 run_grade "$D"
 printf '%s\n' "$OUT" | grep -qE '^mode:silent-drop FAIL .*re-opened'; check "regressed-mode-FAIL" $?
-printf '%s\n' "$OUT" | grep -qE '^harness_score: 10\.0$'; check "one-regression-score-10.0" $?
+printf '%s\n' "$OUT" | grep -qE '^harness_score: 9\.0$'; check "one-regression-score-9.0" $?
 
 echo
-echo "=== (d) missing guard battery -> fail-closed FAIL + 0.5 OER penalty (9.5) ==="
+echo "=== (d) missing guard battery -> fail-closed FAIL + 0.5 OER penalty (8.5) ==="
 D="$(mktemp -d "$TMP_ROOT/dXXXX")"; seed_pass_dir "$D"; rm -f "$D/evals-test.sh"
 run_grade "$D"
 printf '%s\n' "$OUT" | grep -qE '^mode:loose-coercion FAIL .*missing .*fail-closed'; check "missing-guard-fail-closed" $?
-printf '%s\n' "$OUT" | grep -qE '^harness_score: 9\.5$'; check "missing-guard-oer-penalty" $?
+printf '%s\n' "$OUT" | grep -qE '^harness_score: 8\.5$'; check "missing-guard-oer-penalty" $?
 
 echo
 echo "=== (e) unparseable rubric -> fail-closed harness_score 0 ==="
@@ -111,7 +112,7 @@ printf '%s\n' "$OUT" | grep -qE '^harness_score: 0$'; check "off-target-score-0"
 printf '%s\n' "$OUT" | grep -qE 'TARGET-VIOLATION.*core/tests/sneaky.sh'; check "off-target-named" $?
 # a full-path regex covering both dirs passes the boundary -> real checklist score
 OUT="$(cd "$G" && GRADE_SKIP_GITLEAKS=1 bash core/tests/grade.sh --base "$BASE" --target '(agents|core)/.*' 2>&1)"
-printf '%s\n' "$OUT" | grep -qE '^harness_score: 11\.0$'; check "on-target-passes-boundary" $?
+printf '%s\n' "$OUT" | grep -qE '^harness_score: 10\.0$'; check "on-target-passes-boundary" $?
 # unanchored bypass is closed: a substring-y regex must NOT classify core/tests as on-target
 OUT="$(cd "$G" && GRADE_SKIP_GITLEAKS=1 bash core/tests/grade.sh --base "$BASE" --target 'agents' 2>&1)"
 printf '%s\n' "$OUT" | grep -qE '^harness_score: 0$'; check "unanchored-target-not-fooled" $?
@@ -172,8 +173,8 @@ echo "=== (g2) MAPPING CORRECTNESS: fail each code mode's battery -> exactly tha
 # Prove the map is not just present but CORRECT: swapping two mappings (both targets
 # still exist, both arms still present) would pass (g) but must fail here.
 # Pairs mirror grade.sh's guard_for (the test's copy IS the drift tripwire).
-MAP_MODES=(silent-drop vacuous-green vacuous-parity glob-scope-miss bypass-flag unanchored-skip infra-as-verdict lexical-containment injection-breakout loose-coercion stale-ssot)
-MAP_BATT=(completion-verify-test.sh verify-all-test.sh adapter-parity.sh supply-chain-scan-test.sh pre-tool-guard-test.sh spec-gate-test.sh llm-judge-test.sh reference-judge-test.sh pre-tool-guard-test.sh evals-test.sh doc-reality.sh)
+MAP_MODES=(silent-drop vacuous-green glob-scope-miss bypass-flag unanchored-skip infra-as-verdict lexical-containment injection-breakout loose-coercion stale-ssot)
+MAP_BATT=(completion-verify-test.sh verify-all-test.sh supply-chain-scan-test.sh pre-tool-guard-test.sh spec-gate-test.sh llm-judge-test.sh reference-judge-test.sh pre-tool-guard-test.sh evals-test.sh doc-reality.sh)
 mapfail=0
 idx=0
 n=${#MAP_MODES[@]}
@@ -187,6 +188,19 @@ while [[ $idx -lt $n ]]; do
   fi
 done
 [[ $mapfail -eq 0 ]]; check "every-mode-maps-to-correct-battery" $?
+
+echo
+echo "=== (g3) DRIFT GATE: no GATE battery may appear as a guard_for target ==="
+# A guard that is also a GATE battery creates a second, unreachable verdict path
+# (the GATE short-circuit runs first) — the 2026-08-09 vacuous-parity decision.
+GATE_SET="sanitize-audit.sh adapter-parity.sh hook-config-test.sh post-commit-autosync-test.sh"
+gate_in_map=0
+while IFS= read -r b; do
+  for g in $GATE_SET; do
+    [[ "$b" == "$g" ]] && { echo "    GATE battery in guard map: $b"; gate_in_map=$((gate_in_map + 1)); }
+  done
+done < <(grep -oE 'echo "[a-z0-9-]+\.sh"' "$GRADE" | sed 's/echo "//; s/"//')
+[[ $gate_in_map -eq 0 ]]; check "no-gate-battery-in-guard-map" $?
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="

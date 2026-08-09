@@ -33,9 +33,17 @@
 # This mirrors the campaign's `infra-as-verdict` lesson (E-1 batch-3): a broken or
 # absent backend must fail closed, never emit a trusted score.
 #
-# Baseline: on a clean tree (all batteries green) this emits `harness_score: 11.0`
-# (11 code-guarded modes PASS; `review-false-clean` is N/A). This SUPERSEDES the
-# pre-L-1 P2-2 target of 8.0 (which came from the retired single-scalar benchmark).
+# Baseline: on a clean tree (all batteries green) this emits `harness_score: 10.0`
+# (10 code-guarded modes PASS; `vacuous-parity` is GATE-covered and `review-false-clean`
+# is N/A — both reported, neither scored). This SUPERSEDES the pre-L-1 P2-2 target
+# of 8.0 (which came from the retired single-scalar benchmark).
+#
+# GATE batteries are BANNED from the mode->guard map (operator decision, 2026-08-09):
+# a mode whose guard is also a GATE battery would have two verdict paths for one
+# signal — the GATE short-circuit (score 0, no checklist) always wins, so the
+# checklist arm could never fire and its `mode:<id> FAIL` line was unreachable
+# (the exact defect grade-test's mapping-correctness check caught). Such modes map
+# to @gate@: covered by the GATE floor alone, reported N/A, excluded from score.
 #
 # NOT a CI gate — this is a loop-time tool (it re-runs batteries; run = minutes,
 # §5.3). Its own battery `core/tests/grade-test.sh` drives it hermetically via the
@@ -94,13 +102,17 @@ done
 # in evals/failure-modes.yaml maps to the battery that encodes its caught_in defect;
 # the battery going red = the candidate re-opened that hole. Kept in the grader (not
 # the rubric yaml) so the rubric stays a pure description; grade-test.sh asserts this
-# map covers every rubric mode and that every named battery file exists (drift gate).
+# map covers every rubric mode, that every named battery file exists, and that no
+# GATE battery appears as a guard target (drift gates).
 # @process@ = a discipline mode with no code guard (reported N/A, excluded from score).
+# @gate@    = a mode whose only guard IS a GATE battery (single path: the GATE floor
+#             already discards on failure; re-running it here would be a second,
+#             unreachable verdict path — see header).
 guard_for() {
   case "$1" in
     silent-drop)          echo "completion-verify-test.sh" ;;
     vacuous-green)        echo "verify-all-test.sh" ;;
-    vacuous-parity)       echo "adapter-parity.sh" ;;
+    vacuous-parity)       echo "@gate@" ;;   # adapter-parity.sh is a GATE battery
     glob-scope-miss)      echo "supply-chain-scan-test.sh" ;;
     bypass-flag)          echo "pre-tool-guard-test.sh" ;;
     unanchored-skip)      echo "spec-gate-test.sh" ;;
@@ -224,6 +236,9 @@ while IFS= read -r mode; do
   case "$guard" in
     @process@)
       printf 'mode:%s N/A — process discipline, no code guard (excluded)\n' "$mode"
+      ;;
+    @gate@)
+      printf 'mode:%s N/A — covered by the GATE floor (single path; a GATE failure already discards at 0)\n' "$mode"
       ;;
     @unknown@)
       printf 'mode:%s FAIL — no guard mapped for this mode (fail-closed)\n' "$mode"

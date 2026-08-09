@@ -18,11 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mandatory last line on every path so an empty grep is always a real crash. It fails
   closed to `harness_score: 0` (= discard) on any untrustworthy path — GATE failure,
   a TARGET-boundary violation (off-target diff), or an unparseable rubric — the
-  operator-chosen baseline verdict. On a clean tree it emits `harness_score: 11.0`
-  (11 code-guarded modes PASS; `review-false-clean` is N/A), superseding the retired
-  single-scalar 8.0. It is a loop-time tool (re-runs batteries; ~1 min) and is
-  excluded from `verify-all` to avoid recursion; `grade-test.sh` (20 checks) drives
-  it hermetically and gates mode↔guard-map drift.
+  operator-chosen baseline verdict. On a clean tree it emits `harness_score: 10.0`
+  (10 code-guarded modes PASS; `vacuous-parity` is GATE-covered — its only guard,
+  adapter-parity, is a GATE battery, and a second checklist path would be unreachable
+  behind the GATE short-circuit, so it is reported N/A on the single GATE path —
+  and `review-false-clean` is N/A), superseding the retired single-scalar 8.0. It is
+  a loop-time tool (re-runs batteries; ~1 min) and is excluded from `verify-all` to
+  avoid recursion; `grade-test.sh` (33 checks) drives it hermetically and gates
+  mode↔guard-map drift, including a ban on GATE batteries in the guard map.
 - **Append-only loop ledger `core/infra/loop-ledger.sh` (P2-3).** The sanctioned
   writer for `.agent/loop/results.tsv` (untracked run state): a 5-column schema
   (commit / harness_score / duration_s / status / description≤80), a status enum
