@@ -29,10 +29,10 @@
 # prefix are append-only extension and are accepted (this self-heals the crash
 # window where an append landed but the process died before the witness update).
 # A pre-witness ledger is adopted on its first sanctioned append (protection
-# starts there). This is tamper-EVIDENT, not tamper-proof — a
-# shell can still delete both files, but that is a two-target act that
-# loop-write-guard.py escalates during a loop; the honest bound is documented
-# (defense-in-depth framing, L-2).
+# starts there). This is tamper-EVIDENT, not tamper-proof — a shell can still
+# delete both files; during a loop session loop-write-guard.py ASKS on writes
+# that touch the ledger or its witness (it does not hard-block a human), so the
+# honest bound is documented (defense-in-depth framing, L-2).
 #
 # Usage:
 #   loop-ledger.sh append --file <tsv> --commit <c> --score <s> \
@@ -66,7 +66,20 @@ prefix_stream_sha() {
   fi
 }
 
+# require_regular <path> <label> — absent is fine; a symlink or other non-regular
+# file is refused. A witness symlinked to /dev/null slipped past the old `-f` gate
+# (a symlink is not a regular file, so the tamper block was skipped) and every
+# future write_witness landed in /dev/null — permanent silent disarm (sec C5).
+require_regular() {
+  if [[ -L "$1" ]]; then
+    die "$2 $1 is a symlink — refused (restore it as a regular file, or remove it as an explicit human reset)"
+  elif [[ -e "$1" && ! -f "$1" ]]; then
+    die "$2 $1 is not a regular file — refused"
+  fi
+}
+
 write_witness() {  # write_witness <ledger> <witness>
+  require_regular "$2" "witness"
   printf '%s %s\n' "$(file_sha "$1")" "$(wc -l < "$1" | tr -d ' ')" > "$2" \
     || die "cannot write witness $2"
 }
@@ -119,6 +132,8 @@ cmd_append() {
   # Refused: missing/empty file (delete-recreate), fewer lines than N (truncation),
   # or a prefix that no longer hashes to the witness (rewritten history).
   local witness="$file.witness"
+  require_regular "$file" "ledger"
+  require_regular "$witness" "witness"
   if [[ -f "$witness" ]]; then
     if [[ ! -s "$file" ]]; then
       die "witness exists but ledger $file is missing/empty — delete-recreate refused (restore the ledger, or remove the witness as an explicit human reset)"
@@ -130,12 +145,36 @@ cmd_append() {
     if ! printf '%s' "$want_lines" | grep -qE '^[0-9]+$'; then
       die "witness $witness is malformed — refused (restore it from a backup, or remove it as an explicit human reset)"
     fi
+    # A notarized prefix is never shorter than the header row. want_lines=0 would
+    # pair `head -n 0` (empty stream) with the empty-string sha256 — a forged
+    # witness that "matches" ANY ledger content (sec C5).
+    if [[ "$want_lines" -lt 1 ]]; then
+      die "witness $witness claims an empty prefix (want_lines=0) — refused (a notarized ledger always has at least its header line)"
+    fi
     if [[ "$have_lines" -lt "$want_lines" ]]; then
       die "ledger $file has fewer lines than its witness (truncated) — refused (restore the ledger, or remove the witness as an explicit human reset)"
     fi
     prefix_sha="$(head -n "$want_lines" "$file" | prefix_stream_sha)"
     if [[ -z "$want_sha" || "$prefix_sha" != "$want_sha" ]]; then
       die "ledger $file does not match its witness (history rewritten since the last sanctioned append) — refused (restore the ledger, or remove the witness as an explicit human reset)"
+    fi
+    # Rows beyond the witnessed prefix are about to be re-notarized as genuine
+    # history, so hold them to the same schema cmd_append enforces on write
+    # (5 TSV columns, hex-or-'-' commit, numeric score, integer duration, status
+    # enum). Without this, a row hand-appended past the CLI (byte-pure append, so
+    # the write guard allows it) is laundered into notarized history (sec C6).
+    if [[ "$have_lines" -gt "$want_lines" ]]; then
+      local bad_row
+      bad_row="$(tail -n +"$((want_lines + 1))" "$file" | awk -F'\t' '
+        NF != 5 \
+        || $1 !~ /^([0-9a-fA-F]+|-)$/ \
+        || $2 !~ /^[0-9]+(\.[0-9]+)?$/ \
+        || $3 !~ /^[0-9]+$/ \
+        || $4 !~ /^(keep|discard|crash|timeout)$/ { print NR; exit }
+      ')"
+      if [[ -n "$bad_row" ]]; then
+        die "ledger $file extension row $((want_lines + bad_row)) (beyond the witness) fails the row schema — refused (restore the ledger, or remove the witness as an explicit human reset)"
+      fi
     fi
   fi
 

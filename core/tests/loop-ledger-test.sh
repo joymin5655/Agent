@@ -120,5 +120,53 @@ bash "$LEDGER" append --file "$FC" --commit ddd444 --score 6.0 --duration 1 --st
 grep -q "truncated" "$TMP_ROOT/i.err"; check "truncation-named" $?
 
 echo
+echo "=== (j) witness forgery/bypass refused: want_lines=0, symlink, non-regular (sec C5) ==="
+# want_lines=0 forgery: empty-prefix hash pairs with the empty-string sha256, which
+# would "match" ANY ledger content — must die, never treat as a valid witness.
+FJ="$TMP_ROOT/forge.tsv"
+bash "$LEDGER" append --file "$FJ" --commit aaa111 --score 3.0 --duration 1 --status keep --desc one
+printf '%s 0\n' "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" > "$FJ.witness"
+bash "$LEDGER" append --file "$FJ" --commit bbb222 --score 9.9 --duration 1 --status keep --desc forged 2>"$TMP_ROOT/j.err"; rc=$?
+[[ $rc -ne 0 ]]; check "want-lines-0-refused" $?
+grep -q "empty prefix" "$TMP_ROOT/j.err"; check "want-lines-0-named" $?
+# symlinked witness (e.g. -> /dev/null): the old -f gate skipped the tamper block
+# entirely AND write_witness landed in /dev/null — permanent disarm. Must die.
+FS="$TMP_ROOT/sym.tsv"
+bash "$LEDGER" append --file "$FS" --commit aaa111 --score 3.0 --duration 1 --status keep --desc one
+rm -f "$FS.witness"; ln -s /dev/null "$FS.witness"
+bash "$LEDGER" append --file "$FS" --commit bbb222 --score 1.0 --duration 1 --status keep --desc two 2>"$TMP_ROOT/j2.err"; rc=$?
+[[ $rc -ne 0 ]]; check "symlink-witness-refused" $?
+grep -q "symlink" "$TMP_ROOT/j2.err"; check "symlink-witness-named" $?
+# symlinked ledger is refused the same way
+FS2="$TMP_ROOT/sym2.tsv"
+printf 'x\n' > "$TMP_ROOT/elsewhere.txt"; ln -s "$TMP_ROOT/elsewhere.txt" "$FS2"
+bash "$LEDGER" append --file "$FS2" --commit aaa111 --score 1.0 --duration 1 --status keep --desc x 2>"$TMP_ROOT/j3.err"; rc=$?
+[[ $rc -ne 0 ]]; check "symlink-ledger-refused" $?
+# non-regular witness (a directory) is refused
+FD="$TMP_ROOT/dirw.tsv"
+bash "$LEDGER" append --file "$FD" --commit aaa111 --score 1.0 --duration 1 --status keep --desc x
+rm -f "$FD.witness"; mkdir "$FD.witness"
+bash "$LEDGER" append --file "$FD" --commit bbb222 --score 1.0 --duration 1 --status keep --desc y 2>"$TMP_ROOT/j4.err"; rc=$?
+[[ $rc -ne 0 ]]; check "non-regular-witness-refused" $?
+
+echo
+echo "=== (k) extension rows are schema-checked before re-notarization (sec C6) ==="
+# A hand-appended row past the CLI (byte-pure append) must NOT be laundered into
+# notarized history by the next sanctioned append unless it matches the row schema.
+FK="$TMP_ROOT/laundry.tsv"
+bash "$LEDGER" append --file "$FK" --commit aaa111 --score 3.0 --duration 1 --status keep --desc one
+printf 'not-a-sha\tNaN\t-1\tPROMOTED\tforged\textra\tcols\n' >> "$FK"
+bash "$LEDGER" append --file "$FK" --commit bbb222 --score 5.0 --duration 1 --status keep --desc two 2>"$TMP_ROOT/k.err"; rc=$?
+[[ $rc -ne 0 ]]; check "forged-extension-row-refused" $?
+grep -q "row schema" "$TMP_ROOT/k.err"; check "forged-extension-named" $?
+# a schema-VALID extension row is still accepted (crash-window self-heal intact —
+# section (i) proves the positive path; this asserts the refusal did not overreach)
+FK2="$TMP_ROOT/laundry2.tsv"
+bash "$LEDGER" append --file "$FK2" --commit aaa111 --score 3.0 --duration 1 --status keep --desc one
+printf 'bbb222\t4.0\t1\tdiscard\tvalid-crash-row\n' >> "$FK2"
+bash "$LEDGER" append --file "$FK2" --commit ccc333 --score 5.0 --duration 1 --status keep --desc two; rc=$?
+[[ $rc -eq 0 ]]; check "valid-extension-still-accepted" $?
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]
