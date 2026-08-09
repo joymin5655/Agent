@@ -30,6 +30,7 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 # Every battery grade.sh may invoke (GATE set + every guard_for target).
 ALL_BATTERIES=(
   sanitize-audit.sh adapter-parity.sh hook-config-test.sh post-commit-autosync-test.sh
+  loop-write-guard-test.sh loop-ledger-test.sh
   completion-verify-test.sh verify-all-test.sh supply-chain-scan-test.sh
   pre-tool-guard-test.sh spec-gate-test.sh llm-judge-test.sh reference-judge-test.sh
   evals-test.sh doc-reality.sh
@@ -45,8 +46,10 @@ seed_pass_dir() {
 make_fail() { printf '%s\n' '#!/usr/bin/env bash' 'exit 1' > "$1"; }
 
 run_grade() {  # <tests_dir> [extra args...] -> stdout+stderr, sets RC
+  # hermetic: GRADE_HERMETIC=1 gates the seams (C3) and skips the INTEGRITY phase,
+  # so scoring logic is tested with stubs in a tmp dir (no git repo).
   local d="$1"; shift
-  OUT="$(GRADE_TESTS_DIR="$d" GRADE_RUBRIC="$RUBRIC" GRADE_SKIP_GITLEAKS=1 bash "$GRADE" "$@" 2>&1)"
+  OUT="$(GRADE_HERMETIC=1 GRADE_TESTS_DIR="$d" GRADE_RUBRIC="$RUBRIC" GRADE_SKIP_GITLEAKS=1 bash "$GRADE" "$@" 2>&1)"
   RC=$?
 }
 
@@ -92,7 +95,7 @@ printf '%s\n' "$OUT" | grep -qE '^harness_score: 0$'; check "bad-rubric-score-0"
 printf '%s\n' "$OUT" | grep -qiE 'fail-closed'; check "bad-rubric-fail-closed-msg" $?
 
 echo
-echo "=== (f) TARGET-boundary in a scratch git repo (clean tree, --base, full-path) ==="
+echo "=== (f) INTEGRITY in a scratch git repo (unconditional; clean tree, --base, full-path) ==="
 G="$TMP_ROOT/gitrepo"; mkdir -p "$G"
 (
   cd "$G" && git init -q && git config user.email t@t && git config user.name t
@@ -101,43 +104,68 @@ G="$TMP_ROOT/gitrepo"; mkdir -p "$G"
   cp "$RUBRIC" evals/failure-modes.yaml
   cp "$GRADE" core/tests/grade.sh
   echo base > agents/reviewer.md && git add -A && git commit -qm base
-  echo change > agents/reviewer.md          # on-target edit
-  echo drift > core/tests/sneaky.sh          # OFF-target edit
-  git add -A && git commit -qm candidate     # tree is CLEAN after commit
+  echo change > agents/reviewer.md && git add -A && git commit -qm on-target  # agents-only candidate
 )
 BASE="$(cd "$G" && git rev-parse HEAD~1)"
-# off-target committed file -> discard 0, named
+# on-target-only candidate under a SAFE target -> real checklist score 10.0
 OUT="$(cd "$G" && GRADE_SKIP_GITLEAKS=1 bash core/tests/grade.sh --base "$BASE" --target 'agents/.*' 2>&1)"
+printf '%s\n' "$OUT" | grep -qE '^harness_score: 10\.0$'; check "on-target-passes-boundary" $?
+# add an OFF-target commit; the same safe target must discard and name it
+( cd "$G" && echo drift > core/tests/sneaky.sh && git add -A && git commit -qm off-target )
+BASE2="$(cd "$G" && git rev-parse HEAD~1)"
+OUT="$(cd "$G" && GRADE_SKIP_GITLEAKS=1 bash core/tests/grade.sh --base "$BASE2" --target 'agents/.*' 2>&1)"
 printf '%s\n' "$OUT" | grep -qE '^harness_score: 0$'; check "off-target-score-0" $?
 printf '%s\n' "$OUT" | grep -qE 'TARGET-VIOLATION.*core/tests/sneaky.sh'; check "off-target-named" $?
-# a full-path regex covering both dirs passes the boundary -> real checklist score
-OUT="$(cd "$G" && GRADE_SKIP_GITLEAKS=1 bash core/tests/grade.sh --base "$BASE" --target '(agents|core)/.*' 2>&1)"
-printf '%s\n' "$OUT" | grep -qE '^harness_score: 10\.0$'; check "on-target-passes-boundary" $?
-# unanchored bypass is closed: a substring-y regex must NOT classify core/tests as on-target
+# C4: a target that ADMITS the grader/verifier surface fails closed (even on a clean, on-target diff)
+OUT="$(cd "$G" && GRADE_SKIP_GITLEAKS=1 bash core/tests/grade.sh --base "$BASE2" --target '(agents|core)/.*' 2>&1)"
+printf '%s\n' "$OUT" | grep -qE 'admits the grader/verifier surface'; check "target-admits-surface-refused" $?
+printf '%s\n' "$OUT" | tail -n1 | grep -qE '^harness_score: 0$'; check "target-admits-surface-score-0" $?
+# unanchored bypass closed: substring-y 'agents' must NOT classify agents/reviewer.md as on-target
 OUT="$(cd "$G" && GRADE_SKIP_GITLEAKS=1 bash core/tests/grade.sh --base "$BASE" --target 'agents' 2>&1)"
 printf '%s\n' "$OUT" | grep -qE '^harness_score: 0$'; check "unanchored-target-not-fooled" $?
 
 echo
-echo "=== (f2) TARGET fail-closed: --target without --base, dirty tree, and bad base ==="
+echo "=== (f2) INTEGRITY fail-closed: no boundary (C1), assume-unchanged (C2), dirty, untracked, bad base ==="
+# C1: a real grading run with NO --base/--target cannot enforce pillar 3 -> fail closed.
+OUT="$(cd "$G" && GRADE_SKIP_GITLEAKS=1 bash core/tests/grade.sh 2>&1)"
+printf '%s\n' "$OUT" | grep -qE 'requires --base .* and --target'; check "bare-grading-fails-closed" $?
+printf '%s\n' "$OUT" | tail -n1 | grep -qE '^harness_score: 0$'; check "bare-grading-score-0" $?
+# --target without --base -> fail closed
 OUT="$(cd "$G" && GRADE_SKIP_GITLEAKS=1 bash core/tests/grade.sh --target 'agents/.*' 2>&1)"
 printf '%s\n' "$OUT" | grep -qE 'requires --base'; check "target-without-base-fails-closed" $?
 printf '%s\n' "$OUT" | tail -n1 | grep -qE '^harness_score: 0$'; check "target-without-base-score-0" $?
-# dirty tree: leave an uncommitted edit, then grade with --target -> refuse
+# C2: assume-unchanged bit hides a modified battery from BOTH status and diff -> fail closed
+( cd "$G" && printf '%s\n' '#!/usr/bin/env bash' 'exit 1' > core/tests/verify-all-test.sh
+  git update-index --assume-unchanged core/tests/verify-all-test.sh )
+OUT="$(cd "$G" && GRADE_SKIP_GITLEAKS=1 bash core/tests/grade.sh --base "$BASE2" --target 'agents/.*' 2>&1)"
+printf '%s\n' "$OUT" | grep -qE 'assume-unchanged/skip-worktree'; check "assume-unchanged-refused" $?
+printf '%s\n' "$OUT" | tail -n1 | grep -qE '^harness_score: 0$'; check "assume-unchanged-score-0" $?
+( cd "$G" && git update-index --no-assume-unchanged core/tests/verify-all-test.sh
+  git checkout -q -- core/tests/verify-all-test.sh )   # clean up
+# dirty tree: uncommitted edit -> refuse
 ( cd "$G" && echo dirty >> core/tests/sneaky.sh )
-OUT="$(cd "$G" && GRADE_SKIP_GITLEAKS=1 bash core/tests/grade.sh --base "$BASE" --target '(agents|core)/.*' 2>&1)"
+OUT="$(cd "$G" && GRADE_SKIP_GITLEAKS=1 bash core/tests/grade.sh --base "$BASE2" --target 'agents/.*' 2>&1)"
 printf '%s\n' "$OUT" | grep -qE 'working tree is dirty'; check "dirty-tree-refused" $?
 printf '%s\n' "$OUT" | tail -n1 | grep -qE '^harness_score: 0$'; check "dirty-tree-score-0" $?
 ( cd "$G" && git checkout -q -- core/tests/sneaky.sh )   # clean up
 # UNTRACKED file: invisible to `git diff` but it EXECUTES in the batteries -> refuse
 ( cd "$G" && echo tamper > core/tests/untracked-helper.sh )
-OUT="$(cd "$G" && GRADE_SKIP_GITLEAKS=1 bash core/tests/grade.sh --base "$BASE" --target '(agents|core)/.*' 2>&1)"
+OUT="$(cd "$G" && GRADE_SKIP_GITLEAKS=1 bash core/tests/grade.sh --base "$BASE2" --target 'agents/.*' 2>&1)"
 printf '%s\n' "$OUT" | grep -qE 'working tree is dirty'; check "untracked-file-refused" $?
 printf '%s\n' "$OUT" | tail -n1 | grep -qE '^harness_score: 0$'; check "untracked-file-score-0" $?
 ( cd "$G" && rm -f core/tests/untracked-helper.sh )   # clean up
 # git error (bogus base) fails closed, not open
-OUT="$(cd "$G" && GRADE_SKIP_GITLEAKS=1 bash core/tests/grade.sh --base deadbeefbogus --target '(agents|core)/.*' 2>&1)"
+OUT="$(cd "$G" && GRADE_SKIP_GITLEAKS=1 bash core/tests/grade.sh --base deadbeefbogus --target 'agents/.*' 2>&1)"
 printf '%s\n' "$OUT" | grep -qE 'cannot verify boundary'; check "bad-base-fails-closed" $?
 printf '%s\n' "$OUT" | tail -n1 | grep -qE '^harness_score: 0$'; check "bad-base-score-0" $?
+
+echo
+echo "=== (f3) SEAM guard (C3): GRADE_TESTS_DIR/GRADE_RUBRIC honored only with GRADE_HERMETIC=1 ==="
+OUT="$(GRADE_TESTS_DIR=/tmp/whatever GRADE_SKIP_GITLEAKS=1 bash "$GRADE" --base x --target 'agents/.*' 2>&1)"
+printf '%s\n' "$OUT" | grep -qE 'SEAM-GUARD'; check "tests-dir-seam-without-hermetic-refused" $?
+printf '%s\n' "$OUT" | tail -n1 | grep -qE '^harness_score: 0$'; check "seam-without-hermetic-score-0" $?
+OUT="$(GRADE_RUBRIC=/tmp/whatever.yaml GRADE_SKIP_GITLEAKS=1 bash "$GRADE" --base x --target 'agents/.*' 2>&1)"
+printf '%s\n' "$OUT" | grep -qE 'SEAM-GUARD'; check "rubric-seam-without-hermetic-refused" $?
 
 echo
 echo "=== (h) unknown flag fails closed (no silent check-disable) ==="
@@ -153,7 +181,7 @@ DUP="$TMP_ROOT/dup.yaml"
   echo '  - {id: stale-ssot, name: b, description: b, caught_in: b, detection_signal: b, grader_check: b}'
 } > "$DUP"
 D="$(mktemp -d "$TMP_ROOT/iXXXX")"; seed_pass_dir "$D"
-OUT="$(GRADE_TESTS_DIR="$D" GRADE_RUBRIC="$DUP" GRADE_SKIP_GITLEAKS=1 bash "$GRADE" 2>&1)"
+OUT="$(GRADE_HERMETIC=1 GRADE_TESTS_DIR="$D" GRADE_RUBRIC="$DUP" GRADE_SKIP_GITLEAKS=1 bash "$GRADE" 2>&1)"
 [[ "$(printf '%s\n' "$OUT" | grep -c '^mode:stale-ssot ')" -eq 1 ]]; check "duplicate-id-graded-once" $?
 printf '%s\n' "$OUT" | grep -qE '^harness_score: 1\.0$'; check "duplicate-id-score-1.0" $?
 

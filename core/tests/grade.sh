@@ -51,24 +51,31 @@
 # model-backed richer signal) is intentionally OUT OF SCOPE for v1 and left to the
 # B6 pilot — v1 is the deterministic regression grader, honestly bounded.
 #
-# Flags:
+# Flags (a real grading run REQUIRES both --base and --target — see INTEGRITY):
 #   --target <regex>   restrict the candidate to files whose FULL path matches <regex>
 #                      (anchored, `grep -xE` — e.g. 'agents/.*'); any off-target
-#                      changed file => harness_score 0. Requires a clean working tree
-#                      and --base. An unknown flag also fails closed.
-#   --base <ref>       the mission's start ref; the boundary diff is <ref>..HEAD.
-#                      REQUIRED when --target is given (no silent HEAD~1 default that
-#                      would miss earlier commits of a multi-commit candidate).
+#                      changed file => harness_score 0. The regex must NOT admit the
+#                      grader/verifier surface (core/tests, evals, the guards, the
+#                      ledger) or the run fails closed. Requires a clean tree + --base.
+#   --base <ref>       the mission's start ref; the boundary diff is <ref>..HEAD
+#                      (no silent HEAD~1 default that would miss earlier commits of a
+#                      multi-commit candidate).
 #   --list-modes       print the rubric's mode ids (run order) and exit 0 (no score)
 #
-# Test seams (hermetic, offline):
+# Test seams — HERMETIC MODE ONLY. GRADE_TESTS_DIR/GRADE_RUBRIC swap the battery
+# set / rubric with no file change (invisible to the boundary), so they are honored
+# only when GRADE_HERMETIC=1 is also set; otherwise the run fails closed. The
+# effective tests_dir/rubric/hermetic flag are echoed on stdout so any swap is
+# visible in run.log.
+#   GRADE_HERMETIC=1      opt into scoring-logic mode (skips the INTEGRITY phase;
+#                         enables the two seams below). For grade-test.sh only.
 #   GRADE_TESTS_DIR       battery source dir (default $REPO_ROOT/core/tests)
 #   GRADE_RUBRIC          failure-modes.yaml path (default $REPO_ROOT/evals/failure-modes.yaml)
 #   GRADE_SKIP_GITLEAKS=1 omit the gitleaks GATE check (offline logic tests)
 #
 # Usage:
-#   bash core/tests/grade.sh                      # grade the working tree
-#   bash core/tests/grade.sh --target '^agents/'  # loop mission: reviewer prompts only
+#   bash core/tests/grade.sh --base <ref> --target 'agents/.*'   # loop mission
+#   GRADE_HERMETIC=1 GRADE_TESTS_DIR=... bash core/tests/grade.sh # scoring-logic test
 set -u
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -97,6 +104,24 @@ while [[ $# -gt 0 ]]; do
     *) printf 'grade.sh: unknown argument: %s (fail-closed)\n' "$1" >&2; emit_score_and_exit 0 ;;
   esac
 done
+
+# --- SEAM guard (C2/C3, security review 2026-08-10). Runs on the grading path only
+# (--list-modes is a read-only informational path that may legitimately point at an
+# alternate rubric). Placed BEFORE the rubric load so a hostile GRADE_RUBRIC is
+# rejected before it is even read. GRADE_TESTS_DIR and GRADE_RUBRIC swap the battery
+# set / rubric with ZERO file changes — invisible to every boundary check because
+# nothing in the repo moved — so a real grading run could point the grader at an
+# all-green stub dir (or drop OER-penalized modes). Require an explicit
+# GRADE_HERMETIC=1 opt-in, and echo the effective paths so any override is visible
+# in run.log (a silent swap alongside a clean score is the infra-as-verdict trap).
+HERMETIC="${GRADE_HERMETIC:-0}"
+if [[ $LIST_MODES -eq 0 ]]; then
+  if [[ "$HERMETIC" != "1" && ( -n "${GRADE_TESTS_DIR:-}" || -n "${GRADE_RUBRIC:-}" ) ]]; then
+    printf 'SEAM-GUARD — GRADE_TESTS_DIR/GRADE_RUBRIC are honored only with GRADE_HERMETIC=1 (fail-closed)\n' >&2
+    emit_score_and_exit 0
+  fi
+  printf 'grade: tests_dir=%s rubric=%s hermetic=%s\n' "$TESTS_DIR" "$RUBRIC" "$HERMETIC"
+fi
 
 # --- mode -> guard battery map (single source of truth for the grader). Each mode
 # in evals/failure-modes.yaml maps to the battery that encodes its caught_in defect;
@@ -171,7 +196,11 @@ run_battery() {
 # GATE set per §5.1: sanitize-audit, adapter-parity, hook-config-test,
 # post-commit-autosync, gitleaks. gitleaks is present-or-SKIP (a missing scanner is
 # not a pass, but its absence must not silently fail the loop offline).
-GATE_BATTERIES=(sanitize-audit.sh adapter-parity.sh hook-config-test.sh post-commit-autosync-test.sh)
+# The L-2 enforcement surface (loop-write-guard, loop-ledger) is in the GATE floor
+# too (C8, security review 2026-08-10): without it a candidate could silently break
+# the very guards that keep it from tampering, at zero score cost. GATE (not guard
+# map) keeps the 2026-08-09 "no GATE battery in the guard map" rule intact.
+GATE_BATTERIES=(sanitize-audit.sh adapter-parity.sh hook-config-test.sh post-commit-autosync-test.sh loop-write-guard-test.sh loop-ledger-test.sh)
 for g in "${GATE_BATTERIES[@]}"; do
   if ! run_battery "$g"; then
     printf 'GATE: FAIL — %s (regression floor breached)\n' "$g" >&2
@@ -193,34 +222,51 @@ if [[ "${GRADE_SKIP_GITLEAKS:-}" != "1" ]]; then
   fi
 fi
 
-# --- TARGET-boundary check (§5.1 pillar ③): refuse to score off-target diffs. ---
-# The batteries execute the WORKING TREE, so the boundary check must cover exactly
-# the bytes that run. We enforce: (1) --base is explicit (HEAD~1 misses earlier
-# commits of a multi-commit candidate); (2) the tree is clean INCLUDING untracked
-# files — `git diff --quiet` sees only tracked modifications, so an untracked
-# tamper file would execute in the batteries while staying invisible to the
-# committed-range diff (`git status --porcelain` covers staged + unstaged +
-# untracked and respects .gitignore, so run state under ignored dirs is fine);
-# (3) git failure fails CLOSED (a boundary check that cannot run must not silently
-# pass); (4) full-path anchored match (so 'core/tests/agents-helper.sh' is not
-# mistaken for on-target 'agents/.*').
-if [[ $TARGET_SET -eq 1 ]]; then
-  if [[ -z "$BASE_REF" ]]; then
-    printf 'TARGET-BOUNDARY — --target requires --base <mission-start-ref> (fail-closed)\n' >&2
+# --- INTEGRITY phase (§5.1 pillar ③): the batteries execute the WORKING TREE, so
+# before trusting ANY verdict the grader must prove the tree it runs IS the
+# committed candidate, confined to its declared TARGET. This phase is now
+# UNCONDITIONAL on a real grading run (C1: it used to hide behind `--target`, so the
+# documented loop — §5.2 step 4, which passed neither flag — never ran it). It is
+# skipped only in hermetic mode (stub batteries in a tmp dir, no repo — scoring-
+# logic tests). Enforced: (C1) --base AND --target are mandatory — a run with no
+# declared boundary cannot enforce pillar ③, so it fails closed rather than score
+# blind; (C4) the TARGET must not itself admit the grader/verifier surface; the tree
+# is clean incl. untracked (an untracked tamper executes yet hides from the diff);
+# (C2) no assume-unchanged/skip-worktree bit (which hides a modified file from BOTH
+# status and diff); (3) git failure fails CLOSED; (4) full-path anchored match.
+if [[ "$HERMETIC" != "1" ]]; then
+  if [[ $TARGET_SET -eq 0 || -z "$BASE_REF" ]]; then
+    printf 'INTEGRITY — real grading requires --base <ref> and --target <regex> (or GRADE_HERMETIC=1 for scoring-logic tests); refusing to score without a boundary (fail-closed)\n' >&2
     emit_score_and_exit 0
   fi
+  # C4: a TARGET that admits the grader/verifier surface would let a candidate edit
+  # the code that scores it and still clear the boundary. Reject such a target.
+  for surface in core/tests/grade.sh evals/failure-modes.yaml \
+                 core/hooks/loop-write-guard.py core/infra/loop-ledger.sh \
+                 hooks/hooks.json adapters/claude-code/adapter.sh; do
+    if printf '%s' "$surface" | grep -qxE "$TARGET_RE"; then
+      printf 'INTEGRITY — --target regex admits the grader/verifier surface (%s); a loop must not target the code that scores it (fail-closed)\n' "$surface" >&2
+      emit_score_and_exit 0
+    fi
+  done
   tree_state="$(git -C "$REPO_ROOT" status --porcelain 2>/dev/null)"
   if [[ $? -ne 0 ]]; then
-    printf 'TARGET-BOUNDARY — git status failed; cannot verify a clean tree (fail-closed)\n' >&2
+    printf 'INTEGRITY — git status failed; cannot verify a clean tree (fail-closed)\n' >&2
     emit_score_and_exit 0
   fi
   if [[ -n "$tree_state" ]]; then
-    printf 'TARGET-BOUNDARY — working tree is dirty (uncommitted or untracked files); commit the candidate before grading (fail-closed)\n' >&2
+    printf 'INTEGRITY — working tree is dirty (uncommitted or untracked files); commit the candidate before grading (fail-closed)\n' >&2
+    emit_score_and_exit 0
+  fi
+  # C2: assume-unchanged (lowercase tag) / skip-worktree (S) make a modified file
+  # invisible to both `status` and `diff`. `git ls-files -v` reveals the bit.
+  if git -C "$REPO_ROOT" ls-files -v | grep -qE '^([a-z]|S)'; then
+    printf 'INTEGRITY — assume-unchanged/skip-worktree bit(s) set; a modified file could hide from status and diff (fail-closed)\n' >&2
     emit_score_and_exit 0
   fi
   changed="$(git -C "$REPO_ROOT" diff --name-only "$BASE_REF" HEAD 2>/dev/null)"
   if [[ $? -ne 0 ]]; then
-    printf 'TARGET-BOUNDARY — git diff %s..HEAD failed; cannot verify boundary (fail-closed)\n' "$BASE_REF" >&2
+    printf 'INTEGRITY — git diff %s..HEAD failed; cannot verify boundary (fail-closed)\n' "$BASE_REF" >&2
     emit_score_and_exit 0
   fi
   offtarget=""
