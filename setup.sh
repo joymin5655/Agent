@@ -862,8 +862,17 @@ PY
 # AGENT_BOOTSTRAP_STDIN_IS_TTY (a piped/redirected stdin is never a tty, so a
 # test that wants to drive the interactive per-package prompts with scripted
 # answers has no other way to simulate "yes this is a real terminal").
+#
+# SECURITY: the override is honored ONLY when AGENT_BOOTSTRAP_PKG_MGR is also set
+# (the mocked-installer seam the battery always pairs it with). Alone, forcing
+# the tty check true while stdin is a pipe would let `yes y | ...` auto-consent
+# to a REAL `sudo apt-get install` on a NOPASSWD host. A real interactive run
+# never sets either seam (pkg_mgr is auto-detected), so this coupling makes the
+# override inert outside the test harness while leaving every test working
+# (sections (d)/(e) set both). Belt-and-suspenders with confirm_bootstrap()'s
+# refusal to consult AGENT_SETUP_YES.
 bootstrap_stdin_is_tty() {
-    if [[ -n "${AGENT_BOOTSTRAP_STDIN_IS_TTY:-}" ]]; then
+    if [[ -n "${AGENT_BOOTSTRAP_STDIN_IS_TTY:-}" && -n "${AGENT_BOOTSTRAP_PKG_MGR+x}" ]]; then
         [[ "$AGENT_BOOTSTRAP_STDIN_IS_TTY" == "1" ]]
         return
     fi
