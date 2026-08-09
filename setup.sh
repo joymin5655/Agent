@@ -949,6 +949,197 @@ PY
         esac
     fi
 
+    # 21. kiro gateway-lane wiring — sibling of check 13 (codex tier profiles):
+    #     the registry declares a tier ladder, and nothing after copy time
+    #     verifies the pieces it names are actually installed here. A kiro
+    #     lane needs three things beyond the registry entry: the gateway CLI,
+    #     one profile file per `--agent <name>` in tier_args (the profile is
+    #     where the model AND the read-only tool list live — see
+    #     adapters/kiro/README.md), and a resolvable preflight probe. Names
+    #     are DERIVED from backends.json, never hardcoded, so a registry edit
+    #     is picked up without touching this check. WARN-only: an uninstalled
+    #     optional lane is machine state, not repo integrity. No enabled kiro
+    #     backend -> skipped (nothing to wire). jq absent -> skipped LOUDLY
+    #     (the registry is JSON; guessing would be a false PASS).
+    #
+    #     An ENABLED lane that yields ZERO profiles or ZERO preflight entries is
+    #     a WARN naming the lane, never a PASS: an earlier revision only
+    #     accumulated MISSING files, so {"tier_args":{"TOP":[]},"preflight":[]}
+    #     printed "0 profile(s) present ... preflight resolvable (none
+    #     declared)" as a PASS — a lane with neither a read-only profile nor a
+    #     fail-closed probe reported healthy. Malformed shapes are named for the
+    #     same reason (they used to be silently dropped by the jq program): a
+    #     non-array cmd, a non-object tier_args, a dangling trailing --agent, a
+    #     non-string first preflight element.
+    local kiro_reg="${AGENT_BACKENDS_FILE:-$FRAMEWORK_ROOT/core/infra/backends.json}"
+    local kiro_agents_dir="${AGENT_KIRO_AGENTS_DIR:-$HOME/.kiro/agents}"
+    # strip control chars before echoing registry/config-derived text back to a
+    # terminal (escape-sequence display spoofing — same hardening as checks 12/15/16/20).
+    local kiro_agents_shown kiro_reg_shown
+    kiro_agents_shown="$(printf '%s' "${kiro_agents_dir/#$HOME/~}" | tr -d '\000-\037\177')"
+    kiro_reg_shown="$(printf '%s' "${kiro_reg/#$HOME/~}" | tr -d '\000-\037\177')"
+    # kcsv <accumulator> <item> — comma-join with dedup. bash 3.2 has no
+    # associative arrays and these lists are single-digit sized.
+    kcsv() {
+        local acc="$1" item="$2"
+        case ",$acc," in *",$item,"*|*", $item,"*) printf '%s' "$acc"; return 0 ;; esac
+        printf '%s' "${acc:+$acc, }$item"
+    }
+    if [[ ! -f "$kiro_reg" ]]; then
+        add_row PASS "kiro gateway lanes — no backends registry at $kiro_reg_shown (check skipped)"
+    elif ! command -v jq >/dev/null 2>&1; then
+        add_row WARN "kiro gateway lanes — check skipped: jq not found and the backends registry is JSON, so the enabled kiro lanes cannot be enumerated (no guess is made — that would be a false PASS). Install: brew install jq (macOS) or apt install jq"
+    else
+        # One jq pass emits tagged TAB-separated lines, one per (lane, fact).
+        # Control chars in any derived name are replaced INSIDE jq (`sane`) so a
+        # crafted registry cannot split a line here, let alone a doctor row.
+        # Every shape that is not usable emits a bad* row instead of vanishing.
+        local kiro_jq_out kiro_jq_rc=0
+        kiro_jq_out="$(jq -r '
+            def sane: gsub("[[:cntrl:]]"; "?");
+            (.backends // {}) | to_entries
+            | map(select((.value.gateway? == "kiro") and (.value.enabled == true)))
+            | .[]
+            | (.key | sane) as $n
+            | ( "lane\t" + $n ),
+              ( (.value.cmd // null)
+                | if (type == "array") and (length > 0)
+                     and ((.[0] | type) == "string") and (.[0] != "")
+                  then "cli\t" + $n + "\t" + (.[0] | sane)
+                  else "badcmd\t" + $n end ),
+              ( (.value.tier_args // {}) as $ta
+                | if ($ta | type) == "object"
+                  then ( $ta | to_entries[] | (.key | sane) as $t | .value
+                         | if type == "array"
+                           then ( . as $a
+                                  | [ range(0; ($a | length)) as $i
+                                      | select($a[$i] == "--agent")
+                                      | select(($i + 1) < ($a | length))
+                                      | select(($a[$i + 1] | type) == "string")
+                                      | select($a[$i + 1] != "")
+                                      | $a[$i + 1] ]
+                                  | if length == 0
+                                    then "badtier\t" + $n + "\t" + $t
+                                    else (.[] | "profile\t" + $n + "\t" + sane) end )
+                           else "badtier\t" + $n + "\t" + $t end )
+                  else "badtierargs\t" + $n end ),
+              ( (.value.preflight // [])
+                | if type == "array"
+                  then ( if length == 0 then "nopreflight\t" + $n
+                         elif ((.[0] | type) == "string") and (.[0] != "")
+                         then "preflight\t" + $n + "\t" + (.[0] | sane)
+                         else "badpreflight\t" + $n end )
+                  else "badpreflight\t" + $n end )
+        ' "$kiro_reg" 2>&1)" || kiro_jq_rc=$?
+        if [[ $kiro_jq_rc -ne 0 ]]; then
+            local kiro_err
+            kiro_err="$(printf '%s\n' "$kiro_jq_out" | head -1 | tr -d '\000-\037\177')"
+            add_row WARN "kiro gateway lanes — registry unreadable ($kiro_reg_shown): $kiro_err; the enabled kiro lanes cannot be enumerated"
+        else
+            local k_tag k_a k_b
+            # Arrays, not space-joined strings: a registry-derived name
+            # containing whitespace must stay ONE name (word splitting would
+            # both mangle the row and stat() nonexistent fragments).
+            local kiro_lane_names=() kiro_clis=() kiro_profs=() kiro_prof_lanes=()
+            local kiro_pfs=() kiro_badtier_lanes=()
+            local kiro_badcmd="" kiro_badtier="" kiro_badtierargs=""
+            local kiro_nopf="" kiro_badpf=""
+            while IFS=$'\t' read -r k_tag k_a k_b; do
+                case "$k_tag" in
+                    lane)        kiro_lane_names+=("$k_a") ;;
+                    cli)         kiro_clis+=("$k_b") ;;
+                    profile)     kiro_prof_lanes+=("$k_a"); kiro_profs+=("$k_b") ;;
+                    preflight)   kiro_pfs+=("$k_b") ;;
+                    badcmd)      kiro_badcmd="$(kcsv "$kiro_badcmd" "$k_a")" ;;
+                    badtier)     kiro_badtier="$(kcsv "$kiro_badtier" "$k_a:$k_b")"
+                                 kiro_badtier_lanes+=("$k_a") ;;
+                    badtierargs) kiro_badtierargs="$(kcsv "$kiro_badtierargs" "$k_a")" ;;
+                    nopreflight) kiro_nopf="$(kcsv "$kiro_nopf" "$k_a")" ;;
+                    badpreflight) kiro_badpf="$(kcsv "$kiro_badpf" "$k_a")" ;;
+                esac
+            done <<< "$kiro_jq_out"
+            local kiro_lanes=${#kiro_lane_names[@]}
+            local kiro_item kiro_missing=""
+            if [[ "$kiro_lanes" -eq 0 ]]; then
+                add_row PASS "kiro gateway lanes — no enabled kiro backend in $kiro_reg_shown (check skipped)"
+            else
+                for kiro_item in ${kiro_clis[@]+"${kiro_clis[@]}"}; do
+                    command -v "$kiro_item" >/dev/null 2>&1 \
+                        || kiro_missing="$(kcsv "$kiro_missing" "$kiro_item")"
+                done
+                if [[ -n "$kiro_missing" ]]; then
+                    # One actionable row, not a cascade: with no gateway CLI the
+                    # profile and preflight rows below are noise, so they are skipped.
+                    add_row WARN "kiro gateway lanes — gateway CLI not installed: $kiro_missing; all $kiro_lanes enabled kiro lane(s) in $kiro_reg_shown are dead until it is on PATH. Install Kiro CLI, or set enabled: false with a disabled_reason (adapters/kiro/README.md)"
+                else
+                    # Per-lane: zero usable profiles is a WARN on its own, before
+                    # any question of whether a profile FILE is installed.
+                    local kiro_lane kiro_noprof="" kiro_partial="" kiro_seen
+                    local kiro_lane_profs kiro_lane_bad
+                    for kiro_lane in ${kiro_lane_names[@]+"${kiro_lane_names[@]}"}; do
+                        kiro_lane_profs=0
+                        for kiro_seen in ${kiro_prof_lanes[@]+"${kiro_prof_lanes[@]}"}; do
+                            [[ "$kiro_seen" == "$kiro_lane" ]] && kiro_lane_profs=$((kiro_lane_profs + 1))
+                        done
+                        kiro_lane_bad=0
+                        for kiro_seen in ${kiro_badtier_lanes[@]+"${kiro_badtier_lanes[@]}"}; do
+                            [[ "$kiro_seen" == "$kiro_lane" ]] && kiro_lane_bad=$((kiro_lane_bad + 1))
+                        done
+                        if [[ "$kiro_lane_profs" -eq 0 ]]; then
+                            kiro_noprof="$(kcsv "$kiro_noprof" "$kiro_lane")"
+                        elif [[ "$kiro_lane_bad" -gt 0 ]]; then
+                            kiro_partial="$(kcsv "$kiro_partial" "$kiro_lane")"
+                        fi
+                    done
+                    local kiro_missing_profs="" kiro_prof_count=0 kiro_uniq_profs=""
+                    for kiro_item in ${kiro_profs[@]+"${kiro_profs[@]}"}; do
+                        case ",$kiro_uniq_profs," in *",$kiro_item,"*) continue ;; esac
+                        kiro_uniq_profs="${kiro_uniq_profs:+$kiro_uniq_profs,}$kiro_item"
+                        kiro_prof_count=$((kiro_prof_count + 1))
+                        [[ -f "$kiro_agents_dir/$kiro_item.json" ]] \
+                            || kiro_missing_profs="$(kcsv "$kiro_missing_profs" "$kiro_item")"
+                    done
+                    local kiro_missing_pfs=""
+                    for kiro_item in ${kiro_pfs[@]+"${kiro_pfs[@]}"}; do
+                        command -v "$kiro_item" >/dev/null 2>&1 \
+                            || kiro_missing_pfs="$(kcsv "$kiro_missing_pfs" "$kiro_item")"
+                    done
+                    if [[ -n "$kiro_badcmd" ]]; then
+                        add_row WARN "kiro gateway lanes — enabled lane(s) with an unusable cmd in $kiro_reg_shown: $kiro_badcmd; cmd must be an array whose first element is a nonempty string (it is the gateway binary call-worker.sh dispatches and the preflight probes)"
+                    fi
+                    if [[ -n "$kiro_badtierargs" ]]; then
+                        add_row WARN "kiro gateway lanes — enabled lane(s) whose tier_args is not an object in $kiro_reg_shown: $kiro_badtierargs; no tier can resolve, so every dispatch runs with the gateway's default model and default (NOT read-only) tools"
+                    fi
+                    if [[ -n "$kiro_noprof" ]]; then
+                        add_row WARN "kiro gateway lanes — enabled lane(s) pinning NO --agent profile in $kiro_reg_shown: $kiro_noprof; the model AND the read-only tool list live in the profile, so such a lane dispatches with the gateway's defaults (default model, NOT read-only). Give each tier [\"--agent\", \"<profile>\"], or set enabled: false with a disabled_reason (adapters/kiro/README.md)"
+                    fi
+                    if [[ -n "$kiro_partial" ]]; then
+                        add_row WARN "kiro gateway lanes — tier(s) that do not pin a profile: $kiro_badtier; a tier whose args carry no \"--agent <name>\" (empty, or a trailing --agent with nothing after it) composes to the bare cmd: default model, NOT read-only. Lane(s) affected: $kiro_partial"
+                    fi
+                    if [[ -n "$kiro_nopf" ]]; then
+                        add_row WARN "kiro gateway lanes — enabled lane(s) declaring NO preflight probe in $kiro_reg_shown: $kiro_nopf; nothing then verifies the credential before a paid dispatch, and no kiro-cli subcommand reports auth failure via exit code (adapters/kiro/README.md § Authentication). Declare \"preflight\": [\"kiro-preflight\"]"
+                    fi
+                    if [[ -n "$kiro_badpf" ]]; then
+                        add_row WARN "kiro gateway lanes — enabled lane(s) with an unusable preflight argv in $kiro_reg_shown: $kiro_badpf; preflight must be an array whose first element is a nonempty string (call-worker.sh execs it verbatim)"
+                    fi
+                    if [[ -n "$kiro_missing_profs" ]]; then
+                        add_row WARN "kiro gateway lanes — profile(s) referenced by an enabled kiro backend missing from $kiro_agents_shown: $kiro_missing_profs; the lane's model and its read-only tool list live in the profile, so --agent resolves to nothing. Install: for f in adapters/kiro/*.json.template; do cp \"\$f\" $kiro_agents_shown/\"\$(basename \"\$f\" .json.template)\".json; done (adapters/kiro/README.md § Installation)"
+                    fi
+                    if [[ -n "$kiro_missing_pfs" ]]; then
+                        add_row WARN "kiro gateway lanes — preflight probe not resolvable on PATH: $kiro_missing_pfs; call-worker.sh runs the registry's preflight argv before every dispatch, so an unresolvable probe exits 127 there and the lane reports UNAVAILABLE (call-worker exit 127) — the lane is dead, not merely unhardened. Install: ln -sf \"\$PWD/adapters/kiro/kiro-preflight.sh\" ~/bin/kiro-preflight (adapters/kiro/README.md § Installation)"
+                    fi
+                    if [[ -z "$kiro_badcmd$kiro_badtierargs$kiro_noprof$kiro_partial$kiro_nopf$kiro_badpf$kiro_missing_profs$kiro_missing_pfs" ]]; then
+                        local kiro_pf_shown=""
+                        for kiro_item in ${kiro_pfs[@]+"${kiro_pfs[@]}"}; do
+                            kiro_pf_shown="$(kcsv "$kiro_pf_shown" "$kiro_item")"
+                        done
+                        add_row PASS "kiro gateway lanes — $kiro_lanes enabled lane(s), $kiro_prof_count profile(s) present in $kiro_agents_shown, preflight resolvable ($kiro_pf_shown)"
+                    fi
+                fi
+            fi
+        fi
+    fi
+
     echo "=== Environment diagnosis (--doctor) ==="
     local row status msg
     for row in "${rows[@]}"; do

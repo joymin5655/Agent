@@ -879,5 +879,230 @@ track_fixture "/"
 check "track-fixture-refuses-empty-and-uncreated-paths" $?
 
 echo
+echo "=== (q) kiro gateway lanes: profiles + preflight installed -> PASS ==="
+# kiro_rows <output> — only the doctor rows this check owns.
+kiro_rows() { printf '%s\n' "$1" | grep 'kiro gateway lanes' || true; }
+
+KIRO_FIX="$(safe_mktemp_d)" || { echo "FAIL: mktemp -d failed (kiro fixture)"; exit 1; }
+mkdir -p "$KIRO_FIX/agents" "$KIRO_FIX/bin"
+for b in kiro-cli fix-preflight; do
+  printf '#!/bin/sh\nexit 0\n' > "$KIRO_FIX/bin/$b"; chmod +x "$KIRO_FIX/bin/$b"
+done
+# Fixture names are deliberately NOT the shipped ones (fix-*), so no test here
+# can pass by accident off this machine's real ~/.kiro/agents or PATH.
+write_kiro_registry() {  # $1 = enabled true|false
+  cat > "$KIRO_FIX/backends.json" <<JSON
+{"version":2,"roles":{},"backends":{
+ "codex":{"vendor":"openai","connection":"cli","enabled":true,"cmd":["codex","exec"],
+          "tier_args":{"TOP":["--profile","deep"]},"preflight":["codex","--version"]},
+ "kiro-openai":{"vendor":"openai","connection":"cli","gateway":"kiro","enabled":$1,
+   "cmd":["kiro-cli","chat","--no-interactive"],
+   "tier_args":{"LOW":["--agent","fix-low"],"TOP":["--agent","fix-top"]},
+   "preflight":["fix-preflight"],"timeout_s":420}}}
+JSON
+}
+write_kiro_registry true
+touch "$KIRO_FIX/agents/fix-low.json" "$KIRO_FIX/agents/fix-top.json"
+doctor_kiro() {  # run doctor with the kiro fixture wired in; $1 = extra PATH prefix dir
+  PATH="$1:/usr/bin:/bin" AGENT_BACKENDS_FILE="$KIRO_FIX/backends.json" \
+    AGENT_KIRO_AGENTS_DIR="$KIRO_FIX/agents" bash "$SETUP" --doctor 2>&1
+}
+OUT_Q="$(doctor_kiro "$KIRO_FIX/bin")"
+RC_Q=$?
+[[ $RC_Q -eq 0 && "$OUT_Q" == *"[PASS"*"kiro gateway lanes — 1 enabled lane(s), 2 profile(s) present in $KIRO_FIX/agents, preflight resolvable (fix-preflight)"* ]]
+check "kiro-wired-pass" $?
+
+echo
+echo "=== (q2) kiro gateway lanes: one profile missing -> WARN naming ONLY that profile ==="
+rm -f "$KIRO_FIX/agents/fix-top.json"
+OUT_Q2="$(doctor_kiro "$KIRO_FIX/bin")"
+RC_Q2=$?
+Q2_ROWS="$(kiro_rows "$OUT_Q2")"
+[[ "$Q2_ROWS" == *"[WARN"*"profile(s) referenced by an enabled kiro backend missing from $KIRO_FIX/agents: fix-top;"* ]]
+check "kiro-missing-profile-warn" $?
+[[ "$Q2_ROWS" != *fix-low* ]]
+check "kiro-missing-profile-omits-present-ones" $?
+[[ $RC_Q2 -eq 0 ]]
+check "kiro-missing-profile-is-warn-not-fail" $?
+touch "$KIRO_FIX/agents/fix-top.json"
+
+echo
+echo "=== (q3) kiro gateway lanes: preflight not on PATH -> WARN naming it + the exit-127 consequence ==="
+mkdir -p "$KIRO_FIX/bin-nopf"
+cp "$KIRO_FIX/bin/kiro-cli" "$KIRO_FIX/bin-nopf/kiro-cli"
+OUT_Q3="$(doctor_kiro "$KIRO_FIX/bin-nopf")"
+RC_Q3=$?
+Q3_ROWS="$(kiro_rows "$OUT_Q3")"
+[[ "$Q3_ROWS" == *"[WARN"*"preflight probe not resolvable on PATH: fix-preflight;"*"127"* ]]
+check "kiro-missing-preflight-warn" $?
+[[ $RC_Q3 -eq 0 ]]
+check "kiro-missing-preflight-is-warn-not-fail" $?
+
+echo
+echo "=== (q4) kiro gateway lanes: every kiro backend disabled -> skipped PASS, no WARN ==="
+write_kiro_registry false
+OUT_Q4="$(doctor_kiro "$KIRO_FIX/bin")"
+Q4_ROWS="$(kiro_rows "$OUT_Q4")"
+[[ "$Q4_ROWS" == *"[PASS"*"kiro gateway lanes — no enabled kiro backend in $KIRO_FIX/backends.json (check skipped)"* ]]
+check "kiro-all-disabled-skip-pass" $?
+[[ "$Q4_ROWS" != *"[WARN"* ]]
+check "kiro-all-disabled-no-warn" $?
+write_kiro_registry true
+
+echo
+echo "=== (q5) kiro gateway lanes: gateway CLI absent -> ONE WARN, no profile/preflight cascade ==="
+mkdir -p "$KIRO_FIX/bin-empty"
+OUT_Q5="$(doctor_kiro "$KIRO_FIX/bin-empty")"
+Q5_ROWS="$(kiro_rows "$OUT_Q5")"
+[[ "$Q5_ROWS" == *"[WARN"*"gateway CLI not installed: kiro-cli;"* ]]
+check "kiro-no-cli-warn" $?
+Q5_N="$(printf '%s\n' "$Q5_ROWS" | grep -c 'kiro gateway lanes' || true)"
+[[ "$Q5_N" -eq 1 ]]
+check "kiro-no-cli-single-row-no-cascade" $?
+
+echo
+echo "=== (q6) kiro gateway lanes: control chars in a registry-derived name cannot split a row ==="
+cat > "$KIRO_FIX/backends.json" <<'JSON'
+{"version":2,"roles":{},"backends":{
+ "kiro-openai":{"vendor":"openai","connection":"cli","gateway":"kiro","enabled":true,
+   "cmd":["kiro-cli","chat","--no-interactive"],
+   "tier_args":{"LOW":["--agent","ev\u001b[2Jil\nkiro gateway lanes — forged row"]},
+   "preflight":["fix-preflight"],"timeout_s":420}}}
+JSON
+OUT_Q6="$(doctor_kiro "$KIRO_FIX/bin")"
+RC_Q6=$?
+Q6_ROWS="$(kiro_rows "$OUT_Q6")"
+[[ "$Q6_ROWS" == *"[WARN"*"ev?[2Jil?kiro gateway lanes — forged row"* ]]
+check "kiro-control-chars-sanitized-in-row" $?
+Q6_N="$(printf '%s\n' "$Q6_ROWS" | grep -c 'kiro gateway lanes' || true)"
+[[ "$Q6_N" -eq 1 ]]
+check "kiro-control-chars-cannot-split-row" $?
+case "$OUT_Q6" in
+  *$'\x1b'*) check "kiro-escape-stripped-from-output" 1 ;;
+  *)         check "kiro-escape-stripped-from-output" 0 ;;
+esac
+[[ $RC_Q6 -eq 0 ]]
+check "kiro-control-chars-no-crash" $?
+write_kiro_registry true
+
+echo
+echo "=== (q9) kiro gateway lanes: enabled lane with NO profile and NO preflight -> WARN naming it, never PASS ==="
+# The regression this pins: the check only accumulated MISSING files, so a lane
+# declaring {"tier_args":{"TOP":[]},"preflight":[]} left both accumulators empty
+# and printed "0 profile(s) present ... preflight resolvable (none declared)" as
+# a PASS — a lane with neither a read-only profile nor a fail-closed probe.
+write_kiro_registry_raw() { cat > "$KIRO_FIX/backends.json"; }
+write_kiro_registry_raw <<'JSON'
+{"version":2,"roles":{},"backends":{
+ "kiro-openai":{"vendor":"openai","connection":"cli","gateway":"kiro","enabled":true,
+   "cmd":["kiro-cli","chat","--no-interactive"],
+   "tier_args":{"TOP":[]},"preflight":[],"timeout_s":420}}}
+JSON
+OUT_Q9="$(doctor_kiro "$KIRO_FIX/bin")"
+RC_Q9=$?
+Q9_ROWS="$(kiro_rows "$OUT_Q9")"
+[[ "$Q9_ROWS" == *"[WARN"*"pinning NO --agent profile"*"kiro-openai"* ]]
+check "kiro-zero-profile-lane-warns-naming-lane" $?
+[[ "$Q9_ROWS" == *"[WARN"*"declaring NO preflight probe"*"kiro-openai"* ]]
+check "kiro-zero-preflight-lane-warns-naming-lane" $?
+[[ "$Q9_ROWS" != *"[PASS"* ]]
+check "kiro-zero-profile-and-preflight-never-passes" $?
+[[ $RC_Q9 -eq 0 ]]
+check "kiro-zero-profile-is-warn-not-fail" $?
+
+echo
+echo "=== (q10) kiro gateway lanes: dangling trailing --agent -> WARN naming lane:tier (not silently dropped) ==="
+write_kiro_registry_raw <<'JSON'
+{"version":2,"roles":{},"backends":{
+ "kiro-openai":{"vendor":"openai","connection":"cli","gateway":"kiro","enabled":true,
+   "cmd":["kiro-cli","chat","--no-interactive"],
+   "tier_args":{"LOW":["--agent","fix-low"],"TOP":["--agent"]},
+   "preflight":["fix-preflight"],"timeout_s":420}}}
+JSON
+OUT_Q10="$(doctor_kiro "$KIRO_FIX/bin")"
+Q10_ROWS="$(kiro_rows "$OUT_Q10")"
+[[ "$Q10_ROWS" == *"[WARN"*"tier(s) that do not pin a profile: kiro-openai:TOP"* ]]
+check "kiro-dangling-agent-warns-naming-lane-and-tier" $?
+[[ "$Q10_ROWS" != *"[PASS"* ]]
+check "kiro-dangling-agent-never-passes" $?
+
+echo
+echo "=== (q11) kiro gateway lanes: non-array cmd -> WARN (was silently dropped) ==="
+write_kiro_registry_raw <<'JSON'
+{"version":2,"roles":{},"backends":{
+ "kiro-openai":{"vendor":"openai","connection":"cli","gateway":"kiro","enabled":true,
+   "cmd":"kiro-cli chat",
+   "tier_args":{"LOW":["--agent","fix-low"]},
+   "preflight":["fix-preflight"],"timeout_s":420}}}
+JSON
+OUT_Q11="$(doctor_kiro "$KIRO_FIX/bin")"
+Q11_ROWS="$(kiro_rows "$OUT_Q11")"
+[[ "$Q11_ROWS" == *"[WARN"*"unusable cmd"*"kiro-openai"* ]]
+check "kiro-non-array-cmd-warns" $?
+[[ "$Q11_ROWS" != *"[PASS"* ]]
+check "kiro-non-array-cmd-never-passes" $?
+
+echo
+echo "=== (q12) kiro gateway lanes: non-object tier_args -> WARN (was silently dropped) ==="
+write_kiro_registry_raw <<'JSON'
+{"version":2,"roles":{},"backends":{
+ "kiro-openai":{"vendor":"openai","connection":"cli","gateway":"kiro","enabled":true,
+   "cmd":["kiro-cli","chat","--no-interactive"],
+   "tier_args":["LOW"],
+   "preflight":["fix-preflight"],"timeout_s":420}}}
+JSON
+OUT_Q12="$(doctor_kiro "$KIRO_FIX/bin")"
+Q12_ROWS="$(kiro_rows "$OUT_Q12")"
+[[ "$Q12_ROWS" == *"[WARN"*"tier_args is not an object"*"kiro-openai"* ]]
+check "kiro-non-object-tier-args-warns" $?
+[[ "$Q12_ROWS" != *"[PASS"* ]]
+check "kiro-non-object-tier-args-never-passes" $?
+
+echo
+echo "=== (q13) kiro gateway lanes: non-string first preflight element -> WARN (was silently dropped) ==="
+write_kiro_registry_raw <<'JSON'
+{"version":2,"roles":{},"backends":{
+ "kiro-openai":{"vendor":"openai","connection":"cli","gateway":"kiro","enabled":true,
+   "cmd":["kiro-cli","chat","--no-interactive"],
+   "tier_args":{"LOW":["--agent","fix-low"]},
+   "preflight":[123,"fix-preflight"],"timeout_s":420}}}
+JSON
+OUT_Q13="$(doctor_kiro "$KIRO_FIX/bin")"
+Q13_ROWS="$(kiro_rows "$OUT_Q13")"
+[[ "$Q13_ROWS" == *"[WARN"*"unusable preflight argv"*"kiro-openai"* ]]
+check "kiro-non-string-preflight-element-warns" $?
+[[ "$Q13_ROWS" != *"[PASS"* ]]
+check "kiro-non-string-preflight-never-passes" $?
+write_kiro_registry true
+
+echo
+echo "=== (q7) kiro gateway lanes: registry absent -> skipped; jq absent -> WARN, never a silent PASS ==="
+OUT_Q7="$(PATH="$KIRO_FIX/bin:/usr/bin:/bin" AGENT_BACKENDS_FILE=/nonexistent/backends.json \
+  bash "$SETUP" --doctor 2>&1)"
+[[ "$OUT_Q7" == *"[PASS"*"kiro gateway lanes — no backends registry at /nonexistent/backends.json (check skipped)"* ]]
+check "kiro-registry-absent-skip" $?
+# A PATH with no jq at all: symlink every /bin + /usr/bin tool EXCEPT jq, so the
+# doctor keeps its coreutils/python3/git but cannot parse JSON.
+NOJQ="$KIRO_FIX/nojq"
+mkdir -p "$NOJQ"
+for p in /bin/* /usr/bin/*; do
+  b="$(basename "$p")"
+  [[ "$b" == "jq" ]] && continue
+  ln -sf "$p" "$NOJQ/$b" 2>/dev/null || true
+done
+cp "$KIRO_FIX/bin/kiro-cli" "$KIRO_FIX/bin/fix-preflight" "$NOJQ/"
+OUT_Q8="$(PATH="$NOJQ" AGENT_BACKENDS_FILE="$KIRO_FIX/backends.json" \
+  AGENT_KIRO_AGENTS_DIR="$KIRO_FIX/agents" bash "$SETUP" --doctor 2>&1)"
+RC_Q8=$?
+Q8_ROWS="$(kiro_rows "$OUT_Q8")"
+[[ "$Q8_ROWS" == *"[WARN"*"check skipped: jq not found"* ]]
+check "kiro-no-jq-warn-not-pass" $?
+[[ "$Q8_ROWS" != *"[PASS"* ]]
+check "kiro-no-jq-no-false-pass" $?
+[[ $RC_Q8 -eq 0 ]]
+check "kiro-no-jq-does-not-abort-doctor" $?
+rm -rf "$KIRO_FIX"
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]

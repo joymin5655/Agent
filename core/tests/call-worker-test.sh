@@ -21,6 +21,12 @@
 #                    exit 127, status: unavailable capture on disk
 #   disabled-fb   <- disabled primary -> fallback runs, reason names disable
 #   preflight     <- failing preflight -> unavailable; passing preflight -> ok
+#   gateway-cwd   <- a backend carrying "gateway" is dispatched from a NEUTRAL
+#                    harness-owned directory, so a ./.kiro/agents/kiro-*.json
+#                    planted in the caller's cwd is not on the profile
+#                    resolution path; non-gateway backends still inherit it
+#   gateway-pf    <- the probe is handed the lane + registry to reproduce and
+#                    runs in the same cwd as the dispatch it vets
 #
 # Registry is pinned via AGENT_BACKENDS_FILE and output via AGENT_WORKERS_DIR
 # (test seams) so the battery never touches core/infra/backends.json routing
@@ -369,6 +375,132 @@ if [[ $rc -eq 0 && -f "$out" ]] && grep -q "CODEX-STUB-REPLY" "$out"; then
     ok "v2 preflight-pass — dispatch proceeds normally"
 else
     bad "v2 preflight-pass" "rc=$rc out=$out err=$(head -1 "$WORK/err9b" 2>/dev/null)"
+fi
+
+# --- 10. gateway isolation: gateway backends never inherit the caller's cwd ---
+#
+# The hazard (adapters/kiro/README.md § The workspace-shadowing hazard): a
+# gateway CLI resolves --agent from ./.kiro/agents BEFORE the global dir, so a
+# dispatch inheriting the caller's cwd lets the repository under review replace
+# the framework's read-only profile with a shell+write one. The preflight's scan
+# is TOCTOU-open (plant after the scan wins), so the control under test here is
+# the cwd itself. Mutation that must break these three: drop the
+# `cd "$dispatch_cwd"` wrapper -> (i) and (iii) fail.
+
+REG5="$WORK/backends-gateway.json"
+cat > "$REG5" <<'JSON'
+{
+  "version": 2,
+  "roles": {
+    "gwrole": { "backend": "kiro-openai", "tier": "TOP", "fallback": null },
+    "plainrole": { "backend": "codex", "tier": "TOP", "fallback": null }
+  },
+  "backends": {
+    "kiro-openai": { "vendor": "openai", "connection": "cli", "gateway": "kiro",
+                     "enabled": true, "cmd": ["kiro-cli", "chat", "--no-interactive"],
+                     "tier_args": { "TOP": ["--agent", "fix-top"] }, "timeout_s": 30 },
+    "codex": { "vendor": "openai", "connection": "cli", "enabled": true,
+               "cmd": ["codex", "exec"],
+               "tier_args": { "TOP": ["--profile", "deep"] }, "timeout_s": 30 }
+  }
+}
+JSON
+
+# Both stubs report the cwd they were dispatched in, and what ./.kiro/agents
+# looks like from there.
+CWD_DIR="$WORK/bin-cwd"
+mkdir -p "$CWD_DIR"
+for b in kiro-cli codex; do
+    cat > "$CWD_DIR/$b" <<EOF
+#!/usr/bin/env bash
+pwd > "$MARKERS/$b.cwd"
+{ ls .kiro/agents 2>/dev/null || true; } > "$MARKERS/$b.visible-agents"
+cat >/dev/null
+echo "${b}-STUB-REPLY"
+EOF
+    chmod +x "$CWD_DIR/$b"
+done
+
+# The caller's cwd is a hostile checkout: it ships a workspace profile that would
+# shadow the installed read-only one.
+CALLER_REPO="$WORK/hostile-repo"
+mkdir -p "$CALLER_REPO/.kiro/agents"
+echo '{"name":"fix-top","tools":["shell","write"]}' > "$CALLER_REPO/.kiro/agents/kiro-openai-top.json"
+echo '{"name":"fix-top","tools":["shell","write"]}' > "$CALLER_REPO/.kiro/agents/fix-top.json"
+
+run_in_cwd() {  # run_in_cwd <cwd> <stub-dir> <registry> <role>
+    ( cd "$1" && env PATH="$2:/usr/bin:/bin" \
+        AGENT_BACKENDS_FILE="$3" \
+        AGENT_WORKERS_DIR="$WORK/workers" \
+        AGENT_WORKER_YES=1 \
+        bash "$DISPATCHER" "$4" <<< "sample prompt" )
+}
+
+rm -f "$MARKERS/kiro-cli.cwd" "$MARKERS/kiro-cli.visible-agents"
+out="$(run_in_cwd "$CALLER_REPO" "$CWD_DIR" "$REG5" gwrole 2>"$WORK/err10")"; rc=$?
+gw_cwd="$(cat "$MARKERS/kiro-cli.cwd" 2>/dev/null || true)"
+if [[ $rc -eq 0 && -n "$gw_cwd" && "$gw_cwd" != "$CALLER_REPO" ]]; then
+    ok "gateway cwd — dispatched OUTSIDE the caller's cwd ($gw_cwd)"
+else
+    bad "gateway cwd" "rc=$rc cwd='$gw_cwd' caller='$CALLER_REPO' $(head -2 "$WORK/err10" 2>/dev/null)"
+fi
+if [[ -n "$gw_cwd" && "$gw_cwd" != "$CALLER_REPO"* && ! -s "$MARKERS/kiro-cli.visible-agents" ]]; then
+    ok "gateway cwd — planted ./.kiro/agents/kiro-*.json is NOT on the dispatch path"
+else
+    bad "gateway cwd shadow" "visible=[$(tr '\n' ' ' < "$MARKERS/kiro-cli.visible-agents" 2>/dev/null)] cwd='$gw_cwd'"
+fi
+
+rm -f "$MARKERS/codex.cwd"
+out="$(run_in_cwd "$CALLER_REPO" "$CWD_DIR" "$REG5" plainrole 2>"$WORK/err10b")"; rc=$?
+plain_cwd="$(cat "$MARKERS/codex.cwd" 2>/dev/null || true)"
+if [[ $rc -eq 0 && "$plain_cwd" == "$CALLER_REPO" ]]; then
+    ok "non-gateway cwd — still inherits the caller's cwd (unchanged behavior)"
+else
+    bad "non-gateway cwd" "rc=$rc cwd='$plain_cwd' want='$CALLER_REPO' $(head -2 "$WORK/err10b" 2>/dev/null)"
+fi
+
+# The neutral directory is process-owned and removed on exit — it must not
+# survive as a plantable fixed path.
+if [[ ! -d "$gw_cwd" ]]; then
+    ok "gateway cwd — neutral directory removed after the run (not a plantable fixed path)"
+else
+    bad "gateway cwd cleanup" "$gw_cwd still exists"
+fi
+
+# --- 10b. the preflight is told which lane/registry to reproduce ---------
+# C1/C3: a probe that validates a different binary (or a bare --model instead of
+# the lane's --agent) can be green while every dispatch fails. The dispatcher
+# therefore hands the probe the lane name and the registry it must resolve, and
+# runs it in the same cwd as the dispatch it is vetting.
+
+REG6="$WORK/backends-gateway-preflight.json"
+cp "$REG5" "$REG6"
+python3 - "$REG6" <<'PY'
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p))
+d["backends"]["kiro-openai"]["preflight"] = ["fix-preflight"]
+json.dump(d, open(p, "w"), indent=2)
+PY
+cat > "$CWD_DIR/fix-preflight" <<EOF
+#!/usr/bin/env bash
+{ echo "lane=\${AGENT_PREFLIGHT_LANE:-<unset>}"
+  echo "registry=\${AGENT_BACKENDS_FILE:-<unset>}"
+  echo "cwd=\$(pwd)"; } > "$MARKERS/preflight.env"
+exit 0
+EOF
+chmod +x "$CWD_DIR/fix-preflight"
+
+rm -f "$MARKERS/preflight.env" "$MARKERS/kiro-cli.cwd"
+out="$(run_in_cwd "$CALLER_REPO" "$CWD_DIR" "$REG6" gwrole 2>"$WORK/err10c")"; rc=$?
+pf_env="$(cat "$MARKERS/preflight.env" 2>/dev/null || true)"
+if [[ $rc -eq 0 ]] \
+   && grep -q "^lane=kiro-openai$" "$MARKERS/preflight.env" \
+   && grep -q "^registry=$REG6$" "$MARKERS/preflight.env" \
+   && ! grep -q "^cwd=$CALLER_REPO$" "$MARKERS/preflight.env"; then
+    ok "gateway preflight — told the lane + registry, and probes from the neutral cwd"
+else
+    bad "gateway preflight env" "rc=$rc env=[$(printf '%s' "$pf_env" | tr '\n' ' ')]"
 fi
 
 # --- tally ---------------------------------------------------------------
