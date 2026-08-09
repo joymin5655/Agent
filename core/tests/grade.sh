@@ -196,17 +196,26 @@ fi
 # --- TARGET-boundary check (§5.1 pillar ③): refuse to score off-target diffs. ---
 # The batteries execute the WORKING TREE, so the boundary check must cover exactly
 # the bytes that run. We enforce: (1) --base is explicit (HEAD~1 misses earlier
-# commits of a multi-commit candidate); (2) the tree is clean (an uncommitted tamper
-# cannot hide where a committed-range diff can't see it); (3) git failure fails CLOSED
-# (a boundary check that cannot run must not silently pass); (4) full-path anchored
-# match (so 'core/tests/agents-helper.sh' is not mistaken for on-target 'agents/.*').
+# commits of a multi-commit candidate); (2) the tree is clean INCLUDING untracked
+# files — `git diff --quiet` sees only tracked modifications, so an untracked
+# tamper file would execute in the batteries while staying invisible to the
+# committed-range diff (`git status --porcelain` covers staged + unstaged +
+# untracked and respects .gitignore, so run state under ignored dirs is fine);
+# (3) git failure fails CLOSED (a boundary check that cannot run must not silently
+# pass); (4) full-path anchored match (so 'core/tests/agents-helper.sh' is not
+# mistaken for on-target 'agents/.*').
 if [[ $TARGET_SET -eq 1 ]]; then
   if [[ -z "$BASE_REF" ]]; then
     printf 'TARGET-BOUNDARY — --target requires --base <mission-start-ref> (fail-closed)\n' >&2
     emit_score_and_exit 0
   fi
-  if ! git -C "$REPO_ROOT" diff --quiet 2>/dev/null || ! git -C "$REPO_ROOT" diff --cached --quiet 2>/dev/null; then
-    printf 'TARGET-BOUNDARY — working tree is dirty; commit the candidate before grading (fail-closed)\n' >&2
+  tree_state="$(git -C "$REPO_ROOT" status --porcelain 2>/dev/null)"
+  if [[ $? -ne 0 ]]; then
+    printf 'TARGET-BOUNDARY — git status failed; cannot verify a clean tree (fail-closed)\n' >&2
+    emit_score_and_exit 0
+  fi
+  if [[ -n "$tree_state" ]]; then
+    printf 'TARGET-BOUNDARY — working tree is dirty (uncommitted or untracked files); commit the candidate before grading (fail-closed)\n' >&2
     emit_score_and_exit 0
   fi
   changed="$(git -C "$REPO_ROOT" diff --name-only "$BASE_REF" HEAD 2>/dev/null)"

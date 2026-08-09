@@ -161,5 +161,20 @@ OUT="$(printf '%s' "$event" | env AGENT_PROJECT_DIR="$ROOT" AGENT_LOOP_ACTIVE=1 
 is_ask; check "ledger-nonstring-content-ask" $?
 
 echo
+echo "=== (i) active loop: recreate deleted ledger while .witness survives -> ask ==="
+rm -f "$LEDG"; printf 'notarized\n' > "$LEDG.witness"
+run_hook Write "$LEDG" "commit\tharness_score\tduration_s\tstatus\tdescription" AGENT_LOOP_ACTIVE=1
+is_ask; check "delete-recreate-with-witness-ask" $?
+# with NO witness either, first creation is still a legitimate append -> allow
+rm -f "$LEDG.witness"
+run_hook Write "$LEDG" "commit\tharness_score\tduration_s\tstatus\tdescription" AGENT_LOOP_ACTIVE=1
+[[ -z "$OUT" ]]; check "true-first-creation-still-allowed" $?
+
+echo
+echo "=== (j) active loop: hand-writing the witness itself -> ask ==="
+run_hook Write "$LEDG.witness" "deadbeef 3" AGENT_LOOP_ACTIVE=1
+is_ask; check "witness-write-ask" $?
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]

@@ -74,5 +74,31 @@ AGENT_LOOP_LEDGER="$TMP_ROOT/custom.tsv" bash "$LEDGER" path | grep -qxF "$TMP_R
 bash "$LEDGER" path | grep -qE '\.agent/loop/results\.tsv$'; check "default-path-shape" $?
 
 echo
+echo "=== (h) tamper evidence: witness written; delete-recreate and rewrite REFUSED ==="
+FW="$TMP_ROOT/w.tsv"
+bash "$LEDGER" append --file "$FW" --commit abc123 --score 9.0 --duration 3 --status keep --desc first
+[[ -s "$FW.witness" ]]; check "witness-created-on-append" $?
+# witness matches the ledger it notarizes (recompute)
+w_sha="$(awk '{print $1}' "$FW.witness")"
+have="$( (shasum -a 256 "$FW" 2>/dev/null || sha256sum "$FW") | awk '{print $1}')"
+[[ -n "$w_sha" && "$w_sha" == "$have" ]]; check "witness-matches-ledger" $?
+# delete-recreate: ledger gone, witness survives -> append must REFUSE, not re-header
+rm -f "$FW"
+bash "$LEDGER" append --file "$FW" --commit def456 --score 1.0 --duration 1 --status keep --desc recreated 2>"$TMP_ROOT/h.err"; rc=$?
+[[ $rc -ne 0 ]]; check "delete-recreate-refused" $?
+grep -q "delete-recreate" "$TMP_ROOT/h.err"; check "delete-recreate-named" $?
+[[ ! -e "$FW" ]]; check "refused-append-writes-nothing" $?
+# rewrite/truncate: restore a DIFFERENT ledger under the old witness -> refuse
+printf 'commit\tharness_score\tduration_s\tstatus\tdescription\nfff\t9.9\t1\tkeep\tforged\n' > "$FW"
+bash "$LEDGER" append --file "$FW" --commit abc999 --score 2.0 --duration 1 --status keep --desc after-forge 2>"$TMP_ROOT/h2.err"; rc=$?
+[[ $rc -ne 0 ]]; check "rewritten-ledger-refused" $?
+grep -q "witness" "$TMP_ROOT/h2.err"; check "rewrite-refusal-cites-witness" $?
+# legacy adopt: pre-witness ledger (no witness file) -> append succeeds, witness starts
+FL="$TMP_ROOT/legacy.tsv"
+printf 'commit\tharness_score\tduration_s\tstatus\tdescription\naaa\t5.0\t1\tkeep\told\n' > "$FL"
+bash "$LEDGER" append --file "$FL" --commit bbb --score 6.0 --duration 1 --status keep --desc new; rc=$?
+[[ $rc -eq 0 && -s "$FL.witness" && "$(wc -l < "$FL" | tr -d ' ')" -eq 3 ]]; check "legacy-ledger-adopted" $?
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]

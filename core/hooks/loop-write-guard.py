@@ -26,6 +26,8 @@ Active-session decisions:
     (this hook, pre-tool-guard.sh, the adapter, hooks.json) so the guard cannot be
     silently neutered.
   Write|Edit|MultiEdit non-append to the ledger -> ask
+    (recreating a deleted ledger whose .witness survives, or hand-writing the
+    .witness itself, is NOT an append — delete-recreate High, see loop-ledger.sh)
   Bash command that WRITES into a guarded path  -> ask   (best-effort: redirection,
     tee, sed -i, cp/mv/dd/install, rm/truncate, git checkout/restore/apply, or a
     python/perl one-liner opening a guarded path for write)
@@ -149,7 +151,10 @@ def _is_pure_append(ledger_real: str, tool_name: str, tool_input: dict) -> bool:
     if tool_name in ("Edit", "MultiEdit"):
         return False
     if not os.path.exists(ledger_real):
-        return True  # creating the ledger for the first time
+        # First creation is an append ONLY if no witness survives: a witness with
+        # no ledger means the ledger was deleted — recreating it would launder the
+        # history as a fresh file (the delete-recreate High). Escalate instead.
+        return not os.path.exists(ledger_real + ".witness")
     new_content = tool_input.get("content")
     if not isinstance(new_content, str):
         return False  # missing / non-string content -> cannot prove append
@@ -208,6 +213,11 @@ def _decide(data: dict, root: str):
     if target == ledger:
         if _is_pure_append(ledger, tool_name, tool_input):
             return None
+        return ("ledger", ASK_LEDGER)
+
+    if target == ledger + ".witness":
+        # only the sanctioned writer (loop-ledger.sh) may touch the witness — a
+        # hand-written witness would notarize a tampered ledger.
         return ("ledger", ASK_LEDGER)
 
     if target in _guarded_files(root):

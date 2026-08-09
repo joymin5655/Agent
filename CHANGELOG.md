@@ -24,14 +24,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind the GATE short-circuit, so it is reported N/A on the single GATE path —
   and `review-false-clean` is N/A), superseding the retired single-scalar 8.0. It is
   a loop-time tool (re-runs batteries; ~1 min) and is excluded from `verify-all` to
-  avoid recursion; `grade-test.sh` (33 checks) drives it hermetically and gates
-  mode↔guard-map drift, including a ban on GATE batteries in the guard map.
+  avoid recursion; `grade-test.sh` (35 checks) drives it hermetically and gates
+  mode↔guard-map drift, including a ban on GATE batteries in the guard map. The
+  TARGET clean-tree check uses `git status --porcelain`, so an UNTRACKED tamper
+  file (which the batteries would execute but a committed-range diff cannot see)
+  also refuses the grade (fail-closed).
 - **Append-only loop ledger `core/infra/loop-ledger.sh` (P2-3).** The sanctioned
   writer for `.agent/loop/results.tsv` (untracked run state): a 5-column schema
   (commit / harness_score / duration_s / status / description≤80), a status enum
   (keep|discard|crash|timeout), numeric validation that rejects rather than coerces
   a malformed score/duration, and free-text sanitization. It only ever appends —
-  the header is written once. `loop-ledger-test.sh` (17 checks).
+  the header is written once. Every successful append notarizes the ledger in a
+  sidecar witness (`<ledger>.witness` = sha256 + line count); the next append
+  REFUSES a ledger that is missing (delete-recreate) or does not hash to its
+  witness (rewrite/truncate) — tamper-evident, honestly bounded (a shell can
+  still delete both files; that two-target act is what loop-write-guard
+  escalates during a loop). `loop-ledger-test.sh` (25 checks).
 - **Loop write-ban `core/hooks/loop-write-guard.py` (L-2).** While an improvement
   loop is active (env `AGENT_LOOP_ACTIVE=1` or a flag file), a Write/Edit to the
   grader/verifier surface (`core/tests/`, `evals/`) or a non-append rewrite of the
@@ -40,7 +48,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   code that scores it. Outside a loop the guard is fully inert (zero added friction).
   Containment uses realpath, so a symlink into the guarded dir cannot dodge it.
   Wired into the `Write|Edit|MultiEdit` PreToolUse chain; `loop-write-guard-test.sh`
-  (14 checks) covers the ask/allow matrix, the symlink-escape case, and WHY/FIX tags.
+  (31 checks) covers the ask/allow matrix, the symlink-escape case, Bash
+  write-path detection, the delete-recreate/witness escalations, and WHY/FIX tags.
 
 ## [0.5.7] - 2026-08-02
 

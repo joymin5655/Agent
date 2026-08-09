@@ -20,6 +20,16 @@
 # appends exactly one data row (>>). The file is created under .agent/loop/ if
 # absent; the directory is created as needed.
 #
+# Tamper evidence (High: delete-recreate): every successful append records a
+# WITNESS (`<ledger>.witness` = sha256 + line count of the ledger). On the next
+# append, a witness with no ledger (delete-then-recreate) or a ledger that does
+# not hash to its witness (rewrite/truncate) is REFUSED, not silently adopted as
+# a fresh first creation. A pre-witness ledger is adopted on its first sanctioned
+# append (protection starts there). This is tamper-EVIDENT, not tamper-proof — a
+# shell can still delete both files, but that is a two-target act that
+# loop-write-guard.py escalates during a loop; the honest bound is documented
+# (defense-in-depth framing, L-2).
+#
 # Usage:
 #   loop-ledger.sh append --file <tsv> --commit <c> --score <s> \
 #       --duration <n> --status <keep|discard|crash|timeout> --desc <text>
@@ -35,6 +45,20 @@ HEADER=$'commit\tharness_score\tduration_s\tstatus\tdescription'
 die() { printf 'loop-ledger: %s\n' "$1" >&2; exit 1; }
 
 cmd_path() { printf '%s\n' "$DEFAULT_LEDGER"; }
+
+# sha256 of a file, portable (macOS shasum / GNU sha256sum / python3 fallback —
+# python3 is already a hard dependency of the harness).
+file_sha() {
+  if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | awk '{print $1}'
+  elif command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'
+  else python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$1"
+  fi
+}
+
+write_witness() {  # write_witness <ledger> <witness>
+  printf '%s %s\n' "$(file_sha "$1")" "$(wc -l < "$1" | tr -d ' ')" > "$2" \
+    || die "cannot write witness $2"
+}
 
 cmd_append() {
   local file="$DEFAULT_LEDGER" commit="" score="" duration="" status="" desc=""
@@ -73,11 +97,27 @@ cmd_append() {
   desc="${desc:0:80}"
 
   mkdir -p "$(dirname "$file")" || die "cannot create ledger dir for $file"
-  if [[ ! -s "$file" ]]; then   # missing OR empty -> (re)write the header once
+
+  # --- tamper-evidence check (High: delete-recreate). Fail closed BEFORE any write.
+  local witness="$file.witness"
+  if [[ -f "$witness" ]]; then
+    if [[ ! -s "$file" ]]; then
+      die "witness exists but ledger $file is missing/empty — delete-recreate refused (restore the ledger, or remove the witness as an explicit human reset)"
+    fi
+    local want_sha have_sha
+    want_sha="$(awk '{print $1}' "$witness")"
+    have_sha="$(file_sha "$file")"
+    if [[ -z "$want_sha" || "$have_sha" != "$want_sha" ]]; then
+      die "ledger $file does not match its witness (rewritten or truncated since the last sanctioned append) — refused"
+    fi
+  fi
+
+  if [[ ! -s "$file" ]]; then   # missing OR empty (and no witness) -> header once
     printf '%s\n' "$HEADER" > "$file" || die "cannot write header to $file"
   fi
   printf '%s\t%s\t%s\t%s\t%s\n' "$commit" "$score" "$duration" "$status" "$desc" >> "$file" \
     || die "cannot append row to $file"
+  write_witness "$file" "$witness"
 }
 
 case "${1:-}" in

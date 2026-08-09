@@ -128,6 +128,12 @@ OUT="$(cd "$G" && GRADE_SKIP_GITLEAKS=1 bash core/tests/grade.sh --base "$BASE" 
 printf '%s\n' "$OUT" | grep -qE 'working tree is dirty'; check "dirty-tree-refused" $?
 printf '%s\n' "$OUT" | tail -n1 | grep -qE '^harness_score: 0$'; check "dirty-tree-score-0" $?
 ( cd "$G" && git checkout -q -- core/tests/sneaky.sh )   # clean up
+# UNTRACKED file: invisible to `git diff` but it EXECUTES in the batteries -> refuse
+( cd "$G" && echo tamper > core/tests/untracked-helper.sh )
+OUT="$(cd "$G" && GRADE_SKIP_GITLEAKS=1 bash core/tests/grade.sh --base "$BASE" --target '(agents|core)/.*' 2>&1)"
+printf '%s\n' "$OUT" | grep -qE 'working tree is dirty'; check "untracked-file-refused" $?
+printf '%s\n' "$OUT" | tail -n1 | grep -qE '^harness_score: 0$'; check "untracked-file-score-0" $?
+( cd "$G" && rm -f core/tests/untracked-helper.sh )   # clean up
 # git error (bogus base) fails closed, not open
 OUT="$(cd "$G" && GRADE_SKIP_GITLEAKS=1 bash core/tests/grade.sh --base deadbeefbogus --target '(agents|core)/.*' 2>&1)"
 printf '%s\n' "$OUT" | grep -qE 'cannot verify boundary'; check "bad-base-fails-closed" $?
