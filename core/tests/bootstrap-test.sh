@@ -160,6 +160,10 @@ check "all-present-short-circuit" $?
 rm -rf "$STUB_A"
 
 # --- shared fixture for (b)-(f): gh missing, everything else present, mocked brew ---
+# (b)-(d) pin AGENT_BOOTSTRAP_PKG_MGR=brew at the call sites: without the seam,
+# bootstrap() detects the REAL host OS (uname), so on a Linux CI runner these
+# brew-mock sections would take the apt branch (and exit 1, apt-get not being in
+# the stub PATH) — the assertions are only meaningful with the brew path pinned.
 setup_missing_gh_fixture() {
   local dir="$1" log="$2"
   build_stub "$dir" sqlite3 jq gitleaks
@@ -178,7 +182,7 @@ LOG_B="$(mktemp)" || { echo "FAIL: mktemp"; exit 1; }
 setup_missing_gh_fixture "$STUB_B" "$LOG_B"
 SCRATCH_B="$(safe_mktemp_d)" || { echo "FAIL: mktemp -d"; exit 1; }
 BEFORE_B="$(find "$SCRATCH_B" -mindepth 1 | sort)"
-OUT_B="$(HOME="$SCRATCH_B" PYTHONDONTWRITEBYTECODE=1 PATH="$STUB_B" "$BASH_BIN" "$SETUP" --bootstrap --dry-run 2>&1)"
+OUT_B="$(HOME="$SCRATCH_B" PYTHONDONTWRITEBYTECODE=1 AGENT_BOOTSTRAP_PKG_MGR=brew PATH="$STUB_B" "$BASH_BIN" "$SETUP" --bootstrap --dry-run 2>&1)"
 RC_B=$?
 AFTER_B="$(find "$SCRATCH_B" -mindepth 1 | sort)"
 [[ $RC_B -eq 0 ]]
@@ -196,7 +200,7 @@ echo "=== (c) non-interactive stdin (real pipe, no seam) -> forced dry-run downg
 STUB_C="$(safe_mktemp_d)" || { echo "FAIL: mktemp -d"; exit 1; }
 LOG_C="$(mktemp)" || { echo "FAIL: mktemp"; exit 1; }
 setup_missing_gh_fixture "$STUB_C" "$LOG_C"
-OUT_C="$(echo | env PATH="$STUB_C" "$BASH_BIN" "$SETUP" --bootstrap 2>&1)"
+OUT_C="$(echo | env AGENT_BOOTSTRAP_PKG_MGR=brew PATH="$STUB_C" "$BASH_BIN" "$SETUP" --bootstrap 2>&1)"
 RC_C=$?
 [[ $RC_C -eq 0 && "$OUT_C" == *"downgraded to --dry-run"* ]]
 check "noninteractive-downgrade-note" $?
@@ -218,7 +222,7 @@ chmod +x "$STUB_D/brew"
 # gitleaks AND gh both excluded from the stub -> both missing. Answer "n" to the
 # first prompt, "y" to the second (order follows the deps array: gitleaks, sqlite3,
 # jq, gh — with sqlite3/jq present, only gitleaks then gh are ever prompted).
-OUT_D="$(printf 'n\ny\n' | AGENT_BOOTSTRAP_STDIN_IS_TTY=1 PATH="$STUB_D" "$BASH_BIN" "$SETUP" --bootstrap 2>&1)"
+OUT_D="$(printf 'n\ny\n' | AGENT_BOOTSTRAP_STDIN_IS_TTY=1 AGENT_BOOTSTRAP_PKG_MGR=brew PATH="$STUB_D" "$BASH_BIN" "$SETUP" --bootstrap 2>&1)"
 RC_D=$?
 [[ $RC_D -eq 0 ]]
 check "interactive-exit-0" $?
