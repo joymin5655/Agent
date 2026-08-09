@@ -173,6 +173,58 @@ See [`concepts/multi-session-worktree.md`](concepts/multi-session-worktree.md) f
 
 ---
 
+## 8. New machine: dependency bootstrap + portable manifest export
+
+Steps 1-2 above install the framework itself. If you also want it to install its
+own missing dependencies — rather than just warning about them — and to carry a
+record of what you had configured on a previous machine, use these two pieces:
+
+### Install missing dependencies
+
+```bash
+bash ~/agent/setup.sh --bootstrap --dry-run   # print the install plan only, install nothing
+bash ~/agent/setup.sh --bootstrap             # one y/N prompt per missing package
+```
+
+`--bootstrap` only manages the four dependencies `--doctor` already WARNs about
+but never installs: `gitleaks`, `sqlite3`, `jq`, `gh`. Supported package
+managers are macOS (`brew`) and Linux (`apt`); anything else prints the missing
+list and exits 1 for a manual install. Non-interactive stdin (CI, a piped
+command) is force-downgraded to `--dry-run` regardless of the flag you passed —
+nothing is ever silently installed.
+
+### Export your global layer
+
+To review what was installed on a previous machine (registered hooks, cached
+plugins, installed skills) without reconstructing it from memory:
+
+```bash
+bash ~/agent/core/infra/local-layer-export.sh /path/to/local-layer-manifest.yml
+```
+
+This is read-only on `~/.claude/settings.json`, the plugin cache, and the
+skills directory, and renders a generic, portable manifest — schema documented
+in [`templates/local-layer-manifest.yml.template`](../templates/local-layer-manifest.yml.template)
+— of hook event names + script basenames, plugin marketplace/name/version
+triples, and skill names. No absolute paths, no personal detail. The rendered
+manifest is gitleaks-scanned before it is ever written to disk; a positive scan
+(or gitleaks missing entirely) refuses to save it.
+
+There is no automated import step yet — read the exported manifest and re-run
+the relevant `setup.sh` flags by hand on the new machine (a
+`local-layer-import.sh` companion is tracked as future work).
+
+### What does NOT belong here
+
+Your **L3 personal glue** — real paths, machine-specific env vars, private
+credentials your hooks reference, your own risk-area definitions — is not
+portable and does not belong in this repo or in the exported manifest. Keep
+that in a **private dotfiles repo** you control, applied on top of this
+framework's install. This repo stays domain-neutral; your dotfiles repo
+carries your identity.
+
+---
+
 ## Next steps
 
 - [`customization.md`](customization.md) — define your risk areas + resources
