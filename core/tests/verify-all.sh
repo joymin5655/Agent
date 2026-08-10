@@ -157,16 +157,28 @@ while [[ $i -lt $n ]]; do
   end=$(date +%s)
   dur=$((end - start))
 
-  if [[ $rc -eq 2 ]]; then
-    # Exit 2 = the check declared itself INAPPLICABLE (an optional binary it
-    # needs is absent). Counted as skipped and printed loudly, never as a pass:
-    # a discovered battery that cannot run must not be indistinguishable from
-    # one that ran and passed. The sentinel is the same one
+  # A check is SKIPPED only if it exits 2 *and* DECLARES the skip by printing a
+  # `SKIP` line. Both halves are required: exit 2 alone is not a skip signal,
+  # because bash itself exits 2 on a SYNTAX ERROR — a truncated or
+  # merge-conflicted battery would otherwise be silently downgraded from FAIL to
+  # SKIP (and `core/tests/` is only `ask`-guarded, so a loop agent could reach
+  # that with one malformed edit). argparse also exits 2 on a bad flag, which is
+  # a real failure of the evals lanes, not an inapplicability. Undeclared rc==2
+  # therefore falls through to FAIL, where the output tail explains it.
+  declared_skip=0
+  if [[ $rc -eq 2 ]] && grep -qE '^SKIP([[:space:]]|:|$)' "$OUTFILE" 2>/dev/null; then
+    declared_skip=1
+  fi
+
+  if [[ $declared_skip -eq 1 ]]; then
+    # Exit 2 + a SKIP line = the check declared itself INAPPLICABLE (an optional
+    # binary it needs is absent). Counted as skipped and printed loudly, never as
+    # a pass: a discovered battery that cannot run must not be indistinguishable
+    # from one that ran and passed. The sentinel is the same one
     # core/infra/gitleaks-fire-test.sh and skills/wrap already use, and it is
     # what lets a battery guarded by an optional tool live under core/tests/
     # (inside the guarded surface) instead of being hidden outside discovery.
-    # The check's own last output line carries the reason.
-    reason="$(tail -n 1 "$OUTFILE" 2>/dev/null | sed 's/^SKIP[: ]*//')"
+    reason="$(grep -m1 -E '^SKIP([[:space:]]|:|$)' "$OUTFILE" | sed -E 's/^SKIP[[:space:]]*[:—-]*[[:space:]]*//')"
     printf 'SKIP  %s  (%s)\n' "$label" "${reason:-check declared itself inapplicable}"
     skipped=$((skipped + 1))
   elif [[ $rc -eq 0 ]]; then
@@ -186,6 +198,15 @@ printf '=== verify-all: %d passed, %d failed, %d skipped ===\n' "$passed" "$fail
 # nothing) — the canonical "empty suite reports green" false-signal. Refuse it.
 if [[ $((passed + failed + skipped)) -eq 0 ]]; then
   printf 'ERROR: verify-all discovered and ran zero checks — refusing to report success.\n' >&2
+  exit 1
+fi
+# Second floor, same principle one level up: a run where NOTHING actually
+# executed — every check skipped — is the same false-signal wearing a different
+# tally. It became reachable once discovered checks could skip themselves (a
+# host missing several optional binaries, or a sabotaged environment), and
+# consumers read a zero exit as "the harness passes its own gates".
+if [[ $passed -eq 0 && $skipped -gt 0 ]]; then
+  printf 'ERROR: verify-all skipped every check (%d skipped, 0 passed) — nothing was verified, refusing to report success.\n' "$skipped" >&2
   exit 1
 fi
 [[ $failed -eq 0 ]]

@@ -115,6 +115,7 @@ SHAPES=(
 echo "=== (a)+(a2) PER-SHAPE: allowed under the real config; classified against a stripped config ==="
 LOAD_BEARING=0
 UNPROVABLE=0
+LOAD_BEARING_NAMES=""
 i=0
 for entry in "${SHAPES[@]}"; do
   i=$((i + 1))
@@ -136,10 +137,18 @@ for entry in "${SHAPES[@]}"; do
     # the control itself is broken — fail loudly rather than silently
     # downgrading this shape to "unprovable".
     check "control-config-report-readable[$i]" 1
-  elif [[ -n "$bare" ]]; then
+  elif [[ -n "$bare" && -z "$real" ]]; then
+    # BOTH halves are required for load-bearing: flagged without the allowlist
+    # AND clean with it. A shape flagged under both configs means that arm is
+    # broken, and counting it toward the floor would let the floor be satisfied
+    # by the very failure it exists to catch (the `allowed-under-real-config`
+    # check above already goes red, but the floor must not disagree with it).
     LOAD_BEARING=$((LOAD_BEARING + 1))
+    LOAD_BEARING_NAMES="$LOAD_BEARING_NAMES $i:$fname"
     echo "  ok   [load-bearing[$i:$fname] — flagged without the allowlist as: $(printf '%s' "$bare" | tr '\n' ',' | sed 's/,$//')]"
     PASS=$((PASS + 1))
+  elif [[ -n "$bare" ]]; then
+    echo "  --   [arm-broken[$i:$fname] — flagged under BOTH configs; not counted load-bearing (see the failed allow check above)]"
   else
     UNPROVABLE=$((UNPROVABLE + 1))
     echo "  --   [unprovable[$i:$fname] — no rule catches this shape with OR without the allowlist; its clean pass proves nothing about the allowlist]"
@@ -147,11 +156,30 @@ for entry in "${SHAPES[@]}"; do
 done
 
 echo
-echo "=== (a3) FLOOR: the load-bearing set must stay non-empty ==="
+echo "=== (a3) FLOOR: the measured load-bearing set must not shrink or drift ==="
 # Without this, a gitleaks version bump or a rule change could silently make
 # every shape unprovable and leave the battery green while proving nothing.
-echo "  load-bearing: $LOAD_BEARING · unprovable-by-this-method: $UNPROVABLE (of ${#SHAPES[@]} shapes)"
+# The floor pins the MEASURED SET, not just its size (a size floor has zero
+# headroom at 2 and would accept a different pair while the two known-catchable
+# shapes silently stopped being caught).
+echo "  load-bearing:$LOAD_BEARING [${LOAD_BEARING_NAMES# }] · unprovable-by-this-method: $UNPROVABLE (of ${#SHAPES[@]} shapes)"
 [[ "$LOAD_BEARING" -ge 2 ]]; check "load-bearing-floor-at-least-2" $?
+# measured 2026-08-10: shape 4 (sk-proj-… → the sk-(proj-)?(your|placeholder|…)
+# arm) and shape 10 (Bearer USER_B_TOKEN → the USER_*(JWT|TOKEN) arm).
+for expect in "4:app_config.py" "10:curl_examples.sh"; do
+  case " $LOAD_BEARING_NAMES " in
+    *" $expect "*) check "load-bearing-includes[$expect]" 0 ;;
+    *) echo "    expected shape $expect to be catchable without the allowlist — gitleaks' ruleset may have changed"
+       check "load-bearing-includes[$expect]" 1 ;;
+  esac
+done
+# HONEST CEILING, stated so it cannot be mistaken for coverage: gitleaks.toml
+# declares 9 allowlist regex arms; the two load-bearing shapes exercise 2 of
+# them. The other 7 arms — including the unanchored bare `placeholder` arm —
+# are asserted by nothing in either direction here, because no rule catches
+# their shapes with OR without the allowlist. Proving those needs either a
+# rule that matches them or a different method; this battery does not claim to.
+echo "  ceiling: 2 of gitleaks.toml's 9 allowlist arms are exercised; the other 7 are unproven by this method"
 
 echo
 echo "=== (a4) AGGREGATE: the whole fixture tree is clean under the real config ==="

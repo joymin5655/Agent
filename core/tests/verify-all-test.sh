@@ -181,5 +181,39 @@ OUT2="$(VERIFY_ALL_TESTS_DIR="$D" VERIFY_ALL_SKIP_FIXED=1 bash "$RUNNER" 2>&1)";
 printf '%s\n' "$OUT2" | grep -qE '^FAIL  zzz-fail-test\.sh'; check "discovered-skip-lane-fail-still-FAIL" $?
 
 echo
+echo "=== (10) UNDECLARED exit 2 IS A FAILURE: bash syntax errors must not become SKIPs ==="
+# bash itself exits 2 on a syntax error, and argparse exits 2 on a bad flag.
+# Accepting a bare rc==2 as "inapplicable" would silently downgrade a truncated,
+# merge-conflicted, or sabotaged battery from FAIL to SKIP — reachable with one
+# malformed edit, since core/tests/ is ask-guarded, not deny-guarded. A skip
+# must be DECLARED (a `SKIP` line), not merely signalled by the exit code.
+D=$(fresh_dir)
+write_pass_stub "$D/aaa-pass-test.sh"
+printf '%s\n' '#!/usr/bin/env bash' 'if [ 1 -eq 1 ]; then' 'echo unterminated' > "$D/zzz-syntax-test.sh"
+OUT="$(VERIFY_ALL_TESTS_DIR="$D" VERIFY_ALL_SKIP_FIXED=1 bash "$RUNNER" 2>&1)"; RC=$?
+[[ $RC -ne 0 ]]; check "undeclared-exit2-exit-nonzero" $?
+printf '%s\n' "$OUT" | grep -qE '^FAIL  zzz-syntax-test\.sh'; check "undeclared-exit2-reported-FAIL" $?
+if printf '%s\n' "$OUT" | grep -qE '^SKIP  zzz-syntax-test\.sh'; then bad=1; else bad=0; fi
+[[ $bad -eq 0 ]]; check "undeclared-exit2-not-counted-skipped" $?
+printf '%s\n' "$OUT" | grep -qF '1 passed, 1 failed'; check "undeclared-exit2-tallied-failed" $?
+
+echo
+echo "=== (11) ALL-SKIP IS NOT SUCCESS: a run where nothing executed must fail loud ==="
+# The floor above only refuses ZERO discovered checks. Once checks could skip
+# themselves, "58 skipped, 0 passed" became a second vacuous-green shape that
+# consumers (skills/harness-audit) read as a healthy harness.
+D=$(fresh_dir)
+printf '%s\n' '#!/usr/bin/env bash' 'echo "SKIP: widget-tool not installed"' 'exit 2' > "$D/aaa-skip-test.sh"
+printf '%s\n' '#!/usr/bin/env bash' 'echo "SKIP: other-tool not installed"' 'exit 2' > "$D/mmm-skip-test.sh"
+OUT="$(VERIFY_ALL_TESTS_DIR="$D" VERIFY_ALL_SKIP_FIXED=1 bash "$RUNNER" 2>&1)"; RC=$?
+[[ $RC -ne 0 ]]; check "all-skip-exit-nonzero" $?
+printf '%s\n' "$OUT" | grep -qF 'skipped every check'; check "all-skip-error-message" $?
+# and the mixed case must still succeed (the floor must not over-fire)
+write_pass_stub "$D/zzz-pass-test.sh"
+OUT2="$(VERIFY_ALL_TESTS_DIR="$D" VERIFY_ALL_SKIP_FIXED=1 bash "$RUNNER" 2>&1)"; RC2=$?
+[[ $RC2 -eq 0 ]]; check "some-passed-some-skipped-still-exit-0" $?
+printf '%s\n' "$OUT2" | grep -qF '1 passed, 0 failed, 2 skipped'; check "mixed-tally-correct" $?
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]
