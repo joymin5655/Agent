@@ -93,7 +93,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   span-guard safe-misses counted as hits). Fixed by **full-containment** span
   testing and a single shared per-occurrence match set (`live_matches`) that both
   the dry-run report and `--apply` consume — counts now equal substitutions by
-  construction. Battery 72 → **94 checks**.
+  construction. Battery 72 → **94 checks**. **Round 7 (2026-08-10, 5th panel's 9
+  confirmed defects, all live-reproduced):** promote-up (OLD under NEW,
+  `/old/sub`→`/old`) is now **refused at the CLI** (user decision 2026-08-10,
+  superseding panel 3's "make it rewrite": after one apply a migrated ref and a
+  fresh ref are byte-identical, so NO stateless rewrite can be idempotent — the
+  panel-4 full-containment fix made re-apply eat one path component per pass);
+  key+path rewrites on one line now **splice at original-line positions** (the
+  sequential re.sub let a `new_key` ending in `)`/`:` flip a following path ref's
+  left boundary — apply did more than the report said); relative `--old`/`--new`
+  refused (a slash-less OLD equals its own encoded key — double-matched both
+  axes); the line-separator guard moved into Python and now rejects **every
+  `splitlines()` separator** (`\r \v \f \x1c-\x1e \x85 U+2028 U+2029` — a `\r`
+  NEW previously injected lines and compounded 15→21→33 bytes per apply); the
+  left boundary became a **whitelist** like the right (an NFD combining mark —
+  the macOS filename normal form — passed the old `[\w./~+@%-]` blocklist and let
+  OLD tail-match `/data/caré/old/x`), keeping `!`/`#` as the shebang/comment
+  sigils; atomic-write temp names are now `mkstemp`-random (the fixed
+  `<file>.reorg-sync-tmp` name destroyed a real file bearing that name); FIFOs/
+  sockets/devices are skipped via `S_ISREG` (an in-tree FIFO hung the sweep
+  forever). Two hazards are **documented residuals** instead of fixes (decision
+  2026-08-10): whitespace-as-boundary sibling bleed (incl. U+00A0/U+3000 names —
+  removing the whitespace boundary would undetect every `see /old/x`-shaped ref)
+  and the non-injective `enc()` key collision (`/x/10_Reference` vs
+  `/x/10-Reference` share one key — a harness-transform property, not the
+  sweeper's); both are dry-run-surfaced and now spelled out in a SKILL.md
+  "Documented residuals" section (the "never corrupts" claim is retired).
+  Battery 94 → **117 checks** (§16 rewritten: promote-up refusal + sibling-rename
+  still allowed; new §17: nine per-defect regression pins incl. an NFD positive
+  control, tmp-collision survival, FIFO no-hang with watchdog, residual
+  surfacing, and SKILL-documentation greps).
 - **Evidence-first inventory — kill the ghost-specialist deadlock at its root
   (`rules/policy/evidence-first.md` + `core/hooks/agent-inventory.py`).** A gate that
   demands a specialist with no in-runtime provider deadlocks the session: the gate blocks

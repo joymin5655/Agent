@@ -32,10 +32,25 @@ bash "${CLAUDE_PLUGIN_ROOT:-.}/core/infra/reorg-sync.sh" \
 ```
 
 Read the `CLASS  file:line  <text>` rows and the per-class summary with the user.
-The tool refuses a bare `/` or empty `--old` (that would match everything) and any
-`--old`/`--new` containing a newline (line-injection hazard). Note the report echoes
-matched lines — review it before pasting into shared channels/CI logs, since a line
-that references `<old>` can also carry unrelated sensitive content.
+The tool refuses four input shapes outright, each a proven corruption/injection
+hazard:
+
+- a bare `/` or empty `--old` (would match everything);
+- a **relative** `--old`/`--new` (both must be `/`-leading — a slash-less OLD is
+  byte-identical to its own encoded key form and would double-match both axes);
+- any `--old`/`--new` containing a **line separator** — not just `\n` but every
+  character Python's `splitlines()` honors (`\r \v \f \x1c-\x1e \x85 U+2028
+  U+2029`), any of which would inject lines into swept files on apply;
+- a **promote-up** move (`--old` under `--new`, e.g. `/old/sub` → `/old`): after
+  one apply, a migrated ref and a fresh `/old/sub` ref are byte-identical, so no
+  stateless rewrite can be idempotent — a re-run eats one path component per
+  pass, which is data corruption. A real reorg moves children individually; run
+  one sweep per moved child instead. (Decision 2026-08-10, superseding the
+  earlier "make promote-up rewrite" direction.)
+
+Note the report echoes matched lines — review it before pasting into shared
+channels/CI logs, since a line that references `<old>` can also carry unrelated
+sensitive content.
 
 ### 2. Confirm, then apply
 
@@ -49,15 +64,21 @@ bash "${CLAUDE_PLUGIN_ROOT:-.}/core/infra/reorg-sync.sh" \
 Replacement is a literal substitution **anchored at a path-component boundary via a
 Unicode-aware whitelist on both sides** — a match counts only when the next
 character is `/`, a line/string end, whitespace, or an unambiguous delimiter (quote,
-`: , ; = | < > ( ) [ ] { }`), AND the preceding character is not a path-body char
-(so `<old>` is not matched as the tail of an unrelated longer absolute path — e.g.
+`: , ; = | < > ( ) [ ] { }`), AND the preceding character is likewise a whitelisted
+boundary (whitespace, quote, structural punctuation, the shebang/comment sigils
+`!` `#`, or string start). The left side is a whitelist too — not a blocklist of
+known body chars — so a combining mark (NFD text, the macOS filename normal form),
+an emoji, or any other exotic character is treated as part of a longer name, and
+`<old>` is never matched as the tail of an unrelated longer absolute path (e.g.
 `/proj/x` never hits `/other/tree/proj/x`; a preceding `/` is deliberately *not* a
 boundary). Any following character that is a word char in *any* script (so CJK
 siblings like `.../논문` vs `.../논문자료` are safe), or `. - + @ ~ %`, marks a
-longer sibling name and is left untouched. Writes are atomic (temp + rename,
+longer sibling name and is left untouched. Writes are atomic (random-name `mkstemp`
+temp + rename — a pre-existing file can never be clobbered as the temp target —
 permissions preserved); a file that cannot be rewritten is reported on stderr and
-the sweep continues, exiting 1 so the failure is visible. Binary files and the
-`.git` object store are skipped. The native-memory key is rewritten with the
+the sweep continues, exiting 1 so the failure is visible. Binary files,
+non-regular files (symlink/FIFO/socket/device — a FIFO would block the sweep
+forever), and the `.git` object store are skipped. The native-memory key is rewritten with the
 harness's `/ . _` → `-` encoding (Unicode-boundaried), confined to lines that carry
 the `claude/projects` consumer context — ordinary kebab-case text is never touched.
 Because that fold is lossy, **only the exact key (the moved dir's own, `cwd == OLD`)
@@ -65,10 +86,8 @@ is rewritten**: a `-`-continuation key like `-old-prefix-sub` is left untouched,
 since after the fold it is indistinguishable from a dash/dot/underscore *sibling*
 (`enc('/old/prefix/sub')` == `enc('/old/prefix-sub')`). Skipping a deeper key is a
 safe miss (the orphaned dir simply stays, as before this tool) rather than risk
-corrupting an unrelated project's key. One documented residual: a directory whose
-name is the moved prefix + a literal space + more (`/old/data 2024` for OLD
-`/old/data`) is read as the component plus text; the dry-run surfaces it before any
-apply.
+corrupting an unrelated project's key. See **Documented residuals** below for the
+two limits this design accepts.
 
 **Coverage caveat (report honestly):** only references that end at a boundary
 (`/`, whitespace, a delimiter, or line/string end) are detected — a reference
@@ -94,17 +113,17 @@ the swept tree) and the live user crontab is a system resource — this skill re
   `/proj` → `/proj/inner`) OR after a delimiter (`/a` → `/a:/a`). Enforced by a
   **protected-span guard**: apply computes the boundary-anchored literal-NEW spans
   positionally on the buffer and refuses to rewrite any OLD *fully contained* in one
-  (already-migrated text). Full containment — not "starts inside" — so a promote-up
-  reorg where NEW is a boundary-prefix of OLD (`/old/sub` → `/old`) still rewrites:
-  the longer OLD overruns the NEW span and is a genuine fresh ref (a starts-inside
-  test silently no-op'd 100% of that direction; retired 2026-07-16). No text is
-  mutated during the scan, so an adjacent component's boundary is never disturbed —
-  the flaw that sank an earlier NUL-nonce mask (which corrupted a nested sibling)
-  and a leading-only negative lookahead (which missed the copy of OLD that NEW
-  reintroduces after a delimiter, compounding `/a:/a:/a…`); both were retired
-  2026-07-16. The cost is a deliberate safe miss: a *fresh* OLD ref that
-  coincidentally sits inside a literal-NEW-shaped span is treated as migrated and
-  left alone — never corrupted. Confirm with `grep -rF '<old>'` after apply.
+  (already-migrated text). No text is mutated during the scan, so an adjacent
+  component's boundary is never disturbed — the flaw that sank an earlier NUL-nonce
+  mask (which corrupted a nested sibling) and a leading-only negative lookahead
+  (which missed the copy of OLD that NEW reintroduces after a delimiter,
+  compounding `/a:/a:/a…`); both were retired 2026-07-16. The one direction NO
+  guard can make idempotent — promote-up, OLD under NEW — is refused at the CLI
+  instead (see step 1): full containment made it rewrite, and the 5th panel proved
+  that corrupts data on re-apply (one component eaten per pass). The remaining
+  cost is a deliberate safe miss: a *fresh* OLD ref that coincidentally sits
+  inside a literal-NEW-shaped span is treated as migrated and left alone — never
+  corrupted. Confirm with `grep -rF '<old>'` after apply.
 - Report fidelity: the dry-run report and `--apply` consume one shared match set
   (per-occurrence, span-guard applied), so the per-class counts equal the
   substitutions `--apply` performs exactly — in both directions. N same-class refs
@@ -113,3 +132,24 @@ the swept tree) and the live user crontab is a system resource — this skill re
   is *not* counted (previously reported as a hit that apply then skipped).
 - Scope is `--root`; run once per tree that may hold references (repo, dotfiles, notes).
 - Cron `@keyword` schedules (`@daily`, `@reboot`) classify as `crontab` like numeric rows.
+
+## Documented residuals (accepted limits — NOT "never corrupts")
+
+Two hazards survive by explicit decision (2026-08-10); both are surfaced by the
+dry-run report, which is why step 1 is mandatory:
+
+1. **Whitespace-as-boundary sibling residual.** Whitespace — ASCII space AND
+   Unicode whitespace (U+00A0 no-break, U+3000 ideographic, …) — is a boundary,
+   so a sibling directory whose name is the moved prefix plus whitespace plus
+   more (`/old/data 2024` for OLD `/old/data`; `/x/논문 자료` for OLD `/x/논문`)
+   *is* matched at the prefix and would be part-rewritten by apply. Kept because
+   the reverse trade-off is worse: without a whitespace boundary, every
+   `see /old/x` / `run /old/x ...` reference goes undetected. Review the
+   dry-run rows for such siblings before `--apply`.
+2. **Lossy key-encoding collision.** The harness memory-key transform `enc()`
+   folds `/`, `.`, `_` all to `-` and is non-injective: a sibling differing from
+   OLD only in a folded char (`/x/10_Reference` vs `/x/10-Reference`) has the
+   byte-identical encoded key, so its key-form refs are reported — and on apply,
+   rewritten — together with the exact key. This is a property of the harness
+   transform itself, not fixable in a text sweeper; the dry-run report shows
+   every key hit for review.

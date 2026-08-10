@@ -3,8 +3,11 @@
 # path-reference sweeper). Builds a fixture tree carrying all five reference
 # classes plus decoys, and asserts: dry-run detects all five and changes nothing;
 # --apply rewrites each correctly (including the native-memory-key encoding);
-# binary + symlink + the .git object store are skipped while a .git worktree FILE
-# is swept; the run is idempotent; and the usage guards reject a footgun.
+# binary + non-regular files (symlink/FIFO) + the .git object store are skipped
+# while a .git worktree FILE is swept; the run is idempotent; the usage guards
+# reject every proven footgun (bare-/ or empty OLD, relative prefixes, any
+# splitlines() separator, promote-up moves); and §17 pins the 5th adversarial
+# panel's nine confirmed defects one-by-one.
 #
 # Usage: bash core/tests/reorg-sync-test.sh
 set -u
@@ -330,23 +333,31 @@ echo "$M2" | grep -q 'rewrote 0 file(s)'; check "panel3-coresident-idempotent" $
 rm -rf "$T13"
 
 echo
-echo "=== (16) panel4: promote-up (NEW prefix of OLD) + report/apply single-source-of-truth (2026-07-16) ==="
+echo "=== (16) promote-up REFUSED (5th panel CRITICAL, decision 2026-08-10) + report/apply single-source-of-truth ==="
 T14="$(mktemp -d)"
-# MAJOR: promote-up reorg — NEW is a boundary-prefix of OLD (/old/sub -> /old). The
-# start-inside-only span guard swallowed EVERY OLD ref (rewrote 0 while report said
-# anchor). Full containment must let the longer OLD (overrunning the NEW span)
-# rewrite. Both refs migrate; report count == substitutions; idempotent.
+# 4th panel made promote-up (NEW a boundary-prefix of OLD, /old/sub -> /old)
+# rewrite via full containment; the 5th panel proved that fix created data
+# corruption: after one apply a migrated ref and a FRESH /old/sub ref are
+# byte-identical, so run2 eats one component per pass (/old/sub/sub/file ->
+# /old/sub/file -> /old/file). No stateless rewrite can be idempotent here —
+# promote-up is now REFUSED at the CLI (user decision 2026-08-10; supersedes
+# the 3rd-panel "make it rewrite" direction).
 printf 'ref /old/sub/backup.sh and dir /old/sub\n' > "$T14/pu"
-PU="$(bash "$TOOL" --old /old/sub --new /old --root "$T14" 2>&1)"
-echo "$PU" | grep -q 'summary: 2 reference(s) across 1 class(es)'; check "panel4-promoteup-reports-2" $?
-bash "$TOOL" --old /old/sub --new /old --root "$T14" --apply >/dev/null 2>&1
-grep -qx 'ref /old/backup.sh and dir /old' "$T14/pu"; check "panel4-promoteup-both-rewritten" $?
-PU2="$(bash "$TOOL" --old /old/sub --new /old --root "$T14" --apply 2>&1)"
-echo "$PU2" | grep -q 'rewrote 0 file(s)'; check "panel4-promoteup-idempotent" $?
-# deeper flatten /a/b/c -> /a/b
+PU="$(bash "$TOOL" --old /old/sub --new /old --root "$T14" 2>&1)"; PURC=$?
+[[ "$PURC" -ne 0 ]]; check "panel5-promoteup-refused" $?
+echo "$PU" | grep -qi 'promote-up'; check "panel5-promoteup-names-hazard" $?
+grep -qx 'ref /old/sub/backup.sh and dir /old/sub' "$T14/pu"; check "panel5-promoteup-tree-untouched" $?
+# deeper flatten /a/b/c -> /a/b: same shape, same refusal — even with --apply
 printf 'p /a/b/c/x\n' > "$T14/fl"
-bash "$TOOL" --old /a/b/c --new /a/b --root "$T14" --apply >/dev/null 2>&1
-grep -qx 'p /a/b/x' "$T14/fl"; check "panel4-flatten-rewritten" $?
+bash "$TOOL" --old /a/b/c --new /a/b --root "$T14" --apply >/dev/null 2>&1; [[ $? -ne 0 ]]; check "panel5-flatten-refused" $?
+grep -qx 'p /a/b/c/x' "$T14/fl"; check "panel5-flatten-tree-untouched" $?
+# NOT promote-up: a sibling rename sharing the parent (/old/sub -> /old/sub2)
+# must still run and converge.
+T14B="$(mktemp -d)"
+printf 's /old/sub/x\n' > "$T14B/sib"
+bash "$TOOL" --old /old/sub --new /old/sub2 --root "$T14B" --apply >/dev/null 2>&1; [[ $? -eq 0 ]]; check "panel5-sibling-rename-still-allowed" $?
+grep -qx 's /old/sub2/x' "$T14B/sib"; check "panel5-sibling-rename-applied" $?
+rm -rf "$T14B"
 # MINOR (report==apply, overcount side): a fresh OLD sitting inside a literal-NEW
 # span is a documented safe-miss; the dry-run must NOT count it (was reported
 # anchor=1 while apply did 0 — divergence). Now honestly 0/0.
@@ -362,12 +373,95 @@ MC="$(bash "$TOOL" --old /old/prefix --new /new/loc --root "$T14" 2>&1)"
 echo "$MC" | grep -q 'summary: 2 reference(s) across 1 class(es)'; check "panel4-multiref-counts-2" $?
 bash "$TOOL" --old /old/prefix --new /new/loc --root "$T14" --apply >/dev/null 2>&1
 grep -qx 'see /new/loc/a and /new/loc/b end' "$T14/mc"; check "panel4-multiref-both-rewritten" $?
-# half-migration guard: promote-up with a co-resident memory key — key AND path both
-# migrate (never a half-migrated tree where the key moved but the paths did not).
-printf 'k ~/.claude/projects/-old-sub/memory and p /old/sub/x\n' > "$T14/hm"
-bash "$TOOL" --old /old/sub --new /old --root "$T14" --apply >/dev/null 2>&1
-grep -q 'projects/-old/memory and p /old/x' "$T14/hm"; check "panel4-promoteup-key-and-path" $?
 rm -rf "$T14"
+
+echo
+echo "=== (17) panel5 regression pins: nine confirmed defects (2026-08-10) ==="
+# C2 [MAJOR] key-then-path splice: both axes must rewrite at ORIGINAL-line
+# positions. The old sequential re.sub let a new_key ending in ')' flip the left
+# boundary of a following path ref, so --apply rewrote MORE than the report said.
+T15="$(mktemp -d)"
+printf 'p claude/projects/-old-x/old/x and /old/x\n' > "$T15/mix"
+SP="$(bash "$TOOL" --old /old/x --new '/new (2)' --root "$T15" 2>&1)"
+echo "$SP" | grep -q 'anchor=1, native-memory-key=1'; check "panel5-splice-reports-1-per-axis" $?
+bash "$TOOL" --old /old/x --new '/new (2)' --root "$T15" --apply >/dev/null 2>&1
+# exactly the reported matches rewrote: the mid-path /old/x (left-blocked by 'x'
+# in the ORIGINAL line) survives even though the key rewrite put a ')' before it.
+grep -qxF 'p claude/projects/-new (2)/old/x and /new (2)' "$T15/mix"; check "panel5-splice-apply-equals-report" $?
+# C3 [MAJOR] relative OLD/NEW refused: a slash-less OLD (enc(OLD)==OLD) matched
+# BOTH axes — double-counted and rewritten to the dash form.
+bash "$TOOL" --old Project --new /new --root "$T15" >/dev/null 2>&1; [[ $? -ne 0 ]]; check "panel5-relative-old-refused" $?
+bash "$TOOL" --old /old --new rel/new --root "$T15" >/dev/null 2>&1; [[ $? -ne 0 ]]; check "panel5-relative-new-refused" $?
+# C4 [MAJOR] every splitlines() separator refused, not just \n: \r once passed
+# the bash-only guard, was written verbatim, and each re-apply re-split the file
+# and grew it without bound (15->21->33 bytes) — line injection included.
+for sepname in CR VT FF LS; do
+  case "$sepname" in
+    CR) sep=$'\r' ;; VT) sep=$'\v' ;; FF) sep=$'\f' ;;
+    LS) sep="$(printf '\xe2\x80\xa8')" ;;  # U+2028 LINE SEPARATOR (UTF-8 bytes; $' ' needs bash>=4.2)
+  esac
+  bash "$TOOL" --old /old --new "/x${sep}y" --root "$T15" >/dev/null 2>&1; [[ $? -ne 0 ]]; check "panel5-separator-refused[$sepname-in-new]" $?
+done
+bash "$TOOL" --old "/o$(printf '\xe2\x80\xa9')ld" --new /new --root "$T15" >/dev/null 2>&1; [[ $? -ne 0 ]]; check "panel5-separator-refused[PS-in-old]" $?
+rm -rf "$T15"
+# U1 [MAJOR] NFD combining mark is NOT a left boundary: macOS filenames are
+# NFD-normalized, so /data/care<U+0301>/old/y let OLD=/old tail-match under the
+# old blocklist and corrupted the path. Whitelist _LEFT blocks it.
+T16="$(mktemp -d)"
+printf 'x /data/care\xcc\x81/old/y\n' > "$T16/nfd"
+ND="$(bash "$TOOL" --old /old --new /moved --root "$T16" 2>&1)"
+echo "$ND" | grep -q 'summary: 0 reference(s)'; check "panel5-nfd-combining-mark-not-boundary" $?
+bash "$TOOL" --old /old --new /moved --root "$T16" --apply >/dev/null 2>&1
+grep -q '/data/care' "$T16/nfd" && ! grep -q '/moved' "$T16/nfd"; check "panel5-nfd-tree-unchanged" $?
+# positive control: NFD text NEXT TO a genuine ref does not suppress detection.
+printf 'y care\xcc\x81 /old/z\n' > "$T16/nfdok"
+bash "$TOOL" --old /old --new /moved --root "$T16" --apply >/dev/null 2>&1
+grep -q '/moved/z' "$T16/nfdok"; check "panel5-nfd-adjacent-ref-still-swept" $?
+rm -rf "$T16"
+# U2 [MAJOR data-loss] fixed temp name collision: a real file named
+# <target>.reorg-sync-tmp was destroyed by being reused as the temp target.
+# mkstemp's random names cannot collide.
+T17="$(mktemp -d)"
+printf 'KEEP-ME sentinel\n' > "$T17/victim.reorg-sync-tmp"
+printf 'r /old/q\n' > "$T17/victim"
+bash "$TOOL" --old /old --new /new --root "$T17" --apply >/dev/null 2>&1
+grep -qx 'KEEP-ME sentinel' "$T17/victim.reorg-sync-tmp"; check "panel5-tmp-collision-file-survives" $?
+grep -qx 'r /new/q' "$T17/victim"; check "panel5-tmp-collision-target-still-swept" $?
+rm -rf "$T17"
+# U3 [MINOR] FIFO must be skipped, not opened: open(FIFO) blocks forever on a
+# writer that never comes — the old islink-only filter hung the whole sweep.
+T18="$(mktemp -d)"
+mkfifo "$T18/pipe"
+printf 'f /old/w\n' > "$T18/norm"
+bash "$TOOL" --old /old --new /new --root "$T18" --apply >/dev/null 2>&1 &
+TPID=$!
+FIN=1
+for _ in $(seq 1 50); do kill -0 "$TPID" 2>/dev/null || { FIN=0; break; }; sleep 0.2; done
+[[ "$FIN" -eq 0 ]]; check "panel5-fifo-no-hang" $?
+[[ "$FIN" -ne 0 ]] && kill "$TPID" 2>/dev/null
+grep -qx 'f /new/w' "$T18/norm"; check "panel5-fifo-normal-file-swept" $?
+rm -rf "$T18"
+# U4 [documented residual ⑧] whitespace-as-boundary sibling: the hit inside
+# `/x/AB<U+3000>C` is the ACCEPTED trade-off (decision 2026-08-10: keep the
+# whitespace boundary) — the pin is that the dry-run SURFACES it for review,
+# never silently.
+T19="$(mktemp -d)"
+printf 'd /x/AB\xe3\x80\x80C/f\n' > "$T19/ws"
+WS="$(bash "$TOOL" --old /x/AB --new /y/AB --root "$T19" 2>&1)"
+echo "$WS" | grep -q 'anchor=1'; check "panel5-whitespace-residual-surfaced" $?
+# U5 [documented residual ⑨] lossy enc(): the sibling key -x-10-Reference
+# (from /x/10-Reference) is byte-identical to enc(/x/10_Reference); the pin is
+# that the dry-run surfaces the collision as a key hit — reviewable, not silent.
+printf 'k ~/.claude/projects/-x-10-Reference/memory\n' > "$T19/key"
+KE="$(bash "$TOOL" --old /x/10_Reference --new /z/10_Reference --root "$T19" 2>&1)"
+echo "$KE" | grep -q 'native-memory-key=1'; check "panel5-lossy-key-residual-surfaced" $?
+rm -rf "$T19"
+# ⑧⑨ must stay DOCUMENTED residuals: the skill sheet has an explicit residuals
+# section naming both, and the promote-up refusal.
+SKILL="$REPO_ROOT/skills/reorg-sync/SKILL.md"
+grep -qi 'residual' "$SKILL" && grep -q 'U+3000\|whitespace' "$SKILL"; check "panel5-skill-documents-whitespace-residual" $?
+grep -q '10_Ref\|non-injective\|lossy' "$SKILL"; check "panel5-skill-documents-lossy-key-residual" $?
+grep -qi 'promote-up' "$SKILL"; check "panel5-skill-documents-promoteup-refusal" $?
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
