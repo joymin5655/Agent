@@ -719,7 +719,27 @@ inheriting the session top model four days after #101 merged).
   Battery 94 → **117 checks** (§16 rewritten: promote-up refusal + sibling-rename
   still allowed; new §17: nine per-defect regression pins incl. an NFD positive
   control, tmp-collision survival, FIFO no-hang with watchdog, residual
-  surfacing, and SKILL-documentation greps).
+  surfacing, and SKILL-documentation greps). **Round 8 (2026-08-10, 6th panel —
+  incomplete run: 17 of 20 agents died on a usage limit, so its findings were
+  main-loop-reproduced rather than trusted, and every candidate came back
+  `unverified`, never "refuted"):** one **CRITICAL** and three MINOR, all
+  reproduced and fixed. CRITICAL — when NEW's own LAST character is a boundary
+  char (`/backup (2026)`, `/srv:`, `/b!`), writing NEW flipped the left boundary
+  of whatever followed it, so a component that was mid-path (unmatchable) before
+  apply became matchable on the next run: a second `--apply` with identical
+  arguments rewrote again and ate one path component per pass
+  (`/data/data/x` → `/backup (2026)/data/x` → `/backup (2026)/backup (2026)/x`).
+  An OLD match starting exactly where a literal-NEW span *ends* is now treated as
+  migration residue (`_abuts`), the mirror of the existing full-containment rule.
+  MINORs — bare `!`/`#` dropped from the left whitelist (they let OLD tail-match
+  inside legal names like `/proj/dir!/old/x`) in favour of a fixed-width `(?<=#!)`
+  lookbehind that keeps shebang detection; the key axis is now anchored directly
+  after `claude/projects/` (an unrelated path component equal to the encoded key,
+  `/backup/-old-x/f`, was being rewritten into a nonexistent path); trailing
+  slashes on `--old`/`--new` are normalized up front (`--old /a/ --new /a` was
+  wrongly refused as promote-up because bash's `*` matches empty, and a trailing
+  slash also broke boundary matching outright). Cross-axis overlaps are dropped
+  before counting and splicing. Battery 117 → **135 checks** (§18).
 - **Evidence-first inventory — kill the ghost-specialist deadlock at its root
   (`rules/policy/evidence-first.md` + `core/hooks/agent-inventory.py`).** A gate that
   demands a specialist with no in-runtime provider deadlocks the session: the gate blocks

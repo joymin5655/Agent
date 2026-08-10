@@ -65,8 +65,10 @@ Replacement is a literal substitution **anchored at a path-component boundary vi
 Unicode-aware whitelist on both sides** — a match counts only when the next
 character is `/`, a line/string end, whitespace, or an unambiguous delimiter (quote,
 `: , ; = | < > ( ) [ ] { }`), AND the preceding character is likewise a whitelisted
-boundary (whitespace, quote, structural punctuation, the shebang/comment sigils
-`!` `#`, or string start). The left side is a whitelist too — not a blocklist of
+boundary (whitespace, quote, structural punctuation, the two-character shebang
+sigil `#!`, or string start — a *bare* `!` or `#` is deliberately not a boundary,
+since `/proj/dir!/old/x` is a legal path that must not tail-match). The left side
+is a whitelist too — not a blocklist of
 known body chars — so a combining mark (NFD text, the macOS filename normal form),
 an emoji, or any other exotic character is treated as part of a longer name, and
 `<old>` is never matched as the tail of an unrelated longer absolute path (e.g.
@@ -79,8 +81,9 @@ permissions preserved); a file that cannot be rewritten is reported on stderr an
 the sweep continues, exiting 1 so the failure is visible. Binary files,
 non-regular files (symlink/FIFO/socket/device — a FIFO would block the sweep
 forever), and the `.git` object store are skipped. The native-memory key is rewritten with the
-harness's `/ . _` → `-` encoding (Unicode-boundaried), confined to lines that carry
-the `claude/projects` consumer context — ordinary kebab-case text is never touched.
+harness's `/ . _` → `-` encoding, **anchored directly after `claude/projects/`** — ordinary kebab-case
+text is never touched, and neither is an unrelated path component that merely
+happens to equal the encoded key (`/backup/-old-x/f`).
 Because that fold is lossy, **only the exact key (the moved dir's own, `cwd == OLD`)
 is rewritten**: a `-`-continuation key like `-old-prefix-sub` is left untouched,
 since after the fold it is indistinguishable from a dash/dot/underscore *sibling*
@@ -117,7 +120,12 @@ the swept tree) and the live user crontab is a system resource — this skill re
   component's boundary is never disturbed — the flaw that sank an earlier NUL-nonce
   mask (which corrupted a nested sibling) and a leading-only negative lookahead
   (which missed the copy of OLD that NEW reintroduces after a delimiter,
-  compounding `/a:/a:/a…`); both were retired 2026-07-16. The one direction NO
+  compounding `/a:/a:/a…`); both were retired 2026-07-16. A ref that begins
+  exactly where an already-migrated NEW span ends is likewise treated as
+  migration residue: when NEW's own last character is a boundary char
+  (`/backup (2026)`, `/srv:`), writing it flips the left boundary of whatever
+  followed, so without that rule a re-apply ate one path component per pass. The
+  one direction NO
   guard can make idempotent — promote-up, OLD under NEW — is refused at the CLI
   instead (see step 1): full containment made it rewrite, and the 5th panel proved
   that corrupts data on re-apply (one component eaten per pass). The remaining

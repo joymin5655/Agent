@@ -79,6 +79,13 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -n "$OLD" && -n "$NEW" && -n "$ROOT" ]] || usage
+# Normalize trailing slashes (6th panel MINOR): `--old /a/` is the same prefix as
+# `/a`, but the raw form both broke matching (the literal `/a/` cannot be followed
+# by the required boundary in `/a/x`) and tripped the promote-up guard's glob
+# (`/a/` matches `/a/*` because `*` matches empty). Strip them once, up front, so
+# every guard and matcher below sees one canonical spelling.
+while [[ "$OLD" == */ && "$OLD" != "/" ]]; do OLD="${OLD%/}"; done
+while [[ "$NEW" == */ && "$NEW" != "/" ]]; do NEW="${NEW%/}"; done
 if [[ ! -d "$ROOT" ]]; then
   echo "reorg-sync: --root is not a directory: $ROOT" >&2
   exit 1
@@ -173,14 +180,15 @@ _BOUNDARY = r"""(?=/|$|[\s"'`:,;=|<>(){}\[\]])"""
 # char must be whitespace, a quote, or structural punctuation; string start is
 # vacuously true). '/' is deliberately NOT in the whitelist: a preceding '/'
 # means OLD is a sub-path of a different absolute path and stays blocked, along
-# with every body char in any script, combining marks, and emoji. '!' and '#'
-# ARE whitelisted — they are the shebang/comment sigils that directly precede a
-# path in two of this tool's core reference classes (`#!/old/...`,
-# `#/old/...`), and both were boundaries under the old blocklist (dropping them
-# silently killed shebang detection — caught by this battery). Other chars the
-# old blocklist happened to allow as boundaries ('*', '?', '&', ...) now fail
-# toward a dry-run-visible safe MISS — never sibling corruption.
-_LEFT = r"""(?<![^\s"'`:,;=|<>(){}\[\]!#])"""
+# with every body char in any script, combining marks, and emoji. The ONE
+# non-punctuation boundary is the two-char shebang sigil `#!` (6th panel MINOR:
+# whitelisting bare '!' and '#' let OLD tail-match mid-path inside legal
+# directory names like `/proj/dir!/old/x` and `/proj/c#/old/x` — a fixed-width
+# `(?<=#!)` lookbehind keeps `#!/old/bin/python3` detected without opening that
+# hole). Other chars the old blocklist happened to allow as boundaries ('*',
+# '?', '&', a bare '#' comment sigil with no space, ...) now fail toward a
+# dry-run-visible safe MISS — never sibling corruption.
+_LEFT = r"""(?:(?<=\#\!)|(?<![^\s"'`:,;=|<>(){}\[\]]))"""
 path_pat = re.compile(_LEFT + re.escape(old) + _BOUNDARY)
 # Idempotency without masking. When NEW contains OLD — as a prefix
 # (/proj -> /proj/inner) OR after a delimiter that _LEFT does not block
@@ -215,11 +223,35 @@ new_span_pat = re.compile(_LEFT + re.escape(new) + _BOUNDARY)
 # old_key. Idempotency uses the same protected-span guard as the path layer
 # (new_key_span_pat), so a new_key that embeds old_key after a surviving delimiter
 # cannot compound either.
+# The key match is ANCHORED to the consumer context (6th panel MINOR): the
+# native-memory dir is always spelled `…claude/projects/<encoded-key>/…`, so the
+# key literal must sit immediately after `claude/projects/`. The earlier form
+# accepted any boundary (including a plain '/') anywhere on a line that merely
+# MENTIONED claude/projects, so an unrelated path component that happened to
+# equal the encoded key — `/backup/-old-x/f` for OLD=/old-x — was rewritten into
+# a path that does not exist. A fixed-width lookbehind keeps the match span
+# covering exactly the key.
 _KEY_R = r"""(?=/|$|[\s"'`:,;=|<>(){}\[\]])"""
-_KEY_L = r"""(?<![^\s"'`:,;=|<>(){}\[\]/])"""
+KEY_CTX = "claude/projects/"
+_KEY_L = r"(?<=%s)" % re.escape(KEY_CTX)
 key_pat = re.compile(_KEY_L + re.escape(old_key) + _KEY_R)
 new_key_span_pat = re.compile(_KEY_L + re.escape(new_key) + _KEY_R)
-KEY_CTX = "claude/projects"
+
+def _abuts(m, spans):
+    # True iff m starts exactly where an already-migrated literal-NEW span ends.
+    # 6th panel CRITICAL: when NEW's LAST character is itself a boundary char
+    # (`/backup (2026)`, `/srv:`, `/b!`), writing NEW flips the left boundary of
+    # whatever followed it. A path component that was NOT matchable before apply
+    # (it sat mid-path, preceded by a body char) becomes matchable on the next
+    # run — so a second --apply with identical arguments rewrote again and ate
+    # one component per pass: /data/data/x -> /backup (2026)/data/x ->
+    # /backup (2026)/backup (2026)/x. The ref is a leftover of the migration, not
+    # a fresh one, so it must be skipped. Symmetric case cannot occur: OLD and
+    # NEW are both '/'-leading, so NEW's first char never changes a preceding
+    # match's RIGHT boundary. Cost is the same documented safe miss as full
+    # containment — a genuinely fresh OLD immediately after a literal-NEW span is
+    # left alone rather than risk corruption.
+    return any(m.start() == e for _, e in spans)
 
 def _contained(m, spans):
     # True iff match m is FULLY inside a boundary-anchored literal-NEW span
@@ -239,7 +271,8 @@ def live_matches(pat, span_pat, s):
     # workflow: the old report path used a bare .search that neither counted per-match
     # nor modelled the span guard, diverging from apply in both directions).
     spans = [(m.start(), m.end()) for m in span_pat.finditer(s)]
-    return [m for m in pat.finditer(s) if not _contained(m, spans)]
+    return [m for m in pat.finditer(s)
+            if not _contained(m, spans) and not _abuts(m, spans)]
 
 def splice(s, repls):
     # Positional splice (5th panel MAJOR): rewrite BOTH axes' live_matches in one
@@ -248,14 +281,25 @@ def splice(s, repls):
     # new_key ended in a boundary char (')' ':' ...) it could flip the left
     # boundary of a following path ref, making --apply do more (or less) than the
     # report said. Splicing by the positions live_matches computed on the original
-    # line makes report == apply by construction. The two axes' spans can never
-    # overlap: a path match is a literal containing '/', a key match is its
-    # same-length enc() image containing none, so no character can belong to both.
+    # line makes report == apply by construction. Overlapping replacements are
+    # dropped by drop_overlaps() BEFORE both counting and splicing, so this loop
+    # can assume disjoint, ascending spans.
     out, pos = [], 0
     for a, b, r in sorted(repls):
         out.append(s[pos:a]); out.append(r); pos = b
     out.append(s[pos:])
     return "".join(out)
+
+def drop_overlaps(keep, drop):
+    # 6th panel MINOR: the two axes were assumed disjoint (a path literal holds
+    # '/', its enc() key image does not), but a pathological OLD built only from
+    # boundary punctuation can produce key and path matches that share bytes —
+    # and splicing both then deleted the overlapped region. Yield to the `keep`
+    # axis and drop the colliding `drop` matches, before counting, so the report
+    # still equals what apply performs.
+    spans = [(m.start(), m.end()) for m in keep]
+    return [m for m in drop
+            if not any(m.start() < e and s < m.end() for s, e in spans)]
 
 # the path axis is ONE mutually-exclusive class for a line's plain-path refs (the
 # native-memory-key axis is counted independently, per-match, in the sweep below).
@@ -317,6 +361,8 @@ for dirpath, dirnames, filenames in os.walk(root):
             disp = ln.rstrip("\n").strip()[:120]
             kmatch = live_matches(key_pat, new_key_span_pat, ln) if KEY_CTX in ln else []
             pmatch = live_matches(path_pat, new_span_pat, ln)
+            if kmatch:
+                pmatch = drop_overlaps(kmatch, pmatch)
             if kmatch:
                 counts["native-memory-key"] += len(kmatch)
                 file_hit = True

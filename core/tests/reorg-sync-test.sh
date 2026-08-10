@@ -464,5 +464,65 @@ grep -q '10_Ref\|non-injective\|lossy' "$SKILL"; check "panel5-skill-documents-l
 grep -qi 'promote-up' "$SKILL"; check "panel5-skill-documents-promoteup-refusal" $?
 
 echo
+echo "=== (18) panel6 regression pins (2026-08-10) ==="
+# C1 [CRITICAL] NEW whose LAST char is itself a boundary char flipped the left
+# boundary of whatever followed it, so a component that was mid-path (unmatchable)
+# before apply became matchable on the NEXT run: re-apply ate one component per
+# pass (/data/data/data/x -> /backup (2026)/data/data/x -> /backup (2026)/backup
+# (2026)/data/x -> ...). Fixed by _abuts: an OLD starting exactly where a
+# literal-NEW span ends is migration residue, not a fresh ref.
+T20="$(mktemp -d)"
+for pair in "/backup (2026)" "/srv:" "/b!" "/q,"; do
+  d="$(mktemp -d)"; printf 'ref /old/old/old/x\n' > "$d/f"
+  bash "$TOOL" --old /old --new "$pair" --root "$d" --apply >/dev/null 2>&1
+  R1="$(cat "$d/f")"
+  A2="$(bash "$TOOL" --old /old --new "$pair" --root "$d" --apply 2>&1)"
+  R2="$(cat "$d/f")"
+  [[ "$R1" == "$R2" ]] && echo "$A2" | grep -q 'rewrote 0 file(s)'
+  check "panel6-boundary-tail-NEW-idempotent[${pair}]" $?
+  # and the first apply was the CORRECT single rewrite (no component eaten)
+  [[ "$R1" == "ref ${pair}/old/old/x" ]]; check "panel6-boundary-tail-NEW-first-apply-exact[${pair}]" $?
+  rm -rf "$d"
+done
+# the span guard's own case must still hold: NEW re-introducing OLD after a
+# delimiter stays protected (control — this is NOT what _abuts changed).
+printf 'ref /a/x\n' > "$T20/ctl"
+bash "$TOOL" --old /a --new '/b!/a' --root "$T20" --apply >/dev/null 2>&1
+C1="$(cat "$T20/ctl")"
+bash "$TOOL" --old /a --new '/b!/a' --root "$T20" --apply >/dev/null 2>&1
+[[ "$C1" == "$(cat "$T20/ctl")" && "$C1" == 'ref /b!/a/x' ]]; check "panel6-span-guard-control-still-holds" $?
+# C2 [MINOR] bare '!' / '#' are no longer left boundaries — they let OLD
+# tail-match inside legal directory names — while the two-char shebang sigil
+# '#!' still is (both bare and leading-whitespace forms).
+printf 'see /proj/c#/old/x\nsee /proj/dir!/old/x\n' > "$T20/tail"
+TL="$(bash "$TOOL" --old /old --new /MOVED --root "$T20" 2>&1)"
+echo "$TL" | grep -q 'summary: 0 reference(s)'; check "panel6-bang-hash-no-tail-match" $?
+printf '#!/old/bin/python3\n' > "$T20/sb1"; printf '   #!/old/bin/sh\n' > "$T20/sb2"
+SB="$(bash "$TOOL" --old /old --new /MOVED --root "$T20" 2>&1)"
+echo "$SB" | grep -q 'shebang=2'; check "panel6-shebang-sigil-still-boundary" $?
+rm -rf "$T20"
+# C3 [MINOR] the key axis is anchored to the 'claude/projects/' consumer
+# context: an unrelated path component that merely equals the encoded key is no
+# longer rewritten, while the real memory-key ref still is.
+T21="$(mktemp -d)"
+printf 'claude/projects note: backup at /backup/-old-x/f\n' > "$T21/decoy"
+printf 'k ~/.claude/projects/-old-x/memory\n' > "$T21/real"
+KA="$(bash "$TOOL" --old /old-x --new /new-y --root "$T21" 2>&1)"
+echo "$KA" | grep -q 'decoy'; [[ $? -ne 0 ]]; check "panel6-key-not-anchored-path-skipped" $?
+echo "$KA" | grep -q 'native-memory-key=1'; check "panel6-key-anchored-real-ref-hit" $?
+bash "$TOOL" --old /old-x --new /new-y --root "$T21" --apply >/dev/null 2>&1
+grep -qxF 'claude/projects note: backup at /backup/-old-x/f' "$T21/decoy"; check "panel6-key-decoy-byte-identical" $?
+rm -rf "$T21"
+# C4 [MINOR] trailing slashes normalize instead of tripping the promote-up glob
+# (`/a/` matched `/a/*` because '*' matches empty) or breaking the boundary match.
+T22="$(mktemp -d)"
+printf 'cd /a/x done\n' > "$T22/t"
+bash "$TOOL" --old /a/ --new /zz --root "$T22" --apply >/dev/null 2>&1; [[ $? -eq 0 ]]; check "panel6-trailing-slash-old-accepted" $?
+grep -qx 'cd /zz/x done' "$T22/t"; check "panel6-trailing-slash-old-applied" $?
+bash "$TOOL" --old /old/sub/ --new /old --root "$T22" >/dev/null 2>&1; [[ $? -ne 0 ]]; check "panel6-trailing-slash-promoteup-still-refused" $?
+bash "$TOOL" --old /old/sub --new /old/ --root "$T22" >/dev/null 2>&1; [[ $? -ne 0 ]]; check "panel6-trailing-slash-new-promoteup-still-refused" $?
+rm -rf "$T22"
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]
