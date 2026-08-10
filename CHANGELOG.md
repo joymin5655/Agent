@@ -8,6 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Autonomous-loop runner `core/infra/loop-run.sh` + `skills/loop` + `skills/harness-loop`
+  (P2-1 + P2-4 + O-2).** The §5 loop's mechanical enforcement in one script — `init`
+  creates the SQLite goal row (attempts modeled as `supervisor-goal.sh` waves) plus a
+  JSON state file and the active-loop flag; `attempt` runs the grader (default
+  `grade.sh --base/--target`, stubbable via `LOOP_RUN_GRADE_CMD`) under a background
+  watchdog that TERMs then KILLs at a timeout (600s default), classifies the outcome
+  (keep / discard / crash / timeout), appends exactly one row to `.agent/loop/results.tsv`
+  via `loop-ledger.sh`, and prints a `LOOP: continue` / `LOOP: stop(cap|circuit-breaker)`
+  verdict — two consecutive `harness_score: 0` attempts trip the circuit-breaker,
+  reaching the cap stops the loop, both remove the active flag. Git reset/keep of the
+  candidate commit stays a skill-level step, not this script's job. `skills/loop`
+  is the generic fresh-context/one-task/resumable protocol (O-2); `skills/harness-loop`
+  specializes it to this harness's own reviewer prompts with §5.2's 9-step procedure
+  verbatim, numbered, human-only-edited. `core/tests/loop-run-test.sh` (37 checks,
+  hermetic temp-git-repo fixture) and `core/tests/loop-skill-test.sh` (13 checks,
+  binds the SKILL prose to the mechanics with RED reorder/removal/token-drop fixtures)
+  drive both. `loop-run-test.sh` needs `sqlite3` + `jq` (supervisor-goal.sh's own hard
+  dependency) and **exits 2** when they are absent, so verify-all's discovered-check
+  SKIP lane tallies it as skipped with its reason rather than as a pass.
 - **Autonomous-loop grader `core/tests/grade.sh` (P2-2 + L-1 impl).** The loop (§5)
   now has its grader: it runs the GATE floor (sanitize-audit / adapter-parity /
   hook-config-test / post-commit-autosync / gitleaks) and then evaluates each named

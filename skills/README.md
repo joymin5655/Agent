@@ -26,6 +26,8 @@ follows it as instructions to the AI.>
 | `/wrap` | Commit + PR creation with security guard checks. |
 | `/supervise` | Multi-wave plan dispatch with audit + risk-area abort. |
 | `/verify-completion` | Independently re-verify a completion claim (mechanical evidence + refute-by-default judge) before "done" is accepted. |
+| `/loop` | Generic bounded-attempt improvement loop (fresh context, cap, timeout, circuit-breaker) via `core/infra/loop-run.sh`. |
+| `/harness-loop` | §5 loop specialized to this harness's own reviewer prompts — the human-only-edited 9-step procedure. |
 
 ## Adding a skill
 
