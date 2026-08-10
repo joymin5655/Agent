@@ -55,6 +55,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Wired into the `Write|Edit|MultiEdit` PreToolUse chain; `loop-write-guard-test.sh`
   (31 checks) covers the ask/allow matrix, the symlink-escape case, Bash
   write-path detection, the delete-recreate/witness escalations, and WHY/FIX tags.
+- **B4 follow-ups: gitleaks allowlist regression + 4-surface drift tripwire.**
+  `core/infra/gitleaks-fire-test.sh` proved the DETECTION side of the secret gate;
+  nothing proved the ALLOW side. `core/tests/gitleaks-allowlist-test.sh` plants each
+  `gitleaks.toml` placeholder shape (`your_*_key`, `dummy_*`, `example_*`,
+  `sk-proj-placeholder…`, `{{VAR}}`, `<your_x>`, `$USER_*_JWT`) in realistic
+  config/doc contexts and asserts a clean scan, with a stripped-config control
+  proving the same fixture WOULD be flagged without the allowlist (non-vacuous) and
+  a real-shaped-secret mutation proving the allowlist isn't a blanket bypass.
+  Separately, the enforcement surface (`core/tests/`, `evals/`, `loop-write-guard.py`,
+  `pre-tool-guard.sh`, `loop-ledger.sh`, `hooks.json`, `adapter.sh`, `gitleaks.toml`)
+  is declared four times — `grade.sh`'s `surface_list` pathspec, its
+  `guarded_surface_re`, and `loop-write-guard.py`'s `_guarded_dirs`/`_guarded_files` —
+  and a hand-edit to one without the others would silently reopen the L-2 tamper
+  path. `grade-test.sh`'s new `(g4) SURFACE DRIFT` section extracts all four LIVE
+  (never hand-mirrored) and asserts they normalize to the same set, plus a RED
+  mutation case proving the comparison actually catches an injected drift.
 
 ## [0.5.7] - 2026-08-02
 

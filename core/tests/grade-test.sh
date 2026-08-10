@@ -291,5 +291,96 @@ done < <(grep -oE 'echo "[a-z0-9-]+\.sh"' "$GRADE" | sed 's/echo "//; s/"//')
 [[ $gate_in_map -eq 0 ]]; check "no-gate-battery-in-guard-map" $?
 
 echo
+echo "=== (g4) SURFACE DRIFT: the 4 hand-maintained guarded-surface definitions must agree ==="
+# The enforcement surface (core/tests/, evals/, loop-write-guard.py, pre-tool-guard.sh,
+# loop-ledger.sh, hooks.json, adapter.sh, gitleaks.toml) is declared FOUR separate times:
+#   1. grade.sh's INTEGRITY `surface_list` (git ls-files pathspec, ~line 226)
+#   2. grade.sh's INTEGRITY `guarded_surface_re` (per-file regex, ~line 274)
+#   3. loop-write-guard.py's _guarded_dirs()
+#   4. loop-write-guard.py's _guarded_files()
+# A hand-edit to one without the other three silently reopens the L-2 tamper path the
+# C4/C8 fixes closed. Extract each LIVE (never hand-mirror the lists here — that would
+# just be a 5th copy to drift) and assert all 4 normalize to the same {dirs, files} sets.
+
+# extractor 1: grade.sh's surface_list pathspec array (the awk range spans its
+# multi-line backslash-continued literal).
+extract_grade_pathspec() {
+  awk '/surface_list="\$\(git -C/,/2>\/dev\/null\)"/' "$1" | grep -oE "'[^']+'" | tr -d "'"
+}
+# extractor 2: grade.sh's guarded_surface_re alternation.
+extract_grade_regex() {
+  sed -n "s/^[[:space:]]*guarded_surface_re='\^(\(.*\))'\$/\1/p" "$1" | tr '|' '\n'
+}
+# extractor 3+4: loop-write-guard.py's _guarded_dirs/_guarded_files, called LIVE via
+# a throwaway import (never regex-scraped Python) so a refactor of the functions'
+# internals can't fool a source-text scrape.
+extract_lwg() {
+  python3 - "$HOOK" "$1" <<'PY'
+import importlib.util, os, sys
+hook_path, root = sys.argv[1], sys.argv[2]
+spec = importlib.util.spec_from_file_location("lwg", hook_path)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+prefix = mod._real(root) + os.sep
+def rel(p):
+    return p[len(prefix):] if p.startswith(prefix) else p
+for d in mod._guarded_dirs(root):
+    print("DIR:" + rel(d))
+for f in sorted(mod._guarded_files(root)):
+    print("FILE:" + rel(f))
+PY
+}
+# canon_from_pathspec/canon_from_regex — normalize each source's tokens to DIR:<x> /
+# FILE:<x> lines matching extract_lwg's output shape.
+canon_from_pathspec() {
+  while IFS= read -r tok; do
+    [[ -z "$tok" ]] && continue
+    if [[ "$tok" == */\* ]]; then printf 'DIR:%s\n' "${tok%/\*}"
+    else printf 'FILE:%s\n' "$tok"; fi
+  done
+}
+canon_from_regex() {
+  while IFS= read -r tok; do
+    [[ -z "$tok" ]] && continue
+    tok="${tok//\\./.}"
+    if [[ "$tok" == */ ]]; then printf 'DIR:%s\n' "${tok%/}"
+    else printf 'FILE:%s\n' "${tok%\$}"; fi
+  done
+}
+
+HOOK="$REPO_ROOT/core/hooks/loop-write-guard.py"
+SET1="$(extract_grade_pathspec "$GRADE" | canon_from_pathspec | sort -u)"
+SET2="$(extract_grade_regex "$GRADE" | canon_from_regex | sort -u)"
+SET3="$(extract_lwg "$TMP_ROOT" | sort -u)"
+
+[[ -n "$SET1" ]]; check "surface-list-extracted" $?
+[[ -n "$SET2" ]]; check "guarded-regex-extracted" $?
+[[ -n "$SET3" ]]; check "loop-write-guard-extracted" $?
+
+if [[ "$SET1" == "$SET2" ]]; then
+  check "surface-list-matches-guarded-regex" 0
+else
+  echo "    drift: surface_list vs guarded_surface_re"; diff <(echo "$SET1") <(echo "$SET2") | sed 's/^/      /'
+  check "surface-list-matches-guarded-regex" 1
+fi
+if [[ "$SET1" == "$SET3" ]]; then
+  check "surface-list-matches-loop-write-guard" 0
+else
+  echo "    drift: surface_list vs loop-write-guard.py"; diff <(echo "$SET1") <(echo "$SET3") | sed 's/^/      /'
+  check "surface-list-matches-loop-write-guard" 1
+fi
+
+echo
+echo "=== (g4-mutation) RED: an injected drift must be CAUGHT, not silently pass ==="
+# Prove the comparison above is sensitive, not vacuously always-equal: inject an
+# extra entry into a SCRATCH COPY of grade.sh's guarded_surface_re only (the real
+# file and loop-write-guard.py are untouched) and assert the extracted sets now
+# disagree.
+MUT_GRADE="$TMP_ROOT/grade-mutated.sh"
+sed "s#guarded_surface_re='\^(#guarded_surface_re='^(core/tests-drift-injected/|#" "$GRADE" > "$MUT_GRADE"
+SET2_MUT="$(extract_grade_regex "$MUT_GRADE" | canon_from_regex | sort -u)"
+[[ "$SET1" != "$SET2_MUT" ]]; check "injected-drift-detected" $?
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]
