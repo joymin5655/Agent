@@ -68,6 +68,9 @@ for f in "$TESTS_DIR"/*.sh; do
   base="$(basename "$f")"
   case "$base" in
     verify-all.sh|verify-all-test.sh) continue ;;  # skip self + self-test (no recursion)
+    grade.sh) continue ;;  # loop-time grader, NOT a gate: it re-runs the batteries
+                           # itself (would recurse + cost minutes). grade-test.sh
+                           # (a *-test.sh battery) still runs here.
   esac
   case "$base" in
     *-test.sh) batteries+=("$f") ;;
