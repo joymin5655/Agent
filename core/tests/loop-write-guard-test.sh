@@ -202,6 +202,11 @@ run_bash "patch core/tests/grade.sh < /tmp/p.diff" AGENT_LOOP_ACTIVE=1
 is_ask; check "bash-patch-ask" $?
 run_bash "python3 -c \"import pathlib; pathlib.Path('evals/failure-modes.yaml').write_text('x')\"" AGENT_LOOP_ACTIVE=1
 is_ask; check "bash-python-write-text-ask" $?
+# round-4: gitleaks.toml (the secret-scan config the GATE runs) is guarded surface
+run_hook Write "$ROOT/gitleaks.toml" "[allowlist]" AGENT_LOOP_ACTIVE=1
+is_ask; check "gitleaks-toml-write-ask" $?
+run_bash "echo '[allowlist]' > gitleaks.toml" AGENT_LOOP_ACTIVE=1
+is_ask; check "bash-redirect-gitleaks-ask" $?
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="

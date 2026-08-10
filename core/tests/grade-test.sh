@@ -138,6 +138,18 @@ printf '%s\n' "$OUT" | grep -qE '^harness_score: 0$'; check "unanchored-target-n
 OUT="$(cd "$G" && GRADE_SKIP_GITLEAKS=1 bash core/tests/grade.sh --base "$BASE2" --target 'core/tests/sneaky\.sh' 2>&1)"
 printf '%s\n' "$OUT" | grep -qE 'admits the grader/verifier surface'; check "target-admits-battery-refused" $?
 printf '%s\n' "$OUT" | tail -n1 | grep -qE '^harness_score: 0$'; check "target-admits-battery-score-0" $?
+# round-4: gitleaks.toml is GATE scoring input — a target admitting it (weaken the
+# allowlist) must be refused. Track a gitleaks.toml in the scratch repo, then target it.
+( cd "$G" && echo '[allowlist]' > gitleaks.toml && git add gitleaks.toml && git commit -qm gitleaks-cfg )
+BASEG="$(cd "$G" && git rev-parse HEAD~1)"
+OUT="$(cd "$G" && GRADE_SKIP_GITLEAKS=1 bash core/tests/grade.sh --base "$BASEG" --target 'gitleaks\.toml' 2>&1)"
+printf '%s\n' "$OUT" | grep -qE 'admits the grader/verifier surface'; check "target-admits-gitleaks-refused" $?
+# nested surface path (evals/datasets/…) — git pathspec '*' is recursive, so an
+# evals-subdir target is enumerated and refused too (insurance vs a future glob edit).
+( cd "$G" && mkdir -p evals/datasets && echo x > evals/datasets/d.jsonl && git add -A && git commit -qm nested-eval )
+BASEN="$(cd "$G" && git rev-parse HEAD~1)"
+OUT="$(cd "$G" && GRADE_SKIP_GITLEAKS=1 bash core/tests/grade.sh --base "$BASEN" --target 'evals/datasets/.*' 2>&1)"
+printf '%s\n' "$OUT" | grep -qE 'admits the grader/verifier surface'; check "target-admits-nested-eval-refused" $?
 # a surface file that lands in the actual DIFF is refused even if a (hypothetically
 # mis-scoped) target matched it — the authoritative per-file check (Layer 2). Here a
 # committed edit to core/tests/grade.sh is caught as a surface violation, not merely

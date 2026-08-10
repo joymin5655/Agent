@@ -159,6 +159,15 @@ printf 'not-a-sha\tNaN\t-1\tPROMOTED\tforged\textra\tcols\n' >> "$FK"
 bash "$LEDGER" append --file "$FK" --commit bbb222 --score 5.0 --duration 1 --status keep --desc two 2>"$TMP_ROOT/k.err"; rc=$?
 [[ $rc -ne 0 ]]; check "forged-extension-row-refused" $?
 grep -q "row schema" "$TMP_ROOT/k.err"; check "forged-extension-named" $?
+# non-newline-terminated final row: wc -l would undercount it, skipping the schema
+# re-check and letting the next append concatenate+notarize the merge. Refused (C6
+# non-newline residual, round-4).
+FN="$TMP_ROOT/nonl.tsv"
+bash "$LEDGER" append --file "$FN" --commit aaa111 --score 3.0 --duration 1 --status keep --desc one
+printf 'bbb222\t4.0\t1\tkeep\tno-newline-here' >> "$FN"   # NOTE: no trailing \n
+bash "$LEDGER" append --file "$FN" --commit ccc333 --score 5.0 --duration 1 --status keep --desc two 2>"$TMP_ROOT/nl.err"; rc=$?
+[[ $rc -ne 0 ]]; check "non-newline-row-refused" $?
+grep -q "no trailing newline" "$TMP_ROOT/nl.err"; check "non-newline-row-named" $?
 # a schema-VALID extension row is still accepted (crash-window self-heal intact —
 # section (i) proves the positive path; this asserts the refusal did not overreach)
 FK2="$TMP_ROOT/laundry2.tsv"

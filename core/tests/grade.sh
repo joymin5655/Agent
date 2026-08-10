@@ -219,11 +219,15 @@ if [[ "$HERMETIC" != "1" ]]; then
   # let a candidate neuter the code that scores it. Enumerate the TRACKED surface and
   # reject a target that fully-matches any of it. (Round-3 security review 2026-08-10;
   # untracked additions are already caught by the dirty-tree check below.)
+  # (git pathspec '*' crosses '/', so 'core/tests/*'/'evals/*' are recursive — they
+  # include evals/datasets/* and evals/judges/* too. gitleaks.toml is scoring input:
+  # the GATE runs `gitleaks --config gitleaks.toml`, so a weakened allowlist there
+  # neuters the secret floor — round-4 review HIGH.)
   surface_list="$(git -C "$REPO_ROOT" ls-files -- \
       'core/tests/*' 'evals/*' \
       'core/hooks/loop-write-guard.py' 'core/hooks/pre-tool-guard.sh' \
       'core/infra/loop-ledger.sh' 'hooks/hooks.json' \
-      'adapters/claude-code/adapter.sh' 2>/dev/null)"
+      'adapters/claude-code/adapter.sh' 'gitleaks.toml' 2>/dev/null)"
   if [[ $? -ne 0 ]]; then
     printf 'INTEGRITY — git ls-files failed; cannot enumerate the grader surface (fail-closed)\n' >&2
     emit_score_and_exit 0
@@ -267,7 +271,7 @@ if [[ "$HERMETIC" != "1" ]]; then
   # edits the code that scores it must rest on the ACTUAL diff, not on reasoning about
   # a regex. Any changed file under the executed/scoring surface is a violation even
   # if it matches TARGET_RE. Mirrors loop-write-guard.py's _guarded_dirs/_guarded_files.
-  guarded_surface_re='^(core/tests/|evals/|core/hooks/loop-write-guard\.py$|core/hooks/pre-tool-guard\.sh$|core/infra/loop-ledger\.sh$|hooks/hooks\.json$|adapters/claude-code/adapter\.sh$)'
+  guarded_surface_re='^(core/tests/|evals/|core/hooks/loop-write-guard\.py$|core/hooks/pre-tool-guard\.sh$|core/infra/loop-ledger\.sh$|hooks/hooks\.json$|adapters/claude-code/adapter\.sh$|gitleaks\.toml$)'
   offtarget=""
   onsurface=""
   while IFS= read -r f; do

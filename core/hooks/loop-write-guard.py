@@ -107,6 +107,9 @@ def _guarded_files(root: str):
         # the sanctioned ledger writer IS enforcement surface: rewriting it turns
         # every future "sanctioned" append into a forgery channel (sec C9).
         _real(os.path.join(root, "core", "infra", "loop-ledger.sh")),
+        # the gitleaks config IS the secret-scan floor grade.sh runs; a weakened
+        # allowlist neuters the GATE (round-4 review HIGH).
+        _real(os.path.join(root, "gitleaks.toml")),
     }
 
 
@@ -212,7 +215,7 @@ def _decide(data: dict, root: str):
         # named explicitly so the guarantee survives a ledger rename (C9).
         guarded_tokens = ("core/tests", "evals", "core/hooks/loop-write-guard.py",
                           "core/hooks/pre-tool-guard.sh", "adapters/claude-code/adapter.sh",
-                          "hooks/hooks.json", "core/infra/loop-ledger.sh",
+                          "hooks/hooks.json", "core/infra/loop-ledger.sh", "gitleaks.toml",
                           ".agent/loop/results.tsv", ".agent/loop/results.tsv.witness")
         if _bash_hits_guarded(command, guarded_tokens):
             return ("bash", ASK_BASH)

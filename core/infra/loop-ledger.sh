@@ -138,6 +138,15 @@ cmd_append() {
     if [[ ! -s "$file" ]]; then
       die "witness exists but ledger $file is missing/empty — delete-recreate refused (restore the ledger, or remove the witness as an explicit human reset)"
     fi
+    # A sanctioned append always ends the ledger with a newline. A last line with no
+    # trailing newline is a hand-write past the CLI: `wc -l` (newline count) would
+    # UNDERcount it, so have_lines could equal want_lines, the extension-row schema
+    # re-check (below) would be skipped, and the next `>>` would concatenate onto the
+    # partial row and notarize the merge. Refuse before counting (round-4 review LOW,
+    # C6 non-newline residual).
+    if [[ -n "$(tail -c1 "$file")" ]]; then
+      die "ledger $file has a final line with no trailing newline (partial or hand-edited row) — refused (restore the ledger, or remove the witness as an explicit human reset)"
+    fi
     local want_sha want_lines have_lines prefix_sha
     want_sha="$(awk '{print $1}' "$witness")"
     want_lines="$(awk '{print $2}' "$witness")"
