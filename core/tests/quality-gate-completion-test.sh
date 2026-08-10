@@ -186,5 +186,49 @@ print("OK" if len(c) <= 20 and all(len(x) <= 500 for x in c) else "BAD len=%d" %
 [[ "$BOUNDS" == OK ]]; check "loader-bounds-enforced" $?
 
 echo
+echo "=== (l) style-only violations -> ADVISORY by default (no block) ==="
+# 2026-07-27 guard-trim: the subjective style scan must not block a Stop by
+# default. Fixture: a git repo whose only change is an untracked src/app.ts
+# with a console.log. The hook scans get_changed_files() in its CWD, so we cd
+# into the fixture for these cases.
+run_stop_in() {
+  local root="$1" active="$2"; shift 2
+  local event
+  event=$(python3 -c 'import json,sys; print(json.dumps({"hook_event_name":"Stop","session_id":"t","cwd":sys.argv[1],"stop_hook_active":sys.argv[2]=="true"}))' "$root" "$active")
+  (cd "$root" && printf '%s' "$event" | env "$@" python3 "$HOOK" > "$OUTFILE" 2>/dev/null)
+  echo $?
+}
+P=$(make_project style)
+mkdir -p "$P/src"
+git -C "$P" init -q 2>/dev/null
+printf 'export const f = () => { console.log("x") }\n' > "$P/src/app.ts"
+RCL=$(run_stop_in "$P" false); OUT=$(cat "$OUTFILE")
+[[ $RCL -eq 0 ]]; check "exit-0-style-only" $?
+is_block "$OUT" && check "style-only-advisory-no-block" 1 || check "style-only-advisory-no-block" 0
+# advisory firings still land in the violations sink (instrumentation contract)
+[[ -f "$P/.agent/logs/quality-gate-violations.jsonl" ]]; check "style-advisory-logged-to-sink" $?
+
+echo
+echo "=== (m) style + AGENT_QUALITY_STYLE_BLOCK=1 -> block (opt-in restores old behavior) ==="
+run_stop_in "$P" false AGENT_QUALITY_STYLE_BLOCK=1 >/dev/null; OUT=$(cat "$OUTFILE")
+is_block "$OUT" && check "style-optin-blocks" 0 || check "style-optin-blocks" 1
+[[ "$OUT" == *"WHY:"* && "$OUT" == *"FIX:"* ]]; check "style-block-teaching-tags" $?
+# remedy text names the layer that blocked: style remedies present, and no
+# completion-test remedy (no completion_tests configured in this fixture)
+[[ "$OUT" == *"console.log"* && "$OUT" != *"failing completion test"* ]]; check "style-block-remedy-matches-layer" $?
+
+echo
+echo "=== (n) style advisory + failing completion_test -> still blocks (completion drives) ==="
+cat > "$P/.agent/hook-config.json" <<'EOF'
+{ "session": { "completion_tests": ["false"] } }
+EOF
+run_stop_in "$P" false >/dev/null; OUT=$(cat "$OUTFILE")
+is_block "$OUT" && check "completion-still-blocks-with-style-advisory" 0 || check "completion-still-blocks-with-style-advisory" 1
+# remedy text points at the completion test, NOT at the non-blocking style
+# findings (post-split, style noise in the FIX line sends the agent chasing
+# the wrong work — code-review finding 2026-07-27)
+[[ "$OUT" == *"failing completion test"* && "$OUT" != *"tokenize colors"* ]]; check "completion-block-remedy-matches-layer" $?
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]

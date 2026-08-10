@@ -1,0 +1,9 @@
+{
+  "_comment": "Agent-brain MCP server for Claude Code. Claude reads MCP servers from .mcp.json (NOT settings.json). Install one of two ways: (1) global/user scope so EVERY Claude session sees the brain — run `claude mcp add brain --scope user -- python3 {{FRAMEWORK_ROOT}}/core/brain/brain-mcp.py` (this is what `setup.sh --claude` does when the claude CLI is present); or (2) project scope — copy this file to a project root as .mcp.json and replace {{FRAMEWORK_ROOT}} with the absolute path to your Agent/ checkout. The SAME brain-mcp.py is registered for Codex and Gemini, so all three CLIs query one brain.",
+  "mcpServers": {
+    "brain": {
+      "command": "python3",
+      "args": ["{{FRAMEWORK_ROOT}}/core/brain/brain-mcp.py"]
+    }
+  }
+}

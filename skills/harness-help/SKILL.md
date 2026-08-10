@@ -16,8 +16,10 @@ everything else is standalone. Each skill below is documented in its own
 1. **`/spec <slug>`** — turn a fuzzy request into `spec.md` + `plan.md` under
    `.agent/plans/<slug>/`, then route to plan approval (ExitPlanMode). Add
    `--interview` when the request is fuzzy enough that a wrong guess would
-   commit the spec to the wrong shape. Approval is what unlocks editing —
-   `spec-gate` stops asking once the plan-approval flag exists.
+   commit the spec to the wrong shape, or `--score-candidates` when the field
+   of problems/approaches is wide enough that the pick should be scored, not
+   asserted. Approval is what unlocks editing — `spec-gate` stops asking once
+   the plan-approval flag exists.
 2. **`/supervise <slug>`** — run the approved plan wave by wave, dispatching
    specialists per the delegation contract and auditing after each wave.
    `--goal-mode` for budgeted, resumable runs.
@@ -36,6 +38,10 @@ trivial work out by design.
 - **`/harness-audit`** — read-only health check of the harness itself: one
   `verify-all.sh` dry-run, a per-check table, the doc-reality verdict named.
   Run it before a release or after a structural change.
+- **`/persona-review <target>`** — seat a panel of grounded Korean citizen
+  personas in front of a piece of UX/copy/content and report how ordinary users
+  would react. A user-perspective lens beside `code-reviewer` (correctness) and
+  `security-reviewer` (vulnerabilities) — it judges experience, not code.
 - **`/project-init`** (command) — scaffold a consumer project with
   `CLAUDE.md`, rules, and `gitleaks.toml`.
 

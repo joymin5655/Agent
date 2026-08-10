@@ -44,6 +44,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # history needed to diff the PR/push commit range (--range scan)
       - name: Grep tracked files for prior-project tokens (excluding legacy/ and the audit tool)
         run: |
           # legacy/ is the intentional archive; the audit script and this workflow
@@ -57,6 +59,27 @@ jobs:
           echo "sanitize gate clean"
       - name: Full token-set audit (superset — same script devs run locally)
         run: bash core/tests/sanitize-audit.sh
+      - name: Range taint scan (catch add-then-remove across PR/push commits, not just HEAD)
+        run: |
+          # The HEAD audit above misses a token added in one commit and removed in a
+          # later one (HEAD ends clean). Scan the added lines of every commit in the
+          # incoming range so that add-then-remove taint is caught before/at merge.
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            RANGE="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            before="${{ github.event.before }}"
+            case "$before" in *[!0]*) RANGE="$before..${{ github.sha }}" ;; *) RANGE="" ;; esac
+          else
+            RANGE=""
+          fi
+          if [ -z "$RANGE" ]; then
+            echo "no commit range for event '${{ github.event_name }}' — skipping range scan"
+            exit 0
+          fi
+          echo "range taint scan over $RANGE"
+          bash core/tests/sanitize-audit.sh --range "$RANGE"
+      - name: Verify the sanitize gate (fixture detection — pairs the gate with its test)
+        run: bash core/tests/sanitize-audit-test.sh
 
   supply-chain-scan:
     name: supply-chain scan (no self-injection directives)
@@ -112,6 +135,32 @@ jobs:
       # runner reports it as a loud SKIP (the dedicated secret-scan job enforces it).
       - name: Run the full discovered check set
         run: bash core/tests/verify-all.sh
+
+  plugin-path-install:
+    name: plugin-path install smoke (marketplace/plugin cache → doctor guidance)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Distinct from clean-install below: clean-install proves the SHELL install
+      # path (`setup.sh --claude`) end to end. This job proves the PLUGIN/marketplace
+      # install path — which never runs setup.sh's install functions at all — still
+      # gets a working doctor: plugin-cache detection, the gh presence check, and
+      # brain-MCP plugin-path guidance (detect-and-guide only, never an auto-write).
+      # core/tests/plugin-path-install-test.sh is the single source of truth for the
+      # operations this job performs; this step is a thin caller (same "gate is a
+      # standalone script, CI just runs it" shape as doc-reality/supply-chain-scan).
+      # Same scratch-$HOME isolation as clean-install below (M-5): the test script
+      # already builds its OWN internal scratch homes for its snapshot assertions,
+      # but job-level isolation is defense in depth — no doctor invocation in this
+      # job, wrapped in an assertion or not, should ever touch the CI runner's real
+      # $HOME (a security review of an earlier revision of this wave found exactly
+      # this kind of unintended $HOME write from an unrelated doctor check).
+      - name: Create an isolated scratch HOME for this job
+        run: |
+          SCRATCH="$(mktemp -d)"
+          echo "HOME=$SCRATCH" >> "$GITHUB_ENV"
+      - name: Run the plugin-path install battery (doctor guidance + loud-degrade + anti-vacuous manifest probe)
+        run: bash core/tests/plugin-path-install-test.sh
 
   clean-install:
     name: clean-install smoke (bare checkout → scratch-home install → doctor)

@@ -7,7 +7,604 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Autonomous-loop grader `core/tests/grade.sh` (P2-2 + L-1 impl).** The loop (§5)
+  now has its grader: it runs the GATE floor (sanitize-audit / adapter-parity /
+  hook-config-test / post-commit-autosync / gitleaks) and then evaluates each named
+  failure mode in `evals/failure-modes.yaml` by RE-RUNNING the battery that encodes
+  it — a mode PASSes iff its guard is still green (the hole stays closed), FAILs iff
+  the candidate re-opened it. Output is the L-1 checklist (`mode:<id> PASS|FAIL —
+  reason`) plus a rollup `harness_score: X.Y` = (#PASS) − 0.5×(#untrustworthy), the
+  mandatory last line on every path so an empty grep is always a real crash. It fails
+  closed to `harness_score: 0` (= discard) on any untrustworthy path — GATE failure,
+  a TARGET-boundary violation (off-target diff), or an unparseable rubric — the
+  operator-chosen baseline verdict. On a clean tree it emits `harness_score: 10.0`
+  (10 code-guarded modes PASS; `vacuous-parity` is GATE-covered — its only guard,
+  adapter-parity, is a GATE battery, and a second checklist path would be unreachable
+  behind the GATE short-circuit, so it is reported N/A on the single GATE path —
+  and `review-false-clean` is N/A), superseding the retired single-scalar 8.0. It is
+  a loop-time tool (re-runs batteries; ~1 min) and is excluded from `verify-all` to
+  avoid recursion; `grade-test.sh` (36 checks) drives it hermetically and gates
+  mode↔guard-map drift, including a ban on GATE batteries in the guard map. The
+  TARGET clean-tree check uses `git status --porcelain`, so an UNTRACKED tamper
+  file (which the batteries would execute but a committed-range diff cannot see)
+  also refuses the grade (fail-closed).
+- **Append-only loop ledger `core/infra/loop-ledger.sh` (P2-3).** The sanctioned
+  writer for `.agent/loop/results.tsv` (untracked run state): a 5-column schema
+  (commit / harness_score / duration_s / status / description≤80), a status enum
+  (keep|discard|crash|timeout), numeric validation that rejects rather than coerces
+  a malformed score/duration, and free-text sanitization. It only ever appends —
+  the header is written once. Every successful append notarizes the ledger in a
+  sidecar witness (`<ledger>.witness` = sha256 + line count) that notarizes a
+  PREFIX: the next append REFUSES a ledger that is missing (delete-recreate),
+  shorter than the witness (truncation), or whose first witnessed lines no
+  longer hash to it (rewritten history), while rows beyond the prefix are
+  append-only extension and are accepted — which self-heals the crash window
+  where an append landed but the process died before the witness update
+  (P2-4 kills runs on timeout, so that window is real). Tamper-evident,
+  honestly bounded (a shell can still delete both files; that two-target act
+  is what loop-write-guard escalates during a loop). `loop-ledger-test.sh`
+  (30 checks).
+- **Loop write-ban `core/hooks/loop-write-guard.py` (L-2).** While an improvement
+  loop is active (env `AGENT_LOOP_ACTIVE=1` or a flag file), a Write/Edit to the
+  grader/verifier surface (`core/tests/`, `evals/`) or a non-append rewrite of the
+  results ledger escalates to `ask` (not deny — the calibration policy reserves deny
+  for secrets) so a human stays on the loop and a run cannot silently rewrite the
+  code that scores it. Outside a loop the guard is fully inert (zero added friction).
+  Containment uses realpath, so a symlink into the guarded dir cannot dodge it.
+  Wired into the `Write|Edit|MultiEdit` PreToolUse chain; `loop-write-guard-test.sh`
+  (31 checks) covers the ask/allow matrix, the symlink-escape case, Bash
+  write-path detection, the delete-recreate/witness escalations, and WHY/FIX tags.
+
+## [0.5.7] - 2026-08-02
+
+Release-only version bump: ships the already-merged #101 (decision-time
+model-routing advisory + `telemetry-digest.sh --model`), #102 (cross-runtime
+harness docs), and #103 (circuit-breaker exit-code fix + verify-observer) to
+plugin consumers. The installed-plugin cache is keyed by manifest version, so
+without this bump `claude plugin update` was a no-op and the PreToolUse
+model-routing advisor never reached live sessions (measured: dispatches still
+inheriting the session top model four days after #101 merged).
+
+### Added
+- **Decision-time model-routing advisory hook (`core/hooks/model-routing-advisor.py`).**
+  The 2026-07-11 audit measured 7/7 dispatches silently inheriting the session
+  top model *with the post-hoc observer already live* — observation alone does
+  not change dispatch behavior. This PreToolUse (Task|Agent) hook adds the
+  decision-time counterpart: when a dispatch is about to inherit top (no
+  registry pin, no call-time `model` override, and not the intentionally
+  inheriting `Plan` agent) it injects a one-line `additionalContext` reminder
+  pointing at the tier table. **Advisory only** — never blocks, never rewrites
+  the model, always exits 0, swallows all errors (same fail-safe contract as
+  the observer), writes no logs. The "no runtime model-switching" rejection in
+  `docs/model-routing.md` § What-this-policy-deliberately-does-not-do is
+  refined, not reversed: blocking/auto-switching/classifiers stay rejected; a
+  deterministic decision-time reminder sits inside the line, and the dispatch
+  decision stays with the dispatcher. Registered in `hooks/hooks.json`, the
+  Claude settings template, `docs/gate-registry.md` (decision=advise), and
+  `core/hooks/README.md`; battery `core/tests/model-routing-advisor-test.sh`
+  (18 checks: warn on unpinned, silent on override/pin/Plan, fail-safe on
+  broken stdin, zero observer-log pollution). Doc counts (hooks 25→26, tests
+  56→57) updated in §7 live-count declarations and READMEs.
+- **Model axis in telemetry (`telemetry-digest.sh --model`).** New mode (same
+  architecture as `--gates`) summarizing `.agent/logs/model-routing.jsonl`:
+  verdict distribution (override / pinned_specialist / inherit_top) and
+  tier-multiplier-weighted relative spend (reuses manager-audit's LOW 0.15 /
+  MID 1 / TOP 3.5 and its env seams). Loud SKIP when the log is absent;
+  always exit 0. Adversarial security-lane hardening (1 MED + 2 LOW, same
+  wave): per-record type validation routes malformed log lines (string
+  `total_tokens`, non-string `model`/`verdict`) into the existing
+  `skipped_malformed` tally instead of a traceback-then-exit-0 false-green,
+  an outer guard turns any analysis failure into the same loud SKIP as the
+  absent-log path, log-derived strings are whitelist-sanitized
+  (`[A-Za-z0-9:._-]`, 80-char cap) in the text report (JSON keeps raw values
+  for machine consumers), and supervise Step 5 writes `routing: skip (no
+  routing log)` — never `clean` — when the routing log is absent or empty
+  (manager-audit short-circuits an empty log to lane-clean PASS, so absence
+  must not be transcribed as cleanliness). Battery +16 checks total in
+  `telemetry-digest-test.sh` (8 model-axis, 3 type-confusion, rendering-fuzz
+  forged-line/raw-ESC probes).
+- **M-9 backlog row — per-model harness re-tuning.** Cursor's swarm experiment
+  had to drop a frontier model mid-run (emphasis markers taken literally →
+  runaway loop): external evidence that harness prompts need re-validation per
+  model. M-9 adds a prompt-compat smoke row to the tier-promotion procedure
+  (backlog only, no mechanism).
+- **M-6 — cost-effective-harness concept doc.**
+  `docs/concepts/cost-effective-harnesses.md` distills the 2026-07 happytlog
+  article + ClaudeDevs thread (intelligence-placement patterns
+  orchestrator/advisor/verifier, the advisor checkpoint finding — mid-run
+  re-ranking beats upfront frontier advice, measured anti-correlation —
+  coordination-cost economics with the small-task inversion, prompt-cache
+  worker-reuse), plus a dated 4-guidance audit table mapping each point to
+  harness state. Backlog rows M-6/M-7 (✅, this PR) and M-8 (open — delegation
+  economics telemetry: spawn-vs-reuse ratio, per-wave delegated volume) added
+  to `docs/harness-improvement-plan.md` §4.10 with the M-series count
+  declaration updated 5→9 (M-8 from the recovered commit, M-9 added in this
+  PR below); article added to §8 references. (Recovered from
+  stranded branch `claude/cost-effective-harness-article`, commit `7aaa587`,
+  2026-07-16 — authored pre-0.5.x but never merged; landed here unchanged.)
+
 ### Changed
+- **M-7 — delegation-economics policy wiring.** `docs/model-routing.md` gains
+  an *Intelligence placement — the advisor pattern* section (three TOP
+  placements by task shape; advisor rule: checkpoints stay TOP and recur
+  mid-run — a single upfront TOP ranking is measured anti-correlated; no new
+  mechanism, stays a documented convention) and two new Floors: a
+  **coordination-cost floor** (boundary tokens billed ≥2×; below a threshold
+  task size solo TOP is cheaper than orchestration — delegate only when
+  delegated volume dwarfs the handoff) and **prompt-cache preservation**
+  (route repeat calls to the *same* worker; fresh spawn re-pays the context
+  write; verifiers always fresh — isolation beats cache). Supervise
+  `SKILL.md` Model policy gains the placement corollaries paragraph and Step
+  2b's orchestration rules go four→five (**Worker reuse (cache)**);
+  `delegation-contract.md` Wave shaping gains *Handoff must pay for itself*
+  and *Worker reuse over fresh spawns* bullets. Enforcement map labels the
+  new rules honestly as conventions (call-time choices are not statically
+  verifiable). `docs/README.md` index gains `model-routing.md` (pre-existing
+  omission) and the new concept doc. Docs only, no behavior. (Same recovered
+  commit as M-6 above.)
+- **Cursor swarm evidence folded into the delegation-economics canon.**
+  `docs/concepts/cost-effective-harnesses.md` gains a "Planner-output quality
+  is a cost control" section (tier placement dominates the bill — hybrid at
+  ~1/8 of frontier-everywhere at equal final score; ambiguous briefs convert
+  planner savings into worker spend; low-correlation cheap review stacks;
+  per-model re-tuning) with the Cursor source added; `docs/model-routing.md`
+  Intelligence-placement gains the orchestrator corollary tying the
+  restatement-quality lane and LE-9 into the cost path (relative numbers
+  only, no price constants). LE-9's evidence column cites the same
+  measurement.
+- **Supervise Step 5 routing visibility.** The manager-audit offer is promoted
+  to an automatic post-run summary of the routing-waste + token-spend lanes,
+  written to RECORD.md's new `routing:` stub field (full 4-lane audit stays
+  an offer; still non-blocking). `supervisor-goal.sh` stub gains the field;
+  battery +1 check.
+
+## [0.5.6] - 2026-07-28
+
+### Added
+- **Machine-identity PII guard.** After a full-history PII audit (350
+  commits, gitleaks + targeted scans; zero secrets, two low-sensitivity
+  history-only artifacts accepted as-is by owner decision), the sanitize
+  gate now forward-blocks personal machine identifiers:
+  `core/tests/sanitize-audit.sh` gains a token group for real macOS home
+  paths (placeholder spellings stay legal) and Apple mDNS device hostnames
+  (shaped to never false-positive on `.env.local` / `settings.local.json`);
+  the 3 pre-existing placeholder paths in the template/fixtures were
+  normalized in the same commit. Paired RED-mutation cases extend
+  `core/tests/sanitize-audit-test.sh` (catch real path, catch hostname,
+  no-false-positive). Rule + git-author noreply-email guidance:
+  `rules/public-repo.md` § Machine-identity PII, cross-referenced from
+  `AGENTS.md` §2. Adversarial security-lane hardening (4 MED, same wave):
+  hostname pattern covers macOS's real hyphenated ComputerName forms
+  (Mac-mini/Pro/Studio); the PII tokens moved to a **case-sensitive**
+  `TOKENS_CS` group (kills latent false positives on lowercase REST-route
+  `/users/` text and imacros-style `.local` filenames); `--range` now also
+  scans each commit's **metadata** (author/committer name+email, subject,
+  body) — the historical leak class was a hostname-bearing author field
+  that diff lines never show; battery extended to 10 checks (hyphenated
+  RED case, FP guards, metadata RED case).
+- **Community files.** Root `CONTRIBUTING.md` (verification battery +
+  ground rules), `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1, contact
+  via issues — no personal email), `.github/ISSUE_TEMPLATE/` (bug /
+  feature); the PR template moved to the standard `.github/` path.
+- **`docs/demo.md`** — three reproducible gate-catch scenarios (denied
+  secret read, REFUTED false-"done" claim, caught PII plant) with real
+  captured outputs and GIF-recording instructions.
+- **`docs/launch-checklist.md`** — maintainer-run distribution guide
+  (directory listings, launch copy drafts); all submissions stay manual.
+
+### Changed
+- **README star-readiness rework (en + ko).** Pain-first opening with the
+  install one-liner in the first screen, live CI badge, evidence-cited
+  category comparison table, promoted blind-benchmark result (honest
+  caveat intact), and stale ungated prose counts corrected to live values
+  (agents 2→3, skills 8→9, tests 54→56, hooks measured as 21 wired /
+  25 scripts). Hero copy and launch-checklist wording keep the
+  enforcement claim honest: secret access and destructive commands
+  hard-deny; the spec gate is disclosed as observation-mode by default
+  with block opt-in.
+- **`docs/benchmark/landscape.md` self-row refresh.** The document
+  violated its own refresh cadence and still described this repo pre-0.3
+  ("no eval suite", 4 CI jobs, 2 agents/4 skills); the self-row, strengths
+  and gap→backlog map now match the live repo (E-1/O-1/T-1..3/L-1/M-4/M-5
+  shipped; O-2/L-2 open), with a dated self-row verification line.
+- **Guard trim (evidence-based, GT series).** Executed the
+  `docs/freedom-enforcement-calibration-2026-07.md` §3c "instrument, then
+  recalibrate" follow-up against 30 days of gate telemetry (new §3e records
+  the verdicts):
+  - `check-hardcoding.py`: hard `deny` → **default dryrun** with
+    `AGENT_HARDCODING_MODE=off|dryrun|block` (block restores the old deny);
+    gains a firing sink (`.agent/logs/hardcoding.jsonl`, schema 2.0.0,
+    `reproduce_test` exclusion) closing its UNINSTRUMENTED status; the
+    docstring/error claim that `hook-config.yml: hardcoding_patterns[]`
+    customizes it — never wired — is now honestly labeled as planned (T-4).
+    Battery rewritten to 21 checks (3 modes, unset-env-defaults-to-dryrun
+    contract, sink schema).
+  - `session-quality-gate.py`: the subjective style scan (inline types, hex
+    colors, console.log) is **advisory by default** — reported and logged,
+    never blocking; the `block` decision is owned solely by the objective
+    `session.completion_tests` layer (P3-1, unweakened). Opt back in with
+    `AGENT_QUALITY_STYLE_BLOCK=1`. Battery +6 checks (style-only no-block +
+    sink write, opt-in restore, completion-still-blocks).
+  - High-firing safety gates (destructive / secrets / verify-bypass) are
+    explicitly **unchanged** — firing volume is defensive track record, not
+    creativity suppression.
+
+### Fixed
+- **Adversarial-review hardening (2 lanes, 2026-07-27).** code-reviewer
+  (2 MINOR + 1 NIT) and security-reviewer (2 LOW, verdict APPROVE — both
+  demoted gates confirmed to carry no security duty; `pre-tool-guard.sh` /
+  `secret-content-scan.py` verified untouched):
+  - check-hardcoding: unknown `AGENT_HARDCODING_MODE` values now warn loudly
+    on stderr and degrade to dryrun (a typo like `Block` no longer silently
+    weakens an intended hard gate); sink writes are **confined** to the repo
+    root or the system temp dir (escaping/empty overrides fall back to the
+    default in-repo sink — mirrors the digest's read-side confinement), and
+    the same writer-side confinement was applied to `spec-gate.py`.
+  - session-quality-gate: the block reason's FIX remedies now name only the
+    layer that actually blocked (completion vs opt-in style), instead of
+    always listing style fixes that no longer block.
+  - telemetry-digest: reproduce_test-excluded records are now **tallied and
+    reported as `suppressed`** instead of silently dropped, so a lingering
+    `AGENT_REPRODUCE_TEST=1` in a real session surfaces as an anomaly rather
+    than invisibly blinding the DEAD/FATIGUE audit.
+  - gate-registry: hardcoding row's decision column reads
+    `deny(opt-in; default=dryrun)` so the scannable machine block can't be
+    misread as a live deny.
+- **telemetry-digest `--gates` double-counting.** Two gates sharing one sink
+  AND one guard value (`secrets-bash` vs `secrets-content`, both
+  `guard=secrets` in `security-violations.jsonl`) each reported the union
+  (both fired=2179; actual in-window 1353/826). `count_sink` now also matches
+  the record's `hook` field against the registry hook when present (legacy
+  hook-less records keep guard-only matching). Regression battery section (l),
+  3 checks.
+
+### Added
+- **`supervisor-ask` gate registered (registry blind-spot closure).**
+  `supervisor.py` had logged ~440 records / 11 ask-intents in 30 days while
+  absent from `docs/gate-registry.md` (firing but unreviewable). Ask-family
+  records now carry `guard`/`hook`/`reproduce_test` stamps and the registry
+  gains a `supervisor-ask` row — **mode unchanged** (measure first; the digest
+  counts from registration forward since older records lack the stamp).
+- **Roadmap v2 (§4.13, growth axes + GT/AP/MC series).**
+  `docs/harness-improvement-plan.md` gains a 5-axis growth plan (guard
+  calibration / low-cost-high-power / beginner onboarding + proposal-based
+  adaptation / plugin interop / model currency) that re-sequences the open
+  backlog (P2, LE, T-4, H-4, W-10, O-2) into waves and adds only three new
+  series: GT (this release's executed trim, 5/5 ✅), AP (proposal-based
+  personalization: local usage aggregation → `/tune` proposal skill →
+  append-only adopt/rollback ledger → onboarding presets; auto-change stays
+  forbidden), MC (model-currency watch + new-model bench-replay procedure).
+- **`docs/model-routing.md` Currency log.** Dated re-verification section:
+  2026-07-27 entry confirms the generation-neutral reviewer alias pins
+  self-update (no edit needed), the codex adapter profiles match the current
+  lineup, and files the above-top client variant as a watch item gated on
+  bench evidence (MC series) per effort-before-tier-up.
+
+## [0.5.5] — 2026-07-23
+
+### Added
+- **Persona-review skill + orchestrator agent (citizen/user review lane).** A
+  new `/persona-review <target>` skill and `persona-review-orchestrator` agent
+  seat a panel of grounded Korean citizen personas in front of UX / copy /
+  content and report how ordinary users would react — a user-perspective lens
+  beside `code-reviewer` (correctness) and `security-reviewer` (vulnerabilities),
+  replacing neither. Ships a stratified persona catalog
+  (`skills/persona-review/personas/catalog.json`, N=119) subsampled from the
+  public `nvidia/Nemotron-Personas-Korea` dataset (CC BY 4.0) via DuckDB
+  `httpfs`: age_group × province hard-balanced across a 7×17 grid (one persona
+  per cell — every province gets an even seat, not a population-proportional
+  one) plus occupation_group × education_level soft-balancing, with a 1-2-tag
+  `review_lens` (UX/카피/접근성/신뢰/가격민감) per persona. A reproducible
+  builder (`skills/persona-review/scripts/build_catalog.py`) and a determinism
+  battery (`core/tests/persona-catalog-test.sh`: schema, CC-BY attribution,
+  stratification sanity, skill/agent wiring) guard it. Personas are synthetic
+  (no real individuals, no name/contact fields). *(Converged from two parallel
+  builders: an initial population-proportional HTTP-paging sampler was
+  superseded by the DuckDB full-dataset hard-balanced one for genuinely even
+  province coverage — the earlier approach left small provinces as few as 2
+  of 120 seats.)*
+
+## [0.5.4] — 2026-07-21
+
+> **Truthfulness repair wave.** An external cross-AI audit (2026-07-21) found
+> the docs claiming more than the code delivered and the doctor verifying
+> installability but never installed state. This release makes the claims match
+> the code, the two install paths match each other, and the doctor check the
+> machine it runs on — and adds gates so each repaired drift class cannot
+> silently return (version parity, hook-manifest parity, memory-dump pollution).
+
+### Added
+- **Version-parity gate (`core/tests/version-parity.sh` + battery).** README
+  (en/ko) badge + status lines, `plugin.json`, `marketplace.json`, and the
+  CHANGELOG's latest release heading must all agree on one version; any lag
+  fails the suite (this release repaired a three-file drift: README and
+  marketplace at 0.5.1 vs plugin manifest at 0.5.3).
+- **backends.json v2 lane registry (PR #89).** Cross-vendor worker lanes gain
+  tiers, `enabled`/preflight flags, and status frontmatter, replacing the flat
+  single-backend registry.
+- **Doctor real-wiring checks (15–18).** `setup.sh --doctor` now verifies the
+  install is actually wired, not just installable: **codex wiring** (brain MCP
+  `[mcp_servers.brain]` + `codex-shell-wrap.sh` in the live config; WARN when
+  absent, FAIL when a wired path is missing on disk), **gemini wiring** (same
+  policy for `~/.gemini/settings.json` — doctor previously had zero Gemini
+  checks; new `GEMINI_SETTINGS` seam), **claude install path** (reports whether
+  the plugin or the shell install is live; WARN when both — hooks can run
+  twice — or neither), and **brain strict lint** over the live store (WARN when
+  the `/brain-ingest` promotion gate would be blocked). 12 new fixture cases in
+  `setup-doctor-test.sh`.
+
+### Fixed
+- **Brain W1 lint measures isolation, not just out-degree.** `lint.py` W1 now
+  fires only for notes with no typed edges in *either* direction and skips
+  `status: seed` imports (seeds are declared-unconnected; distillations are
+  `status: growing`, where the strict gate keeps its teeth). A freshly seeded
+  store no longer fails `--strict` wholesale — previously 143 warnings made the
+  `/brain-ingest` precondition (`--strict` at 0) permanently unsatisfiable.
+- **doc-reality prunes `.claude/`.** A live multi-session worktree under
+  `.claude/worktrees/` carries *another branch's* doc snapshots; the gate was
+  scanning them and failing this branch for that branch's paths. `.claude/` is
+  untracked runtime state, pruned like `.agent/`.
+- **Hook-manifest parity gate (`core/tests/hook-template-parity.sh` + battery).**
+  `hooks/hooks.json` (plugin path) and `adapters/claude-code/settings.json.template`
+  (shell-install path) had silently diverged by six hooks; the template is now a
+  faithful mirror of the manifest (SSOT: `hooks/hooks.json`) and the gate fails
+  the suite on any future drift (path prefixes normalized; chain order enforced).
+  Shell installs now also wire `spec-gate.py`, `plan-scope-allow.py`,
+  `model-routing-observer.py`, `rubric-commit-judge.sh`, the WebFetch/MCP
+  `secret-content-scan.py` matcher, and `supervisor.py` on UserPromptSubmit
+  (replacing a stale `plan-gate.py`) — behavior change is observation-only since
+  spec-gate/tdd-guard default to `dryrun`.
+- **Plugin session capture.** `brain-capture.py` added to the plugin Stop chain
+  (`hooks/hooks.json`) — the 0.5.3 brain feature now actually captures sessions
+  on the plugin install path, not just shell installs.
+- **Codex profile templates refreshed to the GPT-5.6 family (PR #88).**
+  quick → light lane, deep → top lane at xhigh effort, ahead of the 2026-07-23
+  legacy-model sunset; model ids verified against the Codex CLI's own models
+  cache, with a currency test (`codex-template-currency-test.sh`) pinning them.
+- **Memory-pollution guard (`core/tests/memory-pollution-guard.sh` + battery).**
+  Fails the suite when an AI-memory plugin's session-context dump (observed
+  injected into `AGENTS.md`) is present in any committable file — tracked or
+  untracked-unignored — so a personal session log can never reach a public
+  commit. Wired into the `/wrap` pre-flight gate list.
+
+### Docs
+- **Docs truthfulness.** README (en/ko) no longer claims `spec-gate.py` /
+  `tdd-guard.py` "physically block" — both ship in observation mode
+  (`off | dryrun | block`, default `dryrun`; only `pre-tool-guard.sh` always
+  blocks) and the modes are now documented. The "same guardrails no matter which
+  AI" claim is split into decision parity (machine-tested) vs per-runtime event
+  coverage, with an honest **Runtime coverage** table. `docs/architecture.md` no
+  longer claims the plan-approval flag has no consumer — both wired consumers
+  (`spec-gate.py`, `plan-scope-allow.py`) are now named. Stale README counts
+  corrected (39→48 test scripts, 7→8 skills — `brain-ingest` added to the
+  catalog).
+
+## [0.5.3] — 2026-07-19
+
+> **Consolidation note.** The changelog was not rolled from [0.2.5] (2026-07-08)
+> through the 0.5.3 cut, so entries for the 0.3.x–0.5.3 releases accumulated under
+> [Unreleased]. They are gathered here at 0.5.3 rather than retro-split into
+> per-version sections, because no version tags or per-release `release:` commits
+> exist for 0.3.x/0.4.x/0.5.0 to place undated entries reliably (a guess would be
+> fabrication). The inline `(vX.Y.Z)` / `(PR #NN)` labels below preserve the finer
+> per-release provenance. Future releases roll [Unreleased] into a dated section.
+
+### Added
+- **Candidate scoring + project rubric (PR #79).** `/spec --score-candidates`
+  scores a field of candidate problems/approaches numerically (candidates ×
+  dimensions → top-K) instead of a prose pick, mirroring the `--interview`
+  submode. A domain-neutral project rubric (`templates/rubric.yml.template` →
+  `.agent/rubric.yml`) is scored deterministically by `core/infra/rubric-score.py`
+  (shared verdict schema, refute-by-default) and run per commit by the advisory
+  `core/hooks/rubric-commit-judge.sh` hook — **trust-gated to personal-tier repos
+  only** (grader_checks are shell commands and `.agent/rubric.yml` ships with the
+  repo tree, so a foreign clone's rubric is never auto-executed) — and folded into
+  `verify-completion`'s semantic judge on-demand (the two-layer split that keeps
+  the fresh-spawn judge off the commit path). Follow-up **PR #80** hardened the
+  hook's test battery: a `.agent/rubric.json` fallback (no PyYAML dep) makes the
+  trust-gate tests self-standing, plus a foreign-origin collab case proving the
+  `owner-decides-alone` branch also blocks auto-execution.
+- **`sanitize-audit.sh --range` mode (PR #78).** The domain-neutrality gate can
+  now scan a commit range (PR/push span), catching taint that a single commit
+  adds and a later commit removes — an add-then-remove sequence the per-commit
+  scan misses. CI wires an explicit `--range` verification step.
+
+### Fixed
+- **`doc-reality.sh` no longer scans gitignored `.agent/` (PR #79).** The gate's
+  `find` walked `.agent/plans/`, so a `/spec` plan naming to-be-created files
+  false-positived as phantom-path drift. `.agent` is now pruned (matching the
+  gate's own "tracked *.md" intent), with a regression case in `doc-reality-test.sh`.
+- **`.gitignore` — `.agent/plans/` re-entry gap closed (v0.5.2).** The
+  runtime-state block enumerated `.agent/locks|logs|state|workers/` but not
+  `.agent/plans/`, so a `git add -A` could commit per-run records
+  (RECORD/RESTATEMENT/PROPOSALS) — artifacts that demonstrably carry
+  machine-local absolute paths. Audit note for the record: the tracked tree
+  itself was verified clean (sanitize-audit tokens + manual grep — no personal
+  paths shipped); this closes the door, it does not clean up a leak. If
+  committed specs are ever wanted, un-ignoring `.agent/plans/**/spec.md` is
+  the narrower future carve-out.
+
+### Docs
+- **sqlite3 + jq declared as goal-mode prerequisites (v0.5.2).**
+  `core/infra/supervisor-goal.sh` hard-requires both (`exit 127`) but README
+  Prerequisites, `setup.sh --doctor`, and the supervise skill never said so —
+  the same undeclared-dependency class the jq/telemetry-digest fix already
+  established as a bug (`docs/harness-improvement-plan.md` P1-5 — jq removed
+  there precisely because a hard dep contradicts doctor's WARN tier). Now:
+  README/README.ko Optional entries, doctor check 14 ("goal-mode deps",
+  WARN-tier — goal-mode is optional), and a prerequisite note on the
+  `--goal-mode` row in `skills/supervise/SKILL.md`.
+
+### Added
+- **`docs/concepts/fable-5-prompting.md` — frontier-model dispatch guidance
+  (v0.5.2).** Distills Anthropic's Fable-5-class prompting guide into 8
+  harness-mapped rules (effort-before-tier-up backing, anti-wrap-up,
+  evidence-grounded progress claims, boundaries+why, delegation, memory
+  surface, two registers, no reasoning replay). Advisory: cited from the
+  supervise Model policy, the delegation-contract template (evidence-citation
+  + anti-wrap-up lines added), verify-completion (artifacts-not-replayed-
+  reasoning hard rule), and `docs/model-routing.md`. Enforcement lane is
+  backlog (LE-9), not shipped.
+- **Agent SDK loop cross-check — `docs/loop-engineering-audit-2026-07.md`
+  §4 (v0.5.2).** Maps the SDK's loop controls (max_turns, budget, effort,
+  permission modes, compaction, subagent isolation, result subtypes, hooks)
+  to harness equivalents. One real gap found: no per-run turn/dispatch cap
+  (token budget only) → LE-8; compaction/scheduling stay intentionally
+  runtime-native. New backlog: LE-8 (dispatch cap), LE-9 (fable-5 prompt
+  audit lane).
+
+### Fixed
+- **v0.5.1 version bump — re-cut of stale 0.5.0 caches.** PR #73 changed
+  shipped content (manager-audit `--since`, Explore-MID fan-out exception,
+  Step 0 run-start timestamp) without bumping the version, so installed
+  0.5.0 caches were cut at the earlier commit and silently missed those
+  fixes. The plugin distribution is the git tree keyed by version — a
+  content change without a bump leaves every existing install stale.
+
+### Added
+- **`manager-audit --global` — slug-less routing sweep.** The audit's
+  routing-waste + token-spend lanes previously required a `<plan-slug>`, so
+  ad-hoc `Explore` / execution dispatches outside any `/supervise` run — the
+  common case for TOP-inherit leaks — were never swept. `--global` drops the
+  slug and run scope, skips the slug-scoped lanes (restatement-quality,
+  role-compliance), and reports inherit-top / floor / fan-out leaks across the
+  whole `model-routing.jsonl`. Still after-the-fact, still WARN-only, still
+  exit 0 (no runtime switching). Covered by 8 new cases in
+  `manager-audit-test.sh`.
+- **`/manager-audit` — meta-audit of the supervisor (v0.5.0)**. Four lanes
+  answering what the supervisor cannot be trusted to answer about itself:
+  `restatement-quality` (intake restatement exists, six sections filled,
+  measurable criteria, scope-drift candidates), `routing-waste` (TOP-inherit
+  leaks, verify/judge MID-floor violations, fan-out not at LOW),
+  `token-spend` (relative dispatch cost = tokens × tier multiplier — LOW 0.15
+  / MID 1 / TOP 3.5, midpoints of the docs/model-routing.md relative ranges;
+  still no price constants in the repo), and `role-compliance` (every wave
+  audited, never-auto-retry honored, RECORD.md written, review lane after
+  code waves). Split mirrors harness-audit: deterministic machine layer
+  `core/infra/manager-audit.sh` (env-seamed, always exit 0, findings JSON)
+  + interpreting skill `skills/manager-audit/SKILL.md` that judges semantic
+  candidates and writes concrete patch **proposals** to
+  `.agent/plans/<slug>/PROPOSALS.md` for one-click user approval. Proposals
+  target conventions/templates/docs only — runtime model-switching stays
+  rejected (docs/model-routing.md). Battery:
+  `core/tests/manager-audit-test.sh` (28 checks, fixture-injected seams,
+  including review-driven regressions: dangling-flag termination, BSD-grep
+  whitespace sections, non-ASCII wave titles, remediated-FAIL non-flagging,
+  mixed-tier fan-out evidence, unsafe-slug rejection). First real-run smoke
+  (2026-07-17) produced two user-approved fixes: the fan-out lane now honors
+  the documented Explore-at-MID exception, and `--since <ISO-ts>` scopes the
+  audit window to one run (Step 0 records the run-start timestamp in
+  RESTATEMENT.md for exactly this) — battery now 30 checks.
+- **/supervise Step 0 "Intake restatement"** — before plan validation, the
+  supervisor now restates the user's chat prompt into a machine-checkable
+  record (`skills/supervise/templates/prompt-restatement.md`: Original ask
+  verbatim / Interpreted goal / Assumptions / Out of scope / Success criteria
+  / Open questions), persisted to `.agent/plans/<slug>/RESTATEMENT.md`.
+  Non-full-auto runs surface unresolved Open questions before Wave 1.
+  Completion (Step 5) now offers `/manager-audit <slug>`, the meta-audit that
+  grades this restatement along with routing waste, relative token spend, and
+  role compliance.
+- **model-routing-observer spend signal** — each dispatch record in
+  `.agent/logs/model-routing.jsonl` now carries `prompt_chars` (always) and
+  `total_tokens` (best-effort probe of `tool_response` usage, `null` when the
+  runtime surfaces none). Pure-observer contract unchanged (silent stdout,
+  exit 0 always). This is the measurement seam for the manager-audit lane
+  (relative dispatch-cost ranking — tiers and token counts only, no price
+  constants, per docs/model-routing.md).
+
+### Removed
+- **Gemini backend retired from `backends.json`** — `second-opinion-review`
+  now ships codex-only (`fallback: null`), and the `gemini` backend entry is
+  gone. Real-call verification (2026-07-17) showed the path fails by default
+  for individual installs: gemini-cli 0.44–0.46 `oauth-personal` is
+  deprecated upstream (`IneligibleTierError` → Antigravity migration), and
+  the API-key path demands paid prepay credits. A shipped fallback that
+  cannot work out of the box misleads worse than no fallback. The
+  dispatcher's fallback mechanism is unchanged and stays stub-tested; to
+  re-enable, add a backend entry and point a role's `fallback` at it (the
+  removed entry lives in git history).
+
+### Fixed
+- **`backends.json`: gemini headless invocation was wrong** — `gemini -p`
+  requires an argument (`Not enough arguments following: p` on CLI 0.44.x);
+  the prompt rides stdin, so the registry now ships `["gemini", "-p", ""]`
+  ("-p is appended to input on stdin" per the CLI's own help). Found by the
+  first real-call smoke of the second-opinion lane — the PATH-stub battery
+  can't catch a vendor's argv contract, which is exactly why the smoke run
+  is part of the lane's rollout checklist.
+
+### Added
+- **Cross-vendor second-opinion lane** (`core/infra/backends.json` +
+  `core/infra/call-worker.sh`): a Claude session can now dispatch Codex
+  (primary) or Gemini (fallback) as a review/verification second opinion.
+  The registry is the machine-readable role→backend SSOT; model names never
+  appear in it — adapter profiles own the tier (`docs/model-routing.md`
+  § Cross-vendor second-opinion lane). The dispatcher refuses without
+  `AGENT_WORKER_YES=1` (paid-call gate, env-only because a headless caller
+  can't answer prompts), names a missing CLI (exit 127), preserves fallback
+  reasons in the capture header, and kills hung workers at `timeout_s`
+  (exit 124). Captures land in `.agent/workers/<ts>-<role>.md`.
+  `verify-completion` documents an optional `--second-opinion` flag (evidence
+  input only — gate logic unchanged). Tests:
+  `core/tests/call-worker-test.sh`, ten contract paths on PATH-stubbed
+  backends, zero paid calls in CI. (Benchmark input:
+  netwaif/multi-agent-starter's `backends.json` + `call_worker.sh` role
+  registry — design borrowed, no code.)
+
+### Removed
+- **`legacy/trim-2026-07-04/` removed from the shipped tree — the last `legacy/`
+  payload is gone (preserved on tag `archive/legacy-trim-2026-07`).** The plugin
+  package *is* the git tree (no exclusion manifest), so these 44K of retired
+  agents/skills rode into every release. The six `legacy/`-scoped exclusion
+  rules (`gitleaks.toml`, `sanitize-audit.sh`, `supply-chain-scan.sh`,
+  `doc-reality.sh`, `check-hardcoding.py`, `secret-content-scan.py`) stay
+  unchanged: CHANGELOG entries
+  still reference historical `legacy/…` paths, and doc-reality needs the
+  exclusion to keep ignoring them. Recover anything with
+  `git show archive/legacy-trim-2026-07:legacy/trim-2026-07-04/<path>`.
+  (Benchmark input: netwaif/multi-agent-starter ships a deliberately minimal
+  generated tree — our tree-is-the-package model makes git removal + archive
+  tag the only diet mechanism.)
+
+### Changed
+- **Benchmark landscape: 2026-07-16 spot re-check recorded**
+  (`docs/benchmark/landscape.md`): netwaif/multi-agent-starter v3.3.0 (three
+  patterns adopted — cross-vendor lane, install→validate pairing, checksum
+  update mode), inkeep/open-knowledge v0.33.0-beta.5 (sandbox trial, 11-target
+  init pollution measured, conditional-adoption verdict with `--scope project
+  --no-skills` containment, GPL boundary noted, skill-symlink SSOT logged as
+  a pattern candidate), and the implicit execution-dispatch permission
+  surface closed by the `/supervise` pre-flight.
+- **`/supervise` gained a dispatch pre-flight for edit waves.** Root-cause of
+  "the supervisor can't edit files": a dispatched subagent cannot answer a
+  native permission prompt, and a background dispatch auto-denies any call
+  that would prompt — so an edit wave sent out without a cleared permission
+  surface silently loses its Edit/Write calls. The skill now requires either
+  the plan-approval flag (`/tmp/agent-plan-approved`, arms `plan-scope-allow`)
+  or project-layer `Edit`/`Write` allow rules before dispatching an edit wave,
+  and falls back to foreground dispatch otherwise. Also made explicit:
+  execution waves must never route to `code-reviewer`/`security-reviewer`
+  (read-only toolsets, CI-enforced) — `supervisor.py` suggestions name the
+  review lane, not the execution lane. Cross-referenced from
+  `docs/model-routing.md`.
+- **`setup.sh` installs now end in post-install validation.** Every install
+  path auto-runs the existing read-only `--doctor` diagnosis and the script
+  exits non-zero on FAIL rows, so a broken install fails loudly at install
+  time instead of at first use (`AGENT_SETUP_NO_DOCTOR=1` skips — test seam /
+  air-gapped bootstrap). Install paths also self-heal lost exec bits on
+  `core/hooks/*` and `adapters/*/adapter.sh` before validating, so
+  exec-bit-hostile distribution paths (ZIP download) don't hard-fail a check
+  the script never remediated. Pattern adopted from multi-agent-starter's
+  generate→`validate.py` PASS/FAIL pairing, reusing our existing doctor
+  instead of a new validator.
+- **`apply_template()` is now idempotent (checksum update mode).** A target
+  byte-identical to the fresh render reports `up-to-date` with no prompt;
+  only a target that actually differs (user-customized, or template changed)
+  asks before overwriting. Re-running setup over an existing install is now a
+  quiet no-op update pass instead of a prompt per file — the equivalent of
+  multi-agent-starter's update mode ("overwrite system files, preserve user
+  data") for our template set.
 - **Gate-registry correction: quality-completion RETIRE-CANDIDATE →
   KEEP-CONDITIONAL (same-day supersede).** The retirement investigation refuted
   its own premise: `session-quality-gate.py` is also the enforcement layer for

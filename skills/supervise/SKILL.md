@@ -18,7 +18,7 @@ wave, auditing after each wave, and aborting on risk-area violations.
 | Mode | Behavior |
 |---|---|
 | `/supervise <slug>` | Default: full-auto. Dispatch, audit, advance. Stops on Wave fail or safeguard. |
-| `/supervise <slug> --goal-mode` | Tracks state in SQLite via `core/infra/supervisor-goal.sh`. Resumable across sessions. |
+| `/supervise <slug> --goal-mode` | Tracks state in SQLite via `core/infra/supervisor-goal.sh`. Resumable across sessions. Requires `sqlite3` + `jq` (the script exits 127 without them — see README Prerequisites). |
 | `/supervise <slug> --auto-push` | Each wave commits + pushes + opens PR. User merges. |
 | `/supervise <slug> --auto-merge` | Each wave commits + pushes + admin-merges via `auto-ship.sh`. |
 
@@ -34,6 +34,25 @@ Coverage is Write/Edit/MultiEdit only — Bash/MCP wave commands always keep
 their own gates and prompts (extension is backlog LE-1). Hard safeguards
 (risk-area abort, R4 mutex, gitleaks, test-failure abort) bind in every tier
 and every mode, including full-auto.
+
+### Dispatch pre-flight (before any edit wave leaves the main loop)
+
+A dispatched subagent cannot answer a native permission prompt, and a
+**background** dispatch auto-denies any tool call that would prompt — so an
+edit wave dispatched without cleared permissions doesn't fail loudly, it
+silently loses its Edit/Write calls and reports garbage. Before dispatching
+an execution (file-editing) wave, confirm at least one of:
+
+1. The plan-approval flag exists — `[[ -f /tmp/agent-plan-approved ]]`
+   (written on ExitPlanMode approval; wiped at every SessionStart), which
+   arms the `plan-scope-allow` gate above, **or**
+2. The project's `.claude/settings.local.json` carries `Edit`/`Write`/
+   `MultiEdit` in `permissions.allow` (project-layer rules are the reliable
+   layer — subagents do not dependably inherit user-level allows).
+
+If neither holds: dispatch the wave **foreground** (prompts then reach the
+user) or stop and tell the user which of the two to set up. Never send an
+edit wave to a background dispatch on an unverified permission surface.
 
 ## Model policy
 
@@ -51,6 +70,15 @@ execution work, dispatch it at the tier the table names instead of doing it
 inline at the session model. Inline execution at the top tier is the expensive
 default this rule exists to prevent.
 
+Two placement corollaries (economics: `docs/model-routing.md` → Intelligence
+placement & Floors): the audit-after-wave step is this harness's **advisor
+checkpoint** — TOP judgment re-ranking MID execution mid-run, which is where
+advisor value concentrates (not in a single upfront ranking). And a
+**coordination-cost check** applies before dispatching: a wave whose delegated
+volume would not clearly offset its own contract+report boundary (billed twice
+in each direction) is not a wave — fold it into an adjacent wave or make the
+edit directly.
+
 The supervise loop itself never overrides a model. `core/hooks/supervisor.py`
 is a dispatch-suggestion stub — it matches intent to a specialist from the
 registry; it does not read or set `model`. If you add an agent whose role is
@@ -58,9 +86,31 @@ planning or deep design, leave `model:` out of its frontmatter.
 
 This table is the enforced (Claude) instance of the cross-runtime tier policy
 in `docs/model-routing.md` — see that document for the Codex/Gemini columns,
-the verify-judge floor, and the fan-out worker default.
+the verify-judge floor, and the fan-out worker default. Prompt-side dispatch
+guidance for frontier models (anti-wrap-up, evidence-grounded claims, no
+reasoning replay) is advisory in `docs/concepts/fable-5-prompting.md`.
 
 ## Steps
+
+### 0. Intake restatement
+
+Before touching the plan, restate the ask so dispatch decisions trace to a
+machine-checkable record rather than to chat prose:
+
+a. Fill `skills/supervise/templates/prompt-restatement.md` from the user's
+   invocation text and the plan's objective — all six sections (Original ask
+   verbatim / Interpreted goal / Assumptions / Out of scope / Success
+   criteria / Open questions), plus the `Run started:` UTC timestamp line
+   (the routing log accumulates across sessions; this is the audit window's
+   start).
+b. Persist it to `.agent/plans/<slug>/RESTATEMENT.md`. (RECORD.md stays a
+   mechanical completion ledger — intake interpretation never goes there.)
+c. If **Open questions** is non-empty and the run is not full-auto, surface
+   them to the user before Wave 1. Full-auto runs note the resolution chosen
+   under Assumptions instead.
+
+`/manager-audit` grades this file (lane `restatement-quality`) — a wave
+serving a goal absent from **Interpreted goal** is flagged as scope drift.
 
 ### 1. Plan validation
 
@@ -81,14 +131,20 @@ a. **Read Wave i section** of the plan.
 b. **Classify the wave and pick lanes** based on its content:
    - Judgment work (deciding, synthesizing) stays in the main loop.
    - Execution work dispatches with an explicit `model` per the Model policy
-     (implementation → workhorse tier, mechanical cleanup → low tier).
+     (implementation → workhorse tier, mechanical cleanup → low tier), after
+     the dispatch pre-flight above clears the permission surface.
    - Wave touches `core/hooks/` or general code → `code-reviewer` after
    - Wave touches auth/secrets → `security-reviewer`
+   - **Never route an execution wave to `code-reviewer` or
+     `security-reviewer`** — both carry read-only toolsets (Read/Grep/Glob,
+     CI-enforced); they cannot edit a file at all. `core/hooks/supervisor.py`
+     suggestions name specialists for the *review* lane, not the execution
+     lane.
 
    Every dispatch is written as a **delegation contract** —
    `skills/supervise/templates/delegation-contract.md` (goal / output format /
    tools & scope / boundaries, plus an explicit `model` field per the Model
-   policy). Four orchestration rules travel with it (details in the template):
+   policy). Five orchestration rules travel with it (details in the template):
    - **Fan-out cap 3–5** per wave — a wave with more concurrent subtasks
      splits into consecutive waves (the template shows a worked split).
    - **Write single-threading** — one writer per fileset; review/verify agents
@@ -98,6 +154,10 @@ b. **Classify the wave and pick lanes** based on its content:
      the wave's relevant constraint slice re-stated (not whole rulebooks).
    - **Verifier isolation** — verifiers are fresh spawns with no author
      context or self-assessment; they grade end-state only.
+   - **Worker reuse (cache)** — consecutive subtasks over the same fileset or
+     context continue the *same* worker rather than fresh-spawning each one
+     (a fresh spawn re-pays the full context write uncached). Verifier
+     isolation is the standing exception: verifiers are always fresh.
 c. **Execute** the wave's intended changes — through the dispatched execution
    lane, not inline at the session model (inline is judgment's lane, not
    execution's).
@@ -114,6 +174,28 @@ e. **Advance** (if `--goal-mode`):
    ```
 f. **Wrap** (if `--auto-push` or `--auto-merge`):
    - Invoke `/wrap` with the appropriate flag.
+
+### 2b. Race lanes (opt-in: wave annotated `race: true`)
+
+For a high-stakes wave the plan may annotate `race: true`: the SAME spec goes
+to two independent implementation lanes, and the supervisor picks the stronger
+result. Rules that keep it inside the standing invariants:
+
+- **Two lanes, both patch-only — neither edits the tree.** Lane A is a Claude
+  subagent in an isolated worktree; lane B is the `implementer` role via
+  `core/infra/call-worker.sh` run from a dedicated `.worktrees/race-<slug>/`
+  checkout (which also scopes its workspace-write sandbox). Each lane's
+  deliverable is a patch file under `.agent/workers/`, produced with
+  `git diff`, plus a lane report (`skills/supervise/templates/lane-report.md`).
+- **The supervisor is the only tree writer** (one-writer rule preserved): it
+  runs the wave's acceptance command against each patch, compares, applies
+  exactly ONE, and records which lane won and why in RECORD.md.
+- **Race = 2 slots against the wave's fan-out cap.** A race wave carries at
+  most one other concurrent worker.
+- **Judgment stays home**: the compare-and-pick step is main-loop judgment
+  work, never dispatched.
+- If a lane is unavailable (`status: unavailable` capture), the race degrades
+  to a single-lane wave — stated in RECORD.md, never silently.
 
 ### 3. Safeguards (immediate abort)
 
@@ -169,6 +251,31 @@ global recording layer, so the two never duplicate. On `--goal-mode` runs the
 guarantee the file exists — it never overwrites one you already wrote); on
 non-goal runs writing it is this step's discipline. This keeps an execution
 record on runtimes that have no global recording layer at all.
+
+Finally, auto-run the two model-economics lanes: `bash core/infra/manager-audit.sh
+<slug> --json --since <Run started ts from RESTATEMENT.md>`, then filter its
+`findings` array to `lane == "routing-waste"` or `lane == "token-spend"` (the
+script has no per-lane flag — the JSON `lane` field on each finding IS the
+selection interface; the other two lanes' findings are simply ignored in this
+pass). First check whether `.agent/logs/model-routing.jsonl` exists and has
+at least one record scoped to this run — if it's missing or empty (the
+`routing-log-missing` WARN finding, or a `routing-waste`/`token-spend`
+finding set with zero `RECORDS`), the correct summary is
+`routing: skip (no routing log)`, NOT `routing: clean` — a missing observer
+log makes the two lanes trivially FAIL/WARN-free (manager-audit.sh short-circuits
+to an empty `RECORDS` set and reports `lane-clean` PASS), so "clean" would
+misrepresent "never measured" as "measured and good." Only write
+`routing: clean` when records actually exist and both lanes are FAIL/WARN-free.
+Otherwise write `routing: N WARN/FAIL — top: <subagent_type> [<tier>]
+rel_cost=<n>` (from the `token-spend` lane's `top-spend-sources` finding).
+This is non-blocking — a bad verdict never blocks completion, it only informs
+the ledger.
+
+Then offer to run the FULL `/manager-audit <slug>` (all four lanes —
+restatement quality, model-routing waste, relative token spend, role
+compliance), passing `--since <Run started ts from RESTATEMENT.md>` so the
+audit scopes to this run's dispatches. It reads the logs this run already
+produced; it never blocks completion.
 
 ## Hard rules
 

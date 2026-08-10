@@ -1,6 +1,7 @@
 # Codex profile: LOW tier — mechanical fixes, lookups, fan-out workers.
 # Copy to ~/.codex/quick.config.toml; invoke with `codex --profile quick`.
-# Model ID is a 2026-07 snapshot — substitute your account's light model.
+# Model ID is a 2026-07 snapshot (GPT-5.6 family; legacy gpt-5.2/5.3/5.4
+# IDs sunset 2026-07-23) — substitute your account's light model.
 # (docs/model-routing.md)
-model = "gpt-5.4-mini"
+model = "gpt-5.6-luna"
 model_reasoning_effort = "low"

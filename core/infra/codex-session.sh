@@ -52,6 +52,10 @@ HB_PID=$!
 
 cleanup() {
   kill "$HB_PID" 2>/dev/null || true
+  # Cross-AI brain breadcrumb: capture uncommitted WIP to raw/ before releasing
+  # the lock. Env-driven (no stdin); fail-open so it never blocks session teardown.
+  AGENT=codex AGENT_SESSION_ID="$AGENT_SESSION_ID" \
+    python3 "$REPO_ROOT/core/hooks/brain-capture.py" </dev/null >/dev/null 2>&1 || true
   AGENT=codex AGENT_SESSION_ID="$AGENT_SESSION_ID" "$SESSION_SH" stop 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM

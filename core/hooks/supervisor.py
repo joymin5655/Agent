@@ -184,6 +184,15 @@ def log_event(root: pathlib.Path, event: str, tool: str, **extra) -> None:
         "session_id": os.environ.get("AGENT_SESSION_ID", "main"),
     }
     rec.update(extra)
+    # Gate-registry instrumentation (T-2): ask-decisions are gate firings —
+    # stamp guard/hook/reproduce_test so telemetry-digest can count exactly the
+    # ask records (registry row: supervisor-ask) without inflating on the far
+    # more numerous observe/match/dispatched records in this shared sink.
+    if str(rec.get("action", "")).startswith("ask"):
+        rec["guard"] = "supervisor-ask"
+        rec["hook"] = "supervisor.py"
+        rec["reproduce_test"] = os.environ.get(
+            "AGENT_REPRODUCE_TEST", "") in ("1", "true", "TRUE", "True")
     try:
         with open(log_dir / "supervisor.jsonl", "a") as f:
             f.write(json.dumps(rec) + "\n")

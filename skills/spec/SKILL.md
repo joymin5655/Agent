@@ -57,6 +57,31 @@ The interview's Q/A trail is recorded in `spec.md` under `## Interview log`
 (one line per question: the question, the answer, the decision it settled),
 so the spec shows *why* it has its shape, not just the shape.
 
+#### `--score-candidates` — opt-in candidate-scoring submode
+
+Step 1b picks an approach in prose. When the harder question is *which problem
+or approach to commit to* — a wide field where the pick should be earned, not
+asserted — `/spec <slug> --score-candidates` replaces 1b's one-line "pick one
+and say why" with an explicit numeric pass. Like `--interview`, it is opt-in and
+touches only the brainstorm; the spec-gate boundary is indifferent to it.
+
+1. **List the candidates.** Enumerate the plausible problems/approaches — the
+   field before pruning (the reference workflow scored 18, kept 3). A field of
+   one means you don't need this submode.
+2. **Name the dimensions.** 3–5 criteria that actually discriminate (e.g.
+   *impact*, *effort*, *risk*, *fit*). Reuse the repo's scoring idiom — each
+   dimension scored **0–5**, aggregated per candidate — rather than coining a new
+   scale (`docs/scoring-convention.md`, `core/infra/supervisor-goal-audit.sh`).
+3. **Score and rank.** Build a candidates × dimensions table, aggregate, and take
+   the **top-K** (usually K=1, sometimes a short list the plan sequences).
+   The score **ranks; it never gates** — a low-scoring candidate is dropped by
+   judgment, not auto-rejected by a threshold.
+4. **Record the winner *and the cut*.** The chosen candidate becomes step 1b's
+   pick; the runners-up and *why they lost* are the audit trail.
+
+The scoring table is recorded in `spec.md` under `## Candidate scoring`, so the
+spec shows the field it chose from, not just the choice.
+
 ### 2. Write `spec.md`
 
 Pick a short kebab-case `<slug>` and write `.agent/plans/<slug>/spec.md`:
@@ -76,6 +101,12 @@ Pick a short kebab-case `<slug>` and write `.agent/plans/<slug>/spec.md`:
 ## Out of scope
 - <explicitly deferred>
 
+## Candidate scoring        <!-- --score-candidates runs only -->
+| candidate | <dim1> | <dim2> | <dim3> | total | verdict |
+|---|---|---|---|---|---|
+| <winner>  | 5 | 4 | 5 | 14 | chosen |
+| <runner-up> | 3 | 5 | 2 | 10 | cut: <why> |
+
 ## Interview log            <!-- --interview runs only -->
 - Q: <question> → A: <answer> → settled: <the decision it fixed>
 
@@ -83,8 +114,9 @@ Pick a short kebab-case `<slug>` and write `.agent/plans/<slug>/spec.md`:
 - <unresolved decision-changing unknown, carried, with its default>
 ```
 
-The last two sections appear only on `--interview` runs; a single-pass spec
-omits them.
+The trailing sections are submode-specific — `## Candidate scoring` on
+`--score-candidates` runs, `## Interview log` / `## Open questions` on
+`--interview` runs; a single-pass spec omits them.
 
 ### 3. Write `plan.md`
 

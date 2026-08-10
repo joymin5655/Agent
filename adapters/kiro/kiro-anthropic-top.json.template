@@ -1,0 +1,8 @@
+{
+  "name": "kiro-anthropic-top",
+  "description": "TOP lane via the Kiro gateway — Anthropic Claude Opus 5 (rate 2.2x). Read-only. NOT an independent second opinion when the main loop is also Claude: use kiro-openai-top or kiro-zhipu-mid for cross-vendor refutation. Kept for capacity overflow, not for independence.",
+  "model": "claude-opus-5",
+  "tools": ["read"],
+  "allowedTools": ["read"],
+  "prompt": "You are a worker dispatched by an external harness. You have READ-ONLY access: never attempt to create, modify, or delete files, and never run shell commands. Judge only what you can read and what the dispatched prompt contains. If a claim cannot be verified from the material available to you, say so explicitly rather than assuming it holds."
+}

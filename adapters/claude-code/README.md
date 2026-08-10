@@ -49,13 +49,18 @@ The `settings.json.template` wires up:
 | Event | Matcher | Hook |
 |---|---|---|
 | SessionStart | `*` | `agent-session-start.sh`, `session-init.py` |
-| Stop | `*` | `session-close.sh` |
-| UserPromptSubmit | `*` | `agent-session-heartbeat.sh`, `plan-gate.py` |
+| Stop | `*` | `session-quality-gate.py`, `brain-capture.py`, `session-close.sh` |
+| UserPromptSubmit | `*` | `agent-session-heartbeat.sh`, `supervisor.py` |
 | PreToolUse | `Bash` | `pre-tool-guard.sh` |
 | PreToolUse | `*` | `r4-mutex-check.sh`, `context-mode-guard.sh` |
-| PreToolUse | `Write\|Edit\|MultiEdit` | `check-hardcoding.py`, `secret-content-scan.py`, `r4-file-mutex-check.sh`, `tdd-guard.py`, `supervisor.py` |
-| PostToolUse | `Bash` | `circuit-breaker.py` |
+| PreToolUse | `Write\|Edit\|MultiEdit` | hardcoding, secret, mutex, TDD, spec, supervisor, plan-scope hooks |
+| PreToolUse | selected WebFetch and MCP tools | `secret-content-scan.py` |
+| PostToolUse | `ExitPlanMode\|Task\|Agent` | plan gate, supervisor, model-routing observer |
+| PostToolUse | `Bash` | circuit breaker, rubric commit observer |
 | PostToolUse | `Write\|Edit\|MultiEdit` | `r4-file-mutex-register.sh` |
+
+Claude runs all matching handlers in parallel. Registration order is not
+execution order; decision precedence supplies the safety ordering.
 
 Adapt per-project by editing `hook-config.yml` (paths, risk areas, exempt
 globs) — the core hooks read it.

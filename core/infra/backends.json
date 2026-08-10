@@ -1,0 +1,86 @@
+{
+  "version": 2,
+  "comment": "Machine-readable SSOT for cross-vendor worker dispatch (docs/model-routing.md § Cross-vendor lanes). Roles map to backends at a tier; backends map to CLI argv. argv = cmd + tier_args[role.tier] + role.args_extra. Model names NEVER appear here — each vendor's adapter/profile owns its tier (codex --profile deep = TOP-tier reasoning; kiro --agent <profile> pins its model in adapters/kiro/*.json.template). A disabled backend (enabled: false) refuses loudly with its disabled_reason — never a silent fallback. A backend carrying \"gateway\" reaches its vendor THROUGH that gateway's CLI rather than a first-party one: one CLI, several vendor lanes, so \"vendor\" stays the honest independence signal — a second opinion is only independent when its vendor differs from the dispatching session's. Kiro lanes are read-only by profile (verified: the profile's tool list overrides even --trust-all-tools), so they carry review/verify/advisor roles, never implementer.",
+  "roles": {
+    "second-opinion-review": { "backend": "codex", "tier": "TOP", "fallback": "kiro-openai" },
+    "second-opinion-verify": { "backend": "codex", "tier": "TOP", "fallback": "kiro-openai" },
+    "implementer": {
+      "backend": "codex",
+      "tier": "MID",
+      "fallback": null,
+      "args_extra": ["--sandbox", "workspace-write", "--ask-for-approval", "never"]
+    },
+    "advisor": { "backend": "codex", "tier": "TOP", "fallback": "kiro-openai" }
+  },
+  "backends": {
+    "codex": {
+      "vendor": "openai",
+      "connection": "cli",
+      "enabled": true,
+      "cmd": ["codex", "exec"],
+      "tier_args": {
+        "LOW": ["--profile", "quick"],
+        "MID": [],
+        "TOP": ["--profile", "deep"]
+      },
+      "preflight": ["codex", "--version"],
+      "timeout_s": 300
+    },
+    "gemini": {
+      "vendor": "google",
+      "connection": "cli",
+      "enabled": false,
+      "cmd": ["gemini", "-p", ""],
+      "tier_args": {},
+      "disabled_reason": "individual OAuth sign-in retired upstream (2026-07); the paid credential path requires prepaid credits. Set enabled: true only after verifying a working login on this machine.",
+      "timeout_s": 300
+    },
+    "kiro-openai": {
+      "vendor": "openai",
+      "connection": "cli",
+      "gateway": "kiro",
+      "enabled": true,
+      "cmd": ["kiro-cli", "chat", "--no-interactive"],
+      "tier_args": {
+        "LOW": ["--agent", "kiro-openai-low"],
+        "MID": ["--agent", "kiro-openai-mid"],
+        "TOP": ["--agent", "kiro-openai-top"]
+      },
+      "preflight": ["kiro-preflight"],
+      "timeout_s": 420
+    },
+    "kiro-zhipu": {
+      "vendor": "zhipu",
+      "connection": "cli",
+      "gateway": "kiro",
+      "enabled": true,
+      "cmd": ["kiro-cli", "chat", "--no-interactive"],
+      "tier_args": {
+        "MID": ["--agent", "kiro-zhipu-mid"]
+      },
+      "preflight": ["kiro-preflight"],
+      "timeout_s": 420
+    },
+    "kiro-anthropic": {
+      "vendor": "anthropic",
+      "connection": "cli",
+      "gateway": "kiro",
+      "enabled": true,
+      "cmd": ["kiro-cli", "chat", "--no-interactive"],
+      "tier_args": {
+        "TOP": ["--agent", "kiro-anthropic-top"]
+      },
+      "preflight": ["kiro-preflight"],
+      "timeout_s": 420
+    },
+    "grok": {
+      "vendor": "xai",
+      "connection": "cli",
+      "enabled": false,
+      "cmd": ["grok", "-p"],
+      "tier_args": {},
+      "disabled_reason": "CLI is early beta (2026-07) — config slot only. Set enabled: true once the CLI is installed and authenticated.",
+      "timeout_s": 300
+    }
+  }
+}

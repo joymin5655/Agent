@@ -126,7 +126,7 @@ a still-open gap, not a working config surface yet.
 | `secret-content-scan.py` | Yes — `.agent/hook-config.yml`/`.json` via `hook_config.py` (schema in part 1) | Built-in scan + additive config patterns/exempts/key-names |
 | `pre-tool-guard.sh` | No — hardcoded in-script | Denies on hardcoded risk-area path/command patterns |
 | `r4-mutex-check.sh` | No — hardcoded in-script | Matches hardcoded resource triggers against the lock file |
-| `check-hardcoding.py` | No — hardcoded in-script | Flags hardcoded literals; hardcoded exempt-globs list |
+| `check-hardcoding.py` | No — hardcoded in-script (patterns/exempts; wiring = backlog T-4) | Flags hardcoded design literals. Default **dryrun** (advisory + `.agent/logs/hardcoding.jsonl`); `AGENT_HARDCODING_MODE=off\|dryrun\|block` (block restores the pre-2026-07 deny). Note: `off` exits before any logging, so the telemetry digest shows the gate as DEAD while off — unenforced AND untelemetered |
 
 ---
 

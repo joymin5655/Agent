@@ -216,6 +216,7 @@ write_record_stub() {
         echo "- prs: <fill — PRs opened/merged by this plan>"
         echo "- audit verdict: <fill — per-wave audit outcomes>"
         echo "- carried: <fill — deferred items from the plan>"
+        echo "- routing: (pending — manager-audit routing-waste/token-spend summary)"
     } > "$rec" 2>/dev/null || return 0
 }
 

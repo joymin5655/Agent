@@ -13,7 +13,9 @@ quality lever in multi-agent work — fill every section or state why it is empt
 - **Tools & scope**: <tool allowlist + the fileset this worker may touch.
   One writer per fileset — never two writers on the same files in one wave>
 - **Boundaries**: <what is out of scope, what must not be touched, when to
-  stop and report instead of proceeding>
+  stop and report instead of proceeding. Also state the anti-wrap-up rule for
+  long runs: do not end the turn early, summarize, or propose a session
+  handoff on account of context limits — continuity is the harness's job>
 
 ## Model
 
@@ -45,14 +47,49 @@ required artifact. Prose criteria are allowed only with a stated reason why no
 command can check the outcome. A dispatch whose completion cannot be checked
 is not ready to send.
 
+The worker's progress and done claims follow the same rule: each claim cites a
+tool result from its own session (path, exit code, diff) — self-assessment
+without evidence is not a status report. Prompt-side rules for frontier-model
+dispatches: `docs/concepts/fable-5-prompting.md`.
+
+## Cross-vendor lane dispatch (when the worker is an external CLI)
+
+A dispatch that leaves the Claude runtime — a `core/infra/call-worker.sh` role
+(`implementer`, `second-opinion-*`, `advisor`) — carries the same four
+elements, plus:
+
+- **Interfaces**: name the exact function/CLI/API surfaces the lane may rely
+  on or must expose. An external lane shares no runtime with us, so an
+  interface not written here does not exist for it.
+- **Verification command**: the runnable acceptance check, stated in the spec
+  itself — the lane runs it, and the caller RE-RUNS it on return.
+- **Return format**: the lane report
+  (`skills/supervise/templates/lane-report.md` — STATUS /
+  OBJECTIVE / CHANGES / VERIFIED / LANE SAID / GAPS). The caller reads
+  `git diff` and re-runs the verification command before accepting; a lane's
+  own success claim is never evidence (claim ≠ evidence).
+- **Spec transport**: unique temp file per dispatch, piped via
+  `call-worker.sh <role>`; the printed capture's `status:` frontmatter is the
+  mechanical record beneath the lane's self-report.
+
 ## Wave shaping — fan-out cap and lanes
 
 - **Fan-out cap 3–5** concurrent workers per wave. A wave with more concurrent
   subtasks splits into consecutive waves — coordination costs grow faster than
   the parallelism pays past that width.
+- **Handoff must pay for itself**: the contract+report boundary is billed
+  twice in each direction (lead writes / worker reads; worker writes / lead
+  reads). Do not dispatch a task whose delegated volume is comparable to its
+  own boundary — fold it into an adjacent contract or do it inline. This is
+  the economic grounding of the fan-out cap above; the coordination-cost
+  floor lives in `docs/model-routing.md` → Floors.
 - **Write single-threading**: one writer per fileset. Review and verify agents
   carry read-only toolsets (Read/Grep/Glob) — that toolset, guarded by the CI
   registry-drift gate, is the mechanical enforcement point.
+- **Worker reuse over fresh spawns**: consecutive subtasks over the same
+  fileset or context continue the *same* worker so its prompt cache
+  accumulates — a fresh spawn per request re-pays the full context write
+  uncached. Verifiers are always fresh (isolation beats cache).
 - **Verifier isolation**: verifiers are fresh spawns given this contract's
   goal and the end-state only — no author context, no author self-assessment.
   They grade what exists, not what the author says exists.

@@ -41,7 +41,7 @@ A hook here is testable in isolation: `echo '{...event JSON...}' | bash core/hoo
 `adapters/claude-code/`, `adapters/codex/`, `adapters/gemini/`.
 
 Each adapter:
-1. Receives a native AI event (Claude Code stdin JSON, Codex event, Gemini callback)
+1. Receives a native hook event or an event from an exclusive controlled wrapper.
 2. Translates to canonical event JSON (per [`hook-protocol.md`](hook-protocol.md))
 3. Pipes to a `core/hooks/<name>` script
 4. Reads canonical decision JSON
@@ -49,7 +49,10 @@ Each adapter:
 
 For Claude Code, the native event JSON ≈ canonical event JSON, so the adapter is a thin pass-through.
 
-For Codex CLI and Gemini CLI, the adapter does real translation (their event formats differ).
+The shipped Codex and Gemini adapters currently translate events from shell
+wrappers. Their upstream runtimes now expose native hooks, but Agent has not yet
+wired those paths. File-write tools outside the wrappers are therefore not
+covered. See [`ai-adapters.md`](ai-adapters.md) for current versus target support.
 
 Each adapter also provides a `settings.template` or `config.template` showing how a user registers hooks in that AI's config file.
 
@@ -98,7 +101,7 @@ User: "run cat secrets/db.env"
        │ wants to invoke Bash tool with command "cat secrets/db.env"
        │
        ▼
-[AI runtime fires PreToolUse hook]
+[AI runtime fires a native hook OR an exclusive wrapper intercepts the effect]
        │ ──► native AI event format
        ▼
 [adapters/<ai>/adapter.sh]                (Layer 2)
@@ -114,7 +117,9 @@ User: "run cat secrets/db.env"
 [AI runtime cancels the Bash tool, shows reason to user]
 ```
 
-The same `pre-tool-guard.sh` script is invoked by all 3 AIs. The adapter handles the translation.
+The same `pre-tool-guard.sh` script is invoked by each shipped adapter route.
+The adapter handles translation; the capability matrix records which native
+tools actually reach that route.
 
 ---
 
@@ -124,24 +129,27 @@ Two different guarantees live in this framework, and they don't mix.
 
 **Deterministic gates (the hooks) are model-invariant.** `core/hooks/*` scripts are plain
 code — same event JSON in, same decision JSON out, regardless of which AI or model fired
-the event. This isn't a claim about model behavior; it's proven mechanically:
-`core/tests/adapter-parity.sh` feeds one logical event through all 3 adapters and asserts
-an identical decision. Swap Claude for Codex or Gemini, swap one model for another — the
-gate doesn't care, because it's a script executing a fixed pattern match, not a model call.
+the event. `core/tests/adapter-parity.sh` feeds one logical synthetic event through all
+three translators and asserts an identical decision. This proves core/translation parity,
+not that every native tool call reaches an adapter. Native registration, bypass coverage,
+and mission completion are separate test layers in the
+[cross-runtime design](cross-runtime-harness-design.md#11-implementation-backlog-for-claude).
 
-**Process enforcement is real for risk areas, not yet wired for plan/TDD.** Risk-area
-asks/denies are an actual gate: `pre-tool-guard.sh` runs on `PreToolUse` and can return
-`permissionDecision: deny` before the tool executes — a model that ignores the policy
-still can't act, because the boundary sits in front of the effect, not in the model's
-judgment (pillar ③: a request is a request, a boundary is physical).
+**Process enforcement is real for covered risk-area routes, not yet wired for plan/TDD.**
+When a tool route reaches the adapter, `pre-tool-guard.sh` runs before the effect and can
+return `permissionDecision: deny` — a model that ignores the policy still cannot use that
+route. Uncovered native tools do not inherit this guarantee; see the
+[capability matrix](benchmark/runtime-capability-matrix-2026-07.md).
 
-Plan-mode and TDD are earlier-stage. `plan-gate.py` is a `PostToolUse` hook — it *records*
-plan approval (writes `/tmp/agent-plan-approved` after `ExitPlanMode` or a plan-class
-`Agent`/`Task` dispatch) but nothing currently reads that flag to gate `Write`/`Edit`; the
-consuming enforcer (a supervisor dispatch mode) isn't wired yet — see
-`docs/harness-improvement-plan.md` P1-4/P1-8. `tdd-guard.py` defaults to
-`AGENT_TDD_GUARD_MODE=dryrun`, which logs would-block verdicts as advisory only; it only
-returns a real deny when explicitly set to `AGENT_TDD_GUARD_MODE=block`.
+Plan-mode and TDD gates ship in observation mode. `plan-gate.py` is a `PostToolUse` hook —
+it *records* plan approval (writes `/tmp/agent-plan-approved` after `ExitPlanMode` or a
+plan-class `Agent`/`Task` dispatch) — and the flag has two wired consumers:
+`spec-gate.py` (`PreToolUse` on `Write|Edit|MultiEdit`) short-circuits its gate when the
+flag exists, and `plan-scope-allow.py` reads the same flag to auto-allow `Write`/`Edit`
+permission prompts for plan-approved work. Both `spec-gate.py` and `tdd-guard.py` default to `dryrun`
+(`AGENT_SPEC_GATE_MODE` / `AGENT_TDD_GUARD_MODE`), which logs would-block verdicts as
+advisory only; each returns a real deny only when explicitly set to `block` — see
+`docs/harness-improvement-plan.md` P1-4/P1-8.
 
 **What's honestly NOT model-invariant: generated content.** The plan a model writes, the
 code it produces, the prose in a commit message — these vary by model and prompt. The

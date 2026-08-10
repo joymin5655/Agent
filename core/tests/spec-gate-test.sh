@@ -127,8 +127,8 @@ expect "t4-real-config-dir-skips"      block absent 'src/config/env.ts'        a
 
 echo
 echo "=== production-representative ABSOLUTE file_path (review MINOR) ==="
-expect "u1-abs-impl-noflag-asks"       block absent '/Users/dev/proj/src/pay.ts'    ask
-expect "u2-abs-impl-flag-allows"       block present '/Users/dev/proj/src/pay.ts'    allow
+expect "u1-abs-impl-noflag-asks"       block absent '/opt/proj/src/pay.ts'    ask
+expect "u2-abs-impl-flag-allows"       block present '/opt/proj/src/pay.ts'    allow
 
 echo
 echo "=== broadened default scope: app/ pages/ lib/ server/ components/ (review MINOR) ==="

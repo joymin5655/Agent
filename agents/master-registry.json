@@ -25,6 +25,18 @@
       "aliases": [],
       "model": "opus",
       "memory_scope": "local"
+    },
+    {
+      "id": "persona-review-orchestrator",
+      "description": "Runs a citizen/user persona panel (UX / copy / content review) — samples grounded Korean personas, dispatches each as a panelist, synthesizes their reactions.",
+      "matches": {
+        "keywords": ["persona review", "persona panel", "user perspective review", "how would users react", "citizen review"],
+        "tools": [],
+        "file_globs": []
+      },
+      "aliases": ["persona-panel", "citizen-panel"],
+      "model": "sonnet",
+      "memory_scope": "local"
     }
   ]
 }

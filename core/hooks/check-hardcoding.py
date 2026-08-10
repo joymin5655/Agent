@@ -1,20 +1,53 @@
 #!/usr/bin/env python3
 """PreToolUse hook — Detect hardcoded constants in Write/Edit content.
 
-Blocks common hardcoding anti-patterns:
+Flags common hardcoding anti-patterns:
   - Inline RGB color arrays (style values that should live in a theme/config)
   - Linear-gradient strings with hardcoded RGB values
   - Const arrays of tick/label/stop strings (chart data that should come from config)
 
-The 3 default patterns target UI/design hardcoding. Project-specific patterns
-can be added via `hook-config.yml: hardcoding_patterns[]`.
+Modes (AGENT_HARDCODING_MODE):
+  - off     — skip entirely
+  - dryrun  — advisory + jsonl log, never blocks (default — this is a DESIGN-TASTE
+              gate, not an irreversibility/secret gate, so per the harness
+              escalation principle it must not hard-deny by default)
+  - block   — return permissionDecision=deny (the pre-2026-07 behavior, opt-in)
 
-Hook protocol: reads canonical event JSON from stdin, writes decision JSON (deny)
-to stdout on match, or empty stdout (allow) otherwise. Exit always 0.
+Configuration env vars:
+  - AGENT_HARDCODING_MODE   off | dryrun | block
+  - AGENT_HARDCODING_SINK   jsonl sink (default .agent/logs/hardcoding.jsonl)
+
+NOTE: the built-in pattern list below is currently the only pattern source —
+`hook-config.yml: hardcoding_patterns[]` is a PLANNED extension seam (backlog
+T-4), not yet wired. Until T-4 lands, customize by mode env only.
+
+Hook protocol: reads canonical event JSON from stdin, writes decision JSON
+(deny) or advisory JSON to stdout on match, or empty stdout (allow) otherwise.
+Exit always 0. Fail-open: any exception → exit 0, never block on error.
 """
-import sys
 import json
+import os
 import re
+import subprocess
+import sys
+import tempfile
+from datetime import datetime, timezone
+
+MODE = os.environ.get("AGENT_HARDCODING_MODE", "dryrun")
+if MODE not in ("off", "dryrun", "block"):
+    # Loud fallback: a typo like "Block"/"blck" must not silently weaken the
+    # gate the operator thinks they hardened (fail-open direction is kept —
+    # unknown value degrades to dryrun, never to deny).
+    print(
+        f"[check-hardcoding] unknown AGENT_HARDCODING_MODE={MODE!r} — "
+        "treating as dryrun (valid: off|dryrun|block)",
+        file=sys.stderr,
+    )
+    MODE = "dryrun"
+if MODE == "off":
+    sys.exit(0)
+
+SINK_RELATIVE = os.environ.get("AGENT_HARDCODING_SINK", ".agent/logs/hardcoding.jsonl")
 
 # Files / path patterns exempt from hardcoding checks
 EXEMPT_PATHS = {
@@ -48,7 +81,7 @@ EXEMPT_PATHS = {
     "check-hardcoding-test.sh",
 }
 
-# Generic hardcoding patterns. Extend via hook-config.yml: hardcoding_patterns[].
+# Generic hardcoding patterns (built-in only until T-4 wires hook-config.yml).
 HARDCODING_PATTERNS = [
     # Inline color segment arrays: [number, [r, g, b]]
     (
@@ -96,12 +129,77 @@ def check_content(content: str, file_path: str) -> list[str]:
     return warnings
 
 
+def repo_root() -> str:
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "--show-toplevel"],
+            stderr=subprocess.DEVNULL,
+        ).decode().strip()
+    except Exception:
+        return os.getcwd()
+
+
+def resolve_sink(root: str) -> str:
+    """Resolve the firing-sink path, CONFINED to the repo root or the system
+    temp dir (the temp allowance is the battery seam — tests point the sink at
+    a mktemp scratch). An empty or escaping override (absolute path elsewhere,
+    ../ traversal) falls back to the default in-repo sink instead of creating
+    directories / appending at an arbitrary path — mirrors the read-side
+    confinement in telemetry-digest count_sink (security review 2026-07-27)."""
+    default = os.path.join(root, ".agent/logs/hardcoding.jsonl")
+    if not SINK_RELATIVE:
+        return default
+    path = os.path.realpath(os.path.join(root, SINK_RELATIVE))
+    for allowed in (os.path.realpath(root), os.path.realpath(tempfile.gettempdir())):
+        if path == allowed or path.startswith(allowed + os.sep):
+            return path
+    return default
+
+
+def log_firing(file_path: str, verdict: str, warning_count: int) -> None:
+    """Append a firing record to the jsonl sink (gate-registry instrumentation).
+    Matches the schema written by the other guard hooks (schema_version 2.0.0);
+    guard+hook let telemetry-digest attribute the record unambiguously, and
+    AGENT_REPRODUCE_TEST marks battery-fed synthetic events so they never
+    inflate fire-rate/FATIGUE."""
+    repro_env = os.environ.get("AGENT_REPRODUCE_TEST", "")
+    rec = {
+        "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "guard": "hardcoding",
+        "hook": "check-hardcoding.py",
+        "file_path": file_path,
+        "decision": verdict,
+        "warnings": warning_count,
+        "mode": MODE,
+        "session_id": os.environ.get("AGENT_SESSION_ID", "main"),
+        "reproduce_test": repro_env in ("1", "true", "TRUE", "True"),
+        "schema_version": "2.0.0",
+    }
+    sink = resolve_sink(repo_root())
+    try:
+        os.makedirs(os.path.dirname(sink), exist_ok=True)
+        with open(sink, "a") as f:
+            f.write(json.dumps(rec) + "\n")
+    except Exception:
+        pass
+
+
 def emit_deny(reason: str) -> None:
     output = {
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
             "permissionDecision": "deny",
             "permissionDecisionReason": reason,
+        }
+    }
+    print(json.dumps(output, ensure_ascii=False))
+
+
+def emit_advisory(message: str) -> None:
+    output = {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "additionalContext": f"check-hardcoding: {message}",
         }
     }
     print(json.dumps(output, ensure_ascii=False))
@@ -132,24 +230,38 @@ def main():
         sys.exit(0)
 
     warnings = check_content(content, file_path)
-    if warnings:
-        print(f"[Hook] BLOCKED: Hardcoding detected in {file_path.split('/')[-1]}", file=sys.stderr)
-        for w in warnings:
-            print(f"  {w}", file=sys.stderr)
-        print("\nExtract constants to a config file and import them. To customize patterns, "
-              "edit hook-config.yml: hardcoding_patterns[].", file=sys.stderr)
-        # Teaching format (T-1): WHY + FIX so the agent can self-correct.
-        emit_deny(
-            "Hardcoding detected in " + file_path.split("/")[-1] + "\n"
-            "WHY: design-hardcoding guard — inline style/config constants drift from the "
-            "theme and dodge the config review path.\n"
-            "FIX: extract the values to a config/theme file and import them; to customize "
-            "what this guard matches, edit hook-config.yml: hardcoding_patterns[]."
-        )
+    if not warnings:
         sys.exit(0)
 
+    log_firing(file_path, "denied" if MODE == "block" else "would_deny", len(warnings))
+
+    label = "BLOCKED" if MODE == "block" else "ADVISORY"
+    print(f"[Hook] {label}: Hardcoding detected in {file_path.split('/')[-1]}", file=sys.stderr)
+    for w in warnings:
+        print(f"  {w}", file=sys.stderr)
+    print("\nExtract constants to a config file and import them. "
+          "(Pattern customization via hook-config.yml is planned — backlog T-4; "
+          "until then use AGENT_HARDCODING_MODE=off|dryrun|block.)", file=sys.stderr)
+
+    # Teaching format (T-1): WHY + FIX so the agent can self-correct.
+    reason = (
+        "Hardcoding detected in " + file_path.split("/")[-1] + "\n"
+        "WHY: design-hardcoding guard — inline style/config constants drift from the "
+        "theme and dodge the config review path.\n"
+        "FIX: extract the values to a config/theme file and import them. "
+        "(Pattern customization via hook-config.yml is planned — backlog T-4; "
+        "until then use AGENT_HARDCODING_MODE=off|dryrun|block.)"
+    )
+    if MODE == "block":
+        emit_deny(reason)
+    else:
+        emit_advisory(reason + "\n(dryrun mode — set AGENT_HARDCODING_MODE=block to enforce)")
     sys.exit(0)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        # Fail-open: a gate bug must never break the session (protocol §3).
+        sys.exit(0)

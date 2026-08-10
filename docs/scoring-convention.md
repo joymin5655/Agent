@@ -53,6 +53,7 @@ Stop gates use (the unproven case is the blocked case).
 | `core/infra/completion-verify.py` (P3-5) | deterministic | `passed / total` over cited facts | `files`, `tests`, `assertions` |
 | `skills/verify-completion` (P3-5) | deterministic **+** semantic judge | combined | the above + a semantic axis |
 | `core/infra/supervisor-goal-audit.sh` | deterministic (static scoring of a plan) | `total / 25` (see mapping) | 5 goal dimensions |
+| `core/infra/rubric-score.py` | deterministic (project rubric) | weighted `passed / total` over checked dims | one dimension per rubric `grader_check` |
 | skill A/B harness (H-3, planned) | assertion + judge | assertions passed / total | per-skill assertions |
 | `grade.sh` (P2-2, planned) | judge | calibrated 0–1 | task-defined |
 

@@ -47,6 +47,13 @@ a2. **Remote-URL credential scan** (W-3) — a token baked into the push remote'
    ```
    Nonzero exit = the remote URL embeds a credential; strip it before pushing.
    (The pre-push hook also runs this, but checking here fails earlier.)
+a3. **Memory-pollution guard** — a memory plugin's session-context dump
+   injected into a tracked instruction file (e.g. `AGENTS.md`) must never
+   reach a commit:
+   ```bash
+   bash core/tests/memory-pollution-guard.sh
+   ```
+   FAIL = revert the injected block (`git checkout -- <file>`) before committing.
 b. **Whitelist path scan** — only files inside allowed paths should be
    staged. Allowed paths default to anything except `secrets/`,
    `.env*` (excl. `.env.example`). Override via `hook-config.yml`.
