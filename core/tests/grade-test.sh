@@ -291,16 +291,19 @@ done < <(grep -oE 'echo "[a-z0-9-]+\.sh"' "$GRADE" | sed 's/echo "//; s/"//')
 [[ $gate_in_map -eq 0 ]]; check "no-gate-battery-in-guard-map" $?
 
 echo
-echo "=== (g4) SURFACE DRIFT: the 4 hand-maintained guarded-surface definitions must agree ==="
+echo "=== (g4) SURFACE DRIFT: the 5 hand-maintained guarded-surface definitions must agree ==="
 # The enforcement surface (core/tests/, evals/, loop-write-guard.py, pre-tool-guard.sh,
-# loop-ledger.sh, hooks.json, adapter.sh, gitleaks.toml) is declared FOUR separate times:
+# loop-ledger.sh, hooks.json, adapter.sh, gitleaks.toml) is declared FIVE separate times:
 #   1. grade.sh's INTEGRITY `surface_list` (git ls-files pathspec, ~line 226)
 #   2. grade.sh's INTEGRITY `guarded_surface_re` (per-file regex, ~line 274)
 #   3. loop-write-guard.py's _guarded_dirs()
 #   4. loop-write-guard.py's _guarded_files()
-# A hand-edit to one without the other three silently reopens the L-2 tamper path the
+#   5. loop-write-guard.py's GUARDED_TOKENS — the BASH write path's copy, and the
+#      only one gating `sed -i`/redirect writes. A file present in 1-4 but absent
+#      from 5 escalates on Write/Edit yet is freely rewritable from Bash.
+# A hand-edit to one without the others silently reopens the L-2 tamper path the
 # C4/C8 fixes closed. Extract each LIVE (never hand-mirror the lists here — that would
-# just be a 5th copy to drift) and assert all 4 normalize to the same {dirs, files} sets.
+# just be another copy to drift) and assert all 5 cover the same surface.
 
 # extractor 1: grade.sh's surface_list pathspec array (the awk range spans its
 # multi-line backslash-continued literal).
@@ -328,6 +331,17 @@ for d in mod._guarded_dirs(root):
     print("DIR:" + rel(d))
 for f in sorted(mod._guarded_files(root)):
     print("FILE:" + rel(f))
+PY
+}
+# extractor 5: the BASH write path's token list, also called live.
+extract_lwg_tokens() {
+  python3 - "$HOOK" <<'PY'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("lwg", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+for t in sorted(mod.GUARDED_TOKENS):
+    print(t)
 PY
 }
 # canon_from_pathspec/canon_from_regex — normalize each source's tokens to DIR:<x> /
@@ -370,6 +384,65 @@ else
   check "surface-list-matches-loop-write-guard" 1
 fi
 
+# 5th definition: every entry of the shared surface must also appear as a Bash
+# token, or the Bash write path leaves it unguarded. Containment (not equality):
+# the token list legitimately carries two ledger-only extras that the Write/Edit
+# path reaches through its own append-only check.
+SET5="$(extract_lwg_tokens)"
+[[ -n "$SET5" ]]; check "bash-guarded-tokens-extracted" $?
+# uncovered_by_tokens <surface-set> <token-set> — prints each surface entry that
+# has no matching Bash token; empty output means full coverage. Shared by the
+# live check and its RED mutation below, so the mutation exercises the SAME
+# comparison rather than re-asserting its own edit.
+uncovered_by_tokens() {
+  local surface="$1" tokens="$2" entry tok
+  while IFS= read -r entry; do
+    [[ -z "$entry" ]] && continue
+    tok="${entry#DIR:}"; tok="${tok#FILE:}"
+    printf '%s\n' "$tokens" | grep -qxF "$tok" || printf '%s\n' "$tok"
+  done <<< "$surface"
+}
+missing_tok="$(uncovered_by_tokens "$SET1" "$SET5")"
+if [[ -z "$missing_tok" ]]; then
+  check "surface-covered-by-bash-guarded-tokens" 0
+else
+  echo "    unguarded from Bash: $(printf '%s' "$missing_tok" | tr '\n' ' ')"
+  check "surface-covered-by-bash-guarded-tokens" 1
+fi
+
+echo
+echo "=== (g4-floor) CONTENT FLOOR: a SYNCHRONIZED shrink of all copies must fail ==="
+# (g4) above only proves the copies AGREE. Dropping an entry from every copy at
+# once — the one edit that keeps them agreeing while unguarding a real scoring
+# input — would pass it. This floor names the surface that must always be there.
+# Deliberately hand-written: it is the one place a human decision belongs, and it
+# is itself inside the guarded surface (core/tests/), so a loop agent editing it
+# escalates and scores TARGET-VIOLATION.
+FLOOR="DIR:core/tests
+DIR:evals
+FILE:adapters/claude-code/adapter.sh
+FILE:core/hooks/loop-write-guard.py
+FILE:core/hooks/pre-tool-guard.sh
+FILE:core/infra/loop-ledger.sh
+FILE:gitleaks.toml
+FILE:hooks/hooks.json"
+# floor_gaps <floor> <surface> — prints each required entry the surface lacks.
+# Shared with the RED mutation below for the same reason as uncovered_by_tokens.
+floor_gaps() {
+  local floor="$1" surface="$2" entry
+  while IFS= read -r entry; do
+    [[ -z "$entry" ]] && continue
+    printf '%s\n' "$surface" | grep -qxF "$entry" || printf '%s\n' "$entry"
+  done <<< "$floor"
+}
+missing_floor="$(floor_gaps "$FLOOR" "$SET1")"
+if [[ -z "$missing_floor" ]]; then
+  check "surface-meets-content-floor" 0
+else
+  echo "    dropped from the guarded surface: $(printf '%s' "$missing_floor" | tr '\n' ' ')"
+  check "surface-meets-content-floor" 1
+fi
+
 echo
 echo "=== (g4-mutation) RED: an injected drift must be CAUGHT, not silently pass ==="
 # Prove the comparison above is sensitive, not vacuously always-equal: inject an
@@ -380,6 +453,16 @@ MUT_GRADE="$TMP_ROOT/grade-mutated.sh"
 sed "s#guarded_surface_re='\^(#guarded_surface_re='^(core/tests-drift-injected/|#" "$GRADE" > "$MUT_GRADE"
 SET2_MUT="$(extract_grade_regex "$MUT_GRADE" | canon_from_regex | sort -u)"
 [[ "$SET1" != "$SET2_MUT" ]]; check "injected-drift-detected" $?
+# Same sensitivity proof for the two new comparisons, run through the SAME
+# functions the live checks use (never a re-assertion of the edit itself):
+# drop gitleaks.toml from a scratch copy of each input and require the shared
+# comparison to REPORT that gap.
+SET5_MUT="$(printf '%s\n' "$SET5" | grep -vxF 'gitleaks.toml')"
+[[ "$(uncovered_by_tokens "$SET1" "$SET5_MUT")" == "gitleaks.toml" ]]
+check "bash-token-drop-detected-by-same-comparison" $?
+SURFACE_MUT="$(printf '%s\n' "$SET1" | grep -vxF 'FILE:gitleaks.toml')"
+[[ "$(floor_gaps "$FLOOR" "$SURFACE_MUT")" == "FILE:gitleaks.toml" ]]
+check "synchronized-shrink-detected-by-content-floor" $?
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="

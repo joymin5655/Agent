@@ -194,6 +194,26 @@ _WRITE_OPS = re.compile(
 )
 
 
+# The Bash write path's copy of the guarded surface. Relative tokens are enough:
+# the command text references paths as written. "evals" carries no trailing slash
+# so `cd evals && rm ...` still hits (C7); the .witness token is technically
+# covered by the ledger substring but is named explicitly so the guarantee
+# survives a ledger rename (C9). The two ledger entries are Bash-path-only
+# extras — the Write/Edit path reaches the ledger through its own append-only
+# check, not through this list.
+#
+# MODULE-LEVEL so grade-test.sh's (g4) drift gate can call it live: this is the
+# FIFTH hand-maintained copy of the enforcement surface (alongside grade.sh's
+# surface_list and guarded_surface_re and this module's _guarded_dirs/
+# _guarded_files), and it is the ONLY one gating Bash writes. Left out of that
+# gate, a file could be added to the other four and still be rewritable by a
+# loop agent via `sed -i`/redirect with no ask.
+GUARDED_TOKENS = ("core/tests", "evals", "core/hooks/loop-write-guard.py",
+                  "core/hooks/pre-tool-guard.sh", "adapters/claude-code/adapter.sh",
+                  "hooks/hooks.json", "core/infra/loop-ledger.sh", "gitleaks.toml",
+                  ".agent/loop/results.tsv", ".agent/loop/results.tsv.witness")
+
+
 def _bash_hits_guarded(command: str, guarded_tokens) -> bool:
     if not any(tok in command for tok in guarded_tokens):
         return False
@@ -209,15 +229,7 @@ def _decide(data: dict, root: str):
         command = tool_input.get("command", "")
         if not isinstance(command, str) or not command:
             return None
-        # relative tokens are enough: the command text references paths as written.
-        # "evals" carries no trailing slash so `cd evals && rm ...` still hits (C7);
-        # the .witness token is technically covered by the ledger substring but is
-        # named explicitly so the guarantee survives a ledger rename (C9).
-        guarded_tokens = ("core/tests", "evals", "core/hooks/loop-write-guard.py",
-                          "core/hooks/pre-tool-guard.sh", "adapters/claude-code/adapter.sh",
-                          "hooks/hooks.json", "core/infra/loop-ledger.sh", "gitleaks.toml",
-                          ".agent/loop/results.tsv", ".agent/loop/results.tsv.witness")
-        if _bash_hits_guarded(command, guarded_tokens):
+        if _bash_hits_guarded(command, GUARDED_TOKENS):
             return ("bash", ASK_BASH)
         return None
 

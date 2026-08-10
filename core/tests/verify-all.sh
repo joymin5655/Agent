@@ -19,6 +19,14 @@
 #      LOUD SKIP (a silently-skipped security scan reported as pass is exactly the
 #      false-green this repo guards against — a SKIP is not a pass, and is printed).
 #
+# SKIP contract for DISCOVERED checks: a check that exits 2 declares itself
+# INAPPLICABLE (an optional binary it needs is absent) and is tallied as skipped,
+# printed as `SKIP  <label>  (<reason>)` — never as a pass. Without this lane a
+# battery could only signal "cannot run" by exiting 0, which this runner would
+# report as PASS with its own SKIP text discarded (the runner only echoes a
+# check's output on FAIL) — a false green in exactly the place it is least
+# visible. Exits 0 and 1 keep their meanings (pass / fail).
+#
 # Design: NOT `set -e`. Every check runs even if an earlier one fails (run all,
 # report all). Each check runs in a SUBSHELL with combined output captured to a
 # temp file, so a sub-script's own set -e / trap / exit cannot kill or corrupt
@@ -149,7 +157,19 @@ while [[ $i -lt $n ]]; do
   end=$(date +%s)
   dur=$((end - start))
 
-  if [[ $rc -eq 0 ]]; then
+  if [[ $rc -eq 2 ]]; then
+    # Exit 2 = the check declared itself INAPPLICABLE (an optional binary it
+    # needs is absent). Counted as skipped and printed loudly, never as a pass:
+    # a discovered battery that cannot run must not be indistinguishable from
+    # one that ran and passed. The sentinel is the same one
+    # core/infra/gitleaks-fire-test.sh and skills/wrap already use, and it is
+    # what lets a battery guarded by an optional tool live under core/tests/
+    # (inside the guarded surface) instead of being hidden outside discovery.
+    # The check's own last output line carries the reason.
+    reason="$(tail -n 1 "$OUTFILE" 2>/dev/null | sed 's/^SKIP[: ]*//')"
+    printf 'SKIP  %s  (%s)\n' "$label" "${reason:-check declared itself inapplicable}"
+    skipped=$((skipped + 1))
+  elif [[ $rc -eq 0 ]]; then
     printf 'PASS  %s  (%ss)\n' "$label" "$dur"
     passed=$((passed + 1))
   else

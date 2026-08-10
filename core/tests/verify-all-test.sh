@@ -156,5 +156,30 @@ else
 fi
 
 echo
+echo "=== (9) DISCOVERED-CHECK SKIP LANE: exit 2 -> SKIP with reason, never PASS ==="
+# Before this lane existed, a discovered battery could only say "I cannot run"
+# by exiting 0 — which the runner printed as PASS while discarding the battery's
+# own SKIP text (output is echoed on FAIL only). A battery gated on an optional
+# binary (gitleaks) therefore reported green in CI having asserted nothing.
+# Exit 2 is the sentinel core/infra/gitleaks-fire-test.sh and /wrap already use.
+D=$(fresh_dir)
+write_pass_stub "$D/aaa-pass-test.sh"
+printf '%s\n' '#!/usr/bin/env bash' 'echo "SKIP: widget-tool not installed"' 'exit 2' > "$D/zzz-skip-test.sh"
+OUT="$(VERIFY_ALL_TESTS_DIR="$D" VERIFY_ALL_SKIP_FIXED=1 bash "$RUNNER" 2>&1)"; RC=$?
+[[ $RC -eq 0 ]]; check "discovered-skip-exit-0" $?
+printf '%s\n' "$OUT" | grep -qE '^SKIP  zzz-skip-test\.sh'; check "discovered-skip-reported-SKIP" $?
+printf '%s\n' "$OUT" | grep -qF 'widget-tool not installed'; check "discovered-skip-reason-surfaced" $?
+printf '%s\n' "$OUT" | grep -qF '1 passed, 0 failed, 1 skipped'; check "discovered-skip-counted-skipped" $?
+# the mutation this lane exists to prevent: a skipped battery must NOT read PASS.
+if printf '%s\n' "$OUT" | grep -qE '^PASS  zzz-skip-test\.sh'; then bad=1; else bad=0; fi
+[[ $bad -eq 0 ]]; check "discovered-skip-not-counted-passed" $?
+# exit 1 must still be a hard FAIL (the lane must not swallow real failures)
+D=$(fresh_dir)
+write_fail_stub "$D/zzz-fail-test.sh"
+OUT2="$(VERIFY_ALL_TESTS_DIR="$D" VERIFY_ALL_SKIP_FIXED=1 bash "$RUNNER" 2>&1)"; RC2=$?
+[[ $RC2 -eq 1 ]]; check "discovered-skip-lane-preserves-fail" $?
+printf '%s\n' "$OUT2" | grep -qE '^FAIL  zzz-fail-test\.sh'; check "discovered-skip-lane-fail-still-FAIL" $?
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]
