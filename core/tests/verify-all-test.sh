@@ -215,5 +215,39 @@ OUT2="$(VERIFY_ALL_TESTS_DIR="$D" VERIFY_ALL_SKIP_FIXED=1 bash "$RUNNER" 2>&1)";
 printf '%s\n' "$OUT2" | grep -qF '1 passed, 0 failed, 2 skipped'; check "mixed-tally-correct" $?
 
 echo
+echo "=== (12) PARTIAL SKIP IS NOT A SKIP: a battery that runs and then breaks must FAIL ==="
+# Requiring a DECLARED SKIP line was still not enough. A battery that skips one
+# SUB-PROBE ("SKIP: sqlite3 missing, skipping the breaker checks"), keeps going,
+# and then genuinely breaks with rc 2 satisfied "exit 2 + a SKIP line somewhere"
+# and was reported as an inapplicable SKIP with the run exiting 0. No adversary
+# needed — a partial-skip battery plus one bad edit. Anchoring to the FIRST line
+# does not help either, since that battery declares its sub-probe skip first.
+# The declaration must therefore be the ONLY non-empty line: real inapplicable
+# checks detect the missing binary up front and exit having done nothing else.
+D=$(fresh_dir)
+write_pass_stub "$D/aaa-pass-test.sh"
+printf '%s\n' '#!/usr/bin/env bash' \
+  'echo "SKIP: sqlite3 missing — skipping the breaker sub-probe only"' \
+  'echo "running the remaining checks..."' \
+  'if [ then' > "$D/zzz-partial-test.sh"
+OUT="$(VERIFY_ALL_TESTS_DIR="$D" VERIFY_ALL_SKIP_FIXED=1 bash "$RUNNER" 2>&1)"; RC=$?
+[[ $RC -ne 0 ]]; check "partial-skip-exit-nonzero" $?
+printf '%s\n' "$OUT" | grep -qE '^FAIL  zzz-partial-test\.sh'; check "partial-skip-reported-FAIL" $?
+if printf '%s\n' "$OUT" | grep -qE '^SKIP  zzz-partial-test\.sh'; then bad=1; else bad=0; fi
+[[ $bad -eq 0 ]]; check "partial-skip-not-counted-skipped" $?
+printf '%s\n' "$OUT" | grep -qF '1 passed, 1 failed'; check "partial-skip-tallied-failed" $?
+# The tightening must not break the shape real skip users emit: exactly one
+# non-empty SKIP line and nothing else. Both current users are this shape, and
+# a stray blank line around it must not disqualify them.
+D=$(fresh_dir)
+write_pass_stub "$D/aaa-pass-test.sh"
+printf '%s\n' '#!/usr/bin/env bash' 'echo' 'echo "SKIP: widget-tool not installed"' 'echo' 'exit 2' \
+  > "$D/zzz-clean-skip-test.sh"
+OUT="$(VERIFY_ALL_TESTS_DIR="$D" VERIFY_ALL_SKIP_FIXED=1 bash "$RUNNER" 2>&1)"; RC=$?
+[[ $RC -eq 0 ]]; check "clean-skip-still-exit-0" $?
+printf '%s\n' "$OUT" | grep -qE '^SKIP  zzz-clean-skip-test\.sh  \(widget-tool not installed\)'
+check "clean-skip-still-skipped-with-reason" $?
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]
