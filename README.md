@@ -222,7 +222,7 @@ Then:
    secret-scan config, and Git-hook wiring.
 4. *(Optional)* In a repo that already runs another hook-heavy plugin, disable agent-harness there via `/plugin` — agents stay namespaced as `agent-harness:*`, so there's no collision either way.
 
-The plugin bundles: **3 agents**, **9 skills**, the hook set, and the
+The plugin bundles: **3 agents**, **10 skills**, the hook set, and the
 `/agent-harness:project-init` command.
 See the
 [plugin installation lifecycle](docs/claude-plugin-install-lifecycle.md) for
@@ -444,7 +444,7 @@ Agent/
 ├── CHANGELOG.md
 │
 ├── agents/             # 3 agent definitions + master-registry.json
-├── skills/             # 9 skills (spec · supervise · verify-completion · wrap · brain-ingest · harness-audit · manager-audit · persona-review · harness-help)
+├── skills/             # 10 skills (spec · supervise · verify-completion · wrap · brain-ingest · harness-audit · manager-audit · persona-review · harness-help · reorg-sync)
 ├── commands/           # 1 namespaced project-init command
 ├── hooks/              # plugin hook wiring (hooks.json)
 │
