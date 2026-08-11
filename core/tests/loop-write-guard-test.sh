@@ -239,5 +239,28 @@ run_bash "rm .agent/loop/active"
 [[ -z "$OUT" ]]; check "loop-state-inert-outside-loop" $?
 
 echo
+echo "=== (t) control tokens must survive the cd-split idiom and cover the goal DB ==="
+# Round-2 review CRITICAL: path-level tokens (".agent/loop/active") missed
+# `cd .agent/loop && rm active`, which mentions neither token — the marker went
+# away with no ask and the guard was inert from then on. Matching at DIRECTORY
+# granularity catches the split. The goal DB under .agent/locks/ was unguarded
+# entirely, so `sqlite3 <db> "UPDATE ..."` rewrote the authoritative status that
+# cmd_attempt cross-checks — the other half of an end-to-end resurrection.
+mkdir -p "$ROOT/.agent/loop/state" "$ROOT/.agent/locks"
+run_bash "cd .agent/loop && rm active" AGENT_LOOP_ACTIVE=1
+is_ask; check "bash-cd-split-rm-marker-ask" $?
+run_bash "cd .agent/loop/state && jq '.status=\"active\"' m.json > m2.json" AGENT_LOOP_ACTIVE=1
+is_ask; check "bash-cd-split-state-rewrite-ask" $?
+run_bash "sqlite3 .agent/locks/goal-state.db \"UPDATE goals SET status='active'\"" AGENT_LOOP_ACTIVE=1
+is_ask; check "bash-sqlite-update-goal-db-ask" $?
+run_bash "sqlite3 .agent/locks/goal-state.db \"update goals set status='active'\"" AGENT_LOOP_ACTIVE=1
+is_ask; check "bash-sqlite-lowercase-update-ask" $?
+# reads must stay quiet — a guard that asks on inspection trains people to click through
+run_bash "sqlite3 .agent/locks/goal-state.db 'SELECT * FROM goals'" AGENT_LOOP_ACTIVE=1
+[[ -z "$OUT" ]]; check "bash-sqlite-select-allowed" $?
+run_bash "ls .agent/loop" AGENT_LOOP_ACTIVE=1
+[[ -z "$OUT" ]]; check "bash-ls-loop-dir-allowed" $?
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]

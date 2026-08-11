@@ -230,5 +230,34 @@ AFTER_ROWS="$(cd "$RESREPO" && f=.agent/loop/results.tsv; [[ -f $f ]] && echo $(
 [[ "$AFTER_ROWS" -eq "$BEFORE_ROWS" ]]; check "resurrect-wrote-no-ledger-row" $?
 
 echo
+echo "=== (j) _halt survives a COMMON-MODE storage failure ==="
+# _halt is reached because a write failed, so the other writes may be failing
+# too (disk full, read-only mount). The first version did the durable act LAST:
+# `_write_state`'s internal `die` on a failed mktemp exited the shell before the
+# active flag was dropped or any verdict printed, so nothing recorded the halt
+# and the next attempt resumed at n=1 (round-2 review CRITICAL). Simulated here
+# by failing advance-wave AND making the state dir unwritable at once.
+CMREPO="$TMP_ROOT/cmrepo"
+cp -R "$REPO" "$CMREPO"
+rm -rf "$CMREPO/.agent"
+python3 - "$CMREPO/core/infra/supervisor-goal.sh" <<'PY'
+import sys
+p = sys.argv[1]; s = open(p).read()
+i = s.index("cmd_advance_wave()"); j = s.index("{", i) + 1
+open(p, "w").write(s[:j] + "\n  return 1  # test stub: simulate a failed SQLite write\n" + s[j:])
+PY
+run_cm() { OUT="$(cd "$CMREPO" && bash "$CMREPO/core/infra/loop-run.sh" "$@" 2>&1)"; RC=$?; }
+run_cm init cmfail --target 'agents/.*' --base "$BASE_REF" --cap 3
+chmod 500 "$CMREPO/.agent/loop/state"      # mktemp inside _write_state now fails
+LOOP_RUN_GRADE_CMD='printf "harness_score: 5.0\n"' run_cm attempt cmfail --desc c1
+chmod 700 "$CMREPO/.agent/loop/state"      # restore so the assertions can read
+printf '%s\n' "$OUT" | grep -q '^LOOP: stop(error)'; check "halt-prints-stop-under-common-mode-failure" $?
+[[ ! -e "$CMREPO/.agent/loop/active" ]]; check "halt-drops-flag-under-common-mode-failure" $?
+# and the loop must NOT quietly resume once the storage condition clears
+LOOP_RUN_GRADE_CMD='printf "harness_score: 5.0\n"' run_cm attempt cmfail --desc c2
+if printf '%s\n' "$OUT" | grep -q '^LOOP: continue'; then bad=1; else bad=0; fi
+[[ $bad -eq 0 ]]; check "halt-does-not-resume-after-storage-recovers" $?
+
+echo
 echo "Results: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]

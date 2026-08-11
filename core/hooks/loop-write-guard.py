@@ -201,7 +201,13 @@ _WRITE_OPS = re.compile(
     # real shell `;` only costs a spurious ask, never a miss.
     r"\bpython[0-9.]*\b[^|&]*(open\s*\([^)]*['\"][wa]|write_text|write_bytes|"
     r"shutil\.\w+|os\.(replace|rename|remove|unlink))|"
-    r"\bperl\b[^|;&]*>|\b\w*chmod\b|\bln\b)"
+    r"\bperl\b[^|;&]*>|\b\w*chmod\b|\bln\b|"
+    # sqlite3 with a mutating statement: the supervisor goal DB under
+    # .agent/locks/ is a plain file, so `sqlite3 <db> "UPDATE ..."` rewrote the
+    # loop's authoritative status without touching any verb above (round-2 review
+    # CRITICAL — it was the second half of an end-to-end breaker resurrection).
+    # Case-insensitive only for the SQL keywords; `sqlite3` itself is lowercase.
+    r"\bsqlite3\b[^|;&]*(?i:\b(update|insert|delete|drop|alter|replace|attach|vacuum)\b))"
 )
 
 
@@ -230,7 +236,20 @@ GUARDED_TOKENS = ("core/tests", "evals", "core/hooks/loop-write-guard.py",
 # ledger entries above. Guarded because this hook is INERT without
 # .agent/loop/active, so `rm` on that marker is a one-command self-disable, and
 # .agent/loop/state/ holds the status + failure count that revive a stopped loop.
-CONTROL_TOKENS = (".agent/loop/active", ".agent/loop/state")
+#
+# Matched at DIRECTORY granularity, not on the full file paths. `cd .agent/loop
+# && rm active` contains neither ".agent/loop/active" nor ".agent/loop/state",
+# so path-level tokens missed it and the marker went away with no ask (round-2
+# review CRITICAL, reproduced end-to-end). ".agent/locks" is here for the same
+# reason: the SQLite goal DB lives there and was not guarded at all, so an
+# `sqlite3 ... UPDATE` on it rewrote the very status cmd_attempt now cross-checks.
+#
+# RESIDUAL, stated because it is not closed: this matches COMMAND TEXT, so a
+# `cd .agent/loop` in one tool call followed by a bare `rm active` in a separate
+# call cannot be seen — the second command mentions no guarded path. Command-text
+# matching cannot fix that; only a cwd-aware or filesystem-level control could.
+# The Write/Edit axis is unaffected (it resolves real paths).
+CONTROL_TOKENS = (".agent/loop", ".agent/locks")
 
 
 def _bash_hits_guarded(command: str, guarded_tokens) -> bool:

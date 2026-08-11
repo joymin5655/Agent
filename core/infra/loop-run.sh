@@ -132,10 +132,22 @@ _write_state() {
 _halt() {
   local slug="$1" best="$2" gate_fails="$3" msg="$4"
   printf 'loop-run: FATAL: %s\n' "$msg" >&2
-  bash "$SUPERVISOR_GOAL" abort "$slug" runner-error >/dev/null 2>&1 || true
-  _write_state "$slug" "$best" "$gate_fails" "aborted" || true
+  # ORDER MATTERS, and it is the reverse of the obvious one. _halt is reached
+  # because a WRITE failed, so assume every other write may fail too (disk full,
+  # read-only mount — a common-mode failure, not an independent one). Drop the
+  # active flag FIRST: it is the one durable act that actually stops the next
+  # attempt, it needs no new bytes, and it also disarms loop-write-guard's
+  # marker. The earlier version did it LAST, after `_write_state`, whose internal
+  # `die` on a failed mktemp exits the shell outright — so under exactly the
+  # storage failure that triggers the halt, the flag survived, no stop verdict
+  # was printed, nothing durable recorded the halt, and the next attempt resumed
+  # at n=1 as if nothing had happened (round-2 review CRITICAL).
   rm -f "$ACTIVE_FLAG"
   echo "LOOP: stop(error)"
+  # Best-effort from here. Each is wrapped in a subshell so a `die` inside it
+  # cannot short-circuit the ones after it, and none can undo the stop above.
+  ( bash "$SUPERVISOR_GOAL" abort "$slug" runner-error >/dev/null 2>&1 ) || true
+  ( _write_state "$slug" "$best" "$gate_fails" "aborted" >/dev/null 2>&1 ) || true
   exit 1
 }
 
