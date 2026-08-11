@@ -277,42 +277,90 @@ for _axis, _o, _n, _b in (("--old/--new", old, new, _BOUNDARY),
             "instead.\n" % (_axis, _o, _n))
         sys.exit(1)
 
-def _abuts(m, spans):
-    # True iff m starts exactly where an already-migrated literal-NEW span ends.
-    # 6th panel CRITICAL: when NEW's LAST character is itself a boundary char
-    # (`/backup (2026)`, `/srv:`, `/b!`), writing NEW flips the left boundary of
-    # whatever followed it. A path component that was NOT matchable before apply
-    # (it sat mid-path, preceded by a body char) becomes matchable on the next
-    # run — so a second --apply with identical arguments rewrote again and ate
-    # one component per pass: /data/data/x -> /backup (2026)/data/x ->
-    # /backup (2026)/backup (2026)/x. The ref is a leftover of the migration, not
-    # a fresh one, so it must be skipped. Symmetric case cannot occur: OLD and
-    # NEW are both '/'-leading, so NEW's first char never changes a preceding
-    # match's RIGHT boundary. Cost is the same documented safe miss as full
-    # containment — a genuinely fresh OLD immediately after a literal-NEW span is
-    # left alone rather than risk corruption.
-    return any(m.start() == e for _, e in spans)
+# _abuts() was folded into _in_residue() below (its `start == span end` case is
+# now the `<= e` half of one rule); see that comment for the 6th-panel history.
 
-def _contained(m, spans):
-    # True iff match m is FULLY inside a boundary-anchored literal-NEW span
-    # (already-migrated). FULL containment — not merely "starts inside" — so a longer
-    # OLD that starts at a NEW-span start but OVERRUNS it (a genuine fresh ref, e.g.
-    # OLD=/old/sub when NEW=/old spans only '/old') is NOT suppressed and still
-    # rewrites. The earlier "starts inside" test (s <= start < e) silently no-op'd
-    # EVERY ref of a promote-up reorg — NEW a boundary-prefix of OLD, /old/sub->/old —
-    # because each OLD match began at a NEW-span start (2026-07-16 workflow MAJOR).
-    return any(s <= m.start() and m.end() <= e for s, e in spans)
+def _new_spans(s):
+    # Every already-migrated literal-NEW span on the line, from BOTH axes, found
+    # with an OVERLAPPING scan. Two 7th-panel CRITICALs lived in what this
+    # replaced:
+    #
+    # CROSS-AXIS (findings 3, 5, 7, 12): live_matches used to be called per axis
+    # with only that axis's span pattern, so the path axis never saw the spans the
+    # KEY splice had just written. new_key shares NEW's last character, so when
+    # NEW ends in a boundary char, writing new_key flips the left boundary of the
+    # component right after it — the exact flip _abuts exists to catch, arriving
+    # through the other axis. A 2nd --apply then ate a live path reference.
+    #
+    # SELF-SIMILAR NEW (finding 10): finditer returns NON-overlapping matches, so
+    # for NEW='/b (x)/b (x)' in '/b (x)/b (x)/b (x)/o/y' it reported only the span
+    # at 0, missing the one at 6 whose end is exactly where '/o' starts — so the
+    # residue guard did not fire and each --apply ate one component. Scanning
+    # through a zero-width lookahead yields every START, overlapping included; the
+    # consumed text is exactly the literal (the _LEFT/_BOUNDARY parts are
+    # zero-width), so the end is start + len(literal).
+    spans = []
+    for pat, lit in ((new_span_pat, new), (new_key_span_pat, new_key)):
+        for m in re.finditer("(?=" + pat.pattern + ")", s):
+            spans.append((m.start(), m.start() + len(lit)))
+    return spans
 
-def live_matches(pat, span_pat, s):
+def _in_residue(m, spans):
+    # True iff m is MIGRATION RESIDUE rather than a live reference: it starts
+    # anywhere inside a literal-NEW span, or exactly where one ends.
+    #
+    # This used to be two weaker tests. FULL containment was required (not merely
+    # "starts inside") because the "starts inside" form silently no-op'd every ref
+    # of a PROMOTE-UP reorg — NEW a boundary-prefix of OLD, /old/sub -> /old —
+    # where each OLD match begins at a NEW-span start (2026-07-16 workflow MAJOR).
+    # That constraint is GONE: promote-up is now refused outright at startup, so
+    # NEW can never be a boundary-prefix of OLD and that case cannot arise.
+    #
+    # Dropping it closes 7th-panel CRITICAL 9, where an OLD match started inside a
+    # NEW span and OVERRAN it, so neither test fired: /old/sub -> '/B(1)/old'
+    # rewrote '/B(1)/old/sub/sub/f' again on every pass, eating one component each
+    # time (/B(1)/B(1)/old/sub/f, /B(1)/B(1)/B(1)/old/f, ...). Anything starting
+    # inside text this tool just wrote is by construction part of that write.
+    #
+    # `<= e` (rather than `< e`) folds in the former _abuts case — a match
+    # starting exactly where a NEW span ends. That is the boundary flip that
+    # appears when NEW's last character is itself a boundary char
+    # (`/backup (2026)`, `/srv:`): writing NEW makes the FOLLOWING component
+    # matchable although it was not before, so a re-apply would eat it.
+    #
+    # Cost is the documented safe MISS, unchanged in kind: a genuinely fresh OLD
+    # sitting immediately after (or inside) literal NEW text is left alone and
+    # shows up in the dry-run, rather than being rewritten into corruption.
+    return any(s <= m.start() <= e for s, e in spans)
+
+def _ctx_manufactured(m, spans, ctx_len):
+    # True iff the left CONTEXT this match depends on overlaps text --apply just
+    # wrote. 7th panel family C (findings 4, 6, 8, 13): the key axis only matches
+    # immediately after `claude/projects/`, but that gate is evaluated on the
+    # POST-apply text — so when NEW itself contains `claude/projects`, the path
+    # rewrite MANUFACTURES the context and the 2nd --apply performs a key rewrite
+    # that had no live reference before it ran. `/old/-old` with
+    # NEW=/n/claude/projects became `/n/claude/projects/-old`, and the next pass
+    # rewrote the inert `-old` component into `-n-claude-projects`.
+    #
+    # The residue rule above cannot see this: the key match starts one character
+    # PAST the NEW span (the '/' separates them), so it is neither inside nor
+    # abutting. What is compromised is the LOOKBEHIND, not the match — hence the
+    # separate test on the context window [start - ctx_len, start).
+    a, b = m.start() - ctx_len, m.start()
+    return any(a < e and s < b for s, e in spans)
+
+def live_matches(pat, s, ctx_len=0):
     # The pat matches --apply will ACTUALLY rewrite: every match not contained in an
     # already-migrated literal-NEW span. This is the SINGLE SOURCE OF TRUTH that both
     # the dry-run report and --apply consume, so the reported per-class count equals
     # the substitutions performed exactly — no report/apply divergence (2026-07-16
     # workflow: the old report path used a bare .search that neither counted per-match
     # nor modelled the span guard, diverging from apply in both directions).
-    spans = [(m.start(), m.end()) for m in span_pat.finditer(s)]
+    spans = _new_spans(s)
     return [m for m in pat.finditer(s)
-            if not _contained(m, spans) and not _abuts(m, spans)]
+            if not _in_residue(m, spans)
+            and not (ctx_len and _ctx_manufactured(m, spans, ctx_len))]
 
 def splice(s, repls):
     # Positional splice (5th panel MAJOR): rewrite BOTH axes' live_matches in one
@@ -399,8 +447,8 @@ for dirpath, dirnames, filenames in os.walk(root):
         # refs contributes N, and a ref the span guard skips contributes 0.
         for i, ln in enumerate(text.splitlines(keepends=True), 1):
             disp = ln.rstrip("\n").strip()[:120]
-            kmatch = live_matches(key_pat, new_key_span_pat, ln) if KEY_CTX in ln else []
-            pmatch = live_matches(path_pat, new_span_pat, ln)
+            kmatch = live_matches(key_pat, ln, len(KEY_CTX)) if KEY_CTX in ln else []
+            pmatch = live_matches(path_pat, ln)
             if kmatch:
                 pmatch = drop_overlaps(kmatch, pmatch)
             if kmatch:

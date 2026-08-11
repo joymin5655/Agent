@@ -570,5 +570,57 @@ bash "$TOOL" --old '/a.b' --new '/a' --root "$T24" --apply >/dev/null 2>&1
 rm -rf "$T24"
 
 echo
+echo "=== §20 7th panel: re-apply is a NO-OP for every shape the panel broke ==="
+# Families B and C. Ten of the thirteen findings were one contract violation
+# wearing different clothes — a 2nd --apply with identical arguments rewrote
+# again, eating a path component per pass. Asserted as a TABLE rather than as ten
+# hand-written cases, because the failure was never in one exotic input: it was
+# that "the tool does not touch what it already wrote" had three separate holes
+# (cross-axis spans, non-overlapping span scan, manufactured left context).
+#
+# Each row asserts BOTH halves of the contract: the file is byte-identical after
+# the 2nd apply, AND the 2nd dry-run reports 0 references. Byte-identity alone
+# would pass a tool that reports work it does not do (report/apply divergence,
+# a defect this suite has caught before).
+idem_case() {  # idem_case <label> <old> <new> <content>
+  local label="$1" o="$2" n="$3" content="$4"
+  local D; D="$(mktemp -d)"
+  printf '%b' "$content" > "$D/f.txt"
+  bash "$TOOL" --old "$o" --new "$n" --root "$D" --apply >/dev/null 2>&1
+  local first; first="$(cat "$D/f.txt")"
+  bash "$TOOL" --old "$o" --new "$n" --root "$D" --apply >/dev/null 2>&1
+  [[ "$first" == "$(cat "$D/f.txt")" ]]; check "panel7-idempotent[$label]" $?
+  local rep; rep="$(bash "$TOOL" --old "$o" --new "$n" --root "$D" 2>&1)"
+  printf '%s' "$rep" | grep -qE 'summary: 0 reference'
+  check "panel7-second-report-is-zero[$label]" $?
+  rm -rf "$D"
+}
+# family B — cross-axis spans, overrun, self-similar NEW
+idem_case "cross-axis-key-flips-path" /old/x '/backup (2026)' \
+  'k: ~/.claude/projects/-old-x/old/x\n'
+idem_case "cross-axis-with-extra-ref" /old/x '/backup (2026)' \
+  'k: ~/.claude/projects/-old-x/old/x\nmore /old/x/y\n'
+idem_case "old-overruns-new-span" /old/sub '/B(1)/old' '/old/sub/sub/sub/f\n'
+idem_case "self-similar-new" /o '/b (x)/b (x)' '/b (x)/o/o/y\n'
+# family C — NEW manufactures the key axis's `claude/projects/` left context
+idem_case "new-manufactures-key-ctx" /old '/n/claude/projects' '/old/-old\n'
+idem_case "manufactured-ctx-two-lines" /x '/claude/projects' \
+  'memkey ~/.claude/projects/-x/memory\npath /x/-x/f\n'
+idem_case "manufactured-ctx-short" /a '/q/claude/projects' '/a/-a\n'
+# controls: ordinary moves must still be idempotent (a fix that suppresses
+# everything would pass every row above and be useless)
+idem_case "plain-rename-both-axes" /old /new \
+  'x /old/f\ny ~/.claude/projects/-old/memory\n'
+idem_case "colon-bearing-destination" /srv:cache /srv2 'gitdir: /srv:cache/.git\n'
+# ...and the FIRST apply must actually have done the work, or "idempotent" is
+# just "does nothing". Pinned separately so over-suppression cannot hide here.
+T25="$(mktemp -d)"
+printf 'x /old/f\ny ~/.claude/projects/-old/memory\n' > "$T25/f.txt"
+bash "$TOOL" --old /old --new /new --root "$T25" --apply >/dev/null 2>&1
+grep -qF '/new/f' "$T25/f.txt"; check "panel7-control-path-actually-rewrote" $?
+grep -qF 'projects/-new/memory' "$T25/f.txt"; check "panel7-control-key-actually-rewrote" $?
+rm -rf "$T25"
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]
