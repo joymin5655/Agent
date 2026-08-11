@@ -524,5 +524,51 @@ bash "$TOOL" --old /old/sub --new /old/ --root "$T22" >/dev/null 2>&1; [[ $? -ne
 rm -rf "$T22"
 
 echo
+echo "=== §19 7th panel: promote-up refusal must use the MATCHER's boundary set, not '/' ==="
+# The guard was a shell glob (`$OLD == $NEW/*`) that knew only '/', while the
+# matcher accepts 19 boundary characters. Every non-'/' boundary therefore walked
+# past the refusal and hit the exact corruption it exists to prevent: one path
+# component eaten per --apply, unbounded. The panel reproduced it on all 18.
+# Enumerated here rather than spot-checked, because a spot check is what let the
+# class survive two review rounds.
+for b in ':' ' ' ',' ';' '=' '|' '<' '>' '(' ')' '{' '}' '[' ']' '"' "'" '`' '/'; do
+  TB="$(mktemp -d)"
+  printf 'x /a%sb%sb%sb\n' "$b" "$b" "$b" > "$TB/f.txt"
+  out="$(bash "$TOOL" --old "/a${b}b" --new /a --root "$TB" --apply 2>&1)"; rc=$?
+  if [[ $rc -ne 0 ]] && printf '%s' "$out" | grep -q 'refusing promote-up'; then ok=0; else ok=1; fi
+  check "panel7-promote-up-refused-across-boundary[$b]" $ok
+  rm -rf "$TB"
+done
+# ... and the refusal must not over-fire on the moves a real reorg actually makes
+T23="$(mktemp -d)"
+printf 'x /old/sub/f\n' > "$T23/f.txt"
+bash "$TOOL" --old /old/sub --new /dest --root "$T23" --apply >/dev/null 2>&1
+check "panel7-unrelated-destination-still-allowed" $?
+grep -qF '/dest/f' "$T23/f.txt"; check "panel7-unrelated-destination-rewrote" $?
+printf 'y /old/sub/f\n' > "$T23/g.txt"
+bash "$TOOL" --old /old/sub --new /old/sub2 --root "$T23" --apply >/dev/null 2>&1
+check "panel7-sibling-rename-still-allowed" $?
+grep -qF '/old/sub2/f' "$T23/g.txt"; check "panel7-sibling-rename-rewrote" $?
+rm -rf "$T23"
+# The refusal also runs on the KEY axis, but that arm is currently UNREACHABLE:
+# enc() folds only '/', '.' and '_' — all to '-' — and '-' is not a boundary on
+# either axis, so no input makes the key arm fire without the path arm firing
+# first (enumerated over every separator in U+0020..U+02FF). It is kept as
+# defense in depth, and deliberately NOT asserted as coverage. What IS asserted
+# is the reachable neighbour: '.' is not a boundary, so /a.b -> /a is an ordinary
+# rename on both axes, and it must rewrite and then be idempotent — the property
+# a wrongly-widened refusal or a wrongly-widened boundary would each break.
+T24="$(mktemp -d)"
+printf 'k ~/.claude/projects/-a-b/memory\np /a.b/f\n' > "$T24/f.txt"
+bash "$TOOL" --old '/a.b' --new '/a' --root "$T24" --apply >/dev/null 2>&1
+check "panel7-dot-separated-rename-allowed" $?
+grep -qF 'claude/projects/-a/memory' "$T24/f.txt"; check "panel7-dot-rename-key-rewritten" $?
+grep -qF '/a/f' "$T24/f.txt"; check "panel7-dot-rename-path-rewritten" $?
+BEFORE24="$(cat "$T24/f.txt")"
+bash "$TOOL" --old '/a.b' --new '/a' --root "$T24" --apply >/dev/null 2>&1
+[[ "$BEFORE24" == "$(cat "$T24/f.txt")" ]]; check "panel7-dot-rename-idempotent" $?
+rm -rf "$T24"
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]

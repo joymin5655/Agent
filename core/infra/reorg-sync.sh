@@ -113,10 +113,14 @@ fi
 # (/old/sub/sub/file -> /old/sub/file -> /old/file), which is data corruption.
 # A real drive reorg moves children individually (/old/sub/a -> /dest/a); run
 # one sweep per child instead.
-if [[ "$OLD" == "$NEW"/* ]]; then
-  echo "reorg-sync: refusing promote-up (--old is --new plus trailing components): a migrated ref and a fresh ref become byte-identical, so re-apply corrupts data (no stateless rewrite can be idempotent). Sweep each moved child individually instead." >&2
-  exit 1
-fi
+# The promote-up TEST itself lives in the Python below, next to the boundary
+# regexes it must agree with. It used to be a bash `[[ "$OLD" == "$NEW"/* ]]`
+# glob, which hard-coded '/' as the only component separator while the matcher
+# treated 19 characters as boundaries (7th panel CRITICAL) — so `--old /srv:cache
+# --new /srv` walked straight past the guard and ate one component per apply,
+# exactly the corruption this refusal exists to prevent. Re-spelling the boundary
+# set here in shell would just re-create that drift; the check is derived from
+# _BOUNDARY / _KEY_R instead.
 # Line-separator guard lives in the Python below (5th panel MAJOR): bash's
 # $'\n' test missed the other separators Python's splitlines() honors
 # (\r \v \f \x1c-\x1e \x85 U+2028 U+2029), any of which would let --apply write
@@ -236,6 +240,42 @@ KEY_CTX = "claude/projects/"
 _KEY_L = r"(?<=%s)" % re.escape(KEY_CTX)
 key_pat = re.compile(_KEY_L + re.escape(old_key) + _KEY_R)
 new_key_span_pat = re.compile(_KEY_L + re.escape(new_key) + _KEY_R)
+
+# PROMOTE-UP REFUSAL (5th panel CRITICAL, user decision 2026-08-10; reworked
+# after the 7th panel). When OLD is NEW plus one or more trailing components, a
+# migrated ref (/old/sub/file -> /old/file) and a FRESH /old/sub ref become
+# byte-identical at identical syntactic positions, so NO stateless text transform
+# can be idempotent: each re-apply eats one component (/old/sub/sub/f ->
+# /old/sub/f -> /old/f). That is data corruption, so the input is refused.
+#
+# The test is DERIVED from the same boundary regexes the matcher uses, not
+# re-spelled. The previous version was a shell glob (`$OLD == $NEW/*`) that knew
+# only '/', while the matcher accepts 19 boundary characters — so every non-'/'
+# boundary bypassed the refusal and corrupted on re-apply (7th panel CRITICAL,
+# reproduced on all 18 of them, e.g. `--old /srv:cache --new /srv`). Anchoring
+# both to the same definition is the point: a future boundary change moves the
+# guard with it instead of silently reopening the hole.
+#
+# Both axes are checked, but be precise about what that buys: with the CURRENT
+# enc() (which folds only '/', '.' and '_', all to '-', and '-' is not a boundary
+# character on either axis) the key arm cannot fire unless the path arm already
+# has — verified by enumerating every separator in U+0020..U+02FF. It is kept as
+# defense in depth for the case that moves first: a boundary set that gains '-',
+# or an enc() that maps some character INTO a boundary, would make the key axis
+# independently reachable, and the failure mode there is silent data corruption.
+# It is NOT counted as coverage; no test asserts a key-only refusal, because none
+# is constructible today.
+for _axis, _o, _n, _b in (("--old/--new", old, new, _BOUNDARY),
+                          ("the encoded native-memory key for --old/--new",
+                           old_key, new_key, _KEY_R)):
+    if re.match(re.escape(_n) + _b, _o):
+        sys.stderr.write(
+            "reorg-sync: refusing promote-up on %s: '%s' is '%s' plus trailing "
+            "components (separated by a path boundary). A migrated ref and a fresh "
+            "ref become byte-identical, so re-apply corrupts data — no stateless "
+            "rewrite can be idempotent. Sweep each moved child individually "
+            "instead.\n" % (_axis, _o, _n))
+        sys.exit(1)
 
 def _abuts(m, spans):
     # True iff m starts exactly where an already-migrated literal-NEW span ends.
