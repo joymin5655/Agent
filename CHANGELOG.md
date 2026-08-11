@@ -640,6 +640,106 @@ inheriting the session top model four days after #101 merged).
   prompt-only-enforcement gap. Survey-only change, no behavior.
 
 ### Added
+- **`/reorg-sync` — orphaned path-reference sweeper (W-2).** After a tree moves (drive
+  reorg, folder rename), absolute-path references left in metadata break silently. New
+  `core/infra/reorg-sync.sh` takes an old and a new path prefix (repo-generic — nothing
+  hardcoded) and sweeps five reference classes under a target tree: `shebang` interpreter
+  lines, git worktree `gitdir:` pointers, `crontab` command paths, doc/config `anchor`s,
+  and the path-keyed `native-memory-key` dir (rewritten with the harness's `/ . _` → `-`
+  encoding). Dry-run report by default (`CLASS  file:line  text` rows + per-class
+  summary); `--apply` does a literal replacement **anchored at a path-component
+  boundary**, with atomic per-file writes (temp + rename, permissions preserved) and
+  per-file failure reporting (exit 1, sweep continues). Binary files, symlinks, and
+  the `.git` object store are skipped, while a `.git` worktree *file* is swept; a
+  bare `/`, empty, or newline-carrying prefix is refused. New skill
+  `skills/reorg-sync/SKILL.md` wraps it report-then-confirm and notes that
+  out-of-tree targets (`~/.claude` memory dir, the live crontab) are surfaced, not
+  auto-mutated. **Adversarial re-review (2026-07-15, 3 lanes — the original review
+  lane died on session limits and was correctly treated as false-clean):** fixed
+  2 CRITICAL (unbounded substring replacement corrupting sibling paths/keys, e.g.
+  `/old/prefixed-thing`, `-…-Agent2`; non-idempotent compounding when NEW extends
+  OLD, `/proj`→`/proj_v2`→`_v2_v2`), 2 MAJOR (non-atomic writes with no error
+  handling → partial-apply + raw traceback; lossy encoded-key collisions with
+  ordinary kebab text — key layer now confined to `claude/projects` context lines),
+  plus newline-prefix rejection and `@keyword` cron classification; a battery
+  mutation pass (5 mutations) exposed the dotted-path encoding gap now covered by a
+  fixture; a second mutation round exposed two more (underscore-in-OLD silent key
+  miss; `/`-continuation compounding where nonce protection is the sole guard) —
+  both fixtured. **Round 3 (2026-07-16)** — the security lane's re-review found the
+  boundary blocklist was ASCII-only, so CJK and punctuation siblings still bled
+  (live on this drive's Korean top-level folders, e.g. `/x/논문` corrupting
+  `/x/논문자료`): replaced the blocklist with a **Unicode-aware whitelist** boundary
+  (`/`, line/string end, whitespace, or an explicit delimiter — everything else,
+  any-script word char or `. - + @ ~ %`, is a continuation) and made the encoded-key
+  boundary Unicode `\w`-based. Battery `core/tests/reorg-sync-test.sh` grew 27 → **72
+  checks** (sibling
+  path/kebab/sibling-key decoys byte-for-byte untouched, NEW-extends-OLD
+  convergence (both `_` and `/` continuations), dotted/underscore-key encoding,
+  CJK + punctuation sibling protection, delimiter- and space-terminated real-ref
+  rewrite, unwritable-target reporting, exec-bit preservation, newline guard);
+  auto-discovered by `verify-all.sh`. **Rounds 4–6 (2026-07-16, adversarial
+  workflow panels):** panel 2 caught the NUL-nonce mask corrupting a nested sibling
+  and a lossy key-layer normalization — nonce retired for a positional
+  **protected-span guard**, key layer made exact-only; panel 3 caught
+  NEW-extends-OLD compounding through the guard and key+path co-resident
+  undercounting; panel 4 (19 agents, 11 CONFIRMED collapsing to 3 root defects,
+  independently confirmed by live-manual byte-level probes) caught the guard's
+  "starts-inside" test no-op'ing 100% of promote-up reorgs (NEW a boundary-prefix
+  of OLD, `/old/sub`→`/old` — report said `anchor=1`, apply rewrote 0) plus
+  report/apply divergence in both directions (N same-line refs counted 1;
+  span-guard safe-misses counted as hits). Fixed by **full-containment** span
+  testing and a single shared per-occurrence match set (`live_matches`) that both
+  the dry-run report and `--apply` consume — counts now equal substitutions by
+  construction. Battery 72 → **94 checks**. **Round 7 (2026-08-10, 5th panel's 9
+  confirmed defects, all live-reproduced):** promote-up (OLD under NEW,
+  `/old/sub`→`/old`) is now **refused at the CLI** (user decision 2026-08-10,
+  superseding panel 3's "make it rewrite": after one apply a migrated ref and a
+  fresh ref are byte-identical, so NO stateless rewrite can be idempotent — the
+  panel-4 full-containment fix made re-apply eat one path component per pass);
+  key+path rewrites on one line now **splice at original-line positions** (the
+  sequential re.sub let a `new_key` ending in `)`/`:` flip a following path ref's
+  left boundary — apply did more than the report said); relative `--old`/`--new`
+  refused (a slash-less OLD equals its own encoded key — double-matched both
+  axes); the line-separator guard moved into Python and now rejects **every
+  `splitlines()` separator** (`\r \v \f \x1c-\x1e \x85 U+2028 U+2029` — a `\r`
+  NEW previously injected lines and compounded 15→21→33 bytes per apply); the
+  left boundary became a **whitelist** like the right (an NFD combining mark —
+  the macOS filename normal form — passed the old `[\w./~+@%-]` blocklist and let
+  OLD tail-match `/data/caré/old/x`), keeping `!`/`#` as the shebang/comment
+  sigils; atomic-write temp names are now `mkstemp`-random (the fixed
+  `<file>.reorg-sync-tmp` name destroyed a real file bearing that name); FIFOs/
+  sockets/devices are skipped via `S_ISREG` (an in-tree FIFO hung the sweep
+  forever). Two hazards are **documented residuals** instead of fixes (decision
+  2026-08-10): whitespace-as-boundary sibling bleed (incl. U+00A0/U+3000 names —
+  removing the whitespace boundary would undetect every `see /old/x`-shaped ref)
+  and the non-injective `enc()` key collision (`/x/10_Reference` vs
+  `/x/10-Reference` share one key — a harness-transform property, not the
+  sweeper's); both are dry-run-surfaced and now spelled out in a SKILL.md
+  "Documented residuals" section (the "never corrupts" claim is retired).
+  Battery 94 → **117 checks** (§16 rewritten: promote-up refusal + sibling-rename
+  still allowed; new §17: nine per-defect regression pins incl. an NFD positive
+  control, tmp-collision survival, FIFO no-hang with watchdog, residual
+  surfacing, and SKILL-documentation greps). **Round 8 (2026-08-10, 6th panel —
+  incomplete run: 17 of 20 agents died on a usage limit, so its findings were
+  main-loop-reproduced rather than trusted, and every candidate came back
+  `unverified`, never "refuted"):** one **CRITICAL** and three MINOR, all
+  reproduced and fixed. CRITICAL — when NEW's own LAST character is a boundary
+  char (`/backup (2026)`, `/srv:`, `/b!`), writing NEW flipped the left boundary
+  of whatever followed it, so a component that was mid-path (unmatchable) before
+  apply became matchable on the next run: a second `--apply` with identical
+  arguments rewrote again and ate one path component per pass
+  (`/data/data/x` → `/backup (2026)/data/x` → `/backup (2026)/backup (2026)/x`).
+  An OLD match starting exactly where a literal-NEW span *ends* is now treated as
+  migration residue (`_abuts`), the mirror of the existing full-containment rule.
+  MINORs — bare `!`/`#` dropped from the left whitelist (they let OLD tail-match
+  inside legal names like `/proj/dir!/old/x`) in favour of a fixed-width `(?<=#!)`
+  lookbehind that keeps shebang detection; the key axis is now anchored directly
+  after `claude/projects/` (an unrelated path component equal to the encoded key,
+  `/backup/-old-x/f`, was being rewritten into a nonexistent path); trailing
+  slashes on `--old`/`--new` are normalized up front (`--old /a/ --new /a` was
+  wrongly refused as promote-up because bash's `*` matches empty, and a trailing
+  slash also broke boundary matching outright). Cross-axis overlaps are dropped
+  before counting and splicing. Battery 117 → **135 checks** (§18).
 - **Evidence-first inventory — kill the ghost-specialist deadlock at its root
   (`rules/policy/evidence-first.md` + `core/hooks/agent-inventory.py`).** A gate that
   demands a specialist with no in-runtime provider deadlocks the session: the gate blocks
