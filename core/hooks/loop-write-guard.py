@@ -142,6 +142,17 @@ ASK_LEDGER = (
     "FIX: only append new rows (or use core/infra/loop-ledger.sh append). A human "
     "must approve any rewrite."
 )
+ASK_CONTROL = (
+    "Editing the loop's own control state (.agent/loop/active or "
+    ".agent/loop/state/) during an active loop session.\n"
+    "WHY: this guard is INERT unless .agent/loop/active exists, so deleting that "
+    "marker turns the guard off entirely — the controlled party must not hold the "
+    "off switch. The state files are the same hazard one step in: they carry the "
+    "status and the consecutive-failure count, so editing them resurrects a loop "
+    "the circuit breaker already stopped.\n"
+    "FIX: let core/infra/loop-run.sh own these files. Stopping or resuming a loop "
+    "is a human decision made outside it (loop-run.sh stop / init)."
+)
 ASK_BASH = (
     "Bash command writes into the grader/verifier surface during an active loop.\n"
     "WHY: L-2 — a shell write (redirect, sed -i, cp/mv, rm, git checkout/apply, a "
@@ -190,7 +201,13 @@ _WRITE_OPS = re.compile(
     # real shell `;` only costs a spurious ask, never a miss.
     r"\bpython[0-9.]*\b[^|&]*(open\s*\([^)]*['\"][wa]|write_text|write_bytes|"
     r"shutil\.\w+|os\.(replace|rename|remove|unlink))|"
-    r"\bperl\b[^|;&]*>|\b\w*chmod\b|\bln\b)"
+    r"\bperl\b[^|;&]*>|\b\w*chmod\b|\bln\b|"
+    # sqlite3 with a mutating statement: the supervisor goal DB under
+    # .agent/locks/ is a plain file, so `sqlite3 <db> "UPDATE ..."` rewrote the
+    # loop's authoritative status without touching any verb above (round-2 review
+    # CRITICAL — it was the second half of an end-to-end breaker resurrection).
+    # Case-insensitive only for the SQL keywords; `sqlite3` itself is lowercase.
+    r"\bsqlite3\b[^|;&]*(?i:\b(update|insert|delete|drop|alter|replace|attach|vacuum)\b))"
 )
 
 
@@ -213,6 +230,65 @@ GUARDED_TOKENS = ("core/tests", "evals", "core/hooks/loop-write-guard.py",
                   "hooks/hooks.json", "core/infra/loop-ledger.sh", "gitleaks.toml",
                   ".agent/loop/results.tsv", ".agent/loop/results.tsv.witness")
 
+# The loop's own control state, kept SEPARATE from GUARDED_TOKENS so a Bash hit
+# can carry the reason that actually explains it. NOT part of the scoring surface
+# the five definitions must agree on — it is untracked runtime state, like the
+# ledger entries above. Guarded because this hook is INERT without
+# .agent/loop/active, so `rm` on that marker is a one-command self-disable, and
+# .agent/loop/state/ holds the status + failure count that revive a stopped loop.
+#
+# Matched at DIRECTORY granularity, not on the full file paths. `cd .agent/loop
+# && rm active` contains neither ".agent/loop/active" nor ".agent/loop/state",
+# so path-level tokens missed it and the marker went away with no ask (round-2
+# review CRITICAL, reproduced end-to-end). ".agent/locks" is here for the same
+# reason: the SQLite goal DB lives there and was not guarded at all, so an
+# `sqlite3 ... UPDATE` on it rewrote the very status cmd_attempt now cross-checks.
+#
+# Directory granularity alone was still not enough: the split can be taken one
+# level higher. `cd .agent && rm loop/active` and `cd .agent && cd loop && rm
+# active` contain neither ".agent/loop" nor ".agent/locks". So the token set
+# bottoms out at ".agent" — the runtime root — which is the shallowest path any
+# cd-chain to this state must still name SOMEWHERE in the command.
+#
+# Cost of that breadth: a write command mentioning an unrelated ".agent" (say
+# `> src/user.agent.ts`) draws a spurious ask. That is the right trade here —
+# it is an ask, not a deny, and it only applies while a loop is running.
+#
+# RESIDUALS. The TOKEN set is now complete for cd-chains, but the Bash axis has
+# two other sides and BOTH remain open — do not read the above as "single-command
+# removal of the marker is closed", because it is not (round-2 final review
+# enumerated these, each confirmed to get no ask AND actually remove the file):
+#
+#   VERB LIST. _WRITE_OPS decides what counts as a write, and it misses plenty:
+#   `find .agent -name active -delete` (only -exec rm is matched), `unlink`,
+#   `shred -u`, `git clean -fdx .agent` (ideal here — .agent is untracked),
+#   `perl -e 'unlink ...'` (the perl branch demands a literal `>`),
+#   `pathlib.Path(...).unlink()` (os.remove is matched, this is not), and
+#   node/ruby/php, which are absent entirely.
+#
+#   LITERAL SUBSTRING MATCHING. A glob or a split literal defeats the token:
+#   `rm .age*/loop/active`, `rm .a*/loop/active`, `rm -rf .ag?nt/loop`,
+#   `rm ".age""nt/loop/active"`, `rm .$'a'gent/loop/active`.
+#
+#   CROSS-CALL STATE. `cd .agent/loop` in one tool call then a bare `rm active`
+#   in the NEXT names no guarded path at all.
+#
+# Those three are NOT the same kind of gap, and conflating them would flatter the
+# guard. The first two are "this matcher does not see it" — reachable inside a
+# SINGLE command, and closable here (a longer verb list; matching the shell's
+# post-expansion view rather than the literal text). The third is "no matcher
+# CAN see it": the command carries no guarded path, so only a cwd-aware or
+# filesystem-level control would catch it.
+#
+# All of the above are open on main identically — none is introduced here — but
+# they matter more for .agent/ than for core/tests/: those have grade.sh's
+# git-diff INTEGRITY phase as a downstream backstop, while .agent/ is untracked,
+# so a missed Bash write to loop state is caught by nothing later.
+#
+# The Write/Edit axis is unaffected by all three — it resolves real paths, and
+# was verified against `..` traversal and symlinks into .agent/loop/.
+CONTROL_TOKENS = (".agent",)
+
 
 def _bash_hits_guarded(command: str, guarded_tokens) -> bool:
     if not any(tok in command for tok in guarded_tokens):
@@ -229,6 +305,10 @@ def _decide(data: dict, root: str):
         command = tool_input.get("command", "")
         if not isinstance(command, str) or not command:
             return None
+        # control-state tokens first: `rm .agent/loop/active` deserves the reason
+        # that explains it disarms the guard, not the generic grader-surface text.
+        if _bash_hits_guarded(command, CONTROL_TOKENS):
+            return ("control", ASK_CONTROL)
         if _bash_hits_guarded(command, GUARDED_TOKENS):
             return ("bash", ASK_BASH)
         return None
@@ -252,6 +332,14 @@ def _decide(data: dict, root: str):
         # only the sanctioned writer (loop-ledger.sh) may touch the witness — a
         # hand-written witness would notarize a tampered ledger.
         return ("ledger", ASK_LEDGER)
+
+    # loop control state, handled like the ledger above (its own branch, not part
+    # of the scoring-surface sets the drift gate holds equal): the marker that
+    # arms this hook and the state files that hold status / failure counts.
+    if target == _real(os.path.join(root, ".agent", "loop", "active")):
+        return ("control", ASK_CONTROL)
+    if _within(target, _real(os.path.join(root, ".agent", "loop", "state"))):
+        return ("control", ASK_CONTROL)
 
     if target in _guarded_files(root):
         return ("surface", ASK_SURFACE)
