@@ -32,7 +32,7 @@ bash "${CLAUDE_PLUGIN_ROOT:-.}/core/infra/reorg-sync.sh" \
 ```
 
 Read the `CLASS  file:line  <text>` rows and the per-class summary with the user.
-The tool refuses five input shapes outright, each a proven corruption/injection
+The tool refuses six input shapes outright, each a proven corruption/injection
 hazard:
 
 - a bare `/` or empty `--old` (would match everything);
@@ -70,7 +70,17 @@ hazard:
   promote-up, this family is checked on the **path axis only**: a key-axis
   straddle is unconstructible (the key matcher is pinned by its fixed-width
   `claude/projects/` lookbehind), so key-suffix-overlapping moves like
-  `/x/a_b` → `/a/b` (keys `-x-a-b` / `-a-b`) sweep normally.
+  `/x/a_b` → `/a/b` (keys `-x-a-b` / `-a-b`) sweep normally;
+- a **cross-axis overlap** — `--old` contains `claude/projects/` followed by a
+  boundary-terminated prefix of the *encoded* `--new` key
+  (`/Users/j/.claude/projects/-a-b` → `/a/b`, whose key is `-a-b`; 10th
+  panel): the key rewrite writes that key immediately after the same literal
+  context, so one `--apply` manufactures a byte-exact fresh `--old` path
+  reference and the next pass destroys the migrated key. This is the one
+  constructible cross-axis straddle direction (key-on-key and key-on-path
+  provably cannot occur). In practice it means the memory-dir tree itself
+  (`~/.claude/projects/...`) cannot be swept as `--old` when the destination's
+  key collides this way — move it under a different name first.
 
 Note the report echoes matched lines — review it before pasting into shared
 channels/CI logs, since a line that references `<old>` can also carry unrelated
@@ -118,7 +128,15 @@ is rewritten**: a `-`-continuation key like `-old-prefix-sub` is left untouched,
 since after the fold it is indistinguishable from a dash/dot/underscore *sibling*
 (`enc('/old/prefix/sub')` == `enc('/old/prefix-sub')`). Skipping a deeper key is a
 safe miss (the orphaned dir simply stays, as before this tool) rather than risk
-corrupting an unrelated project's key. See **Documented residuals** below for the
+corrupting an unrelated project's key. One more accepted key-class miss (9th
+panel, generalized by the 10th): when `--new`'s literal text can overlay
+`claude/projects/` — a destination under `~/.claude` (`/Users/u/.claude/…`),
+`--new /projects`, or a NEW containing the context outright — every key
+context window overlaps a NEW-shaped span and the key class reports an honest
+**0** for that move (required: a path rewrite really can manufacture partial
+context, and rewriting behind manufactured context corrupted an inert
+component). The path axis still sweeps; confirm key refs with the post-apply
+`grep`. See **Documented residuals** below for the
 two limits this design accepts.
 
 **Coverage caveat (report honestly):** only references that end at a boundary

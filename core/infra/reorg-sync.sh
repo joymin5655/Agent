@@ -383,6 +383,48 @@ for _axis, _o, _n, _b, _mirror in (
                 % (_axis, _o, _n[:_k], _n, _OVERLAP_TAIL))
             sys.exit(1)
 
+# CROSS-AXIS STRADDLE REFUSAL (10th panel CRITICAL family). The four straddle
+# directions: path-on-path and the containment shapes are the mirror family
+# above; key-on-key and key-on-path are UNCONSTRUCTIBLE (key-on-key: the
+# straddle remainder would have to be a suffix of 'claude/projects/', and no
+# '-'-leading key is; key-on-path: a key literal contains no '/', a path NEW
+# starts with one, so they share no non-empty suffix/prefix). That leaves
+# PATH-on-KEY: the key splice writes new_key immediately after a literal
+# 'claude/projects/', so when OLD itself contains 'claude/projects/' followed
+# by a prefix of new_key, pass 1's key rewrite manufactures a byte-exact fresh
+# path-OLD reference — OLD='/Users/j/.claude/projects/-a-b', NEW='/a/b'
+# (new_key='-a-b') key-migrates a deep memory key and pass 2's PATH arm eats
+# the result ('/a/b/memory'). A re-match must start before the window (every
+# in-window alignment fails _LEFT: window chars are letters and '/', neither
+# whitelisted), so it fully covers 'claude/projects/' — scanning OLD's CTX
+# occurrences is complete. Hazard shapes per occurrence, with _t = the rest of
+# OLD after the CTX: _t a non-empty prefix of new_key ending OLD (re-match
+# ends inside/at the span end; needs new_key's next char to be a boundary, or
+# nothing left — the `$` alternative); or _t containing all of new_key with a
+# boundary-led remainder (re-match overruns into pre-existing text, whose
+# first char the original key match's _KEY_R already forces to a boundary).
+# _t == '' is provably safe: the re-match would end at the span start and
+# new_key's leading '-' fails _BOUNDARY. Same undecidability, same answer.
+_ci = old.find(KEY_CTX)
+while _ci != -1:
+    _t = old[_ci + len(KEY_CTX):]
+    _hazard = False
+    if _t and new_key.startswith(_t):
+        _hazard = _t == new_key or bool(re.match(_BOUNDARY, new_key[len(_t):]))
+    elif _t.startswith(new_key):
+        _hazard = bool(re.match(_BOUNDARY, _t[len(new_key):]))
+    if _hazard:
+        sys.stderr.write(
+            "reorg-sync: refusing cross-axis overlap on --old/--new: '%s' "
+            "contains '%s' followed by (a boundary-terminated prefix of) the "
+            "encoded --new key '%s'. The key rewrite writes that key "
+            "immediately after the same literal context, so one --apply "
+            "manufactures a byte-exact fresh --old path reference and the "
+            "next pass destroys the migrated key.%s" % (old, KEY_CTX, new_key,
+                                                        _OVERLAP_TAIL))
+        sys.exit(1)
+    _ci = old.find(KEY_CTX, _ci + 1)
+
 # _abuts() was folded into _in_residue() below (its `start == span end` case is
 # now the `<= e` half of one rule); see that comment for the 6th-panel history.
 
@@ -454,16 +496,24 @@ def _ctx_manufactured(m, spans, ctx_len):
     # abutting. What is compromised is the LOOKBEHIND, not the match — hence the
     # separate test on the context window [start - ctx_len, start).
     #
-    # Documented cost (9th panel MINOR, pinned in §21): when NEW itself occurs
-    # as boundary-terminated literal text INSIDE `claude/projects/` — today
-    # that is exactly NEW='/projects' — every genuine context window overlaps
-    # a NEW-shaped span and the key class reports 0 for that move. This
-    # suppression cannot be narrowed to "spans the tool actually wrote":
-    # partial manufacture is real (--old /x --new /projects turns a
-    # pre-existing 'claude' + a path rewrite + '/' into a context that was
-    # never there), so any span overlapping the window is disqualifying. Same
-    # safe-miss direction as every other span cost: the key ref stays
-    # unmigrated and visible to a post-apply grep, never corrupted.
+    # Documented cost (9th panel MINOR; GENERALIZED by the 10th, which
+    # falsified the previous "exactly NEW='/projects'" enumeration here — the
+    # second such enumeration this file has had to retract, see the key-arm
+    # reachability note above): the key class reports 0 for a move whenever a
+    # literal-NEW span can OVERLAP the 16-char context window, i.e. whenever
+    # NEW's text can overlay 'claude/projects/' — a suffix of NEW equal to a
+    # prefix of it (NEW='/Users/u/.claude', NEW='/x/claude'), NEW a
+    # boundary-followed substring of it (NEW='/projects'), or NEW containing
+    # it outright (family C). Realistic destinations under ~/.claude are in
+    # this family, so the cost is not exotic. It cannot be narrowed to "spans
+    # the tool actually wrote": partial manufacture is real (--old /x
+    # --new /projects turns a pre-existing 'claude' + a path rewrite + '/'
+    # into a context that was never there; likewise a rewrite ending in
+    # '.claude' before a pre-existing '/projects/'), so any span overlapping
+    # the window is disqualifying. Same safe-miss direction as every other
+    # span cost: the key ref stays unmigrated and visible to a post-apply
+    # grep, never corrupted — pinned in §21/§23 for both the substring and the
+    # suffix-overlap spellings.
     a, b = m.start() - ctx_len, m.start()
     return any(a < e and s < b for s, e in spans)
 

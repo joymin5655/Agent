@@ -773,5 +773,54 @@ grep -qF 'projects/-old-x/memory' "$T31/f.md"; check "panel9-ctx-overlap-key-nev
 rm -rf "$T31"
 
 echo
+echo "=== (23) 10th adversarial panel: cross-axis straddle refusal + ctx-overlap generalization ==="
+# Two root causes:
+#   (a) CRITICAL — PATH-on-KEY straddle, the one constructible cross-axis
+#       direction: when OLD contains 'claude/projects/' followed by a prefix
+#       of the ENCODED new key, pass 1's key splice manufactures a byte-exact
+#       fresh path-OLD and pass 2's path arm destroys the migrated key
+#       (key-on-key and key-on-path are unconstructible; path-on-path is the
+#       §21/§22 mirror family).
+#   (b) MAJOR — the §22 "exactly NEW='/projects'" claim was falsified: ANY NEW
+#       whose literal text can overlay 'claude/projects/' (suffix-overlap like
+#       '/Users/u/.claude', substring like '/projects', containment like
+#       family C) zeroes the key class — same required safe-miss, now
+#       documented as the overlap family and pinned in both spellings.
+# (a) the four panel repro shapes + the minimal variant
+refuse_case "cross-axis-full-key" '/Users/joymin/.claude/projects/-a-b' /a/b \
+  "refusing cross-axis overlap"
+refuse_case "cross-axis-minimal" '/xclaude/projects/-a-b' /a/b \
+  "refusing cross-axis overlap"
+refuse_case "cross-axis-key-prefix" '/var/claude/projects/-n' '/n (2)' \
+  "refusing cross-axis overlap"
+refuse_case "cross-axis-colon-key" '/srv/claude/projects/-p' '/p:v2' \
+  "refusing cross-axis overlap"
+# ...and the refused input's tree survives --apply byte-identical
+T32="$(mktemp -d)"
+printf 'MEMDIR=/Users/joymin/.claude/projects/-Users-joymin--claude-projects--a-b/memory\n' > "$T32/f"
+bash "$TOOL" --old /Users/joymin/.claude/projects/-a-b --new /a/b --root "$T32" --apply >/dev/null 2>&1
+[[ $? -eq 1 && "$(cat "$T32/f")" == 'MEMDIR=/Users/joymin/.claude/projects/-Users-joymin--claude-projects--a-b/memory' ]]
+check "panel10-cross-axis-apply-leaves-tree-untouched" $?
+rm -rf "$T32"
+# non-hazard neighbours stay accepted: CTX without its trailing slash at OLD's
+# end (re-match ends before the span, no overlap), and a mid-OLD tail that
+# diverges from new_key
+accept_case "ctx-no-trailing-slash" /data/claude/projects /n
+accept_case "ctx-tail-diverges" '/q/claude/projects/-zz' /a/b
+# (b) ctx-overlap family: suffix-overlap spelling (NEW under ~/.claude) —
+# honest key-0, path still sweeps, key bytes never corrupted
+T33="$(mktemp -d)"
+printf 'MEM=/Users/joymin/.claude/projects/-old-harness/memory\np /old/harness/f\n' > "$T33/f.md"
+REP="$(bash "$TOOL" --old /old/harness --new /Users/joymin/.claude --root "$T33" 2>&1)"
+printf '%s' "$REP" | grep -q 'native-memory-key=0'; check "panel10-ctx-suffix-overlap-key-honest-zero" $?
+printf '%s' "$REP" | grep -q 'anchor=1'; check "panel10-ctx-suffix-overlap-path-still-swept" $?
+bash "$TOOL" --old /old/harness --new /Users/joymin/.claude --root "$T33" --apply >/dev/null 2>&1
+grep -qF 'projects/-old-harness/memory' "$T33/f.md"
+check "panel10-ctx-suffix-overlap-key-never-corrupted" $?
+grep -qF '/Users/joymin/.claude/f' "$T33/f.md"
+check "panel10-ctx-suffix-overlap-path-rewrote" $?
+rm -rf "$T33"
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]
