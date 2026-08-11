@@ -807,6 +807,14 @@ rm -rf "$T32"
 # diverges from new_key
 accept_case "ctx-no-trailing-slash" /data/claude/projects /n
 accept_case "ctx-tail-diverges" '/q/claude/projects/-zz' /a/b
+# 11th panel MINOR: the cross-axis arm is gated on old_key != new_key — the
+# hazard's first move is the key splice WRITING new_key, and identical keys
+# never write. Identity (incl. trailing-slash and boundary-char spellings) and
+# enc()-collision renames of context-bearing paths must all be accepted.
+accept_case "cross-axis-identity" '/:/claude/projects/-' '/:/claude/projects/-'
+accept_case "cross-axis-identity-trailing-slash" '/:/claude/projects/-/' '/:/claude/projects/-'
+accept_case "cross-axis-identity-spaced" '/data (old)/claude/projects/-data' '/data (old)/claude/projects/-data'
+accept_case "cross-axis-enc-collision" '/x/claude/projects/-a_b' '/x/claude/projects/-a-b'
 # (b) ctx-overlap family: suffix-overlap spelling (NEW under ~/.claude) —
 # honest key-0, path still sweeps, key bytes never corrupted
 T33="$(mktemp -d)"

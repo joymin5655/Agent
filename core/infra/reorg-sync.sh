@@ -405,7 +405,16 @@ for _axis, _o, _n, _b, _mirror in (
 # first char the original key match's _KEY_R already forces to a boundary).
 # _t == '' is provably safe: the re-match would end at the span start and
 # new_key's leading '-' fails _BOUNDARY. Same undecidability, same answer.
-_ci = old.find(KEY_CTX)
+#
+# Gated on old_key != new_key, NOT old != new (11th panel MINOR: the first
+# spelling of this arm sat outside the per-axis loop and had no identity skip
+# at all, refusing --old X --new X whenever X contained the context): the
+# hazard's first move is the KEY SPLICE WRITING new_key, and when the keys
+# encode identically every key match sits inside its own literal-new_key span
+# and nothing is ever written — no write, no manufactured path-OLD. That
+# covers identity as a special case and also keeps enc()-collision renames of
+# context-bearing paths sweepable.
+_ci = old.find(KEY_CTX) if old_key != new_key else -1
 while _ci != -1:
     _t = old[_ci + len(KEY_CTX):]
     _hazard = False
