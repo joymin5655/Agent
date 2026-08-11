@@ -254,14 +254,39 @@ GUARDED_TOKENS = ("core/tests", "evals", "core/hooks/loop-write-guard.py",
 # `> src/user.agent.ts`) draws a spurious ask. That is the right trade here —
 # it is an ask, not a deny, and it only applies while a loop is running.
 #
-# RESIDUAL, stated because it is NOT closed: this matches COMMAND TEXT, so a
-# `cd .agent/loop` in one tool call followed by a bare `rm active` in the NEXT
-# call cannot be seen — the second command names no guarded path at all. No
-# regex closes that; it needs a cwd-aware or filesystem-level control. This
-# matters more here than for core/tests: those have grade.sh's git-diff
-# INTEGRITY phase as a downstream backstop, whereas .agent/ is untracked, so a
-# missed Bash write to loop state is caught by nothing later (round-2 review).
-# The Write/Edit axis is unaffected — it resolves real paths.
+# RESIDUALS. The TOKEN set is now complete for cd-chains, but the Bash axis has
+# two other sides and BOTH remain open — do not read the above as "single-command
+# removal of the marker is closed", because it is not (round-2 final review
+# enumerated these, each confirmed to get no ask AND actually remove the file):
+#
+#   VERB LIST. _WRITE_OPS decides what counts as a write, and it misses plenty:
+#   `find .agent -name active -delete` (only -exec rm is matched), `unlink`,
+#   `shred -u`, `git clean -fdx .agent` (ideal here — .agent is untracked),
+#   `perl -e 'unlink ...'` (the perl branch demands a literal `>`),
+#   `pathlib.Path(...).unlink()` (os.remove is matched, this is not), and
+#   node/ruby/php, which are absent entirely.
+#
+#   LITERAL SUBSTRING MATCHING. A glob or a split literal defeats the token:
+#   `rm .age*/loop/active`, `rm .a*/loop/active`, `rm -rf .ag?nt/loop`,
+#   `rm ".age""nt/loop/active"`, `rm .$'a'gent/loop/active`.
+#
+#   CROSS-CALL STATE. `cd .agent/loop` in one tool call then a bare `rm active`
+#   in the NEXT names no guarded path at all.
+#
+# Those three are NOT the same kind of gap, and conflating them would flatter the
+# guard. The first two are "this matcher does not see it" — reachable inside a
+# SINGLE command, and closable here (a longer verb list; matching the shell's
+# post-expansion view rather than the literal text). The third is "no matcher
+# CAN see it": the command carries no guarded path, so only a cwd-aware or
+# filesystem-level control would catch it.
+#
+# All of the above are open on main identically — none is introduced here — but
+# they matter more for .agent/ than for core/tests/: those have grade.sh's
+# git-diff INTEGRITY phase as a downstream backstop, while .agent/ is untracked,
+# so a missed Bash write to loop state is caught by nothing later.
+#
+# The Write/Edit axis is unaffected by all three — it resolves real paths, and
+# was verified against `..` traversal and symlinks into .agent/loop/.
 CONTROL_TOKENS = (".agent",)
 
 
