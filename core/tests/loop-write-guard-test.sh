@@ -249,6 +249,15 @@ echo "=== (t) control tokens must survive the cd-split idiom and cover the goal 
 mkdir -p "$ROOT/.agent/loop/state" "$ROOT/.agent/locks"
 run_bash "cd .agent/loop && rm active" AGENT_LOOP_ACTIVE=1
 is_ask; check "bash-cd-split-rm-marker-ask" $?
+# the split can be taken a level HIGHER, which directory-granularity tokens still
+# missed — hence the token set bottoms out at ".agent", the shallowest path any
+# cd-chain to this state must still name somewhere in the command.
+run_bash "cd .agent && rm loop/active" AGENT_LOOP_ACTIVE=1
+is_ask; check "bash-cd-split-one-level-higher-ask" $?
+run_bash "cd .agent && cd loop && rm active" AGENT_LOOP_ACTIVE=1
+is_ask; check "bash-cd-chain-rm-marker-ask" $?
+run_bash "(cd .agent/loop && rm -f active)" AGENT_LOOP_ACTIVE=1
+is_ask; check "bash-subshell-cd-rm-marker-ask" $?
 run_bash "cd .agent/loop/state && jq '.status=\"active\"' m.json > m2.json" AGENT_LOOP_ACTIVE=1
 is_ask; check "bash-cd-split-state-rewrite-ask" $?
 run_bash "sqlite3 .agent/locks/goal-state.db \"UPDATE goals SET status='active'\"" AGENT_LOOP_ACTIVE=1
@@ -260,6 +269,14 @@ run_bash "sqlite3 .agent/locks/goal-state.db 'SELECT * FROM goals'" AGENT_LOOP_A
 [[ -z "$OUT" ]]; check "bash-sqlite-select-allowed" $?
 run_bash "ls .agent/loop" AGENT_LOOP_ACTIVE=1
 [[ -z "$OUT" ]]; check "bash-ls-loop-dir-allowed" $?
+# The ".agent" token is broad on purpose, so pin that it does not turn into
+# background noise: a guard that asks on ordinary work gets clicked through.
+run_bash "npm run build --state=production" AGENT_LOOP_ACTIVE=1
+[[ -z "$OUT" ]]; check "bash-unrelated-state-flag-allowed" $?
+run_bash "grep -r active src/" AGENT_LOOP_ACTIVE=1
+[[ -z "$OUT" ]]; check "bash-grep-active-allowed" $?
+run_bash "echo hi > docs/note.md" AGENT_LOOP_ACTIVE=1
+[[ -z "$OUT" ]]; check "bash-unrelated-write-allowed" $?
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="

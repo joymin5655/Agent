@@ -244,12 +244,25 @@ GUARDED_TOKENS = ("core/tests", "evals", "core/hooks/loop-write-guard.py",
 # reason: the SQLite goal DB lives there and was not guarded at all, so an
 # `sqlite3 ... UPDATE` on it rewrote the very status cmd_attempt now cross-checks.
 #
-# RESIDUAL, stated because it is not closed: this matches COMMAND TEXT, so a
-# `cd .agent/loop` in one tool call followed by a bare `rm active` in a separate
-# call cannot be seen — the second command mentions no guarded path. Command-text
-# matching cannot fix that; only a cwd-aware or filesystem-level control could.
-# The Write/Edit axis is unaffected (it resolves real paths).
-CONTROL_TOKENS = (".agent/loop", ".agent/locks")
+# Directory granularity alone was still not enough: the split can be taken one
+# level higher. `cd .agent && rm loop/active` and `cd .agent && cd loop && rm
+# active` contain neither ".agent/loop" nor ".agent/locks". So the token set
+# bottoms out at ".agent" — the runtime root — which is the shallowest path any
+# cd-chain to this state must still name SOMEWHERE in the command.
+#
+# Cost of that breadth: a write command mentioning an unrelated ".agent" (say
+# `> src/user.agent.ts`) draws a spurious ask. That is the right trade here —
+# it is an ask, not a deny, and it only applies while a loop is running.
+#
+# RESIDUAL, stated because it is NOT closed: this matches COMMAND TEXT, so a
+# `cd .agent/loop` in one tool call followed by a bare `rm active` in the NEXT
+# call cannot be seen — the second command names no guarded path at all. No
+# regex closes that; it needs a cwd-aware or filesystem-level control. This
+# matters more here than for core/tests: those have grade.sh's git-diff
+# INTEGRITY phase as a downstream backstop, whereas .agent/ is untracked, so a
+# missed Bash write to loop state is caught by nothing later (round-2 review).
+# The Write/Edit axis is unaffected — it resolves real paths.
+CONTROL_TOKENS = (".agent",)
 
 
 def _bash_hits_guarded(command: str, guarded_tokens) -> bool:
