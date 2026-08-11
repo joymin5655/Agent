@@ -259,26 +259,45 @@ echo "=== (13) NO BATTERY MAY SKIP VIA exit 0: that is reported as PASS ==="
 # having asserted nothing. Static tripwire, because the dynamic path only shows
 # up on a host that happens to be missing the optional binary — which is
 # precisely where nobody is looking.
+# skip_declared_with_exit_0 <file> — 0 if the file DECLARES a skip and exits 0
+# near it. Both print verbs (grade.sh already prints SKIP-shaped lines with
+# printf, so an echo-only regex had a live blind spot) and a 5-line window so the
+# exit need not be adjacent. SKIP must start the printed string: matching the
+# word anywhere flagged telemetry-digest-test.sh, whose section HEADER describes
+# the skip behaviour of the script it tests. A tripwire that cries wolf on prose
+# is one people learn to ignore, which is worse than not having it.
+skip_declared_with_exit_0() {
+  grep -A5 -E '(echo|printf)[[:space:]]+"?SKIP([[:space:]]|:|\\n|")' "$1" 2>/dev/null \
+    | grep -qE 'exit[[:space:]]+0'
+}
 REAL_TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 offenders=""
 for f in "$REAL_TESTS_DIR"/*.sh; do
   case "$(basename "$f")" in verify-all-test.sh) continue ;; esac
-  # `echo "SKIP..."; exit 0` on one line, or an `exit 0` within 2 lines of a
-  # SKIP echo — both are the same mistake written two ways.
-  if grep -nE 'echo[[:space:]]+"?SKIP' "$f" >/dev/null 2>&1; then
-    if grep -A2 -E 'echo[[:space:]]+"?SKIP' "$f" | grep -qE 'exit[[:space:]]+0'; then
-      offenders="$offenders $(basename "$f")"
-    fi
-  fi
+  if skip_declared_with_exit_0 "$f"; then offenders="$offenders $(basename "$f")"; fi
 done
 [[ -z "$offenders" ]]; check "no-battery-skips-with-exit-0" $?
 [[ -n "$offenders" ]] && echo "    offenders:$offenders — a SKIP must exit 2, or the runner reports it as PASS"
-# and the tripwire must actually detect the shape (guard against a regex that
-# silently matches nothing, which would make the check above vacuously green)
+# The tripwire must actually FIRE, or the check above is vacuously green. Both
+# print verbs and a non-adjacent exit are exercised, because those are the two
+# ways the first version was blind.
 D=$(fresh_dir)
-printf '%s\n' '#!/usr/bin/env bash' 'echo "SKIP: widget not installed"' 'exit 0' > "$D/bad-skip-test.sh"
-if grep -A2 -E 'echo[[:space:]]+"?SKIP' "$D/bad-skip-test.sh" | grep -qE 'exit[[:space:]]+0'; then det=0; else det=1; fi
-[[ $det -eq 0 ]]; check "tripwire-detects-the-exit-0-skip-shape" $?
+printf '%s\n' '#!/usr/bin/env bash' 'echo "SKIP: widget not installed"' 'exit 0' > "$D/e.sh"
+skip_declared_with_exit_0 "$D/e.sh"; check "tripwire-detects-echo-shape" $?
+printf '%s\n' '#!/usr/bin/env bash' 'printf "SKIP: widget not installed\n"' 'exit 0' > "$D/p.sh"
+skip_declared_with_exit_0 "$D/p.sh"; check "tripwire-detects-printf-shape" $?
+printf '%s\n' '#!/usr/bin/env bash' 'echo "SKIP: widget missing"' '# a comment' 'x=1' 'y=2' 'exit 0' > "$D/g.sh"
+skip_declared_with_exit_0 "$D/g.sh"; check "tripwire-detects-non-adjacent-exit" $?
+# ...and must NOT fire on a correct battery, or it is noise that gets ignored
+printf '%s\n' '#!/usr/bin/env bash' 'echo "SKIP: widget not installed"' 'exit 2' > "$D/ok.sh"
+if skip_declared_with_exit_0 "$D/ok.sh"; then fp=1; else fp=0; fi
+[[ $fp -eq 0 ]]; check "tripwire-no-false-positive-on-exit-2" $?
+# KNOWN BLIND SPOTS, named so this is not mistaken for proof: it is a source
+# regex, so `exit "$rc"` where rc happens to be 0, a SKIP declared in a function
+# whose exit lives elsewhere, or a skip further than 5 lines from its exit all
+# slip past. It raises the cost of the mistake; it does not make it impossible.
+# The contract in verify-all.sh's header is the actual rule.
+echo "    (heuristic: exit-code indirection and function-separated skips are NOT detected)"
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
