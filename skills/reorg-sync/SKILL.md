@@ -32,7 +32,7 @@ bash "${CLAUDE_PLUGIN_ROOT:-.}/core/infra/reorg-sync.sh" \
 ```
 
 Read the `CLASS  file:line  <text>` rows and the per-class summary with the user.
-The tool refuses four input shapes outright, each a proven corruption/injection
+The tool refuses five input shapes outright, each a proven corruption/injection
 hazard:
 
 - a bare `/` or empty `--old` (would match everything);
@@ -46,7 +46,23 @@ hazard:
   stateless rewrite can be idempotent — a re-run eats one path component per
   pass, which is data corruption. A real reorg moves children individually; run
   one sweep per moved child instead. (Decision 2026-08-10, superseding the
-  earlier "make promote-up rewrite" direction.)
+  earlier "make promote-up rewrite" direction.) The refusal is **per axis**: the
+  encoded-key forms of OLD/NEW are checked too, and because `enc()` preserves
+  characters like `:` and space, a move can be a promote-up on the *key* axis
+  alone (`/a.b:c` → `/a/b` gives keys `-a-b:c` / `-a-b`) — refused with a
+  key-axis message. Identity (`--old X --new X`, including trailing-slash
+  spellings) is **not** a promote-up: it is accepted and reports an honest 0, as
+  does the key axis of a rename that changes only `/ . _` (whose keys encode
+  identically);
+- a **suffix-overlap** ("demote") move — a proper suffix of `--old` equals a
+  boundary-terminated prefix of `--new` (`/srv:/app` → `/app`, `/a/b` → `/b`,
+  partial: `/a/b` → `/b/c`): the mirror of promote-up. After one apply,
+  pre-existing text ending in OLD's leading remainder followed by the written
+  NEW is byte-identical to a fresh OLD ref, so each re-apply eats one *leading*
+  component per pass (8th panel, reproduced on every boundary character). Sweep
+  with a more specific `--old`, or move through an intermediate name sharing no
+  boundary-anchored affix with either side. (`/proj` → `/proj/inner` is *not*
+  this shape — extends-moves stay supported via the protected-span guard.)
 
 Note the report echoes matched lines — review it before pasting into shared
 channels/CI logs, since a line that references `<old>` can also carry unrelated
@@ -114,9 +130,12 @@ the swept tree) and the live user crontab is a system resource — this skill re
 - Idempotent: a second `--apply` run with the same prefixes finds nothing to change,
   including every shape where NEW contains OLD — as a prefix (`/proj` → `/proj_v2`,
   `/proj` → `/proj/inner`) OR after a delimiter (`/a` → `/a:/a`). Enforced by a
-  **protected-span guard**: apply computes the boundary-anchored literal-NEW spans
-  positionally on the buffer and refuses to rewrite any OLD *fully contained* in one
-  (already-migrated text). No text is mutated during the scan, so an adjacent
+  **protected-span guard**: apply computes the literal-NEW spans positionally on
+  the buffer (right-boundary-anchored only — a *written* span's left neighbour
+  is whatever the splice left there, so requiring a left boundary missed the
+  second of two adjacent rewrites and the tool re-ate its own output; 8th panel)
+  and refuses to rewrite any OLD that *starts inside* one (already-migrated
+  text). No text is mutated during the scan, so an adjacent
   component's boundary is never disturbed — the flaw that sank an earlier NUL-nonce
   mask (which corrupted a nested sibling) and a leading-only negative lookahead
   (which missed the copy of OLD that NEW reintroduces after a delimiter,
@@ -125,13 +144,14 @@ the swept tree) and the live user crontab is a system resource — this skill re
   migration residue: when NEW's own last character is a boundary char
   (`/backup (2026)`, `/srv:`), writing it flips the left boundary of whatever
   followed, so without that rule a re-apply ate one path component per pass. The
-  one direction NO
-  guard can make idempotent — promote-up, OLD under NEW — is refused at the CLI
-  instead (see step 1): full containment made it rewrite, and the 5th panel proved
-  that corrupts data on re-apply (one component eaten per pass). The remaining
+  two directions NO guard can make idempotent — promote-up (OLD under NEW) and
+  suffix-overlap (a proper suffix of OLD = a boundary-terminated prefix of NEW)
+  — are refused at the CLI instead (see step 1); the 5th and 8th panels proved
+  each corrupts data on re-apply (one component eaten per pass, trailing or
+  leading respectively). The remaining
   cost is a deliberate safe miss: a *fresh* OLD ref that coincidentally sits
-  inside a literal-NEW-shaped span is treated as migrated and left alone — never
-  corrupted. Confirm with `grep -rF '<old>'` after apply.
+  inside or immediately after literal-NEW-shaped text is treated as migrated and
+  left alone — never corrupted. Confirm with `grep -rF '<old>'` after apply.
 - Report fidelity: the dry-run report and `--apply` consume one shared match set
   (per-occurrence, span-guard applied), so the per-class counts equal the
   substitutions `--apply` performs exactly — in both directions. N same-class refs

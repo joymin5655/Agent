@@ -112,7 +112,13 @@ fi
 # transform can be idempotent — a re-run eats one path component per pass
 # (/old/sub/sub/file -> /old/sub/file -> /old/file), which is data corruption.
 # A real drive reorg moves children individually (/old/sub/a -> /dest/a); run
-# one sweep per child instead.
+# one sweep per child instead. The MIRROR shape is refused for the same reason
+# (8th panel CRITICAL): when a proper suffix of OLD is a boundary-terminated
+# prefix of NEW (/srv:/app -> /app, /a/b -> /b/c), pre-existing text ending in
+# OLD's leading remainder followed by a written NEW is byte-identical to a
+# fresh OLD ref, and each re-apply eats one LEADING component instead.
+# Identity (--old X --new X) is NOT a promote-up (zero trailing components) and
+# is accepted as a no-op sweep reporting 0.
 # The promote-up TEST itself lives in the Python below, next to the boundary
 # regexes it must agree with. It used to be a bash `[[ "$OLD" == "$NEW"/* ]]`
 # glob, which hard-coded '/' as the only component separator while the matcher
@@ -208,7 +214,22 @@ path_pat = re.compile(_LEFT + re.escape(old) + _BOUNDARY)
 # disturbed, and EVERY embedded OLD (prefix or post-delimiter) is covered. The cost
 # is the same documented safe MISS of a fresh ref that coincidentally sits inside a
 # literal-NEW-shaped span — never corruption.
-new_span_pat = re.compile(_LEFT + re.escape(new) + _BOUNDARY)
+#
+# The span pattern deliberately has NO _LEFT requirement (8th panel CRITICAL):
+# a WRITTEN span's left neighbour is whatever the splice left there. When two
+# OLD matches were textually adjacent (possible exactly when OLD ends in a
+# boundary char — that is what let the second match pass _LEFT), the first
+# splice puts NEW's LAST character on the second span's left, and when that is
+# not a boundary char (almost every path ends in a letter/digit) a left-bounded
+# rescan no longer recognizes the second span — so the OLD embedded in the NEW
+# this tool itself wrote re-matched, eating text on every --apply. The RIGHT
+# lookahead stays: a written NEW is always followed by the boundary the OLD
+# match's _BOUNDARY lookahead verified (splices never consume it), so it prunes
+# only spans nothing was written into ('/app' inside a fresh '/apple'). Cost of
+# the missing left bound, unchanged in kind: more text counts as span, so a
+# fresh OLD ref sitting inside/behind ANY literal-NEW text (boundary-led or
+# not) is now a documented safe MISS instead of a rewrite.
+new_span_pat = re.compile(re.escape(new) + _BOUNDARY)
 # The native-memory key is enc(cwd) with '/', '.', '_' ALL folded to '-'. That
 # fold is lossy: a deeper key (enc('/old/p/sub') = '-old-p-sub') and a
 # dash/dot/underscore SIBLING (enc('/old/p-sub') = the same '-old-p-sub') are
@@ -226,7 +247,14 @@ new_span_pat = re.compile(_LEFT + re.escape(new) + _BOUNDARY)
 # The Unicode-\w-aware left whitelist blocks a longer key that merely ends with
 # old_key. Idempotency uses the same protected-span guard as the path layer
 # (new_key_span_pat), so a new_key that embeds old_key after a surviving delimiter
-# cannot compound either.
+# cannot compound either. Unlike the path span pattern, the KEY span pattern
+# KEEPS its left anchor: a written key span always sits immediately after
+# `claude/projects/` (that is the only place the key splice fires), and key
+# matches cannot be textually adjacent (_KEY_R requires a boundary after
+# old_key, but a following key match would have to start with the letter 'c' of
+# its own context) — so the adjacency flip that forced the path span pattern to
+# drop _LEFT is not constructible here, and keeping the anchor avoids treating
+# every '-a-b'-shaped word in prose as a protected span.
 # The key match is ANCHORED to the consumer context (6th panel MINOR): the
 # native-memory dir is always spelled `…claude/projects/<encoded-key>/…`, so the
 # key literal must sit immediately after `claude/projects/`. The earlier form
@@ -256,18 +284,30 @@ new_key_span_pat = re.compile(_KEY_L + re.escape(new_key) + _KEY_R)
 # both to the same definition is the point: a future boundary change moves the
 # guard with it instead of silently reopening the hole.
 #
-# Both axes are checked, but be precise about what that buys: with the CURRENT
-# enc() (which folds only '/', '.' and '_', all to '-', and '-' is not a boundary
-# character on either axis) the key arm cannot fire unless the path arm already
-# has — verified by enumerating every separator in U+0020..U+02FF. It is kept as
-# defense in depth for the case that moves first: a boundary set that gains '-',
-# or an enc() that maps some character INTO a boundary, would make the key axis
-# independently reachable, and the failure mode there is silent data corruption.
-# It is NOT counted as coverage; no test asserts a key-only refusal, because none
-# is constructible today.
+# Both arms require _o != _n first (8th panel MAJOR + MINOR family): the
+# boundary regexes both carry a `$` alternative, so with a zero-length remainder
+# `re.match(escape(_n) + _b, _o)` fires on IDENTITY — "'X' is 'X' plus trailing
+# components", a self-refuting message. On the path axis that wrongly refused
+# --old X --new X (contract 6b: identity is a no-op sweep, not a promote-up).
+# On the KEY axis it was worse: enc() folds '/', '.', '_' all to '-', so any
+# rename that changes ONLY those characters (/x/10_Reference -> /x/10-Reference)
+# has old_key == new_key and was refused OUTRIGHT — the tool could not sweep a
+# plain sibling rename at all. With the identity arm gone, both cases fall
+# through to the sweep, where every match sits inside its own literal-NEW span
+# and reports an honest 0 on that axis.
+#
+# The key arm IS independently reachable (8th panel disproved the previous
+# enumeration claim here): enc() folds only '/', '.', '_', so a boundary char
+# that enc() PRESERVES (':', ' ', '(', ...) can make old_key extend new_key while
+# the path arm sees no prefix at all — `--old '/a.b:c' --new /a/b` gives
+# old_key='-a-b:c', new_key='-a-b', a genuine key-axis promote-up (its key sweep
+# would be non-idempotent) that only this arm catches. A key-only refusal test
+# is now constructible and asserted in the battery.
 for _axis, _o, _n, _b in (("--old/--new", old, new, _BOUNDARY),
                           ("the encoded native-memory key for --old/--new",
                            old_key, new_key, _KEY_R)):
+    if _o == _n:
+        continue
     if re.match(re.escape(_n) + _b, _o):
         sys.stderr.write(
             "reorg-sync: refusing promote-up on %s: '%s' is '%s' plus trailing "
@@ -276,6 +316,36 @@ for _axis, _o, _n, _b in (("--old/--new", old, new, _BOUNDARY),
             "rewrite can be idempotent. Sweep each moved child individually "
             "instead.\n" % (_axis, _o, _n))
         sys.exit(1)
+    # SUFFIX-OVERLAP REFUSAL (8th panel CRITICAL family — the exact MIRROR of
+    # promote-up, previously unguarded). When a PROPER suffix of OLD equals a
+    # boundary-terminated prefix of NEW (fully contained: NEW a suffix of OLD,
+    # /srv:/app -> /app; or partial: /a/b -> /b/c sharing '/b'), --apply writes
+    # NEW where OLD's tail stood, and pre-existing text ending with OLD's
+    # leading remainder followed by that written NEW is byte-identical to a
+    # FRESH OLD reference. The residue guard cannot save it: the re-match STARTS
+    # in pre-existing text and only STRADDLES the span, and suppressing
+    # straddles instead would make every fresh ref of such a move sit inside a
+    # span — a silent 0 where the tool can in fact never sweep. Same
+    # undecidability as promote-up, so the same answer: refuse loudly. Each
+    # re-apply otherwise eats one leading component per pass (reproduced on all
+    # 18 non-'/' boundary chars; '/' is excluded from _LEFT so the pure-slash
+    # spelling of the PARTIAL case cannot re-match, but the CONTAINED case
+    # (/a/b -> /b) corrupts regardless). The k range excludes k == len(_o):
+    # OLD == NEW[:len(OLD)] is the supported extends case (/proj ->
+    # /proj/inner), protected by span containment, not refused.
+    for _k in range(1, min(len(_o), len(_n) + 1)):
+        if _o.endswith(_n[:_k]) and re.match(_b, _n[_k:]):
+            sys.stderr.write(
+                "reorg-sync: refusing suffix-overlap on %s: '%s' ends with "
+                "'%s', which is '%s' up to a path boundary. After --apply, "
+                "pre-existing text ending in the leading remainder followed by "
+                "the written new value is byte-identical to a fresh reference, "
+                "so re-apply corrupts data (one leading component per pass) — "
+                "no stateless rewrite can be idempotent. Sweep with a more "
+                "specific --old, or move through an intermediate name sharing "
+                "no boundary-anchored affix with either side.\n"
+                % (_axis, _o, _n[:_k], _n))
+            sys.exit(1)
 
 # _abuts() was folded into _in_residue() below (its `start == span end` case is
 # now the `<= e` half of one rule); see that comment for the 6th-panel history.

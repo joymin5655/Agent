@@ -6,8 +6,9 @@
 # binary + non-regular files (symlink/FIFO) + the .git object store are skipped
 # while a .git worktree FILE is swept; the run is idempotent; the usage guards
 # reject every proven footgun (bare-/ or empty OLD, relative prefixes, any
-# splitlines() separator, promote-up moves); and §17 pins the 5th adversarial
-# panel's nine confirmed defects one-by-one.
+# splitlines() separator, promote-up moves, suffix-overlap/demote moves —
+# while ACCEPTING identity and enc()-collision renames); and §17 pins the 5th
+# adversarial panel's nine confirmed defects one-by-one.
 #
 # Usage: bash core/tests/reorg-sync-test.sh
 set -u
@@ -620,6 +621,84 @@ bash "$TOOL" --old /old --new /new --root "$T25" --apply >/dev/null 2>&1
 grep -qF '/new/f' "$T25/f.txt"; check "panel7-control-path-actually-rewrote" $?
 grep -qF 'projects/-new/memory' "$T25/f.txt"; check "panel7-control-key-actually-rewrote" $?
 rm -rf "$T25"
+
+echo
+echo "=== (21) 8th adversarial panel: refusal-arm precision + span left-anchor drop ==="
+# The 8th panel's 16 CONFIRMED findings reduce to three root causes, pinned here:
+#   (a) the boundary regexes' `$` alternative made the promote-up arms fire on a
+#       ZERO-LENGTH remainder — refusing identity moves outright, and (via the
+#       lossy enc() fold) refusing ANY rename that changes only '/', '.', '_';
+#   (b) the mirror of promote-up was unguarded: a proper suffix of OLD equal to
+#       a boundary-terminated prefix of NEW makes pre-existing text + written
+#       NEW byte-identical to a fresh ref — each re-apply ate one LEADING
+#       component (reproduced on all 18 non-'/' boundary chars, and on the
+#       pure-'/' CONTAINED spelling);
+#   (c) _new_spans required _LEFT at a span start, but a splice puts NEW's last
+#       char on an ADJACENT written span's left — when that is not a boundary
+#       char the span went unrecognized and the tool rewrote its own output.
+refuse_case() {  # refuse_case <label> <old> <new> <expected-stderr-substring>
+  local label="$1" o="$2" n="$3" want="$4"
+  local D rc err; D="$(mktemp -d)"
+  err="$(bash "$TOOL" --old "$o" --new "$n" --root "$D" 2>&1 >/dev/null)"; rc=$?
+  [[ $rc -eq 1 ]]; check "panel8-refused[$label]" $?
+  printf '%s' "$err" | grep -qF "$want"; check "panel8-refusal-names-hazard[$label]" $?
+  rm -rf "$D"
+}
+accept_case() {  # accept_case <label> <old> <new>  — exit 0, no refusal on stderr
+  local label="$1" o="$2" n="$3"
+  local D rc err; D="$(mktemp -d)"
+  err="$(bash "$TOOL" --old "$o" --new "$n" --root "$D" 2>&1 >/dev/null)"; rc=$?
+  [[ $rc -eq 0 ]]; check "panel8-accepted[$label]" $?
+  ! printf '%s' "$err" | grep -q 'refusing'; check "panel8-no-refusal-msg[$label]" $?
+  rm -rf "$D"
+}
+# (a) identity and enc()-collision moves are NOT promote-ups (contract 6b)
+accept_case "identity" /a /a
+accept_case "identity-trailing-slash" /a/ /a
+accept_case "enc-collision-underscore" /x/10_Reference /x/10-Reference
+accept_case "enc-collision-dot" /a_b /a.b
+# ...and the enc()-collision sweep actually works: path axis rewrites, key axis
+# reports an honest 0 (old_key == new_key: nothing to change), and it is
+# idempotent. Without the actually-rewrote control, over-refusal removed and
+# over-suppression added would cancel out invisibly.
+T26="$(mktemp -d)"
+printf 'doc /x/10_Reference/notes.md\nkey ~/.claude/projects/-x-10-Reference/memory/MEMORY.md\n' > "$T26/f.md"
+REP="$(bash "$TOOL" --old /x/10_Reference --new /x/10-Reference --root "$T26" 2>&1)"
+printf '%s' "$REP" | grep -q 'anchor=1'; check "panel8-enc-collision-path-detected" $?
+printf '%s' "$REP" | grep -q 'native-memory-key=0'; check "panel8-enc-collision-key-honest-zero" $?
+bash "$TOOL" --old /x/10_Reference --new /x/10-Reference --root "$T26" --apply >/dev/null 2>&1
+grep -qF '/x/10-Reference/notes.md' "$T26/f.md"; check "panel8-enc-collision-actually-rewrote" $?
+grep -qF 'projects/-x-10-Reference/memory' "$T26/f.md"; check "panel8-enc-collision-key-untouched" $?
+rm -rf "$T26"
+# (a') the key arm is independently REACHABLE (the old comment claimed it was
+# not): enc() preserves ':' , so old_key extends new_key while the path arm
+# sees no prefix — a key-only promote-up, refused with the key-axis message.
+refuse_case "key-only-promote-up" '/a.b:c' /a/b \
+  "refusing promote-up on the encoded native-memory key"
+refuse_case "key-only-promote-up-space" '/vol/a.b (2026)' /vol/a/b \
+  "refusing promote-up on the encoded native-memory key"
+# (b) suffix-overlap (demote) refusals — contained, pure-slash, and partial
+refuse_case "demote-colon" '/srv:/app' /app "refusing suffix-overlap"
+refuse_case "demote-pure-slash" /a/b /b "refusing suffix-overlap"
+refuse_case "demote-space" '/x (2)/app' /app "refusing suffix-overlap"
+refuse_case "partial-overlap" /a/b /b/c "refusing suffix-overlap"
+# (b') ...but the k range must EXCLUDE k == len(OLD): the extends case is the
+# span guard's job, not a refusal — and unrelated names never trip the arm.
+accept_case "extends-not-a-demote" /proj /proj/inner
+accept_case "shared-chars-no-boundary-affix" /data /dat
+accept_case "embedded-after-delimiter" /a '/a:/a'
+# (c) adjacent matches: OLD ending in a boundary char can match back-to-back;
+# the splice flips the second span's left neighbour to NEW's last char, which a
+# left-bounded span scan no longer recognizes. Both idempotency halves plus the
+# first-apply control (the fix must not suppress the legitimate first pass).
+T27="$(mktemp -d)"
+printf '/srv:/srv:/etc/app.conf\n' > "$T27/f.txt"
+bash "$TOOL" --old '/srv:' --new '/vol:/srv:/v2' --root "$T27" --apply >/dev/null 2>&1
+[[ "$(cat "$T27/f.txt")" == '/vol:/srv:/v2/vol:/srv:/v2/etc/app.conf' ]]
+check "panel8-adjacent-first-apply-correct" $?
+rm -rf "$T27"
+idem_case "adjacent-matches-flip-span-left" '/srv:' '/vol:/srv:/v2' \
+  '/srv:/srv:/etc/app.conf\n'
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
