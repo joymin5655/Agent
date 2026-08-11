@@ -249,5 +249,37 @@ printf '%s\n' "$OUT" | grep -qE '^SKIP  zzz-clean-skip-test\.sh  \(widget-tool n
 check "clean-skip-still-skipped-with-reason" $?
 
 echo
+echo "=== (13) NO BATTERY MAY SKIP VIA exit 0: that is reported as PASS ==="
+# A battery that announces `SKIP: <tool> not installed` and then exits 0 is
+# printed by the runner as `PASS <name>` with its SKIP text discarded (output is
+# echoed on FAIL only) — the same false green the skip lane exists to remove,
+# just declared from the battery's side instead of the runner's. Two batteries
+# shipped exactly this (backends-schema-test.sh, kiro-preflight-test.sh: both
+# `echo "SKIP: jq not installed"; exit 0`), so with jq absent they reported PASS
+# having asserted nothing. Static tripwire, because the dynamic path only shows
+# up on a host that happens to be missing the optional binary — which is
+# precisely where nobody is looking.
+REAL_TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+offenders=""
+for f in "$REAL_TESTS_DIR"/*.sh; do
+  case "$(basename "$f")" in verify-all-test.sh) continue ;; esac
+  # `echo "SKIP..."; exit 0` on one line, or an `exit 0` within 2 lines of a
+  # SKIP echo — both are the same mistake written two ways.
+  if grep -nE 'echo[[:space:]]+"?SKIP' "$f" >/dev/null 2>&1; then
+    if grep -A2 -E 'echo[[:space:]]+"?SKIP' "$f" | grep -qE 'exit[[:space:]]+0'; then
+      offenders="$offenders $(basename "$f")"
+    fi
+  fi
+done
+[[ -z "$offenders" ]]; check "no-battery-skips-with-exit-0" $?
+[[ -n "$offenders" ]] && echo "    offenders:$offenders — a SKIP must exit 2, or the runner reports it as PASS"
+# and the tripwire must actually detect the shape (guard against a regex that
+# silently matches nothing, which would make the check above vacuously green)
+D=$(fresh_dir)
+printf '%s\n' '#!/usr/bin/env bash' 'echo "SKIP: widget not installed"' 'exit 0' > "$D/bad-skip-test.sh"
+if grep -A2 -E 'echo[[:space:]]+"?SKIP' "$D/bad-skip-test.sh" | grep -qE 'exit[[:space:]]+0'; then det=0; else det=1; fi
+[[ $det -eq 0 ]]; check "tripwire-detects-the-exit-0-skip-shape" $?
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]

@@ -25,7 +25,11 @@ check() {
   else echo "  FAIL [$name]"; FAIL=$((FAIL + 1)); fi
 }
 
-command -v jq >/dev/null 2>&1 || { echo "SKIP: jq not installed"; exit 0; }
+# exit 2, not 0: exiting 0 made verify-all print `PASS backends-schema-test.sh`
+# while this battery asserted NOTHING, and discard this SKIP line with it (the
+# runner echoes a check's output on FAIL only). rc 2 + a lone SKIP line is the
+# runner's declared inapplicable-check contract.
+command -v jq >/dev/null 2>&1 || { echo "SKIP: jq not installed"; exit 2; }
 
 # AGENT_PIN_JQ — "backend $b's tier_args pins a profile at tier $t": the tier key
 # must exist AND its value must be an array carrying "--agent" IMMEDIATELY

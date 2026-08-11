@@ -35,7 +35,10 @@ assert() {
 }
 
 [[ -f "$PROBE" ]] || { echo "FAIL: probe not found at $PROBE"; exit 1; }
-command -v jq >/dev/null 2>&1 || { echo "SKIP: jq not installed (the probe resolves its argv from the registry with jq)"; exit 0; }
+# exit 2, not 0 — see backends-schema-test.sh: exit 0 was reported as PASS by
+# verify-all with this SKIP line discarded, a green light for a battery that
+# asserted nothing.
+command -v jq >/dev/null 2>&1 || { echo "SKIP: jq not installed (the probe resolves its argv from the registry with jq)"; exit 2; }
 JQ_DIR="$(dirname "$(command -v jq)")"
 
 safe_mktemp_d() {
