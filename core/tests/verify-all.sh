@@ -19,6 +19,18 @@
 #      LOUD SKIP (a silently-skipped security scan reported as pass is exactly the
 #      false-green this repo guards against — a SKIP is not a pass, and is printed).
 #
+# SKIP contract for DISCOVERED checks: a check declares itself INAPPLICABLE (an
+# optional binary it needs is absent) by exiting 2 with `SKIP <reason>` as its
+# ONLY non-empty line of output. It is then tallied as skipped and printed as
+# `SKIP  <label>  (<reason>)` — never as a pass. Without this lane a battery
+# could only signal "cannot run" by exiting 0, which this runner would report as
+# PASS with its own SKIP text discarded (the runner only echoes a check's output
+# on FAIL) — a false green in exactly the place it is least visible. The
+# only-line requirement is what keeps the lane from becoming a second false
+# green: a battery that skips one SUB-PROBE, runs on, and then genuinely breaks
+# must stay a FAIL. Partial skips belong in a battery's own tally, not here.
+# Exits 0 and 1 keep their meanings (pass / fail).
+#
 # Design: NOT `set -e`. Every check runs even if an earlier one fails (run all,
 # report all). Each check runs in a SUBSHELL with combined output captured to a
 # temp file, so a sub-script's own set -e / trap / exit cannot kill or corrupt
@@ -149,7 +161,49 @@ while [[ $i -lt $n ]]; do
   end=$(date +%s)
   dur=$((end - start))
 
-  if [[ $rc -eq 0 ]]; then
+  # A check is SKIPPED only if it exits 2 *and* declares the skip on its FIRST
+  # non-empty line of output. All three halves matter:
+  #   - exit 2 alone is not a skip signal, because bash exits 2 on a SYNTAX
+  #     ERROR — a truncated or merge-conflicted battery would be silently
+  #     downgraded from FAIL to SKIP, and `core/tests/` is only `ask`-guarded,
+  #     so one malformed edit from a loop agent reaches it. argparse also exits
+  #     2 on a bad flag, a real failure of the evals lanes.
+  #   - a SKIP line ANYWHERE was not enough either: a battery that skips one
+  #     SUB-PROBE ("SKIP: sqlite3 missing, skipping the breaker checks"), runs
+  #     on, and then genuinely breaks with rc 2 was reported as an inapplicable
+  #     skip — a false green needing no adversary, just a partial-skip battery
+  #     plus a bad edit. Anchoring to the FIRST line does not fix it either:
+  #     that battery declares its sub-probe skip first and runs on afterwards.
+  # So the declaration must be the ONLY non-empty line of output. That is what
+  # an inapplicable check actually looks like: it detects the missing dependency
+  # up front, says so, and exits without doing anything else. Both current users
+  # (gitleaks-allowlist-test.sh, loop-run-test.sh) are exactly this shape. Any
+  # other output means the battery RAN, so its rc 2 is a failure, not an
+  # inapplicability, and it falls through to FAIL where the tail explains it.
+  # A battery that must skip only part of itself reports that in its own tally
+  # and exits 0 or 1; it does not get to claim the whole check was inapplicable.
+  declared_skip=0
+  first_line=""
+  if [[ $rc -eq 2 ]]; then
+    nonempty_count="$(grep -cv '^[[:space:]]*$' "$OUTFILE" 2>/dev/null || true)"
+    first_line="$(grep -m1 -v '^[[:space:]]*$' "$OUTFILE" 2>/dev/null)"
+    if [[ "${nonempty_count:-0}" -eq 1 && "$first_line" =~ ^SKIP([[:space:]]|:|$) ]]; then
+      declared_skip=1
+    fi
+  fi
+
+  if [[ $declared_skip -eq 1 ]]; then
+    # Exit 2 + a SKIP line = the check declared itself INAPPLICABLE (an optional
+    # binary it needs is absent). Counted as skipped and printed loudly, never as
+    # a pass: a discovered battery that cannot run must not be indistinguishable
+    # from one that ran and passed. The sentinel is the same one
+    # core/infra/gitleaks-fire-test.sh and skills/wrap already use, and it is
+    # what lets a battery guarded by an optional tool live under core/tests/
+    # (inside the guarded surface) instead of being hidden outside discovery.
+    reason="$(printf '%s' "$first_line" | sed -E 's/^SKIP[[:space:]]*[:—-]*[[:space:]]*//')"
+    printf 'SKIP  %s  (%s)\n' "$label" "${reason:-check declared itself inapplicable}"
+    skipped=$((skipped + 1))
+  elif [[ $rc -eq 0 ]]; then
     printf 'PASS  %s  (%ss)\n' "$label" "$dur"
     passed=$((passed + 1))
   else
@@ -166,6 +220,15 @@ printf '=== verify-all: %d passed, %d failed, %d skipped ===\n' "$passed" "$fail
 # nothing) — the canonical "empty suite reports green" false-signal. Refuse it.
 if [[ $((passed + failed + skipped)) -eq 0 ]]; then
   printf 'ERROR: verify-all discovered and ran zero checks — refusing to report success.\n' >&2
+  exit 1
+fi
+# Second floor, same principle one level up: a run where NOTHING actually
+# executed — every check skipped — is the same false-signal wearing a different
+# tally. It became reachable once discovered checks could skip themselves (a
+# host missing several optional binaries, or a sabotaged environment), and
+# consumers read a zero exit as "the harness passes its own gates".
+if [[ $passed -eq 0 && $skipped -gt 0 ]]; then
+  printf 'ERROR: verify-all skipped every check (%d skipped, 0 passed) — nothing was verified, refusing to report success.\n' "$skipped" >&2
   exit 1
 fi
 [[ $failed -eq 0 ]]

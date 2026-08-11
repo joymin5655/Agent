@@ -55,6 +55,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Wired into the `Write|Edit|MultiEdit` PreToolUse chain; `loop-write-guard-test.sh`
   (31 checks) covers the ask/allow matrix, the symlink-escape case, Bash
   write-path detection, the delete-recreate/witness escalations, and WHY/FIX tags.
+- **B4 follow-ups: gitleaks allowlist regression + 5-surface drift tripwire +
+  a real SKIP lane for discovered checks.**
+  `core/infra/gitleaks-fire-test.sh` proved the DETECTION side of the secret gate;
+  nothing proved the ALLOW side. `core/tests/gitleaks-allowlist-test.sh` plants each
+  `gitleaks.toml` placeholder shape (`your_*_key`, `dummy_*`, `example_*`,
+  `sk-proj-placeholder…`, `{{VAR}}`, `<your_x>`, `$USER_*_JWT`) in realistic
+  config/doc contexts and asserts a clean scan. Adversarial review reshaped it
+  three ways: the control is now **per shape** rather than one aggregate scan
+  (an aggregate passes on a single finding anywhere, which proved only 1 arm of
+  8); findings are read from gitleaks' **JSON report by rule id**, never from its
+  exit status (non-zero means "leaks found" OR "gitleaks errored", and conflating
+  them lets a broken control report ok); and the placeholder value is assembled
+  at runtime so no secret-shaped literal is committed — a committed one would
+  make the repo's own secret-scan depend on the very allowlist arm under test,
+  blocking future tightening. It reports an **honest ceiling**: measured
+  2026-08-10, only 2 of 10 shapes are load-bearing (`sk-proj-…` and
+  `Bearer USER_B_TOKEN`); the other 8 are caught by no rule with or without the
+  allowlist, so their clean pass is stated as proving nothing rather than
+  counted as coverage. A floor assertion keeps the load-bearing set non-empty.
+  Separately, the enforcement surface (`core/tests/`, `evals/`, `loop-write-guard.py`,
+  `pre-tool-guard.sh`, `loop-ledger.sh`, `hooks.json`, `adapter.sh`, `gitleaks.toml`)
+  is declared **five** times — `grade.sh`'s `surface_list` pathspec, its
+  `guarded_surface_re`, `loop-write-guard.py`'s `_guarded_dirs`/`_guarded_files`,
+  and that module's `GUARDED_TOKENS` (hoisted to module level here), which is the
+  only copy gating **Bash** writes: a file present in the other four but missing
+  there escalates on Write/Edit yet stays freely rewritable via `sed -i`/redirect.
+  `grade-test.sh`'s new `(g4) SURFACE DRIFT` extracts all five LIVE (never
+  hand-mirrored) and asserts they cover one surface, `(g4-floor)` adds a content
+  floor so a *synchronized* shrink of every copy cannot pass, and `(g4-mutation)`
+  drives each comparison through its own shared function with a dropped entry to
+  prove the checks are sensitive rather than vacuously equal.
+  **`verify-all.sh` gained a SKIP lane for auto-discovered checks** (exit 2 =
+  inapplicable → tallied skipped, reason printed). Without it a battery gated on
+  an optional binary could only signal "cannot run" by exiting 0, which the
+  runner printed as `PASS` while discarding the battery's own SKIP text — and the
+  CI `verify` job has no gitleaks installed, so the new allowlist battery would
+  have reported green in CI having asserted nothing. `verify-all-test.sh` case (9)
+  pins the lane, including that exit 1 is still a hard FAIL.
 
 ## [0.5.7] - 2026-08-02
 
