@@ -701,5 +701,77 @@ idem_case "adjacent-matches-flip-span-left" '/srv:' '/vol:/srv:/v2' \
   '/srv:/srv:/etc/app.conf\n'
 
 echo
+echo "=== (22) 9th adversarial panel: contained-NEW arm, key-axis mirror scope, .git reverse pointers ==="
+# Three root causes from the 9th panel:
+#   (a) CRITICAL — the 8th-round k-loop knew only NEW-as-SUFFIX-of-OLD; NEW
+#       STRICTLY INSIDE OLD (OLD = S + NEW + P, boundary after NEW) walked past
+#       both refusal arms and ate one leading component per --apply.
+#   (b) MAJOR overreach — the mirror family fired on the KEY axis, where a
+#       straddling re-match is unconstructible (key_pat is pinned by the
+#       fixed-width claude/projects/ lookbehind), refusing provably safe moves.
+#   (c) MAJOR — the worktree link is double-ended, but the blanket .git prune
+#       skipped the repo-side reverse pointer .git/worktrees/<name>/gitdir.
+# (a) contained-NEW refusals — internal offset, every junction flavour
+refuse_case "contained-colon" '/srv:/app/bin' /app "refusing suffix-overlap"
+refuse_case "contained-deeper" '/srv:/app/data' /app "refusing suffix-overlap"
+refuse_case "contained-pure-slash" /a/b/c /b "refusing suffix-overlap"
+refuse_case "contained-space-junction" '/x (2)/app/tail' /app "refusing suffix-overlap"
+# ...and the refused input's tree stays byte-untouched even under --apply
+T28="$(mktemp -d)"
+printf 'PYTHONPATH=/srv:/srv:/app/bin/bin/lib\n' > "$T28/env.sh"
+bash "$TOOL" --old '/srv:/app/bin' --new /app --root "$T28" --apply >/dev/null 2>&1
+[[ $? -eq 1 && "$(cat "$T28/env.sh")" == 'PYTHONPATH=/srv:/srv:/app/bin/bin/lib' ]]
+check "panel9-refused-apply-leaves-tree-untouched" $?
+rm -rf "$T28"
+# non-boundary junction after the embedded NEW is NOT the hazard shape
+accept_case "contained-nonboundary-after" /data/appx /app
+# (b) key-axis mirror overreach gone: keys -x-a-b / -a-b suffix-overlap but the
+# path axis is clean — must sweep, and idempotently (the unconstructibility
+# argument is load-bearing here, so both halves are asserted)
+accept_case "key-suffix-overlap-is-safe" /x/a_b /a/b
+idem_case "key-mirror-sweeps-idempotently" /x/a_b /a/b \
+  'k ~/.claude/projects/-x-a-b/memory\np /x/a_b/f\n'
+T29="$(mktemp -d)"
+printf 'k ~/.claude/projects/-x-a-b/memory\n' > "$T29/f.md"
+bash "$TOOL" --old /x/a_b --new /a/b --root "$T29" --apply >/dev/null 2>&1
+grep -qF 'projects/-a-b/memory' "$T29/f.md"; check "panel9-key-mirror-actually-rewrote" $?
+rm -rf "$T29"
+# ...while the key-axis PROMOTE-UP arm still fires (scope was narrowed, not lost)
+refuse_case "key-promote-up-still-refused" '/a.b:c' /a/b \
+  "refusing promote-up on the encoded native-memory key"
+# (c) repo-side worktree reverse pointer swept; .git siblings and store stay skipped
+T30="$(mktemp -d)"
+mkdir -p "$T30/repo/.git/worktrees/wt1" "$T30/repo/.git/objects/ab" "$T30/wt1"
+printf '/old/x/wt1/.git\n' > "$T30/repo/.git/worktrees/wt1/gitdir"
+printf 'ref: /old/x/decoy\n' > "$T30/repo/.git/worktrees/wt1/HEAD"
+printf 'x /old/x/in-store\n' > "$T30/repo/.git/objects/ab/cd"
+printf '/old/x/config-decoy\n' > "$T30/repo/.git/config"
+printf 'gitdir: /old/x/repo/.git/worktrees/wt1\n' > "$T30/wt1/.git"
+REP="$(bash "$TOOL" --old /old/x --new /new/y --root "$T30" 2>&1)"
+printf '%s' "$REP" | grep -q 'worktrees/wt1/gitdir:1'; check "panel9-reverse-pointer-reported" $?
+printf '%s' "$REP" | grep -q 'summary: 2 reference(s)'; check "panel9-reverse-pointer-count" $?
+bash "$TOOL" --old /old/x --new /new/y --root "$T30" --apply >/dev/null 2>&1
+grep -qF '/new/y/wt1/.git' "$T30/repo/.git/worktrees/wt1/gitdir"
+check "panel9-reverse-pointer-rewritten" $?
+grep -qF 'gitdir: /new/y/repo' "$T30/wt1/.git"; check "panel9-checkout-side-rewritten" $?
+grep -qF '/old/x/decoy' "$T30/repo/.git/worktrees/wt1/HEAD"; check "panel9-worktree-HEAD-skipped" $?
+grep -qF '/old/x/in-store' "$T30/repo/.git/objects/ab/cd"; check "panel9-object-store-skipped" $?
+grep -qF '/old/x/config-decoy' "$T30/repo/.git/config"; check "panel9-git-config-skipped" $?
+rm -rf "$T30"
+# documented ctx-overlap cost pinned (9th panel MINOR): NEW='/projects' is
+# literal text inside 'claude/projects/', so every key context window overlaps
+# a NEW span and the key class reports an honest 0 — a safe miss, REQUIRED
+# because partial manufacture ('claude' + rewritten path + '/') is real. The
+# path axis still sweeps.
+T31="$(mktemp -d)"
+printf 'k ~/.claude/projects/-old-x/memory\np /old/x/f\n' > "$T31/f.md"
+REP="$(bash "$TOOL" --old /old/x --new /projects --root "$T31" 2>&1)"
+printf '%s' "$REP" | grep -q 'native-memory-key=0'; check "panel9-ctx-overlap-key-honest-zero" $?
+printf '%s' "$REP" | grep -q 'anchor=1'; check "panel9-ctx-overlap-path-still-swept" $?
+bash "$TOOL" --old /old/x --new /projects --root "$T31" --apply >/dev/null 2>&1
+grep -qF 'projects/-old-x/memory' "$T31/f.md"; check "panel9-ctx-overlap-key-never-corrupted" $?
+rm -rf "$T31"
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]

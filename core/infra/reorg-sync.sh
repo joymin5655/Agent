@@ -303,9 +303,17 @@ new_key_span_pat = re.compile(_KEY_L + re.escape(new_key) + _KEY_R)
 # old_key='-a-b:c', new_key='-a-b', a genuine key-axis promote-up (its key sweep
 # would be non-idempotent) that only this arm catches. A key-only refusal test
 # is now constructible and asserted in the battery.
-for _axis, _o, _n, _b in (("--old/--new", old, new, _BOUNDARY),
-                          ("the encoded native-memory key for --old/--new",
-                           old_key, new_key, _KEY_R)):
+_OVERLAP_TAIL = (
+    " After --apply, pre-existing text ending in the leading remainder "
+    "followed by the written new value is byte-identical to a fresh "
+    "reference, so re-apply corrupts data (one leading component per pass) — "
+    "no stateless rewrite can be idempotent. Sweep with a more specific "
+    "--old, or move through an intermediate name sharing no boundary-anchored "
+    "affix with either side.\n")
+for _axis, _o, _n, _b, _mirror in (
+        ("--old/--new", old, new, _BOUNDARY, True),
+        ("the encoded native-memory key for --old/--new",
+         old_key, new_key, _KEY_R, False)):
     if _o == _n:
         continue
     if re.match(re.escape(_n) + _b, _o):
@@ -316,35 +324,63 @@ for _axis, _o, _n, _b in (("--old/--new", old, new, _BOUNDARY),
             "rewrite can be idempotent. Sweep each moved child individually "
             "instead.\n" % (_axis, _o, _n))
         sys.exit(1)
-    # SUFFIX-OVERLAP REFUSAL (8th panel CRITICAL family — the exact MIRROR of
-    # promote-up, previously unguarded). When a PROPER suffix of OLD equals a
-    # boundary-terminated prefix of NEW (fully contained: NEW a suffix of OLD,
-    # /srv:/app -> /app; or partial: /a/b -> /b/c sharing '/b'), --apply writes
-    # NEW where OLD's tail stood, and pre-existing text ending with OLD's
+    # SUFFIX-OVERLAP REFUSAL (8th panel CRITICAL family; CONTAINED-at-any-offset
+    # arm added by the 9th) — the exact MIRROR of promote-up. Whenever --apply
+    # writes NEW where OLD's tail stood, pre-existing text ending with OLD's
     # leading remainder followed by that written NEW is byte-identical to a
-    # FRESH OLD reference. The residue guard cannot save it: the re-match STARTS
-    # in pre-existing text and only STRADDLES the span, and suppressing
-    # straddles instead would make every fresh ref of such a move sit inside a
-    # span — a silent 0 where the tool can in fact never sweep. Same
-    # undecidability as promote-up, so the same answer: refuse loudly. Each
-    # re-apply otherwise eats one leading component per pass (reproduced on all
-    # 18 non-'/' boundary chars; '/' is excluded from _LEFT so the pure-slash
-    # spelling of the PARTIAL case cannot re-match, but the CONTAINED case
-    # (/a/b -> /b) corrupts regardless). The k range excludes k == len(_o):
-    # OLD == NEW[:len(OLD)] is the supported extends case (/proj ->
-    # /proj/inner), protected by span containment, not refused.
-    for _k in range(1, min(len(_o), len(_n) + 1)):
+    # FRESH OLD reference. The residue guard cannot save it: the re-match
+    # STARTS in pre-existing text and only STRADDLES the span (_in_residue
+    # tests m.start() alone), and suppressing straddles instead would make
+    # every fresh ref of such a move sit inside a span — a silent 0 where the
+    # tool can in fact never sweep. Same undecidability as promote-up, so the
+    # same answer: refuse loudly. Two shapes, each eating one LEADING component
+    # per re-apply:
+    #
+    #   (a) NEW CONTAINED in OLD at any offset >= 1 with a boundary (or OLD's
+    #       end) after it — as a suffix (/srv:/app -> /app) or STRICTLY INSIDE
+    #       (/srv:/app/bin -> /app, OLD = S + NEW + P). The 8th-panel k-loop
+    #       knew only the suffix spelling, so the 9th panel walked one
+    #       component deeper and corrupted again: the re-match needs the text
+    #       after the written NEW to continue with P, and the original match's
+    #       own right-boundary lookahead already guarantees that shape is
+    #       constructible exactly when P starts with a boundary char (P empty
+    #       = the suffix case, matched here by the `$` alternative).
+    #   (b) PARTIAL straddle — a proper suffix of OLD equals a proper,
+    #       boundary-terminated prefix of NEW (/a/b -> /b/c sharing '/b').
+    #
+    # The extends case is NEITHER: OLD == NEW[:len(OLD)] (/proj ->
+    # /proj/inner) is offset 0, handled by span containment, not refused.
+    #
+    # The mirror family is PATH-AXIS ONLY (_mirror flag): on the key axis a
+    # straddling re-match is UNCONSTRUCTIBLE, because key_pat is pinned by the
+    # fixed-width `claude/projects/` lookbehind — a written new_key sits
+    # immediately after that literal, so the leading remainder of a straddling
+    # old_key match would have to be a suffix of 'claude/projects/' itself;
+    # every old_key starts with '-' (enc of the required leading '/') and no
+    # suffix of 'claude/projects/' contains '-', on either arm's alignment.
+    # Refusing there anyway blocked legitimate, provably safe moves outright
+    # (--old /x/a_b --new /a/b: keys -x-a-b / -a-b — 9th panel MAJOR
+    # overreach). The manufactured-context variant is _ctx_manufactured's job,
+    # not a refusal's. Promote-up stays checked on BOTH axes: its key-axis
+    # re-match starts exactly where the written new_key starts, so the
+    # lookbehind holds and the hazard is real (key-only refusal test in §21).
+    if not _mirror:
+        continue
+    _pos = _o.find(_n, 1)
+    while _pos != -1:
+        if re.match(_b, _o[_pos + len(_n):]):
+            sys.stderr.write(
+                "reorg-sync: refusing suffix-overlap on %s: '%s' contains "
+                "'%s' followed by a path boundary (offset %d).%s"
+                % (_axis, _o, _n, _pos, _OVERLAP_TAIL))
+            sys.exit(1)
+        _pos = _o.find(_n, _pos + 1)
+    for _k in range(1, min(len(_o), len(_n))):
         if _o.endswith(_n[:_k]) and re.match(_b, _n[_k:]):
             sys.stderr.write(
                 "reorg-sync: refusing suffix-overlap on %s: '%s' ends with "
-                "'%s', which is '%s' up to a path boundary. After --apply, "
-                "pre-existing text ending in the leading remainder followed by "
-                "the written new value is byte-identical to a fresh reference, "
-                "so re-apply corrupts data (one leading component per pass) — "
-                "no stateless rewrite can be idempotent. Sweep with a more "
-                "specific --old, or move through an intermediate name sharing "
-                "no boundary-anchored affix with either side.\n"
-                % (_axis, _o, _n[:_k], _n))
+                "'%s', which is '%s' up to a path boundary.%s"
+                % (_axis, _o, _n[:_k], _n, _OVERLAP_TAIL))
             sys.exit(1)
 
 # _abuts() was folded into _in_residue() below (its `start == span end` case is
@@ -417,6 +453,17 @@ def _ctx_manufactured(m, spans, ctx_len):
     # PAST the NEW span (the '/' separates them), so it is neither inside nor
     # abutting. What is compromised is the LOOKBEHIND, not the match — hence the
     # separate test on the context window [start - ctx_len, start).
+    #
+    # Documented cost (9th panel MINOR, pinned in §21): when NEW itself occurs
+    # as boundary-terminated literal text INSIDE `claude/projects/` — today
+    # that is exactly NEW='/projects' — every genuine context window overlaps
+    # a NEW-shaped span and the key class reports 0 for that move. This
+    # suppression cannot be narrowed to "spans the tool actually wrote":
+    # partial manufacture is real (--old /x --new /projects turns a
+    # pre-existing 'claude' + a path rewrite + '/' into a context that was
+    # never there), so any span overlapping the window is disqualifying. Same
+    # safe-miss direction as every other span cost: the key ref stays
+    # unmigrated and visible to a post-apply grep, never corrupted.
     a, b = m.start() - ctx_len, m.start()
     return any(a < e and s < b for s, e in spans)
 
@@ -479,10 +526,26 @@ report = []
 
 for dirpath, dirnames, filenames in os.walk(root):
     # skip the git object store, but NOT a .git *file* (worktree pointer) — that is
-    # a regular file, handled below.
-    if os.path.basename(dirpath) == ".git":
-        dirnames[:] = []
+    # a regular file, handled below. ONE exception descends INTO a .git dir
+    # (9th panel MAJOR): the worktree link is double-ended — the checkout side
+    # is the `gitdir: <path>` line in the worktree's .git FILE (swept), and the
+    # repo side is `.git/worktrees/<name>/gitdir`, a plain one-line file
+    # holding the worktree's absolute path. Sweeping only the checkout side
+    # left every reverse pointer dangling after a reorg (git then drops the
+    # worktree registration). Exactly those `gitdir` files are visited; their
+    # siblings (HEAD, index, commondir, locked, ...) and everything else under
+    # .git stay skipped.
+    _b1 = os.path.basename(dirpath)
+    _b2 = os.path.basename(os.path.dirname(dirpath))
+    _b3 = os.path.basename(os.path.dirname(os.path.dirname(dirpath)))
+    if _b1 == ".git":
+        dirnames[:] = [d for d in dirnames if d == "worktrees"]
         continue
+    if _b1 == "worktrees" and _b2 == ".git":
+        continue  # descend into per-worktree dirs; nothing to sweep here
+    if _b2 == "worktrees" and _b3 == ".git":
+        dirnames[:] = []
+        filenames[:] = [f for f in filenames if f == "gitdir"]
     for fn in filenames:
         fp = os.path.join(dirpath, fn)
         # regular files only (5th panel MINOR): islink alone let a FIFO through,

@@ -54,15 +54,23 @@ hazard:
   spellings) is **not** a promote-up: it is accepted and reports an honest 0, as
   does the key axis of a rename that changes only `/ . _` (whose keys encode
   identically);
-- a **suffix-overlap** ("demote") move — a proper suffix of `--old` equals a
-  boundary-terminated prefix of `--new` (`/srv:/app` → `/app`, `/a/b` → `/b`,
-  partial: `/a/b` → `/b/c`): the mirror of promote-up. After one apply,
-  pre-existing text ending in OLD's leading remainder followed by the written
-  NEW is byte-identical to a fresh OLD ref, so each re-apply eats one *leading*
-  component per pass (8th panel, reproduced on every boundary character). Sweep
-  with a more specific `--old`, or move through an intermediate name sharing no
-  boundary-anchored affix with either side. (`/proj` → `/proj/inner` is *not*
-  this shape — extends-moves stay supported via the protected-span guard.)
+- a **suffix-overlap** ("demote") move — `--new` occurs inside `--old` at any
+  offset ≥ 1 followed by a path boundary or OLD's end (as a suffix `/srv:/app`
+  → `/app`, `/a/b` → `/b`; or *strictly inside*: `/srv:/app/bin` → `/app`, 9th
+  panel), or a proper suffix of `--old` equals a boundary-terminated proper
+  prefix of `--new` (partial: `/a/b` → `/b/c`): the mirror of promote-up.
+  After one apply, pre-existing text ending in OLD's leading remainder
+  followed by the written NEW is byte-identical to a fresh OLD ref, so each
+  re-apply eats one *leading* component per pass (8th/9th panels, reproduced
+  on every boundary character). Sweep with a more specific `--old`, or move
+  through an intermediate name sharing no boundary-anchored affix with either
+  side. (`/proj` → `/proj/inner` is *not* this shape — extends-moves stay
+  supported via the protected-span guard. `/data/appx` → `/app` is not either:
+  a non-boundary junction after the embedded NEW cannot re-match.) Unlike
+  promote-up, this family is checked on the **path axis only**: a key-axis
+  straddle is unconstructible (the key matcher is pinned by its fixed-width
+  `claude/projects/` lookbehind), so key-suffix-overlapping moves like
+  `/x/a_b` → `/a/b` (keys `-x-a-b` / `-a-b`) sweep normally.
 
 Note the report echoes matched lines — review it before pasting into shared
 channels/CI logs, since a line that references `<old>` can also carry unrelated
@@ -96,7 +104,12 @@ temp + rename — a pre-existing file can never be clobbered as the temp target 
 permissions preserved); a file that cannot be rewritten is reported on stderr and
 the sweep continues, exiting 1 so the failure is visible. Binary files,
 non-regular files (symlink/FIFO/socket/device — a FIFO would block the sweep
-forever), and the `.git` object store are skipped. The native-memory key is rewritten with the
+forever), and the `.git` object store are skipped — with one deliberate
+exception inside `.git`: the worktree link is double-ended, so the repo-side
+reverse pointer `.git/worktrees/<name>/gitdir` (a one-line file holding the
+worktree's absolute path) is swept along with the checkout-side `.git` file,
+while its siblings (`HEAD`, `index`, `commondir`, …) and everything else under
+`.git` stay untouched (9th panel). The native-memory key is rewritten with the
 harness's `/ . _` → `-` encoding, **anchored directly after `claude/projects/`** — ordinary kebab-case
 text is never touched, and neither is an unrelated path component that merely
 happens to equal the encoded key (`/backup/-old-x/f`).
@@ -145,10 +158,11 @@ the swept tree) and the live user crontab is a system resource — this skill re
   (`/backup (2026)`, `/srv:`), writing it flips the left boundary of whatever
   followed, so without that rule a re-apply ate one path component per pass. The
   two directions NO guard can make idempotent — promote-up (OLD under NEW) and
-  suffix-overlap (a proper suffix of OLD = a boundary-terminated prefix of NEW)
-  — are refused at the CLI instead (see step 1); the 5th and 8th panels proved
-  each corrupts data on re-apply (one component eaten per pass, trailing or
-  leading respectively). The remaining
+  suffix-overlap (NEW boundary-embedded inside OLD at offset ≥ 1, or a proper
+  suffix of OLD = a boundary-terminated proper prefix of NEW)
+  — are refused at the CLI instead (see step 1); the 5th, 8th and 9th panels
+  proved each corrupts data on re-apply (one component eaten per pass, trailing
+  or leading respectively). The remaining
   cost is a deliberate safe miss: a *fresh* OLD ref that coincidentally sits
   inside or immediately after literal-NEW-shaped text is treated as migrated and
   left alone — never corrupted. Confirm with `grep -rF '<old>'` after apply.
