@@ -260,14 +260,30 @@ echo "=== (13) NO BATTERY MAY SKIP VIA exit 0: that is reported as PASS ==="
 # up on a host that happens to be missing the optional binary — which is
 # precisely where nobody is looking.
 # skip_declared_with_exit_0 <file> — 0 if the file DECLARES a skip and exits 0
-# near it. Both print verbs (grade.sh already prints SKIP-shaped lines with
-# printf, so an echo-only regex had a live blind spot) and a 5-line window so the
-# exit need not be adjacent. SKIP must start the printed string: matching the
-# word anywhere flagged telemetry-digest-test.sh, whose section HEADER describes
-# the skip behaviour of the script it tests. A tripwire that cries wolf on prose
-# is one people learn to ignore, which is worse than not having it.
+# right there. Two calibration lessons are baked in, both from false signals this
+# check itself produced:
+#
+#   WINDOW. It must be tight. A 5-line window flagged a perfectly CORRECT short
+#   battery — `{ echo "SKIP: jq…"; exit 2; }` up top, a few lines of checks, then
+#   the normal terminal `exit 0` — because the two happened to land within five
+#   lines of each other. A gate that fails a correct file is worse than one that
+#   misses a bad file: it blocks every unrelated change until someone silences
+#   it. So the exit must be on the SAME line as the declaration or the next one,
+#   which is how both real offenders were written (`echo "SKIP…"; exit 0`).
+#
+#   VERBS AND QUOTING. It must cover how skips are actually spelled HERE:
+#   `echo`, `echo -e`, `printf`, single OR double quotes, and the
+#   `printf '%s\n' "SKIP…"` format-then-argument form — which is this repo's
+#   dominant printf idiom (242 occurrences), and so the most likely way an author
+#   here would write one. SKIP must still START the printed string; matching the
+#   word anywhere flagged telemetry-digest-test.sh, whose section HEADER merely
+#   describes the skip behaviour of the script it tests.
+#
+# NOT a proof — a source-text heuristic. `exit "$rc"` where rc is 0, and a skip
+# whose exit lives elsewhere in the file, are not detected. The contract in
+# verify-all.sh's header is the actual rule.
 skip_declared_with_exit_0() {
-  grep -A5 -E '(echo|printf)[[:space:]]+"?SKIP([[:space:]]|:|\\n|")' "$1" 2>/dev/null \
+  grep -A1 -E "(echo|printf)[[:space:]]+(-e[[:space:]]+)?('%s.n'|\"%s.n\")?[[:space:]]*[\"']?SKIP([[:space:]]|:|\\\\n|\"|')" "$1" 2>/dev/null \
     | grep -qE 'exit[[:space:]]+0'
 }
 REAL_TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -282,22 +298,48 @@ done
 # print verbs and a non-adjacent exit are exercised, because those are the two
 # ways the first version was blind.
 D=$(fresh_dir)
+# Every spelling a battery author here would plausibly use must be caught. The
+# first version knew only `echo "SKIP` and missed four of these.
 printf '%s\n' '#!/usr/bin/env bash' 'echo "SKIP: widget not installed"' 'exit 0' > "$D/e.sh"
-skip_declared_with_exit_0 "$D/e.sh"; check "tripwire-detects-echo-shape" $?
+skip_declared_with_exit_0 "$D/e.sh"; check "tripwire-detects-echo-double-quoted" $?
+printf '%s\n' '#!/usr/bin/env bash' "echo 'SKIP: widget not installed'" 'exit 0' > "$D/e2.sh"
+skip_declared_with_exit_0 "$D/e2.sh"; check "tripwire-detects-echo-single-quoted" $?
+printf '%s\n' '#!/usr/bin/env bash' 'echo -e "SKIP: widget not installed"' 'exit 0' > "$D/e3.sh"
+skip_declared_with_exit_0 "$D/e3.sh"; check "tripwire-detects-echo-dash-e" $?
 printf '%s\n' '#!/usr/bin/env bash' 'printf "SKIP: widget not installed\n"' 'exit 0' > "$D/p.sh"
-skip_declared_with_exit_0 "$D/p.sh"; check "tripwire-detects-printf-shape" $?
-printf '%s\n' '#!/usr/bin/env bash' 'echo "SKIP: widget missing"' '# a comment' 'x=1' 'y=2' 'exit 0' > "$D/g.sh"
-skip_declared_with_exit_0 "$D/g.sh"; check "tripwire-detects-non-adjacent-exit" $?
-# ...and must NOT fire on a correct battery, or it is noise that gets ignored
+skip_declared_with_exit_0 "$D/p.sh"; check "tripwire-detects-printf-direct" $?
+# this repo's dominant printf idiom — the format string carries no SKIP at all.
+# Written as a quoted heredoc: building this line with printf/echo escaping is
+# how the fixture silently ended up with a doubled backslash and tested nothing.
+cat > "$D/p2.sh" <<'FIXTURE'
+#!/usr/bin/env bash
+printf '%s\n' "SKIP: widget not installed"
+exit 0
+FIXTURE
+skip_declared_with_exit_0 "$D/p2.sh"; check "tripwire-detects-printf-format-arg" $?
+printf '%s\n' '#!/usr/bin/env bash' 'command -v jq || { echo "SKIP: jq"; exit 0; }' 'run' > "$D/g.sh"
+skip_declared_with_exit_0 "$D/g.sh"; check "tripwire-detects-same-line-guard" $?
+# ...and it must NOT fire on correct code, or it is noise that gets silenced.
 printf '%s\n' '#!/usr/bin/env bash' 'echo "SKIP: widget not installed"' 'exit 2' > "$D/ok.sh"
 if skip_declared_with_exit_0 "$D/ok.sh"; then fp=1; else fp=0; fi
 [[ $fp -eq 0 ]]; check "tripwire-no-false-positive-on-exit-2" $?
-# KNOWN BLIND SPOTS, named so this is not mistaken for proof: it is a source
-# regex, so `exit "$rc"` where rc happens to be 0, a SKIP declared in a function
-# whose exit lives elsewhere, or a skip further than 5 lines from its exit all
-# slip past. It raises the cost of the mistake; it does not make it impossible.
-# The contract in verify-all.sh's header is the actual rule.
-echo "    (heuristic: exit-code indirection and function-separated skips are NOT detected)"
+# The FP that a 5-line window actually produced: a CORRECT short battery whose
+# guard exits 2 and whose normal terminal exit 0 happened to land nearby.
+printf '%s\n' '#!/usr/bin/env bash' 'command -v jq || { echo "SKIP: jq"; exit 2; }' \
+  'run_checks' 'report' 'exit 0' > "$D/short.sh"
+if skip_declared_with_exit_0 "$D/short.sh"; then fp=1; else fp=0; fi
+[[ $fp -eq 0 ]]; check "tripwire-no-false-positive-on-short-correct-battery" $?
+# ...and prose describing the behaviour of some OTHER script
+printf '%s\n' '#!/usr/bin/env bash' 'echo "=== (n) missing log -> LOUD SKIP, exit 0 ==="' 'run' 'exit 0' > "$D/prose.sh"
+if skip_declared_with_exit_0 "$D/prose.sh"; then fp=1; else fp=0; fi
+[[ $fp -eq 0 ]]; check "tripwire-no-false-positive-on-prose" $?
+# KNOWN BLIND SPOTS, named so this is not mistaken for proof: `exit "$rc"` where
+# rc is 0, and a skip whose exit lives further away than the next line, both slip
+# past. Detecting those needs control-flow analysis, not a regex; widening the
+# window instead is what produced the false positive pinned above. This raises
+# the cost of the mistake; it does not make it impossible. The contract in
+# verify-all.sh's header is the actual rule.
+echo "    (heuristic: exit-code indirection and distant exits are NOT detected)"
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
