@@ -124,6 +124,21 @@ _write_state() {
      "$sf" > "$tmp" && mv "$tmp" "$sf"
 }
 
+# _halt <slug> <best> <gate_fails> <msg> — a write the stop conditions depend on
+# failed. Fail CLOSED: mark the loop aborted, drop the active flag, and emit a
+# stop verdict, so a broken counter or ledger cannot degrade into an unbounded
+# run. Never called for ordinary attempt outcomes — only for infrastructure
+# failures the loop cannot safely continue past.
+_halt() {
+  local slug="$1" best="$2" gate_fails="$3" msg="$4"
+  printf 'loop-run: FATAL: %s\n' "$msg" >&2
+  bash "$SUPERVISOR_GOAL" abort "$slug" runner-error >/dev/null 2>&1 || true
+  _write_state "$slug" "$best" "$gate_fails" "aborted" || true
+  rm -f "$ACTIVE_FLAG"
+  echo "LOOP: stop(error)"
+  exit 1
+}
+
 usage() {
   cat >&2 <<'EOF'
 loop-run.sh — autonomous-loop mechanical runner (P2-1/P2-4/O-2)
@@ -228,11 +243,20 @@ cmd_attempt() {
   gate_fails="$(jq -r '.consecutive_gate_failures' <<<"$state")"
   [[ "$gate_fails" -lt 2 ]] || die "attempt: slug '$slug' already tripped the circuit breaker — refusing"
 
-  local goal_json current_wave total_waves
+  local goal_json current_wave total_waves goal_status
   goal_json="$(bash "$SUPERVISOR_GOAL" status "$slug" 2>/dev/null)"
   current_wave="$(jq -r '.current_wave // empty' <<<"$goal_json")"
   total_waves="$(jq -r '.total_waves // empty' <<<"$goal_json")"
+  goal_status="$(jq -r '.status // empty' <<<"$goal_json")"
   [[ -n "$current_wave" && -n "$total_waves" ]] || die "attempt: could not read goal state for '$slug'"
+  # The goal DB is the SSOT for whether this loop may run; the local JSON above
+  # is only a cache of it. Gating on the cache alone meant a loop the circuit
+  # breaker had already aborted could be resurrected by hand-editing one
+  # untracked file (.agent/loop/state/<slug>.json) while the DB still read
+  # "aborted". Check the authority itself, and refuse when the two disagree
+  # rather than picking the more permissive one.
+  [[ -n "$goal_status" ]] || die "attempt: could not read goal status for '$slug'"
+  [[ "$goal_status" == "active" ]] || die "attempt: goal state for '$slug' is '$goal_status', not active — refusing (the local state file is a cache, not the authority)"
   [[ "$current_wave" -le "$total_waves" ]] || die "attempt: slug '$slug' already reached its attempt cap ($total_waves) — refusing"
 
   local n="$current_wave"
@@ -296,12 +320,25 @@ cmd_attempt() {
   fi
   [[ -n "$score" ]] || score=0
 
-  bash "$LOOP_LEDGER" append --commit "$commit" --score "$score" --duration "$duration" \
-    --status "$run_status" --desc "$desc" \
-    || echo "loop-run: WARNING: ledger append failed for '$slug' attempt $n" >&2
+  # Both writes below are load-bearing for STOPPING, so neither may fail quietly.
+  # As warnings they were fail-OPEN in the worst direction: advance-wave is the
+  # only thing that increments the wave counter, and the next attempt re-reads
+  # that counter to decide the cap — so a failed write (locked or read-only DB)
+  # meant n never advanced, `$((n+1)) -gt $cap` never fired, and the loop ran
+  # unbounded while still printing `LOOP: continue`. A dropped ledger append is
+  # the audit-trail equivalent: a verdict the caller trusts that was never
+  # durably recorded. Halt instead, with the loop marked aborted, so the failure
+  # needs a human rather than silently removing the stop condition.
+  if ! bash "$LOOP_LEDGER" append --commit "$commit" --score "$score" --duration "$duration" \
+       --status "$run_status" --desc "$desc"; then
+    _halt "$slug" "$best_score" "$gate_fails" \
+      "ledger append failed for attempt $n — outcome not durably recorded"
+  fi
 
-  bash "$SUPERVISOR_GOAL" advance-wave "$slug" "$n" >/dev/null 2>&1 \
-    || echo "loop-run: WARNING: advance-wave failed for '$slug' attempt $n" >&2
+  if ! bash "$SUPERVISOR_GOAL" advance-wave "$slug" "$n" >/dev/null 2>&1; then
+    _halt "$slug" "$best_score" "$gate_fails" \
+      "advance-wave failed for attempt $n — the wave counter did not advance, so the attempt cap can no longer stop this loop"
+  fi
 
   echo "ATTEMPT: n=$n status=$run_status score=$score commit=$commit duration_s=$duration desc=\"$desc\""
   echo "ATTEMPT: reason: $reason"

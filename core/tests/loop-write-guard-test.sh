@@ -209,5 +209,35 @@ run_bash "echo '[allowlist]' > gitleaks.toml" AGENT_LOOP_ACTIVE=1
 is_ask; check "bash-redirect-gitleaks-ask" $?
 
 echo
+echo "=== (s) the loop cannot hold its own off switch (.agent/loop control state) ==="
+# This hook is INERT unless .agent/loop/active exists, so that marker was the
+# whole containment in one file — and it was not guarded: `rm .agent/loop/active`
+# was ALLOWED, after which a core/tests/ write that had been `ask` sailed through.
+# The state files are the same hazard one step in: they carry .status and the
+# consecutive-failure count, so editing them revives a loop the breaker stopped.
+# Both are runtime state, so they live in GUARDED_TOKENS + a dedicated Write/Edit
+# branch rather than the scoring-surface sets the drift gate holds equal.
+mkdir -p "$ROOT/.agent/loop/state"
+run_bash "rm .agent/loop/active" AGENT_LOOP_ACTIVE=1
+is_ask; check "bash-rm-active-marker-ask" $?
+run_bash "rm -f .agent/loop/active && echo done" AGENT_LOOP_ACTIVE=1
+is_ask; check "bash-rm-f-active-marker-ask" $?
+run_hook Write "$ROOT/.agent/loop/state/mission.json" '{"status":"active"}' AGENT_LOOP_ACTIVE=1
+is_ask; check "write-loop-state-ask" $?
+run_hook Edit "$ROOT/.agent/loop/state/mission.json" '{"status":"active"}' AGENT_LOOP_ACTIVE=1
+is_ask; check "edit-loop-state-ask" $?
+run_bash "jq '.status=\"active\"' .agent/loop/state/mission.json > /tmp/s && mv /tmp/s .agent/loop/state/mission.json" AGENT_LOOP_ACTIVE=1
+is_ask; check "bash-rewrite-loop-state-ask" $?
+# the reason must name the actual hazard, not the generic surface message
+printf '%s' "$OUT" | grep -q 'control state'; check "loop-state-reason-names-control-state" $?
+# and reading the same paths must NOT ask (no false-ask on inspection)
+run_bash "cat .agent/loop/state/mission.json" AGENT_LOOP_ACTIVE=1
+[[ -z "$OUT" ]]; check "bash-read-loop-state-allowed" $?
+# outside a loop session the whole hook stays inert (loop-run.sh itself writes
+# these files, and a human stopping a loop must not be nagged)
+run_bash "rm .agent/loop/active"
+[[ -z "$OUT" ]]; check "loop-state-inert-outside-loop" $?
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]

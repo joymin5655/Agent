@@ -142,6 +142,17 @@ ASK_LEDGER = (
     "FIX: only append new rows (or use core/infra/loop-ledger.sh append). A human "
     "must approve any rewrite."
 )
+ASK_CONTROL = (
+    "Editing the loop's own control state (.agent/loop/active or "
+    ".agent/loop/state/) during an active loop session.\n"
+    "WHY: this guard is INERT unless .agent/loop/active exists, so deleting that "
+    "marker turns the guard off entirely — the controlled party must not hold the "
+    "off switch. The state files are the same hazard one step in: they carry the "
+    "status and the consecutive-failure count, so editing them resurrects a loop "
+    "the circuit breaker already stopped.\n"
+    "FIX: let core/infra/loop-run.sh own these files. Stopping or resuming a loop "
+    "is a human decision made outside it (loop-run.sh stop / init)."
+)
 ASK_BASH = (
     "Bash command writes into the grader/verifier surface during an active loop.\n"
     "WHY: L-2 — a shell write (redirect, sed -i, cp/mv, rm, git checkout/apply, a "
@@ -213,6 +224,14 @@ GUARDED_TOKENS = ("core/tests", "evals", "core/hooks/loop-write-guard.py",
                   "hooks/hooks.json", "core/infra/loop-ledger.sh", "gitleaks.toml",
                   ".agent/loop/results.tsv", ".agent/loop/results.tsv.witness")
 
+# The loop's own control state, kept SEPARATE from GUARDED_TOKENS so a Bash hit
+# can carry the reason that actually explains it. NOT part of the scoring surface
+# the five definitions must agree on — it is untracked runtime state, like the
+# ledger entries above. Guarded because this hook is INERT without
+# .agent/loop/active, so `rm` on that marker is a one-command self-disable, and
+# .agent/loop/state/ holds the status + failure count that revive a stopped loop.
+CONTROL_TOKENS = (".agent/loop/active", ".agent/loop/state")
+
 
 def _bash_hits_guarded(command: str, guarded_tokens) -> bool:
     if not any(tok in command for tok in guarded_tokens):
@@ -229,6 +248,10 @@ def _decide(data: dict, root: str):
         command = tool_input.get("command", "")
         if not isinstance(command, str) or not command:
             return None
+        # control-state tokens first: `rm .agent/loop/active` deserves the reason
+        # that explains it disarms the guard, not the generic grader-surface text.
+        if _bash_hits_guarded(command, CONTROL_TOKENS):
+            return ("control", ASK_CONTROL)
         if _bash_hits_guarded(command, GUARDED_TOKENS):
             return ("bash", ASK_BASH)
         return None
@@ -252,6 +275,14 @@ def _decide(data: dict, root: str):
         # only the sanctioned writer (loop-ledger.sh) may touch the witness — a
         # hand-written witness would notarize a tampered ledger.
         return ("ledger", ASK_LEDGER)
+
+    # loop control state, handled like the ledger above (its own branch, not part
+    # of the scoring-surface sets the drift gate holds equal): the marker that
+    # arms this hook and the state files that hold status / failure counts.
+    if target == _real(os.path.join(root, ".agent", "loop", "active")):
+        return ("control", ASK_CONTROL)
+    if _within(target, _real(os.path.join(root, ".agent", "loop", "state"))):
+        return ("control", ASK_CONTROL)
 
     if target in _guarded_files(root):
         return ("surface", ASK_SURFACE)

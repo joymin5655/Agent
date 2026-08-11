@@ -172,5 +172,63 @@ run_lr init improve-test --target 'agents/.*' --base "$BASE_REF" --cap 3
 [[ $RC -ne 0 ]]; check "red-duplicate-init-refused" $?
 
 echo
+echo "=== (h) STOP-CONDITION WRITES FAIL CLOSED: a failed advance-wave halts the loop ==="
+# advance-wave is the ONLY thing that increments the wave counter, and the next
+# attempt re-reads that counter to evaluate the cap. When its failure was only a
+# stderr WARNING, a locked or read-only DB meant n never advanced, the cap check
+# never fired, and the loop ran unbounded while still printing `LOOP: continue`.
+# The write is load-bearing for STOPPING, so it must fail closed.
+CAPREPO="$TMP_ROOT/caprepo"
+cp -R "$REPO" "$CAPREPO"
+rm -rf "$CAPREPO/.agent"
+python3 - "$CAPREPO/core/infra/supervisor-goal.sh" <<'PY'
+import sys
+p = sys.argv[1]; s = open(p).read()
+i = s.index("cmd_advance_wave()"); j = s.index("{", i) + 1
+open(p, "w").write(s[:j] + "\n  return 1  # test stub: simulate a failed SQLite write\n" + s[j:])
+PY
+run_cap() { OUT="$(cd "$CAPREPO" && bash "$CAPREPO/core/infra/loop-run.sh" "$@" 2>&1)"; RC=$?; }
+run_cap init capfail --target 'agents/.*' --base "$BASE_REF" --cap 3
+attempts_run=0
+FIRST_OUT=""
+for i in 1 2 3 4 5; do
+  LOOP_RUN_GRADE_CMD='printf "harness_score: 5.0\n"' run_cap attempt capfail --desc "a$i"
+  [[ -z "$FIRST_OUT" ]] && FIRST_OUT="$OUT"
+  printf '%s\n' "$OUT" | grep -q '^LOOP: continue' && attempts_run=$((attempts_run + 1))
+done
+# without the fix all 5 print `LOOP: continue` against a cap of 3. The halt lands
+# on the FIRST attempt, so assert against that one — later attempts are refused
+# for a different (already-aborted) reason, which would mask what is being tested.
+[[ "$attempts_run" -eq 0 ]]; check "advance-wave-failure-never-continues" $?
+printf '%s\n' "$FIRST_OUT" | grep -q 'FATAL: advance-wave failed'; check "advance-wave-failure-is-fatal" $?
+printf '%s\n' "$FIRST_OUT" | grep -q '^LOOP: stop(error)'; check "advance-wave-failure-emits-stop" $?
+[[ ! -e "$CAPREPO/.agent/loop/active" ]]; check "advance-wave-failure-drops-active-flag" $?
+
+echo
+echo "=== (i) THE GOAL DB IS THE AUTHORITY: a hand-edited state file cannot resurrect ==="
+# cmd_attempt used to gate solely on the local JSON's .status. After a breaker
+# trip the SQLite goal reads "aborted" while current_wave is still under the cap,
+# so editing one untracked file revived a loop the breaker had already stopped.
+RESREPO="$TMP_ROOT/resrepo"
+cp -R "$REPO" "$RESREPO"
+rm -rf "$RESREPO/.agent"
+run_res() { OUT="$(cd "$RESREPO" && bash "$RESREPO/core/infra/loop-run.sh" "$@" 2>&1)"; RC=$?; }
+run_res init resurrect --target 'agents/.*' --base "$BASE_REF" --cap 9
+LOOP_RUN_GRADE_CMD='printf "harness_score: 0.0\n"' run_res attempt resurrect --desc r1
+LOOP_RUN_GRADE_CMD='printf "harness_score: 0.0\n"' run_res attempt resurrect --desc r2
+printf '%s\n' "$OUT" | grep -q '^LOOP: stop(circuit-breaker)'; check "resurrect-breaker-tripped" $?
+SF="$RESREPO/.agent/loop/state/resurrect.json"
+jq '.status="active" | .consecutive_gate_failures=0 | .cap=99' "$SF" > "$SF.tmp" && mv "$SF.tmp" "$SF"
+: > "$RESREPO/.agent/loop/active"
+BEFORE_ROWS="$(cd "$RESREPO" && f=.agent/loop/results.tsv; [[ -f $f ]] && echo $(( $(wc -l < $f) - 1 )) || echo 0)"
+LOOP_RUN_GRADE_CMD='printf "harness_score: 9.0\n"' run_res attempt resurrect --desc r3
+[[ $RC -ne 0 ]]; check "resurrect-refused-nonzero-exit" $?
+printf '%s\n' "$OUT" | grep -q "not active"; check "resurrect-refused-names-goal-status" $?
+if printf '%s\n' "$OUT" | grep -q '^LOOP: continue'; then bad=1; else bad=0; fi
+[[ $bad -eq 0 ]]; check "resurrect-did-not-continue" $?
+AFTER_ROWS="$(cd "$RESREPO" && f=.agent/loop/results.tsv; [[ -f $f ]] && echo $(( $(wc -l < $f) - 1 )) || echo 0)"
+[[ "$AFTER_ROWS" -eq "$BEFORE_ROWS" ]]; check "resurrect-wrote-no-ledger-row" $?
+
+echo
 echo "Results: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]
