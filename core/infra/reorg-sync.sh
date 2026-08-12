@@ -325,6 +325,57 @@ _OVERLAP_TAIL = (
     "no stateless rewrite can be idempotent. Sweep with a more specific "
     "--old, or move through an intermediate name sharing no boundary-anchored "
     "affix with either side.\n")
+# CROSS-AXIS STRADDLE REFUSAL (10th panel CRITICAL family). The four straddle
+# directions: path-on-path and the containment shapes are the mirror family
+# above; key-on-key and key-on-path are UNCONSTRUCTIBLE (key-on-key: the
+# straddle remainder would have to be a suffix of 'claude/projects/', and no
+# '-'-leading key is; key-on-path: a key literal contains no '/', a path NEW
+# starts with one, so they share no non-empty suffix/prefix). That leaves
+# PATH-on-KEY: the key splice writes new_key immediately after a literal
+# 'claude/projects/', so when OLD itself contains 'claude/projects/' followed
+# by a prefix of new_key, pass 1's key rewrite manufactures a byte-exact fresh
+# path-OLD reference — OLD='/Users/j/.claude/projects/-a-b', NEW='/a/b'
+# (new_key='-a-b') key-migrates a deep memory key and pass 2's PATH arm eats
+# the result ('/a/b/memory'). A re-match must start before the window (every
+# in-window alignment fails _LEFT: window chars are letters and '/', neither
+# whitelisted), so it fully covers 'claude/projects/' — scanning OLD's CTX
+# occurrences is complete. Hazard shapes per occurrence, with _t = the rest of
+# OLD after the CTX: _t a non-empty prefix of new_key ending OLD (re-match
+# ends inside/at the span end; needs new_key's next char to be a boundary, or
+# nothing left — the `$` alternative); or _t containing all of new_key with a
+# boundary-led remainder (re-match overruns into pre-existing text, whose
+# first char the original key match's _KEY_R already forces to a boundary).
+# _t == '' is provably safe: the re-match would end at the span start and
+# new_key's leading '-' fails _BOUNDARY. Same undecidability, same answer.
+#
+# Gated on old_key != new_key, NOT old != new (11th panel MINOR: the first
+# spelling of this arm sat outside the per-axis loop and had no identity skip
+# at all, refusing --old X --new X whenever X contained the context): the
+# hazard's first move is the KEY SPLICE WRITING new_key, and when the keys
+# encode identically every key match sits inside its own literal-new_key span
+# and nothing is ever written — no write, no manufactured path-OLD. That
+# covers identity as a special case and also keeps enc()-collision renames of
+# context-bearing paths sweepable.
+_ci = old.find(KEY_CTX) if old_key != new_key else -1
+while _ci != -1:
+    _t = old[_ci + len(KEY_CTX):]
+    _hazard = False
+    if _t and new_key.startswith(_t):
+        _hazard = _t == new_key or bool(re.match(_BOUNDARY, new_key[len(_t):]))
+    elif _t.startswith(new_key):
+        _hazard = bool(re.match(_BOUNDARY, _t[len(new_key):]))
+    if _hazard:
+        sys.stderr.write(
+            "reorg-sync: refusing cross-axis overlap on --old/--new: '%s' "
+            "contains '%s' followed by (a boundary-terminated prefix of) the "
+            "encoded --new key '%s'. The key rewrite writes that key "
+            "immediately after the same literal context, so one --apply "
+            "manufactures a byte-exact fresh --old path reference and the "
+            "next pass destroys the migrated key.%s" % (old, KEY_CTX, new_key,
+                                                        _OVERLAP_TAIL))
+        sys.exit(1)
+    _ci = old.find(KEY_CTX, _ci + 1)
+
 for _axis, _o, _n, _b, _mirror in (
         ("--old/--new", old, new, _BOUNDARY, True),
         ("the encoded native-memory key for --old/--new",
@@ -381,73 +432,37 @@ for _axis, _o, _n, _b, _mirror in (
     # lookbehind holds and the hazard is real (key-only refusal test in §21).
     if not _mirror:
         continue
-    _pos = _o.find(_n, 1)
-    while _pos != -1:
-        if re.match(_b, _o[_pos + len(_n):]):
-            sys.stderr.write(
-                "reorg-sync: refusing suffix-overlap on %s: '%s' contains "
-                "'%s' followed by a path boundary (offset %d).%s"
-                % (_axis, _o, _n, _pos, _OVERLAP_TAIL))
-            sys.exit(1)
-        _pos = _o.find(_n, _pos + 1)
-    for _k in range(1, min(len(_o), len(_n))):
-        if _o.endswith(_n[:_k]) and re.match(_b, _n[_k:]):
-            sys.stderr.write(
-                "reorg-sync: refusing suffix-overlap on %s: '%s' ends with "
-                "'%s', which is '%s' up to a path boundary.%s"
-                % (_axis, _o, _n[:_k], _n, _OVERLAP_TAIL))
-            sys.exit(1)
+    # ...and it runs against BOTH span literals (13th panel MAJOR family). The
+    # mirror arm used to compare `old` only against `new`, but _new_spans()
+    # feeds new AND new_key spans into ONE list that the PATH axis consults, so
+    # a path match can straddle a new_key-shaped span just as easily — and
+    # splicing that match destroys the span, un-suppressing on pass 2 whatever
+    # the span had suppressed. Reached through both guards: `_in_residue`'s
+    # abut rule (`--old /q-z --new /z:`: new_key '-z:' is old's tail '-z' plus
+    # the boundary that follows it, so every ref suppresses the NEXT one and
+    # each --apply migrates exactly one, with the dry-run reporting 1 of N) and
+    # `_ctx_manufactured` (`--old /p-u --new /u:claude`: the destroyed span
+    # un-suppresses a key rewrite the pass-1 dry-run reported as 0). Since the
+    # hazard needs the PATH splice to destroy the bytes, the scan stays on
+    # `old`; only the literal being straddled varies.
+    for _lit in (_n, new_key):
+        _pos = _o.find(_lit, 1)
+        while _pos != -1:
+            if re.match(_b, _o[_pos + len(_lit):]):
+                sys.stderr.write(
+                    "reorg-sync: refusing suffix-overlap on %s: '%s' contains "
+                    "'%s' followed by a path boundary (offset %d).%s"
+                    % (_axis, _o, _lit, _pos, _OVERLAP_TAIL))
+                sys.exit(1)
+            _pos = _o.find(_lit, _pos + 1)
+        for _k in range(1, min(len(_o), len(_lit))):
+            if _o.endswith(_lit[:_k]) and re.match(_b, _lit[_k:]):
+                sys.stderr.write(
+                    "reorg-sync: refusing suffix-overlap on %s: '%s' ends with "
+                    "'%s', which is '%s' up to a path boundary.%s"
+                    % (_axis, _o, _lit[:_k], _lit, _OVERLAP_TAIL))
+                sys.exit(1)
 
-# CROSS-AXIS STRADDLE REFUSAL (10th panel CRITICAL family). The four straddle
-# directions: path-on-path and the containment shapes are the mirror family
-# above; key-on-key and key-on-path are UNCONSTRUCTIBLE (key-on-key: the
-# straddle remainder would have to be a suffix of 'claude/projects/', and no
-# '-'-leading key is; key-on-path: a key literal contains no '/', a path NEW
-# starts with one, so they share no non-empty suffix/prefix). That leaves
-# PATH-on-KEY: the key splice writes new_key immediately after a literal
-# 'claude/projects/', so when OLD itself contains 'claude/projects/' followed
-# by a prefix of new_key, pass 1's key rewrite manufactures a byte-exact fresh
-# path-OLD reference — OLD='/Users/j/.claude/projects/-a-b', NEW='/a/b'
-# (new_key='-a-b') key-migrates a deep memory key and pass 2's PATH arm eats
-# the result ('/a/b/memory'). A re-match must start before the window (every
-# in-window alignment fails _LEFT: window chars are letters and '/', neither
-# whitelisted), so it fully covers 'claude/projects/' — scanning OLD's CTX
-# occurrences is complete. Hazard shapes per occurrence, with _t = the rest of
-# OLD after the CTX: _t a non-empty prefix of new_key ending OLD (re-match
-# ends inside/at the span end; needs new_key's next char to be a boundary, or
-# nothing left — the `$` alternative); or _t containing all of new_key with a
-# boundary-led remainder (re-match overruns into pre-existing text, whose
-# first char the original key match's _KEY_R already forces to a boundary).
-# _t == '' is provably safe: the re-match would end at the span start and
-# new_key's leading '-' fails _BOUNDARY. Same undecidability, same answer.
-#
-# Gated on old_key != new_key, NOT old != new (11th panel MINOR: the first
-# spelling of this arm sat outside the per-axis loop and had no identity skip
-# at all, refusing --old X --new X whenever X contained the context): the
-# hazard's first move is the KEY SPLICE WRITING new_key, and when the keys
-# encode identically every key match sits inside its own literal-new_key span
-# and nothing is ever written — no write, no manufactured path-OLD. That
-# covers identity as a special case and also keeps enc()-collision renames of
-# context-bearing paths sweepable.
-_ci = old.find(KEY_CTX) if old_key != new_key else -1
-while _ci != -1:
-    _t = old[_ci + len(KEY_CTX):]
-    _hazard = False
-    if _t and new_key.startswith(_t):
-        _hazard = _t == new_key or bool(re.match(_BOUNDARY, new_key[len(_t):]))
-    elif _t.startswith(new_key):
-        _hazard = bool(re.match(_BOUNDARY, _t[len(new_key):]))
-    if _hazard:
-        sys.stderr.write(
-            "reorg-sync: refusing cross-axis overlap on --old/--new: '%s' "
-            "contains '%s' followed by (a boundary-terminated prefix of) the "
-            "encoded --new key '%s'. The key rewrite writes that key "
-            "immediately after the same literal context, so one --apply "
-            "manufactures a byte-exact fresh --old path reference and the "
-            "next pass destroys the migrated key.%s" % (old, KEY_CTX, new_key,
-                                                        _OVERLAP_TAIL))
-        sys.exit(1)
-    _ci = old.find(KEY_CTX, _ci + 1)
 
 # _abuts() was folded into _in_residue() below (its `start == span end` case is
 # now the `<= e` half of one rule); see that comment for the 6th-panel history.

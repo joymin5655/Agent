@@ -870,5 +870,36 @@ check "panel12-safe-miss-stays-missed-not-rewritten" $?
 rm -rf "$T35"
 
 echo
+echo "=== (25) 13th adversarial panel: the mirror arm must run against BOTH span literals ==="
+# Three MAJORs, one root cause, one level deeper than §24. Suppression spans are
+# recomputed from the CURRENT text every pass, so a suppression decision is only
+# sound if the span's bytes survive the pass. Written spans survive; a span the
+# splice OVERWRITES does not — and _new_spans() feeds new AND new_key spans into
+# ONE list the PATH axis consults, while the mirror refusal only ever compared
+# `old` against `new`. So a path match straddling a new_key-shaped span was
+# never refused, and splicing it un-suppressed whatever that span had hidden.
+# Reached through both guards, and the second shape is nastier than a stale
+# no-op: the dry-run reports fewer references than the tool will eventually
+# rewrite, so the review gate approves less than what happens.
+refuse_case "span-lit-key-junction" '/,-.-' '/,' "refusing suffix-overlap"
+refuse_case "span-lit-key-tail-plus-boundary" '/q-z' '/z:' "refusing suffix-overlap"
+refuse_case "span-lit-key-ctx-manufacture" '/p-u' '/u:claude' "refusing suffix-overlap"
+# the refused inputs' trees survive --apply untouched (N-pass drip, not a no-op)
+T36="$(mktemp -d)"
+printf '/q-z:/q-z:/q-z: x\n' > "$T36/f.txt"
+bash "$TOOL" --old '/q-z' --new '/z:' --root "$T36" --apply >/dev/null 2>&1
+[[ $? -eq 1 && "$(cat "$T36/f.txt")" == '/q-z:/q-z:/q-z: x' ]]
+check "panel13-refused-apply-leaves-tree-untouched" $?
+rm -rf "$T36"
+# ...and the arm must not have become a blanket refusal: every ordinary move,
+# including the ones whose NEW ends in a boundary char (the shape that makes
+# new_key end in one too), still sweeps.
+accept_case "ordinary-move-unaffected" /old/prefix /new/loc
+accept_case "boundary-tail-new-still-ok" /old '/backup (2026)'
+accept_case "colon-bearing-old-still-ok" '/srv:cache' /srv2
+accept_case "self-similar-new-still-ok" /o '/b (x)/b (x)'
+accept_case "key-collision-still-ok" /x/a_b /a/b
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]

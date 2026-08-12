@@ -70,7 +70,12 @@ hazard:
   promote-up, this family is checked on the **path axis only**: a key-axis
   straddle is unconstructible (the key matcher is pinned by its fixed-width
   `claude/projects/` lookbehind), so key-suffix-overlapping moves like
-  `/x/a_b` → `/a/b` (keys `-x-a-b` / `-a-b`) sweep normally;
+  `/x/a_b` → `/a/b` (keys `-x-a-b` / `-a-b`) sweep normally. It is checked
+  against **both** span literals, though — the *encoded key* of `--new` as well
+  as `--new` itself — because both kinds of span are consulted by the path
+  axis, so a path rewrite can destroy an encoded-key-shaped span just as
+  easily (`/q-z` → `/z:`, where the key `-z:` is `--old`'s tail plus the
+  boundary after it; 13th panel);
 - a **cross-axis overlap** — `--old` contains `claude/projects/` followed by a
   boundary-terminated prefix of the *encoded* `--new` key
   (`/Users/j/.claude/projects/-a-b` → `/a/b`, whose key is `-a-b`; 10th
