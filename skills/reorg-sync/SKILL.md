@@ -78,7 +78,7 @@ hazard:
   boundary after it; 13th panel);
 - a **cross-axis overlap** — `--old` contains `claude/projects/` followed by a
   boundary-terminated prefix of the *encoded* `--new` key
-  (`/Users/j/.claude/projects/-a-b` → `/a/b`, whose key is `-a-b`; 10th
+  (`/home/u/.claude/projects/-a-b` → `/a/b`, whose key is `-a-b`; 10th
   panel): the key rewrite writes that key immediately after the same literal
   context, so one `--apply` manufactures a byte-exact fresh `--old` path
   reference and the next pass destroys the migrated key. This is the one
@@ -135,7 +135,7 @@ since after the fold it is indistinguishable from a dash/dot/underscore *sibling
 safe miss (the orphaned dir simply stays, as before this tool) rather than risk
 corrupting an unrelated project's key. One more accepted key-class miss (9th
 panel, generalized by the 10th): when `--new`'s literal text can overlay
-`claude/projects/` — a destination under `~/.claude` (`/Users/u/.claude/…`),
+`claude/projects/` — a destination under `~/.claude` (`/home/u/.claude/…`),
 `--new /projects`, or a NEW containing the context outright — every key
 context window overlaps a NEW-shaped span and the key class reports an honest
 **0** for that move (required: a path rewrite really can manufacture partial

@@ -334,7 +334,7 @@ _OVERLAP_TAIL = (
 # PATH-on-KEY: the key splice writes new_key immediately after a literal
 # 'claude/projects/', so when OLD itself contains 'claude/projects/' followed
 # by a prefix of new_key, pass 1's key rewrite manufactures a byte-exact fresh
-# path-OLD reference — OLD='/Users/j/.claude/projects/-a-b', NEW='/a/b'
+# path-OLD reference — OLD='/home/u/.claude/projects/-a-b', NEW='/a/b'
 # (new_key='-a-b') key-migrates a deep memory key and pass 2's PATH arm eats
 # the result ('/a/b/memory'). A re-match must start before the window (every
 # in-window alignment fails _LEFT: window chars are letters and '/', neither
@@ -541,7 +541,7 @@ def _ctx_manufactured(m, spans, ctx_len):
     # reachability note above): the key class reports 0 for a move whenever a
     # literal-NEW span can OVERLAP the 16-char context window, i.e. whenever
     # NEW's text can overlay 'claude/projects/' — a suffix of NEW equal to a
-    # prefix of it (NEW='/Users/u/.claude', NEW='/x/claude'), NEW a
+    # prefix of it (NEW='/home/u/.claude', NEW='/x/claude'), NEW a
     # boundary-followed substring of it (NEW='/projects'), or NEW containing
     # it outright (family C). Realistic destinations under ~/.claude are in
     # this family, so the cost is not exotic. It cannot be narrowed to "spans
