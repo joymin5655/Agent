@@ -870,30 +870,65 @@ check "panel12-safe-miss-stays-missed-not-rewritten" $?
 rm -rf "$T35"
 
 echo
-echo "=== (25) 13th adversarial panel: the mirror arm must run against BOTH span literals ==="
-# Three MAJORs, one root cause, one level deeper than §24. Suppression spans are
-# recomputed from the CURRENT text every pass, so a suppression decision is only
-# sound if the span's bytes survive the pass. Written spans survive; a span the
-# splice OVERWRITES does not — and _new_spans() feeds new AND new_key spans into
-# ONE list the PATH axis consults, while the mirror refusal only ever compared
-# `old` against `new`. So a path match straddling a new_key-shaped span was
-# never refused, and splicing it un-suppressed whatever that span had hidden.
-# Reached through both guards, and the second shape is nastier than a stale
-# no-op: the dry-run reports fewer references than the tool will eventually
-# rewrite, so the review gate approves less than what happens.
-refuse_case "span-lit-key-junction" '/,-.-' '/,' "refusing suffix-overlap"
-refuse_case "span-lit-key-tail-plus-boundary" '/q-z' '/z:' "refusing suffix-overlap"
-refuse_case "span-lit-key-ctx-manufacture" '/p-u' '/u:claude' "refusing suffix-overlap"
-# the refused inputs' trees survive --apply untouched (N-pass drip, not a no-op)
-T36="$(mktemp -d)"
-printf '/q-z:/q-z:/q-z: x\n' > "$T36/f.txt"
-bash "$TOOL" --old '/q-z' --new '/z:' --root "$T36" --apply >/dev/null 2>&1
-[[ $? -eq 1 && "$(cat "$T36/f.txt")" == '/q-z:/q-z:/q-z: x' ]]
-check "panel13-refused-apply-leaves-tree-untouched" $?
-rm -rf "$T36"
-# ...and the arm must not have become a blanket refusal: every ordinary move,
-# including the ones whose NEW ends in a boundary char (the shape that makes
-# new_key end in one too), still sweeps.
+echo "=== (25) 13th+14th panels: the suppression-stability invariant, OBSERVED ==="
+# The span guards answer "is this already-migrated residue?" from literal-NEW /
+# new_key spans in the CURRENT text. That answer is sound only if the span's
+# bytes still say the same thing after the pass — and a splice can overwrite
+# them, on EITHER axis. When that happens the next --apply re-scans, finds no
+# span, and rewrites what this pass skipped: idempotency breaks and, worse, the
+# dry-run undercounts what repeated runs perform, so the review gate approves
+# less than what happens.
+#
+# Three rounds tried to predict this from (old, new) alone. The 13th round's
+# widened refusal was wrong in BOTH directions at once (14th panel): it still
+# missed KEY-axis splices destroying spans, and it refused safe moves whose OLD
+# merely contained the dash-encoding of NEW with no possible victim. It is now
+# OBSERVED on the real text — a span is dangerous iff it actually suppressed a
+# match AND a splice actually overwrites it — so these cases are content-level,
+# not input-level: the same --old/--new is refused on a tree that carries the
+# shape and sweeps normally on one that does not. Both halves are asserted.
+unstable_case() {  # unstable_case <label> <old> <new> <content>
+  local label="$1" o="$2" n="$3" content="$4"
+  local D err rc; D="$(mktemp -d)"
+  printf '%b' "$content" > "$D/f.txt"
+  local before; before="$(cat "$D/f.txt")"
+  err="$(bash "$TOOL" --old "$o" --new "$n" --root "$D" --apply 2>&1 >/dev/null)"; rc=$?
+  [[ $rc -eq 1 ]]; check "panel14-refused[$label]" $?
+  printf '%s' "$err" | grep -q 'refusing this sweep'
+  check "panel14-names-stability-hazard[$label]" $?
+  [[ "$before" == "$(cat "$D/f.txt")" ]]; check "panel14-tree-untouched[$label]" $?
+  rm -rf "$D"
+}
+# path splice destroys the span (13th panel: _in_residue abut, and _ctx_manufactured)
+unstable_case "path-splice-destroys-span" '/q-z' '/z:' '/q-z:/q-z:/q-z: x\n'
+unstable_case "path-splice-ctx-manufacture" '/p-u' '/u:claude' '/p-u:claude/projects/-p-u/f\n'
+unstable_case "path-splice-junction" '/,-.-' '/,' '/,-.-,/,-.-\n'
+# KEY splice destroys the span (14th panel MAJOR — the direction the 13th
+# round's path-axis-only widening could never have caught)
+unstable_case "key-splice-destroys-span" '/x.a' '/a:' 'claude/projects/-x-a:/x.a\n'
+unstable_case "key-splice-realistic" '/mnt/srv.app' '/srv/app (old)' \
+  '~/.claude/projects/-mnt-srv-app (old)/mnt/srv.app/notes.md\n'
+# ...and the SAME inputs sweep normally when the tree does not carry the shape:
+# no victim, no refusal. This is the over-refusal the 14th panel found in the
+# 13th round's input-level widening.
+stable_case() {  # stable_case <label> <old> <new> <content> <expect-substring>
+  local label="$1" o="$2" n="$3" content="$4" want="$5"
+  local D rc; D="$(mktemp -d)"
+  printf '%b' "$content" > "$D/f.txt"
+  bash "$TOOL" --old "$o" --new "$n" --root "$D" --apply >/dev/null 2>&1; rc=$?
+  [[ $rc -eq 0 ]]; check "panel14-accepted[$label]" $?
+  grep -qF "$want" "$D/f.txt"; check "panel14-actually-rewrote[$label]" $?
+  bash "$TOOL" --old "$o" --new "$n" --root "$D" 2>&1 | grep -q 'summary: 0 reference'
+  check "panel14-idempotent[$label]" $?
+  rm -rf "$D"
+}
+stable_case "same-input-benign-tree" '/q-z' '/z:' 'ref /q-z/f\n' '/z:/f'
+stable_case "key-input-benign-tree" '/x.a' '/a:' 'ref /x.a/f\n' '/a:/f'
+# the 14th panel's MINOR: OLD merely CONTAINING the dash-encoding of NEW is not
+# a hazard — there is no victim, so it must sweep, not refuse.
+stable_case "old-contains-new-key-no-victim" '/srv/-old-x/data' '/old/x' \
+  'see /srv/-old-x/data/notes\n' '/old/x/notes'
+# controls: ordinary moves, and the shapes whose NEW ends in a boundary char
 accept_case "ordinary-move-unaffected" /old/prefix /new/loc
 accept_case "boundary-tail-new-still-ok" /old '/backup (2026)'
 accept_case "colon-bearing-old-still-ok" '/srv:cache' /srv2

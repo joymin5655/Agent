@@ -432,36 +432,35 @@ for _axis, _o, _n, _b, _mirror in (
     # lookbehind holds and the hazard is real (key-only refusal test in §21).
     if not _mirror:
         continue
-    # ...and it runs against BOTH span literals (13th panel MAJOR family). The
-    # mirror arm used to compare `old` only against `new`, but _new_spans()
-    # feeds new AND new_key spans into ONE list that the PATH axis consults, so
-    # a path match can straddle a new_key-shaped span just as easily — and
-    # splicing that match destroys the span, un-suppressing on pass 2 whatever
-    # the span had suppressed. Reached through both guards: `_in_residue`'s
-    # abut rule (`--old /q-z --new /z:`: new_key '-z:' is old's tail '-z' plus
-    # the boundary that follows it, so every ref suppresses the NEXT one and
-    # each --apply migrates exactly one, with the dry-run reporting 1 of N) and
-    # `_ctx_manufactured` (`--old /p-u --new /u:claude`: the destroyed span
-    # un-suppresses a key rewrite the pass-1 dry-run reported as 0). Since the
-    # hazard needs the PATH splice to destroy the bytes, the scan stays on
-    # `old`; only the literal being straddled varies.
-    for _lit in (_n, new_key):
-        _pos = _o.find(_lit, 1)
-        while _pos != -1:
-            if re.match(_b, _o[_pos + len(_lit):]):
-                sys.stderr.write(
-                    "reorg-sync: refusing suffix-overlap on %s: '%s' contains "
-                    "'%s' followed by a path boundary (offset %d).%s"
-                    % (_axis, _o, _lit, _pos, _OVERLAP_TAIL))
-                sys.exit(1)
-            _pos = _o.find(_lit, _pos + 1)
-        for _k in range(1, min(len(_o), len(_lit))):
-            if _o.endswith(_lit[:_k]) and re.match(_b, _lit[_k:]):
-                sys.stderr.write(
-                    "reorg-sync: refusing suffix-overlap on %s: '%s' ends with "
-                    "'%s', which is '%s' up to a path boundary.%s"
-                    % (_axis, _o, _lit[:_k], _lit, _OVERLAP_TAIL))
-                sys.exit(1)
+    # This arm covers the MANUFACTURE family only — pre-existing text plus a
+    # WRITTEN value spelling a byte-exact fresh reference. The other family the
+    # 13th/14th panels found (a splice DESTROYING bytes that a suppression
+    # decision rested on) is deliberately NOT handled by widening this scan:
+    # the 13th round tried that (`for _lit in (_n, new_key)`) and the 14th
+    # proved it wrong in both directions at once — it still missed KEY-axis
+    # splices destroying spans, and it refused provably safe moves whose OLD
+    # merely contained the dash-encoding of NEW with no possible victim
+    # (`--old /srv/-old-x/data --new /old/x`). Destruction is now detected by
+    # observation on the real text (see unstable_suppression below) instead of
+    # predicted from (old, new); that is the only form that can be neither
+    # under- nor over-inclusive, and after three enumerations falsified in a
+    # row it is the form this file should have reached earlier.
+    _pos = _o.find(_n, 1)
+    while _pos != -1:
+        if re.match(_b, _o[_pos + len(_n):]):
+            sys.stderr.write(
+                "reorg-sync: refusing suffix-overlap on %s: '%s' contains "
+                "'%s' followed by a path boundary (offset %d).%s"
+                % (_axis, _o, _n, _pos, _OVERLAP_TAIL))
+            sys.exit(1)
+        _pos = _o.find(_n, _pos + 1)
+    for _k in range(1, min(len(_o), len(_n))):
+        if _o.endswith(_n[:_k]) and re.match(_b, _n[_k:]):
+            sys.stderr.write(
+                "reorg-sync: refusing suffix-overlap on %s: '%s' ends with "
+                "'%s', which is '%s' up to a path boundary.%s"
+                % (_axis, _o, _n[:_k], _n, _OVERLAP_TAIL))
+            sys.exit(1)
 
 
 # _abuts() was folded into _in_residue() below (its `start == span end` case is
@@ -568,6 +567,50 @@ def live_matches(pat, s, ctx_len=0):
             if not _in_residue(m, spans)
             and not (ctx_len and _ctx_manufactured(m, spans, ctx_len))]
 
+def unstable_suppression(s, spliced):
+    # THE SUPPRESSION-STABILITY INVARIANT (13th/14th panels). Every span guard
+    # here answers "is this match already-migrated residue?" by looking at
+    # literal-NEW/new_key spans in the CURRENT text. That answer is only sound
+    # if the span's bytes still say the same thing after this pass — and a
+    # splice can overwrite them. When it does, the next --apply re-scans, finds
+    # no span, and rewrites what this pass deliberately skipped: idempotency
+    # breaks, and worse, the dry-run reports FEWER references than the tool
+    # will eventually rewrite, so the review gate approves less than what
+    # happens.
+    #
+    # Three rounds of predicting this from (old, new) alone failed — the 13th
+    # round's widened refusal still missed key-axis splices and refused safe
+    # moves with no victim. So it is OBSERVED instead: a span is dangerous iff
+    # (a) it actually suppressed a match on this line, and (b) a splice range
+    # actually overwrites part of it. Both halves are checked against the real
+    # text, so there is nothing to under- or over-enumerate: no victim means no
+    # refusal, and any destroying splice is caught whichever axis performs it.
+    #
+    # Returns a human-readable reason, or None when the line is stable.
+    spans = _new_spans(s)
+    if not spans:
+        return None
+    victims = []
+    for pat, ctx_len in ((path_pat, 0), (key_pat, len(KEY_CTX))):
+        for m in pat.finditer(s):
+            for sp in spans:
+                a, b = sp
+                if a <= m.start() <= b:
+                    victims.append((sp, m, "residue"))
+                elif ctx_len and _ctx_manufactured(m, [sp], ctx_len):
+                    victims.append((sp, m, "manufactured-context"))
+    for (a, b), m, why in victims:
+        for x, y, _r in spliced:
+            if x < b and a < y:
+                return ("a rewrite at [%d,%d) overwrites the already-migrated "
+                        "span at [%d,%d), which is the only reason the "
+                        "reference at [%d,%d) is being skipped (%s). The next "
+                        "--apply would no longer see that span and would "
+                        "rewrite it, so this run's report undercounts what "
+                        "repeated runs would do"
+                        % (x, y, a, b, m.start(), m.end(), why))
+    return None
+
 def splice(s, repls):
     # Positional splice (5th panel MAJOR): rewrite BOTH axes' live_matches in one
     # pass over the ORIGINAL string. The earlier flow ran key-sub then path-sub
@@ -612,6 +655,8 @@ counts = {"shebang": 0, "worktree-gitfile": 0, "crontab": 0, "anchor": 0, "nativ
 changed_files = 0
 failed = []
 report = []
+unstable = []
+pending = []
 
 for dirpath, dirnames, filenames in os.walk(root):
     # skip the git object store, but NOT a .git *file* (worktree pointer) — that is
@@ -682,38 +727,72 @@ for dirpath, dirnames, filenames in os.walk(root):
                 counts[cls] += len(pmatch)
                 file_hit = True
                 report.append("%-17s %s:%d  %s" % (cls, rel, i, disp))
-            if apply and (kmatch or pmatch):
-                # both axes splice at their ORIGINAL-line positions in one pass —
-                # never sequential re.sub over an already-mutated line (see splice).
-                ln = splice(ln, [(m.start(), m.end(), new_key) for m in kmatch]
-                              + [(m.start(), m.end(), new) for m in pmatch])
+            if kmatch or pmatch:
+                repls = ([(m.start(), m.end(), new_key) for m in kmatch]
+                         + [(m.start(), m.end(), new) for m in pmatch])
+                # Suppression stability is checked on EVERY run, not just
+                # --apply: the dry-run's counts are the review gate, and an
+                # unstable line makes them an undercount of what repeated runs
+                # would rewrite. Reporting it in the dry run is the whole point.
+                why = unstable_suppression(ln, repls)
+                if why is not None:
+                    unstable.append("%s:%d: %s" % (rel, i, why))
+                if apply:
+                    # both axes splice at their ORIGINAL-line positions in one pass —
+                    # never sequential re.sub over an already-mutated line (see splice).
+                    ln = splice(ln, repls)
             out.append(ln)
         if apply and file_hit:
             updated = "".join(out)
             if updated != text:
-                # atomic write: temp + rename, preserving the original mode
-                # (a shebang target must stay executable). A file we cannot
-                # rewrite is reported and the sweep continues. The temp name is
-                # mkstemp-random (5th panel data-loss fix): the earlier FIXED
-                # name fp+".reorg-sync-tmp" collided with any real file of that
-                # name — the sweep would list it, then destroy it by using it
-                # as the temp target for fp's rewrite.
-                tmp = None
-                try:
-                    st = os.stat(fp)
-                    fd, tmp = tempfile.mkstemp(dir=dirpath, prefix=".reorg-sync-", suffix=".tmp")
-                    with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                        fh.write(updated)
-                    os.chmod(tmp, st.st_mode & 0o7777)
-                    os.replace(tmp, fp)
-                    changed_files += 1
-                except OSError as e:
-                    failed.append("%s: %s" % (rel, e))
-                    if tmp is not None:
-                        try:
-                            os.unlink(tmp)
-                        except OSError:
-                            pass
+                # Writes are DEFERRED to after the whole walk (14th panel): the
+                # suppression-stability check is a property of the tree, and a
+                # hazardous line in the last file must not find the first files
+                # already rewritten. Buffering costs the changed files' bytes in
+                # memory, which for a reference sweep is small, and makes the
+                # refusal all-or-nothing.
+                pending.append((fp, dirpath, rel, updated))
+
+if unstable:
+    sys.stderr.write(
+        "reorg-sync: refusing this sweep — the report would undercount what "
+        "repeated --apply runs perform, because a rewrite destroys the "
+        "already-migrated text that is the only reason another reference is "
+        "being skipped:\n")
+    for u in unstable[:20]:
+        sys.stderr.write("  %s\n" % u)
+    if len(unstable) > 20:
+        sys.stderr.write("  ... and %d more\n" % (len(unstable) - 20))
+    sys.stderr.write(
+        "Nothing was written. Sweep with a more specific --old, or move "
+        "through an intermediate name that shares no boundary-anchored affix "
+        "with either side.\n")
+    sys.exit(1)
+
+for fp, dirpath, rel, updated in pending:
+    # atomic write: temp + rename, preserving the original mode
+    # (a shebang target must stay executable). A file we cannot
+    # rewrite is reported and the sweep continues. The temp name is
+    # mkstemp-random (5th panel data-loss fix): the earlier FIXED
+    # name fp+".reorg-sync-tmp" collided with any real file of that
+    # name — the sweep would list it, then destroy it by using it
+    # as the temp target for fp's rewrite.
+    tmp = None
+    try:
+        st = os.stat(fp)
+        fd, tmp = tempfile.mkstemp(dir=dirpath, prefix=".reorg-sync-", suffix=".tmp")
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(updated)
+        os.chmod(tmp, st.st_mode & 0o7777)
+        os.replace(tmp, fp)
+        changed_files += 1
+    except OSError as e:
+        failed.append("%s: %s" % (rel, e))
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
 
 mode = "APPLY" if apply else "DRY-RUN"
 print("reorg-sync [%s]  old=%s  new=%s  root=%s" % (mode, old, new, root))

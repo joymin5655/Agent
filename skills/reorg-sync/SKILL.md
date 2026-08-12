@@ -70,12 +70,7 @@ hazard:
   promote-up, this family is checked on the **path axis only**: a key-axis
   straddle is unconstructible (the key matcher is pinned by its fixed-width
   `claude/projects/` lookbehind), so key-suffix-overlapping moves like
-  `/x/a_b` → `/a/b` (keys `-x-a-b` / `-a-b`) sweep normally. It is checked
-  against **both** span literals, though — the *encoded key* of `--new` as well
-  as `--new` itself — because both kinds of span are consulted by the path
-  axis, so a path rewrite can destroy an encoded-key-shaped span just as
-  easily (`/q-z` → `/z:`, where the key `-z:` is `--old`'s tail plus the
-  boundary after it; 13th panel);
+  `/x/a_b` → `/a/b` (keys `-x-a-b` / `-a-b`) sweep normally;
 - a **cross-axis overlap** — `--old` contains `claude/projects/` followed by a
   boundary-terminated prefix of the *encoded* `--new` key
   (`/home/u/.claude/projects/-a-b` → `/a/b`, whose key is `-a-b`; 10th
@@ -86,6 +81,20 @@ hazard:
   provably cannot occur). In practice it means the memory-dir tree itself
   (`~/.claude/projects/...`) cannot be swept as `--old` when the destination's
   key collides this way — move it under a different name first.
+
+One further refusal is decided by the **tree's content**, not by the arguments,
+so the same `--old`/`--new` can be refused on one tree and sweep normally on
+another. Every "already migrated, skip it" decision rests on literal-`<new>`
+text found in the *current* line; if the same pass's rewrite would overwrite
+that text, the decision does not survive — the next `--apply` would no longer
+see it and would rewrite what this run skipped. The report would then be an
+**undercount of what repeated runs perform**, which breaks the review gate
+rather than merely being non-idempotent. The tool detects that by observation
+(a span is dangerous only when it actually suppressed a reference *and* a
+rewrite actually overwrites it), names the file, line, and byte ranges, and
+writes **nothing at all** — writes are buffered until the whole tree is
+checked, so a hazard in the last file cannot leave the first ones rewritten.
+Same remedy as above: a more specific `--old`, or an intermediate name.
 
 Note the report echoes matched lines — review it before pasting into shared
 channels/CI logs, since a line that references `<old>` can also carry unrelated
