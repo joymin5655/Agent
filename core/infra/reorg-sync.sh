@@ -247,14 +247,29 @@ new_span_pat = re.compile(re.escape(new) + _BOUNDARY)
 # The Unicode-\w-aware left whitelist blocks a longer key that merely ends with
 # old_key. Idempotency uses the same protected-span guard as the path layer
 # (new_key_span_pat), so a new_key that embeds old_key after a surviving delimiter
-# cannot compound either. Unlike the path span pattern, the KEY span pattern
-# KEEPS its left anchor: a written key span always sits immediately after
-# `claude/projects/` (that is the only place the key splice fires), and key
-# matches cannot be textually adjacent (_KEY_R requires a boundary after
-# old_key, but a following key match would have to start with the letter 'c' of
-# its own context) — so the adjacency flip that forced the path span pattern to
-# drop _LEFT is not constructible here, and keeping the anchor avoids treating
-# every '-a-b'-shaped word in prose as a protected span.
+# cannot compound either. Like the path span pattern, the KEY span pattern is
+# RIGHT-ANCHORED ONLY. The 9th round kept its left anchor on the argument that
+# "a written key span always sits immediately after `claude/projects/`, so the
+# adjacency flip is not constructible here" — the 12th panel falsified that
+# (three independent lenses, one root cause), and the error is worth naming
+# because it is the same shape twice: the argument was about where the splice
+# FIRES (pre-splice text) when what matters is where the span SITS ON THE NEXT
+# PASS. splice() rewrites both axes in one pass over the original line, so when
+# OLD's own text covers the literal `claude/projects/` (any OLD ending in
+# `…/claude` or `…/claude/projects`, or containing the context), the PATH splice
+# overwrites the very anchor bytes the key match's lookbehind used. Those bytes
+# lie OUTSIDE the protected span, so nothing preserved them. On the next pass no
+# key span is found, and both protections that rode on it vanish: the `<= e`
+# abut rule, and suppression of the boundary flip the key write itself caused
+# (_KEY_R accepts `/` on the right, but _LEFT excludes it, so text after the key
+# was unmatchable while new_key ended in a letter and becomes matchable once it
+# ends in a boundary char). Result: --apply ate its own output, one component
+# per pass, including the interior of an unrelated longer path.
+# Dropping the anchor costs what keeping it was meant to avoid — '-a-b'-shaped
+# prose text now counts as a span — but that is the same safe-miss direction as
+# every other span cost, and it is narrow: a key match must still satisfy the
+# `claude/projects/` lookbehind to exist at all, so only a key ref sitting
+# inside or right after new_key-shaped text is skipped, visibly, in the dry run.
 # The key match is ANCHORED to the consumer context (6th panel MINOR): the
 # native-memory dir is always spelled `…claude/projects/<encoded-key>/…`, so the
 # key literal must sit immediately after `claude/projects/`. The earlier form
@@ -267,7 +282,7 @@ _KEY_R = r"""(?=/|$|[\s"'`:,;=|<>(){}\[\]])"""
 KEY_CTX = "claude/projects/"
 _KEY_L = r"(?<=%s)" % re.escape(KEY_CTX)
 key_pat = re.compile(_KEY_L + re.escape(old_key) + _KEY_R)
-new_key_span_pat = re.compile(_KEY_L + re.escape(new_key) + _KEY_R)
+new_key_span_pat = re.compile(re.escape(new_key) + _KEY_R)
 
 # PROMOTE-UP REFUSAL (5th panel CRITICAL, user decision 2026-08-10; reworked
 # after the 7th panel). When OLD is NEW plus one or more trailing components, a

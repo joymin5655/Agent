@@ -162,11 +162,15 @@ the swept tree) and the live user crontab is a system resource — this skill re
   including every shape where NEW contains OLD — as a prefix (`/proj` → `/proj_v2`,
   `/proj` → `/proj/inner`) OR after a delimiter (`/a` → `/a:/a`). Enforced by a
   **protected-span guard**: apply computes the literal-NEW spans positionally on
-  the buffer (right-boundary-anchored only — a *written* span's left neighbour
-  is whatever the splice left there, so requiring a left boundary missed the
-  second of two adjacent rewrites and the tool re-ate its own output; 8th panel)
-  and refuses to rewrite any OLD that *starts inside* one (already-migrated
-  text). No text is mutated during the scan, so an adjacent
+  the buffer — for **both** axes, right-boundary-anchored only — and refuses to
+  rewrite any OLD that *starts inside* one (already-migrated text). Neither
+  span pattern may require a *left* boundary, because a written span's left
+  neighbour is whatever the splice left there: on the path axis that lost the
+  second of two adjacent rewrites (8th panel), and on the key axis the
+  `claude/projects/` anchor is itself overwritable by the *same pass's* path
+  splice whenever `<old>` covers that literal (`/z/claude` → `/w:`), since the
+  anchor bytes sit outside the protected span. Both spellings ended the same
+  way: the tool re-ate its own output, one component per pass (12th panel). No text is mutated during the scan, so an adjacent
   component's boundary is never disturbed — the flaw that sank an earlier NUL-nonce
   mask (which corrupted a nested sibling) and a leading-only negative lookahead
   (which missed the copy of OLD that NEW reintroduces after a delimiter,

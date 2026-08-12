@@ -830,5 +830,45 @@ check "panel10-ctx-suffix-overlap-path-rewrote" $?
 rm -rf "$T33"
 
 echo
+echo "=== (24) 12th adversarial panel: the key span's left anchor is destroyable ==="
+# One root cause behind 4 CRITICALs + 1 MAJOR from five independent lenses. The
+# 9th round kept _KEY_L on new_key_span_pat, arguing a written key span "always
+# sits immediately after claude/projects/". That is true where the splice FIRES
+# and false where the span SITS ON THE NEXT PASS: splice() rewrites both axes in
+# one pass, so when OLD's text covers the literal context (OLD ending in
+# '…/claude' or '…/claude/projects'), the PATH splice overwrites the anchor
+# bytes — which live OUTSIDE the protected span, so nothing preserves them.
+# Pass 2 then finds no key span, the `<= e` abut rule stops firing, and --apply
+# eats its own output one component per pass. The span pattern is now
+# right-anchored only, matching the path axis.
+idem_case "key-anchor-destroyed-migrated-key" '/h/u/.claude' '/mnt/c (2)' \
+  '/h/u/.claude/projects/-h-u--claude/h/u/.claude/f\n'
+idem_case "key-anchor-destroyed-minimal" /c/claude/projects '/n)' \
+  '/c/claude/projects/-c-claude-projects/c/claude/projects\n'
+idem_case "key-anchor-destroyed-ctx-tail" /z/claude '/w:' \
+  '/z/claude/projects/-w:/z/claude/x\n'
+# first applies must still do the real work (a fix that suppressed everything
+# would satisfy every idempotency row above)
+T34="$(mktemp -d)"
+printf '/h/u/.claude/projects/-h-u--claude/h/u/.claude/f\n' > "$T34/f.txt"
+REP="$(bash "$TOOL" --old '/h/u/.claude' --new '/mnt/c (2)' --root "$T34" 2>&1)"
+printf '%s' "$REP" | grep -q 'anchor=1'; check "panel12-first-pass-path-counted" $?
+printf '%s' "$REP" | grep -q 'native-memory-key=1'; check "panel12-first-pass-key-counted" $?
+bash "$TOOL" --old '/h/u/.claude' --new '/mnt/c (2)' --root "$T34" --apply >/dev/null 2>&1
+[[ "$(cat "$T34/f.txt")" == '/mnt/c (2)/projects/-mnt-c (2)/h/u/.claude/f' ]]
+check "panel12-first-pass-rewrote-both-axes" $?
+rm -rf "$T34"
+# the surviving ref is a PERMANENT safe miss (visible to a post-apply grep),
+# not a self-healing unreviewed change on the next run — that distinction is
+# the whole point of the MAJOR in this family.
+T35="$(mktemp -d)"
+printf '/z/claude/projects/-w:/z/claude/x\n' > "$T35/f.txt"
+bash "$TOOL" --old /z/claude --new '/w:' --root "$T35" --apply >/dev/null 2>&1
+grep -qF '/z/claude/x' "$T35/f.txt"; check "panel12-safe-miss-survives-apply" $?
+bash "$TOOL" --old /z/claude --new '/w:' --root "$T35" 2>&1 | grep -q 'summary: 0 reference'
+check "panel12-safe-miss-stays-missed-not-rewritten" $?
+rm -rf "$T35"
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]
