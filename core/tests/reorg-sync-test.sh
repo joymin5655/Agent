@@ -928,6 +928,17 @@ stable_case "key-input-benign-tree" '/x.a' '/a:' 'ref /x.a/f\n' '/a:/f'
 # a hazard — there is no victim, so it must sweep, not refuse.
 stable_case "old-contains-new-key-no-victim" '/srv/-old-x/data' '/old/x' \
   'see /srv/-old-x/data/notes\n' '/old/x/notes'
+# 15th panel: the 14th round's POSITIONAL proxy ("does a rewrite overlap a
+# suppressing span?") is not the question — the splice writes NEW, and with
+# both span patterns right-anchor-only the written literal is itself a span on
+# the next pass, often at exactly the position that keeps the same reference
+# suppressed. 12 of 17 firings were false positives, each aborting the whole
+# tree and hiding an honest report. The predicate is now the property itself:
+# splice the line, re-run the matcher, require a fixed point. These three
+# reproduce the proxy's false positives and must sweep.
+stable_case "proxy-fp-span-still-suppresses" '/-a:' '/a:' '/-a:/-a:\n' '/a:/-a:'
+stable_case "proxy-fp-written-literal-re-spans" '/srv-a:' '/a:' '/srv-a:/srv-a:/f\n' '/a:/srv-a:/f'
+stable_case "proxy-fp-abut-preserved" '/srv/-app:' '/app:' 'PATH=/srv/-app:/srv/-app:\n' 'PATH=/app:/srv/-app:'
 # controls: ordinary moves, and the shapes whose NEW ends in a boundary char
 accept_case "ordinary-move-unaffected" /old/prefix /new/loc
 accept_case "boundary-tail-new-still-ok" /old '/backup (2026)'

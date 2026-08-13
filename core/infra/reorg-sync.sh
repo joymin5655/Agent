@@ -567,49 +567,52 @@ def live_matches(pat, s, ctx_len=0):
             if not _in_residue(m, spans)
             and not (ctx_len and _ctx_manufactured(m, spans, ctx_len))]
 
-def unstable_suppression(s, spliced):
-    # THE SUPPRESSION-STABILITY INVARIANT (13th/14th panels). Every span guard
-    # here answers "is this match already-migrated residue?" by looking at
-    # literal-NEW/new_key spans in the CURRENT text. That answer is only sound
-    # if the span's bytes still say the same thing after this pass — and a
-    # splice can overwrite them. When it does, the next --apply re-scans, finds
-    # no span, and rewrites what this pass deliberately skipped: idempotency
-    # breaks, and worse, the dry-run reports FEWER references than the tool
-    # will eventually rewrite, so the review gate approves less than what
-    # happens.
+def unstable_suppression(s, repls):
+    # THE SUPPRESSION-STABILITY INVARIANT (13th-15th panels). Every span guard
+    # here answers "is this already-migrated residue?" from literal-NEW /
+    # new_key spans in the CURRENT text. That answer is sound only if it still
+    # holds after this pass — and a splice can overwrite the very bytes it rests
+    # on, on either axis. When it does, the next --apply re-scans, finds no
+    # span, and rewrites what this pass skipped: idempotency breaks and, worse,
+    # the report UNDERCOUNTS what repeated runs perform, so the review gate
+    # approves less than what happens.
     #
-    # Three rounds of predicting this from (old, new) alone failed — the 13th
-    # round's widened refusal still missed key-axis splices and refused safe
-    # moves with no victim. So it is OBSERVED instead: a span is dangerous iff
-    # (a) it actually suppressed a match on this line, and (b) a splice range
-    # actually overwrites part of it. Both halves are checked against the real
-    # text, so there is nothing to under- or over-enumerate: no victim means no
-    # refusal, and any destroying splice is caught whichever axis performs it.
+    # Four rounds tried to decide this indirectly and all four failed:
+    #   9th/12th/13th  predicted it from (old, new) alone — three enumerations
+    #                  falsified in a row, missing real hazards AND refusing
+    #                  safe moves.
+    #   14th           observed the text, but through a POSITIONAL PROXY ("does
+    #                  a rewrite overlap a span that suppressed something?").
+    #                  The 15th panel showed the proxy is not the question: the
+    #                  splice writes NEW, and since both span patterns are now
+    #                  right-anchor-only, the written literal is itself
+    #                  recognized as a span next pass — frequently at exactly
+    #                  the position that keeps suppressing the same reference.
+    #                  12 of 17 observed firings were false positives, and each
+    #                  aborted the WHOLE tree and hid an honest report.
+    #
+    # So ask the actual question. Splice the line, re-run the same match logic
+    # on the result, and require it to be a FIXED POINT: a second --apply must
+    # find nothing here. That is contract 2 at line granularity, computed
+    # rather than approximated — no over- or under-inclusion left to enumerate,
+    # because the predicate IS the property.
     #
     # Returns a human-readable reason, or None when the line is stable.
-    spans = _new_spans(s)
-    if not spans:
+    if not repls:
         return None
-    victims = []
-    for pat, ctx_len in ((path_pat, 0), (key_pat, len(KEY_CTX))):
-        for m in pat.finditer(s):
-            for sp in spans:
-                a, b = sp
-                if a <= m.start() <= b:
-                    victims.append((sp, m, "residue"))
-                elif ctx_len and _ctx_manufactured(m, [sp], ctx_len):
-                    victims.append((sp, m, "manufactured-context"))
-    for (a, b), m, why in victims:
-        for x, y, _r in spliced:
-            if x < b and a < y:
-                return ("a rewrite at [%d,%d) overwrites the already-migrated "
-                        "span at [%d,%d), which is the only reason the "
-                        "reference at [%d,%d) is being skipped (%s). The next "
-                        "--apply would no longer see that span and would "
-                        "rewrite it, so this run's report undercounts what "
-                        "repeated runs would do"
-                        % (x, y, a, b, m.start(), m.end(), why))
-    return None
+    after = splice(s, repls)
+    k2 = live_matches(key_pat, after, len(KEY_CTX)) if KEY_CTX in after else []
+    p2 = live_matches(path_pat, after)
+    if k2:
+        p2 = drop_overlaps(k2, p2)
+    if not (k2 or p2):
+        return None
+    return ("rewriting this line would leave %d reference(s) that a second "
+            "--apply would rewrite again (%s), so this run's report undercounts "
+            "what repeated runs perform"
+            % (len(k2) + len(p2),
+               ", ".join(sorted(set(["%r" % after[m.start():m.end()]
+                                     for m in list(k2) + list(p2)])))))
 
 def splice(s, repls):
     # Positional splice (5th panel MAJOR): rewrite BOTH axes' live_matches in one
