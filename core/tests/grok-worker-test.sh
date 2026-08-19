@@ -176,17 +176,22 @@ echo "You've reached your free Grok Build usage limit for now. Try again later."
 exit 1
 LSTUB
 chmod +x "$LIMIT_STUB/grok"
-printf 'x' | PATH="$LIMIT_STUB:$PATH" GROK_TIERS_FILE="$TIERS" bash "$WORKER" --tier mid >/dev/null 2>&1
+# ALLOW_UNSANDBOXED=1: this case runs AFTER the transparent sandbox-exec stub is
+# removed (case (e)), so on a non-macOS runner sandbox-exec is absent and the
+# worker would fail closed (exit 7) before reaching the classify logic. The
+# opt-out lets the dispatch through so the exit-code classification is what's
+# under test here (the sandbox itself is case (e)'s concern).
+printf 'x' | PATH="$LIMIT_STUB:$PATH" GROK_TIERS_FILE="$TIERS" GROK_WORKER_ALLOW_UNSANDBOXED=1 bash "$WORKER" --tier mid >/dev/null 2>&1
 check "usage-limit-exits-75" 75 $?
 cat > "$LIMIT_STUB/grok" <<'LSTUB'
 #!/usr/bin/env bash
 echo "some unrelated backend error"
 exit 1
 LSTUB
-printf 'x' | PATH="$LIMIT_STUB:$PATH" GROK_TIERS_FILE="$TIERS" bash "$WORKER" --tier mid >/dev/null 2>&1
+printf 'x' | PATH="$LIMIT_STUB:$PATH" GROK_TIERS_FILE="$TIERS" GROK_WORKER_ALLOW_UNSANDBOXED=1 bash "$WORKER" --tier mid >/dev/null 2>&1
 check "plain-failure-stays-1" 1 $?
 # Output must still reach stdout after the capture-and-classify change.
-out="$(printf 'x' | PATH="$LIMIT_STUB:$PATH" GROK_TIERS_FILE="$TIERS" bash "$WORKER" --tier mid 2>/dev/null)"
+out="$(printf 'x' | PATH="$LIMIT_STUB:$PATH" GROK_TIERS_FILE="$TIERS" GROK_WORKER_ALLOW_UNSANDBOXED=1 bash "$WORKER" --tier mid 2>/dev/null)"
 [[ "$out" == *"unrelated backend error"* ]]; check "cli-output-still-streams" 0 $?
 
 echo
