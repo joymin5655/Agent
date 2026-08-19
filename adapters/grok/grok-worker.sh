@@ -41,7 +41,8 @@
 # env:   GROK_TIERS_FILE, GROK_WORKER_WEB_SEARCH=1, GROK_WORKER_ALLOW_UNSANDBOXED=1,
 #        GROK_WORKER_MAX_TURNS (default 4)
 # exit:  the grok CLI's own exit code; 2 usage/config; 6 mktemp failure;
-#        7 sandbox unavailable (fail closed); 8 unsafe $HOME for a scheme string
+#        7 sandbox unavailable (fail closed); 8 unsafe $HOME for a scheme string;
+#        75 vendor usage/rate limit detected (EX_TEMPFAIL — fail-open signal)
 set -euo pipefail
 
 self="${BASH_SOURCE[0]}"
@@ -127,8 +128,21 @@ forward() { [[ -n "$child" ]] && kill -TERM "$child" 2>/dev/null || true; }
 trap cleanup EXIT
 trap forward TERM INT
 cd "$WORK_DIR"
-"${RUN[@]}" &
+# Child output is captured (stdout+stderr merged — call-worker merges them
+# anyway) so a nonzero exit can be classified before it propagates: the xAI
+# free tier ends a run mid-flight with a "usage limit" message and a generic
+# exit 1 (measured 2026-08-18, capture 20260818T235034Z-advisor-third.md).
+# That is a quota condition, not a backend fault — reported as EX_TEMPFAIL
+# (75) so call-worker.sh can mark the lane rate-limited and the council fails
+# open without it. Watchdog kills (124/137/143) are excluded: a timeout must
+# not be reclassified just because the partial output mentions a limit.
+OUT_CAP="$WORK_DIR/out.cap"
+"${RUN[@]}" > "$OUT_CAP" 2>&1 &
 child=$!
 rc=0
 wait "$child" || rc=$?
+cat "$OUT_CAP"
+if [[ $rc -ne 0 && $rc -ne 124 && $rc -ne 137 && $rc -ne 143 ]] && grep -qi "usage limit" "$OUT_CAP"; then
+    rc=75
+fi
 exit "$rc"

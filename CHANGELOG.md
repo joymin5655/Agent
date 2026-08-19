@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Rate-limit fail-open contract** — a vendor quota/rate limit is now a
+  distinct lane condition, not a generic failure: `grok-worker.sh` classifies
+  the xAI free-tier "usage limit" ending (measured 2026-08-18: message +
+  generic exit 1) as EX_TEMPFAIL (75), `call-worker.sh` maps 75 to
+  `status: rate-limited` in the capture (escaping exit code stays 1), and
+  `/council-review` reports the lane "rate-limited, retry later" and proceeds
+  without it — decided 2026-08-19: the grok lane stays on the free tier and is
+  skipped when exhausted; no upgrade prompt mid-review. Watchdog kills
+  (124/137/143) are excluded from reclassification. Tests: grok battery
+  case (g) — limit→75, plain failure→1, output still streams.
 - **Grok (xAI) advisor lane** — `adapters/grok/` worker-lane bridge
   (`grok-worker.sh` stdin→prompt-file + sandbox-exec deny-write + neutral cwd;
   `grok-preflight.sh` exact-token probe; tiers template owns the model pin) and

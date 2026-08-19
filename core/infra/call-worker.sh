@@ -265,6 +265,11 @@ if [[ $rc -ne 0 ]]; then
     # Normalize: only the documented codes escape this script — a backend's
     # raw exit code (reported above) must not collide with 2/3/124/127.
     [[ $rc -eq 124 ]] && { write_capture "timeout" >/dev/null; exit 124; }
+    # 75 (EX_TEMPFAIL) from an adapter = vendor quota/rate limit, not a backend
+    # fault: capture status 'rate-limited' so the consumer can fail open and
+    # report "retry later". The escaping exit code stays 1 (lane failed) — no
+    # new code leaves this script.
+    [[ $rc -eq 75 ]] && { write_capture "rate-limited" >/dev/null; exit 1; }
     [[ $rc -eq 64 ]] && exit 2     # run_backend registry/config error (EX_USAGE internally, so a backend's own raw 2 can't collide)
     write_capture "failed" >/dev/null
     exit 1

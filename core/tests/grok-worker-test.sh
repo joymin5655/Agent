@@ -163,5 +163,32 @@ printf 'x' | HOME='/tmp/x") (allow file-write* (subpath "/' GROK_TIERS_FILE="$TI
 check "unsafe-home-refuses-8" 8 $?
 
 echo
+echo "=== (g) vendor usage-limit classification -> exit 75 (fail-open signal) ==="
+# The xAI free tier ends a run with a "usage limit" message and a generic
+# exit 1 (measured 2026-08-18). The worker must reclassify that to 75
+# (EX_TEMPFAIL) so call-worker marks the lane rate-limited — and must NOT
+# touch any other nonzero exit.
+LIMIT_STUB="$TMP/limitbin"
+mkdir -p "$LIMIT_STUB"
+cat > "$LIMIT_STUB/grok" <<'LSTUB'
+#!/usr/bin/env bash
+echo "You've reached your free Grok Build usage limit for now. Try again later."
+exit 1
+LSTUB
+chmod +x "$LIMIT_STUB/grok"
+printf 'x' | PATH="$LIMIT_STUB:$PATH" GROK_TIERS_FILE="$TIERS" bash "$WORKER" --tier mid >/dev/null 2>&1
+check "usage-limit-exits-75" 75 $?
+cat > "$LIMIT_STUB/grok" <<'LSTUB'
+#!/usr/bin/env bash
+echo "some unrelated backend error"
+exit 1
+LSTUB
+printf 'x' | PATH="$LIMIT_STUB:$PATH" GROK_TIERS_FILE="$TIERS" bash "$WORKER" --tier mid >/dev/null 2>&1
+check "plain-failure-stays-1" 1 $?
+# Output must still reach stdout after the capture-and-classify change.
+out="$(printf 'x' | PATH="$LIMIT_STUB:$PATH" GROK_TIERS_FILE="$TIERS" bash "$WORKER" --tier mid 2>/dev/null)"
+[[ "$out" == *"unrelated backend error"* ]]; check "cli-output-still-streams" 0 $?
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]

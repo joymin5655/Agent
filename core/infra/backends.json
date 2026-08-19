@@ -84,7 +84,7 @@
           "top"
         ]
       },
-      "disabled_reason": "individual OAuth sign-in retired upstream (2026-07); re-verified 2026-08-19. Both auth paths fail for an individual Google account on gemini-cli 0.46.0: the OAuth path returns 401 UNAUTHENTICATED, and the API key path with a Code-Assist-tier credential returns IneligibleTierError ('no longer supported for Gemini Code Assist for individuals — migrate to Antigravity'). Re-enable needs a genuine AI Studio key (AIza..., created at aistudio.google.com) in ~/.gemini/.env with selectedAuthType set to the Gemini key auth type, after which gemini-preflight must exit 0. The worker is already prepared for that path (--skip-trust for the neutral cwd, stdin capture); also pin the CLI's tool/web-search posture off before enabling (gemini is a SEATED reviewer).",
+      "disabled_reason": "individual OAuth sign-in retired upstream (2026-07). Decided 2026-08-19: migrate this lane to the Antigravity CLI (agy) instead of an AI Studio key. Measured 2026-08-19: agy 1.1.14 installed at ~/.local/bin/agy and the keyring is already authenticated (agy -p answers headless, no interactive login needed); current flash/pro tiers listed by 'agy models' (IDs live in the adapter tiers file); argv convention is flags BEFORE -p \"prompt\" (flags after are misparsed); headless print mode denied an internal command by default (fail-closed hint - formal tool-posture measurement pending). Re-enable = build an agy adapter (worker + preflight + measured posture, grok-adapter pattern), point this backend's cmd at it, then its preflight must exit 0. gemini-worker/gemini-preflight stay retired with the gemini CLI.",
       "timeout_s": 300,
       "preflight": [
         "gemini-preflight"

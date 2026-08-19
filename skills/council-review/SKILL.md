@@ -28,6 +28,12 @@ its OAuth path is retired) refuses loudly at dispatch; report it as absent —
 never substitute another vendor for it (a fallback that shares a seated
 vendor would fake the independence signal).
 
+The grok lane runs on the free tier by design (decided 2026-08-19): when its
+quota is exhausted mid-review the lane surfaces `status: rate-limited` and the
+council **fails open** — the review proceeds without the advisory, the lane
+status line says "rate-limited, retry later", and no upgrade prompt is put to
+the user.
+
 ## Steps
 
 ### 1. Assemble the target
@@ -122,6 +128,7 @@ Claude lane always runs, but it must not borrow the council's authority.
 | call-worker exit 3 | not approved | re-ask or drop the lane |
 | exit 127 / `status: unavailable` | lane disabled / CLI or preflight missing | lane absent, quote reason |
 | exit 124 / `status: timeout` | hung CLI killed | lane absent |
+| exit 1 / `status: rate-limited` | vendor quota/rate limit hit (e.g. grok free tier) | lane absent — fail-open; report "rate-limited, retry later", never an upgrade pitch |
 | exit 1 / `status: failed` | backend errored | lane absent, quote stderr tail |
 
 External failures never abort the review — the Claude lane carries it.
