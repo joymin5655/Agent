@@ -201,13 +201,27 @@ shared blind spot doesn't survive review.
   under review could replace a read-only profile with a `shell`+`write` one; a
   pre-dispatch scan cannot close that (plant-after-scan wins). Non-gateway
   backends still inherit the caller's cwd.
-- **Gemini backend retired (2026-07-17).** It shipped as the review fallback,
-  but upstream deprecated `oauth-personal` for individuals (gemini-cli 0.44–0.46
-  throws `IneligibleTierError`, pointing at Antigravity) and the API-key path
-  requires paid prepay credits — a fallback that fails by default for
-  individual installs misleads. The dispatcher's fallback mechanism is intact
-  and stub-tested; to re-enable a fallback, add a backend entry and point a
-  role's `fallback` at it (the removed entry is in git history, PR #66/#68).
+- **Gemini backend: retired (2026-07-17), contract restored (2026-08-19),
+  still disabled.** Upstream deprecated `oauth-personal` for individuals
+  (gemini-cli 0.44–0.46 throws `IneligibleTierError`; re-verified 2026-08-19 —
+  a cached credential now gets 401 UNAUTHENTICATED). The lane's full worker
+  contract ships anyway (`adapters/gemini/gemini-worker.sh` tier bridge +
+  `gemini-preflight` exact-token probe + the `third-opinion-review` role), so
+  re-enabling is one registry flip — but ONLY after `gemini-preflight` exits 0
+  on a fresh login: the probe, not a credential file's presence, is the
+  re-enable condition. `third-opinion-review` carries `fallback: null` on
+  purpose — falling back to `kiro-openai` would duplicate the codex lane's
+  vendor and fake the council's independence signal; an absent lane is
+  reported absent instead.
+- **Grok advisor lane (2026-08-19).** `grok` registers enabled as vendor `xai`
+  carrying the **`advisor-third`** role only — deliberately wired to NO gate
+  role: Grok 4.6 benchmarks a tier below the frontier on code correctness, so
+  the lane exists for perspective diversity, is opt-in per consumer
+  (`/council-review --with-grok`), and its findings are tagged
+  `[grok:advisory]` and never flip a verdict. Read-only is OS-enforced by
+  `grok-worker.sh` (sandbox-exec deny-write + neutral cwd) because the CLI's
+  own flags demonstrably do not block writes — measurements in
+  `adapters/grok/README.md`.
 - **Dispatcher: `core/infra/call-worker.sh <role> < prompt.md`** — captures
   the reply to `.agent/workers/<ts>-<role>.md` and prints the path. External
   calls cost money: without `AGENT_WORKER_YES=1` it refuses (exit 3). The
@@ -219,6 +233,11 @@ shared blind spot doesn't survive review.
 - **Consumption**: `/verify-completion --second-opinion` attaches the capture
   as evidence input to the semantic judge; the gate logic itself is unchanged
   (a second opinion informs the verdict, it never replaces the judge).
+  `/council-review` consumes the review roles in parallel — codex
+  (`second-opinion-review`) + gemini (`third-opinion-review`) beside the
+  Claude `code-reviewer` agent, grok (`advisor-third`) opt-in — and
+  synthesizes with citation verification against the actual files
+  (`skills/council-review/SKILL.md`).
 - **Tests**: `core/tests/call-worker-test.sh` — PATH-stubbed backends, every
   contract path (including gateway cwd isolation), zero paid calls in CI.
 

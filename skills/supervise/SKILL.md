@@ -135,6 +135,8 @@ b. **Classify the wave and pick lanes** based on its content:
      the dispatch pre-flight above clears the permission surface.
    - Wave touches `core/hooks/` or general code → `code-reviewer` after
    - Wave touches auth/secrets → `security-reviewer`
+   - High-stakes wave where a cross-vendor opinion is worth its cost →
+     `/council-review` (skills/council-review/SKILL.md; paid, user-approved)
    - **Never route an execution wave to `code-reviewer` or
      `security-reviewer`** — both carry read-only toolsets (Read/Grep/Glob,
      CI-enforced); they cannot edit a file at all. `core/hooks/supervisor.py`

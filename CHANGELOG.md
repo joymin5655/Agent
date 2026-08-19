@@ -8,6 +8,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Grok (xAI) advisor lane** — `adapters/grok/` worker-lane bridge
+  (`grok-worker.sh` stdin→prompt-file + sandbox-exec deny-write + neutral cwd;
+  `grok-preflight.sh` exact-token probe; tiers template owns the model pin) and
+  registry entry carrying the `advisor-third` role only — never a gate vote.
+  Measured (0.2.118, 2026-08-19): the CLI's own flags (`--tools ''`,
+  `--permission-mode plan`, `--deny`, `--disallowed-tools`) do NOT block
+  writes; only the OS sandbox does. The sandbox denies reads of credential
+  stores (`~/.ssh`/`~/.aws`/…) and narrows writes to the run's WORK_DIR + the
+  CLI session store minus its own tiers file (argv-persistence hole), forwards
+  signals instead of `exec` so the prompt file never outlives the run, and
+  validates `$HOME` before building the scheme profile (`adapters/grok/README.md`).
+- **Gemini worker-lane contract restored** — `gemini-worker.sh` tier bridge +
+  `gemini-preflight.sh` probe + `third-opinion-review` role (`fallback: null`
+  for vendor independence). Backend stays `enabled: false`: re-verified
+  2026-08-19, a cached oauth credential still gets 401 UNAUTHENTICATED; the
+  registry's re-enable condition is a passing preflight, not a credential file.
+- **`/council-review` skill** — multi-vendor review council: Claude
+  `code-reviewer` agent + codex + gemini in parallel, grok opt-in
+  (`--with-grok`, advisory only). Synthesis order: mechanical capture status →
+  dedup → citation verification against the actual files (hallucinated
+  findings dropped and counted per lane) → severity re-rating → source tagging
+  (≥2-vendor findings marked high-signal) → disagreement adjudication.
+  False-council guard: an all-external-lanes-absent run must say so.
+- `setup.sh --grok` + worker-lane symlink installs for gemini/grok, and a
+  generic doctor check: every enabled backend's `cmd[0]`/`preflight[0]` must
+  resolve on PATH.
+- Tests: `core/tests/gemini-preflight-test.sh` (10 checks),
+  `core/tests/grok-worker-test.sh` (14 checks: argv/prompt bridge + OS-level sandbox write-block, credential-read-deny, tiers-write-deny, unsafe-HOME regressions) — PATH stubs, zero paid calls.
 - **Autonomous-loop runner `core/infra/loop-run.sh` + `skills/loop` + `skills/harness-loop`
   (P2-1 + P2-4 + O-2).** The §5 loop's mechanical enforcement in one script — `init`
   creates the SQLite goal row (attempts modeled as `supervisor-goal.sh` waves) plus a

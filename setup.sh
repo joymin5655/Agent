@@ -6,6 +6,8 @@
 #   bash setup.sh --claude         # claude only
 #   bash setup.sh --codex          # codex only
 #   bash setup.sh --gemini         # gemini only
+#   bash setup.sh --grok           # grok worker lane only (opt-in — advisory lane,
+#                                   # deliberately NOT part of the default/--all set)
 #   bash setup.sh --project        # +current project scaffold (CLAUDE.md, hook-config.yml, etc.)
 #   bash setup.sh --hooks-only     # install git-hooks (pre-commit, pre-push) only
 #   bash setup.sh --all            # alias for default (all 3 AIs)
@@ -36,12 +38,14 @@ if [[ $# -eq 0 ]]; then
     DO_CODEX=1
     DO_GEMINI=1
 fi
+DO_GROK=${DO_GROK:-0}
 
 for arg in "$@"; do
     case "$arg" in
         --claude)      DO_CLAUDE=1 ;;
         --codex)       DO_CODEX=1 ;;
         --gemini)      DO_GEMINI=1 ;;
+        --grok)        DO_GROK=1 ;;
         --project)     DO_PROJECT=1 ;;
         --hooks-only)  DO_HOOKS=1 ;;
         --doctor)      DO_DOCTOR=1 ;;
@@ -172,6 +176,41 @@ install_gemini() {
         echo "  symlink: ~/bin/gemini-bash -> gemini-shell-wrap.sh"
     else
         echo "  NOTE: ~/bin doesn't exist. Put gemini-shell-wrap.sh on your PATH manually."
+    fi
+
+    # Worker lane (cross-vendor second opinions — core/infra/backends.json).
+    chmod +x "$FRAMEWORK_ROOT/adapters/gemini/gemini-worker.sh" \
+             "$FRAMEWORK_ROOT/adapters/gemini/gemini-preflight.sh"
+    if [[ -d "$HOME/bin" ]]; then
+        ln -sf "$FRAMEWORK_ROOT/adapters/gemini/gemini-worker.sh" "$HOME/bin/gemini-worker"
+        ln -sf "$FRAMEWORK_ROOT/adapters/gemini/gemini-preflight.sh" "$HOME/bin/gemini-preflight"
+        echo "  symlink: ~/bin/gemini-worker, ~/bin/gemini-preflight"
+    else
+        echo "  NOTE: ~/bin doesn't exist. Put gemini-worker.sh / gemini-preflight.sh on your PATH manually."
+    fi
+    if [[ -d "$HOME/.gemini" && ! -f "$HOME/.gemini/agent-tiers.json" ]]; then
+        cp "$FRAMEWORK_ROOT/adapters/gemini/gemini-tiers.json.template" "$HOME/.gemini/agent-tiers.json"
+        echo "  installed: ~/.gemini/agent-tiers.json (edit to pin a TOP-tier model)"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Grok (xAI) CLI — worker lane only (adapters/grok/README.md)
+# ---------------------------------------------------------------------------
+install_grok() {
+    echo "=== Grok CLI (worker lane) ==="
+    chmod +x "$FRAMEWORK_ROOT/adapters/grok/grok-worker.sh" \
+             "$FRAMEWORK_ROOT/adapters/grok/grok-preflight.sh"
+    if [[ -d "$HOME/bin" ]]; then
+        ln -sf "$FRAMEWORK_ROOT/adapters/grok/grok-worker.sh" "$HOME/bin/grok-worker"
+        ln -sf "$FRAMEWORK_ROOT/adapters/grok/grok-preflight.sh" "$HOME/bin/grok-preflight"
+        echo "  symlink: ~/bin/grok-worker, ~/bin/grok-preflight"
+    else
+        echo "  NOTE: ~/bin doesn't exist. Put grok-worker.sh / grok-preflight.sh on your PATH manually."
+    fi
+    if [[ -d "$HOME/.grok" && ! -f "$HOME/.grok/agent-tiers.json" ]]; then
+        cp "$FRAMEWORK_ROOT/adapters/grok/grok-tiers.json.template" "$HOME/.grok/agent-tiers.json"
+        echo "  installed: ~/.grok/agent-tiers.json"
     fi
 }
 
@@ -1140,6 +1179,29 @@ PY
         fi
     fi
 
+    # -- worker lanes (generic): every ENABLED backend in the registry must
+    # resolve its cmd[0] and its preflight[0] on PATH. This generalizes the
+    # kiro-specific block above to non-gateway lanes (grok-worker, and
+    # gemini-worker once that lane is re-enabled): call-worker.sh execs both
+    # argvs verbatim, so an unresolvable one is a dead lane (exit 127), not
+    # merely an unhardened one.
+    if command -v jq >/dev/null 2>&1 && [[ -f "$FRAMEWORK_ROOT/core/infra/backends.json" ]]; then
+        local wl_missing="" wl_lanes="" wl_row
+        while IFS=$'\t' read -r wl_lane wl_bin; do
+            [[ -n "$wl_bin" ]] || continue
+            case ",$wl_lanes," in *",$wl_lane,"*) ;; *) wl_lanes="${wl_lanes:+$wl_lanes,}$wl_lane" ;; esac
+            command -v "$wl_bin" >/dev/null 2>&1 \
+                || wl_missing="${wl_missing:+$wl_missing, }$wl_lane -> $wl_bin"
+        done < <(jq -r '.backends | to_entries[] | select(.value.enabled == true)
+                        | .key as $l | ((.value.cmd // [])[0] // ""), ((.value.preflight // [])[0] // "")
+                        | [$l, .] | @tsv' "$FRAMEWORK_ROOT/core/infra/backends.json" 2>/dev/null)
+        if [[ -n "$wl_missing" ]]; then
+            add_row WARN "worker lanes — enabled backend(s) whose cmd[0]/preflight[0] is not resolvable on PATH: $wl_missing; call-worker.sh execs the registry argv verbatim, so the lane reports UNAVAILABLE (exit 127). Install the symlinks (setup.sh --codex/--gemini/--grok, or ln -sf by hand — see the adapter README)"
+        elif [[ -n "$wl_lanes" ]]; then
+            add_row PASS "worker lanes — enabled backend(s) resolvable on PATH: $wl_lanes"
+        fi
+    fi
+
     echo "=== Environment diagnosis (--doctor) ==="
     local row status msg
     for row in "${rows[@]}"; do
@@ -1316,6 +1378,7 @@ fi
 [[ $DO_CLAUDE -eq 1 ]] && install_claude
 [[ $DO_CODEX -eq 1 ]]  && install_codex
 [[ $DO_GEMINI -eq 1 ]] && install_gemini
+[[ $DO_GROK -eq 1 ]]   && install_grok
 [[ $DO_PROJECT -eq 1 ]] && install_project
 
 # Self-heal exec bits before validating: distribution paths that drop POSIX

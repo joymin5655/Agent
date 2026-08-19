@@ -23,6 +23,9 @@ The native Gemini extension and separate Antigravity plugin are specified in
 |---|---|
 | `adapter.sh`               | Hook invoker (synthetic-mode or stdin-mode). |
 | `adapter.py`               | Translator: Gemini envelope → canonical event JSON. |
+| `gemini-worker.sh`         | Worker-lane tier bridge (cross-vendor dispatch; OS-sandboxed). |
+| `gemini-preflight.sh`      | Fail-closed exact-token health probe (call-worker runs it). |
+| `gemini-tiers.json.template` | Per-tier `-m <model>` args (→ `~/.gemini/agent-tiers.json`). |
 | `gemini-shell-wrap.sh`     | Drop-in replacement for Gemini's shell tool. |
 | `gemini-settings.json.template` | `~/.gemini/settings.json` template. |
 | `GEMINI.md.template`       | Project-level instructions Gemini reads. |
