@@ -8,6 +8,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Antigravity (`agy`) review lane restores the seated google reviewer** —
+  new `adapters/antigravity/` (worker + preflight + tiers template + measured
+  posture README), following the grok adapter pattern. The council's
+  `third-opinion-review` lane, dead since the gemini CLI's individual OAuth was
+  retired (2026-07), is `enabled: true` again via agy — Google's official
+  successor — authenticating from the OS keyring (no API key; the
+  GEMINI_API_KEY path is upstream-contradicted). Measured 2026-08-19 (agy
+  1.1.14): default headless mode fails closed on shell exec and created no file
+  in any probe; worker forbids `--dangerously-skip-permissions` and runs under
+  a sandbox-exec deny-write/deny-cred-read profile; argv is flags-before-`-p`
+  (flags after are misparsed); tiers differ by model (effort is baked into the
+  ID). Live-verified: preflight exit 0 + one E2E council dispatch returned a
+  real finding with `status: complete`. Tests: `core/tests/antigravity-worker-test.sh` (16),
+  `setup.sh --antigravity` install path.
+- **Rate-limit fail-open contract** — a vendor quota/rate limit is now a
+  distinct lane condition, not a generic failure: `grok-worker.sh` classifies
+  the xAI free-tier "usage limit" ending (measured 2026-08-18: message +
+  generic exit 1) as EX_TEMPFAIL (75), `call-worker.sh` maps 75 to
+  `status: rate-limited` in the capture (escaping exit code stays 1), and
+  `/council-review` reports the lane "rate-limited, retry later" and proceeds
+  without it — decided 2026-08-19: the grok lane stays on the free tier and is
+  skipped when exhausted; no upgrade prompt mid-review. Watchdog kills
+  (124/137/143) are excluded from reclassification. Tests: grok battery
+  case (g) — limit→75, plain failure→1, output still streams.
+- **Grok (xAI) advisor lane** — `adapters/grok/` worker-lane bridge
+  (`grok-worker.sh` stdin→prompt-file + sandbox-exec deny-write + neutral cwd;
+  `grok-preflight.sh` exact-token probe; tiers template owns the model pin) and
+  registry entry carrying the `advisor-third` role only — never a gate vote.
+  Measured (0.2.118, 2026-08-19): the CLI's own flags (`--tools ''`,
+  `--permission-mode plan`, `--deny`, `--disallowed-tools`) do NOT block
+  writes; only the OS sandbox does. The sandbox denies reads of credential
+  stores (`~/.ssh`/`~/.aws`/…) and narrows writes to the run's WORK_DIR + the
+  CLI session store minus its own tiers file (argv-persistence hole), forwards
+  signals instead of `exec` so the prompt file never outlives the run, and
+  validates `$HOME` before building the scheme profile (`adapters/grok/README.md`).
+- **Gemini worker-lane contract restored** — `gemini-worker.sh` tier bridge +
+  `gemini-preflight.sh` probe + `third-opinion-review` role (`fallback: null`
+  for vendor independence). Backend stays `enabled: false`: re-verified
+  2026-08-19, a cached oauth credential still gets 401 UNAUTHENTICATED; the
+  registry's re-enable condition is a passing preflight, not a credential file.
+- **`/council-review` skill** — multi-vendor review council: Claude
+  `code-reviewer` agent + codex + gemini in parallel, grok opt-in
+  (`--with-grok`, advisory only). Synthesis order: mechanical capture status →
+  dedup → citation verification against the actual files (hallucinated
+  findings dropped and counted per lane) → severity re-rating → source tagging
+  (≥2-vendor findings marked high-signal) → disagreement adjudication.
+  False-council guard: an all-external-lanes-absent run must say so.
+- `setup.sh --grok` + worker-lane symlink installs for gemini/grok, and a
+  generic doctor check: every enabled backend's `cmd[0]`/`preflight[0]` must
+  resolve on PATH.
+- Tests: `core/tests/gemini-preflight-test.sh` (10 checks),
+  `core/tests/grok-worker-test.sh` (14 checks: argv/prompt bridge + OS-level sandbox write-block, credential-read-deny, tiers-write-deny, unsafe-HOME regressions) — PATH stubs, zero paid calls.
 - **Autonomous-loop runner `core/infra/loop-run.sh` + `skills/loop` + `skills/harness-loop`
   (P2-1 + P2-4 + O-2).** The §5 loop's mechanical enforcement in one script — `init`
   creates the SQLite goal row (attempts modeled as `supervisor-goal.sh` waves) plus a

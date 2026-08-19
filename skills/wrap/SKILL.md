@@ -25,6 +25,9 @@ one skill invocation, with all the safety gates intact.
 
 ## Steps
 
+> Reviews happen BEFORE wrapping — for a multi-vendor opinion on the diff,
+> run `/council-review --staged` first (skills/council-review/SKILL.md).
+
 ### 1. Pre-flight checks (gates)
 
 Run in order; any failure aborts before the commit.

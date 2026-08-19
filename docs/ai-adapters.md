@@ -180,7 +180,11 @@ The shipped Gemini adapter is also a compatibility wrapper:
 - native file-write and replacement tools are not covered.
 
 The external Gemini worker is disabled by default until a working credential
-path is verified on the machine.
+path is verified on the machine. Since 2026-08-19 the worker contract itself
+ships ready: `gemini-worker.sh` (tier bridge, OS-sandboxed dispatch) and
+`gemini-preflight.sh` (fail-closed exact-token probe). The registry's
+`disabled_reason` names the re-enable condition — a fresh login after which
+`gemini-preflight` exits 0.
 
 ### Upstream native path
 
@@ -264,6 +268,18 @@ Keep these claims separate:
 
 `core/tests/adapter-parity.sh` currently proves level 1 through the shipped
 adapter translators for its fixtures. It does not prove levels 3 or 4.
+
+## Grok (xAI) — worker lane only
+
+Grok has NO runtime host adapter: nothing wires the framework's hooks into a
+Grok-hosted session, and `adapter-parity.sh` deliberately excludes it. What
+ships (`adapters/grok/`) is a **worker-lane bridge** for cross-vendor
+dispatch: `grok-worker.sh` (stdin→`--prompt-file`, tiers file owns the model
+pin, sandbox-exec deny-write + neutral cwd — the CLI's own restriction flags
+measurably do not block writes) and `grok-preflight.sh` (fail-closed
+exact-token probe). The lane carries the `advisor-third` role only — advisory,
+never a gate vote. Measurements, cost and positioning:
+`adapters/grok/README.md`.
 
 ## Adding a new runtime
 

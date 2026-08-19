@@ -1,0 +1,7 @@
+{
+  "comment": "Owned by the Gemini adapter — model IDs are forbidden in core/infra/backends.json (no-model-ids gate). Install: cp gemini-tiers.json.template ~/.gemini/agent-tiers.json and pin the TOP tier to your account's strongest available model (e.g. [\"-m\", \"<model-id>\"]). Empty arrays ride the CLI's default model.",
+  "tiers": {
+    "MID": [],
+    "TOP": []
+  }
+}

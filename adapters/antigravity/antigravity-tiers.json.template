@@ -1,0 +1,8 @@
+{
+  "comment": "Owned by the Antigravity adapter — model IDs are forbidden in core/infra/backends.json (no-model-ids gate), so the pin lives here. Install: cp antigravity-tiers.json.template ~/.gemini/antigravity-cli/agent-tiers.json (setup.sh does this). agy bakes reasoning effort INTO the model ID (…-low/-medium/-high) — there is no bare id — so tiers differ by model, not a flag. The worker resolves ONE model per tier: .model is MID's, .tiers.TOP may carry a single [\"--model\", \"<id>\"] override (worker collapses it so only one -m reaches agy). Verify current IDs with `agy models`.",
+  "model": "gemini-3.1-pro-low",
+  "tiers": {
+    "MID": [],
+    "TOP": ["--model", "gemini-3.1-pro-high"]
+  }
+}

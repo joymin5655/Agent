@@ -146,7 +146,16 @@ run_backend() {
         local prc=0 pf_timeout
         # A gateway probe is a real (cheap) inference round trip, not a --version
         # call, so the default budget is wider; the env seam still wins.
+        # Per-backend preflight_timeout_s beats the gateway/non-gateway split:
+        # the split encoded "non-gateway probes are cheap version checks", but a
+        # non-gateway lane whose probe is a REAL inference round trip (grok,
+        # gemini — exact-token probes) dies at 10s under ordinary LLM latency
+        # and spuriously reports unavailable. The registry entry that declares
+        # such a probe now declares its budget too.
         pf_timeout="${AGENT_WORKER_PREFLIGHT_TIMEOUT_S:-}"
+        if [[ -z "$pf_timeout" ]]; then
+            pf_timeout="$(jq -r --arg b "$name" '.backends[$b].preflight_timeout_s // empty' "$BACKENDS_FILE")"
+        fi
         if [[ -z "$pf_timeout" ]]; then
             if [[ -n "$gateway" ]]; then pf_timeout=60; else pf_timeout=10; fi
         fi
@@ -256,6 +265,11 @@ if [[ $rc -ne 0 ]]; then
     # Normalize: only the documented codes escape this script — a backend's
     # raw exit code (reported above) must not collide with 2/3/124/127.
     [[ $rc -eq 124 ]] && { write_capture "timeout" >/dev/null; exit 124; }
+    # 75 (EX_TEMPFAIL) from an adapter = vendor quota/rate limit, not a backend
+    # fault: capture status 'rate-limited' so the consumer can fail open and
+    # report "retry later". The escaping exit code stays 1 (lane failed) — no
+    # new code leaves this script.
+    [[ $rc -eq 75 ]] && { write_capture "rate-limited" >/dev/null; exit 1; }
     [[ $rc -eq 64 ]] && exit 2     # run_backend registry/config error (EX_USAGE internally, so a backend's own raw 2 can't collide)
     write_capture "failed" >/dev/null
     exit 1
