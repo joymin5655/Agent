@@ -39,6 +39,7 @@ if [[ $# -eq 0 ]]; then
     DO_GEMINI=1
 fi
 DO_GROK=${DO_GROK:-0}
+DO_ANTIGRAVITY=${DO_ANTIGRAVITY:-0}
 
 for arg in "$@"; do
     case "$arg" in
@@ -46,6 +47,7 @@ for arg in "$@"; do
         --codex)       DO_CODEX=1 ;;
         --gemini)      DO_GEMINI=1 ;;
         --grok)        DO_GROK=1 ;;
+        --antigravity) DO_ANTIGRAVITY=1 ;;
         --project)     DO_PROJECT=1 ;;
         --hooks-only)  DO_HOOKS=1 ;;
         --doctor)      DO_DOCTOR=1 ;;
@@ -211,6 +213,27 @@ install_grok() {
     if [[ -d "$HOME/.grok" && ! -f "$HOME/.grok/agent-tiers.json" ]]; then
         cp "$FRAMEWORK_ROOT/adapters/grok/grok-tiers.json.template" "$HOME/.grok/agent-tiers.json"
         echo "  installed: ~/.grok/agent-tiers.json"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Antigravity (agy) CLI — worker lane only (adapters/antigravity/README.md).
+# Successor to the retired gemini CLI review lane; auth lives in the OS keyring.
+# ---------------------------------------------------------------------------
+install_antigravity() {
+    echo "=== Antigravity CLI (worker lane) ==="
+    chmod +x "$FRAMEWORK_ROOT/adapters/antigravity/antigravity-worker.sh" \
+             "$FRAMEWORK_ROOT/adapters/antigravity/antigravity-preflight.sh"
+    if [[ -d "$HOME/bin" ]]; then
+        ln -sf "$FRAMEWORK_ROOT/adapters/antigravity/antigravity-worker.sh" "$HOME/bin/antigravity-worker"
+        ln -sf "$FRAMEWORK_ROOT/adapters/antigravity/antigravity-preflight.sh" "$HOME/bin/antigravity-preflight"
+        echo "  symlink: ~/bin/antigravity-worker, ~/bin/antigravity-preflight"
+    else
+        echo "  NOTE: ~/bin doesn't exist. Put antigravity-worker.sh / antigravity-preflight.sh on your PATH manually."
+    fi
+    if [[ -d "$HOME/.gemini/antigravity-cli" && ! -f "$HOME/.gemini/antigravity-cli/agent-tiers.json" ]]; then
+        cp "$FRAMEWORK_ROOT/adapters/antigravity/antigravity-tiers.json.template" "$HOME/.gemini/antigravity-cli/agent-tiers.json"
+        echo "  installed: ~/.gemini/antigravity-cli/agent-tiers.json"
     fi
 }
 
@@ -1379,6 +1402,7 @@ fi
 [[ $DO_CODEX -eq 1 ]]  && install_codex
 [[ $DO_GEMINI -eq 1 ]] && install_gemini
 [[ $DO_GROK -eq 1 ]]   && install_grok
+[[ $DO_ANTIGRAVITY -eq 1 ]] && install_antigravity
 [[ $DO_PROJECT -eq 1 ]] && install_project
 
 # Self-heal exec bits before validating: distribution paths that drop POSIX

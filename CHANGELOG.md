@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Antigravity (`agy`) review lane restores the seated google reviewer** —
+  new `adapters/antigravity/` (worker + preflight + tiers template + measured
+  posture README), following the grok adapter pattern. The council's
+  `third-opinion-review` lane, dead since the gemini CLI's individual OAuth was
+  retired (2026-07), is `enabled: true` again via agy — Google's official
+  successor — authenticating from the OS keyring (no API key; the
+  GEMINI_API_KEY path is upstream-contradicted). Measured 2026-08-19 (agy
+  1.1.14): default headless mode fails closed on shell exec and created no file
+  in any probe; worker forbids `--dangerously-skip-permissions` and runs under
+  a sandbox-exec deny-write/deny-cred-read profile; argv is flags-before-`-p`
+  (flags after are misparsed); tiers differ by model (effort is baked into the
+  ID). Live-verified: preflight exit 0 + one E2E council dispatch returned a
+  real finding with `status: complete`. Tests: `core/tests/antigravity-worker-test.sh` (16),
+  `setup.sh --antigravity` install path.
 - **Rate-limit fail-open contract** — a vendor quota/rate limit is now a
   distinct lane condition, not a generic failure: `grok-worker.sh` classifies
   the xAI free-tier "usage limit" ending (measured 2026-08-18: message +
