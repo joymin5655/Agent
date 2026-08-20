@@ -1104,5 +1104,68 @@ check "kiro-no-jq-does-not-abort-doctor" $?
 rm -rf "$KIRO_FIX"
 
 echo
+echo "=== (r) install_kiro(): throwaway HOME — profiles seeded, pre-existing not overwritten, symlink resolves ==="
+IK_HOME="$(safe_mktemp_d)" || { echo "FAIL: mktemp -d failed (install_kiro fixture)"; exit 1; }
+track_fixture "$IK_HOME"
+mkdir -p "$IK_HOME/.kiro/agents"
+echo '{"model":"user-pinned-model","tools":["read"],"allowedTools":["read"]}' \
+  > "$IK_HOME/.kiro/agents/kiro-openai-low.json"
+OUT_R="$(AGENT_SETUP_NO_DOCTOR=1 HOME="$IK_HOME" bash "$SETUP" --kiro 2>&1)"
+RC_R=$?
+[[ $RC_R -eq 0 ]]
+check "install-kiro-exits-0" $?
+[[ -d "$IK_HOME/bin" ]]
+check "install-kiro-creates-home-bin" $?
+[[ -L "$IK_HOME/bin/kiro-preflight" ]]
+check "install-kiro-symlinks-preflight"  $?
+[[ "$(readlink "$IK_HOME/bin/kiro-preflight")" == "$REPO_ROOT/adapters/kiro/kiro-preflight.sh" ]]
+check "install-kiro-preflight-symlink-resolves" $?
+# every shipped adapters/kiro/*.json.template gets a sibling profile file
+IK_ALL_SEEDED=0
+for f in "$REPO_ROOT"/adapters/kiro/*.json.template; do
+  [[ -e "$f" ]] || continue
+  base="$(basename "$f" .json.template)"
+  [[ -f "$IK_HOME/.kiro/agents/$base.json" ]] || IK_ALL_SEEDED=1
+done
+[[ "$IK_ALL_SEEDED" -eq 0 ]]
+check "install-kiro-seeds-every-template" $?
+[[ "$OUT_R" == *"skipped (exists — user-owned model pin): $IK_HOME/.kiro/agents/kiro-openai-low.json"* ]]
+check "install-kiro-announces-skip-of-existing-profile" $?
+[[ "$(cat "$IK_HOME/.kiro/agents/kiro-openai-low.json")" == *"user-pinned-model"* ]]
+check "install-kiro-does-not-overwrite-existing-profile" $?
+[[ "$OUT_R" == *"seeded: $IK_HOME/.kiro/agents/kiro-openai-mid.json"* ]]
+check "install-kiro-announces-seed-of-new-profile" $?
+[[ "$OUT_R" == *"kiro-cli not found on PATH"* ]]
+check "install-kiro-notes-missing-cli" $?
+rm -rf "$IK_HOME"
+
+# A dangling symlink at a profile path is false under -e; without the -L half
+# of the guard, cp would follow it and write through to the link's target
+# instead of skipping (security review 2026-08-20).
+IK_HOME3="$(safe_mktemp_d)" || { echo "FAIL: mktemp -d failed (dangling-symlink fixture)"; exit 1; }
+track_fixture "$IK_HOME3"
+mkdir -p "$IK_HOME3/.kiro/agents"
+ln -s "$IK_HOME3/nonexistent-target.json" "$IK_HOME3/.kiro/agents/kiro-openai-top.json"
+AGENT_SETUP_NO_DOCTOR=1 HOME="$IK_HOME3" bash "$SETUP" --kiro >/dev/null 2>&1
+[[ ! -e "$IK_HOME3/nonexistent-target.json" ]]
+check "install-kiro-does-not-write-through-dangling-symlink" $?
+[[ -L "$IK_HOME3/.kiro/agents/kiro-openai-top.json" ]]
+check "install-kiro-leaves-dangling-symlink-in-place" $?
+rm -rf "$IK_HOME3"
+
+echo
+echo "=== (r2) doctor ~/bin row — PASS when ~/bin is on PATH, WARN when PATH is stripped of it ==="
+IK_HOME2="$(safe_mktemp_d)" || { echo "FAIL: mktemp -d failed (install_kiro doctor-row fixture)"; exit 1; }
+track_fixture "$IK_HOME2"
+AGENT_SETUP_NO_DOCTOR=1 HOME="$IK_HOME2" bash "$SETUP" --kiro >/dev/null 2>&1
+OUT_R2A="$(HOME="$IK_HOME2" PATH="$IK_HOME2/bin:/usr/bin:/bin" bash "$SETUP" --doctor 2>&1)"
+[[ "$OUT_R2A" == *"[PASS"*"worker symlink dir — ~/bin exists and is on PATH"* ]]
+check "home-bin-doctor-row-pass-when-on-path" $?
+OUT_R2B="$(HOME="$IK_HOME2" PATH="/usr/bin:/bin" bash "$SETUP" --doctor 2>&1)"
+[[ "$OUT_R2B" == *"[WARN"*"worker symlink dir"*"not on PATH"* ]]
+check "home-bin-doctor-row-warn-when-off-path" $?
+rm -rf "$IK_HOME2"
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]

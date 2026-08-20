@@ -221,8 +221,9 @@ Then:
    `/agent-harness:project-init` to generate runtime instructions, hook policy,
    secret-scan config, and Git-hook wiring.
 4. *(Optional)* In a repo that already runs another hook-heavy plugin, disable agent-harness there via `/plugin` — agents stay namespaced as `agent-harness:*`, so there's no collision either way.
+5. *(Optional)* Want the cross-vendor worker lanes (codex/antigravity/grok/kiro second opinions)? Run `/agent-harness:worker-setup` for a guided install → auth → verify walkthrough with an upfront cost briefing.
 
-The plugin bundles: **3 agents**, **11 skills**, the hook set, and the
+The plugin bundles: **3 agents**, **13 skills**, the hook set, and the
 `/agent-harness:project-init` command.
 See the
 [plugin installation lifecycle](docs/claude-plugin-install-lifecycle.md) for
@@ -243,10 +244,18 @@ bash ~/agent/setup.sh                    # no flag = all three AIs
 | `--project` | Scaffold the current repo: `CLAUDE.md` / `AGENTS.md` / `GEMINI.md` / `gitleaks.toml` / `hook-config.yml` / git pre-commit + pre-push hooks |
 | `--hooks-only` | git-hooks only, no AI configs |
 | `--all` | Everything above |
+| `--grok` | **opt-in**, not part of `--all`/default — grok worker lane (advisory-only cross-vendor review) |
+| `--antigravity` | **opt-in**, not part of `--all`/default — antigravity (agy) worker lane (cross-vendor review) |
+| `--kiro` | **opt-in**, not part of `--all`/default — kiro gateway worker lanes (metered/paid) |
 
 Flags combine (`bash setup.sh --claude --project`). Idempotent — existing files are
 skipped; when a file would be replaced, setup asks interactively. Set `AGENT_SETUP_YES=1`
 for non-interactive runs. There is no `--force` flag.
+
+Cross-vendor worker-lane onboarding (install → auth → verify, with a cost
+briefing) is a guided walkthrough, not a bare flag: run `/agent-harness:worker-setup`
+(plugin) or the `worker-setup` skill (shell install) rather than reaching for
+`--grok`/`--antigravity`/`--kiro` directly.
 
 ## See it work
 
@@ -444,7 +453,7 @@ Agent/
 ├── CHANGELOG.md
 │
 ├── agents/             # 3 agent definitions + master-registry.json
-├── skills/             # 11 skills (spec · supervise · verify-completion · wrap · brain-ingest · harness-audit · manager-audit · persona-review · harness-help · loop · harness-loop)
+├── skills/             # 13 skills (spec · supervise · verify-completion · wrap · brain-ingest · harness-audit · manager-audit · persona-review · harness-help · loop · harness-loop · council-review · worker-setup)
 ├── commands/           # 1 namespaced project-init command
 ├── hooks/              # plugin hook wiring (hooks.json)
 │
@@ -452,7 +461,7 @@ Agent/
 │   ├── hooks/          #   26 portable hook scripts (22 wired + shared modules)
 │   ├── infra/          #   session coordination · goal mode · audits · auto-ship
 │   ├── git-hooks/      #   pre-commit · pre-push
-│   └── tests/          #   70 test scripts (verify-all.sh runs them all)
+│   └── tests/          #   76 test scripts (verify-all.sh runs them all)
 │
 ├── adapters/           # claude-code (thin) · codex · gemini
 ├── rules/              # generic policy docs

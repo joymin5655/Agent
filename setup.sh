@@ -8,6 +8,9 @@
 #   bash setup.sh --gemini         # gemini only
 #   bash setup.sh --grok           # grok worker lane only (opt-in — advisory lane,
 #                                   # deliberately NOT part of the default/--all set)
+#   bash setup.sh --antigravity    # antigravity (agy) worker lane only (opt-in)
+#   bash setup.sh --kiro           # kiro gateway lanes only (opt-in — metered/paid,
+#                                   # deliberately NOT part of the default/--all set)
 #   bash setup.sh --project        # +current project scaffold (CLAUDE.md, hook-config.yml, etc.)
 #   bash setup.sh --hooks-only     # install git-hooks (pre-commit, pre-push) only
 #   bash setup.sh --all            # alias for default (all 3 AIs)
@@ -40,6 +43,7 @@ if [[ $# -eq 0 ]]; then
 fi
 DO_GROK=${DO_GROK:-0}
 DO_ANTIGRAVITY=${DO_ANTIGRAVITY:-0}
+DO_KIRO=${DO_KIRO:-0}
 
 for arg in "$@"; do
     case "$arg" in
@@ -48,6 +52,7 @@ for arg in "$@"; do
         --gemini)      DO_GEMINI=1 ;;
         --grok)        DO_GROK=1 ;;
         --antigravity) DO_ANTIGRAVITY=1 ;;
+        --kiro)        DO_KIRO=1 ;;
         --project)     DO_PROJECT=1 ;;
         --hooks-only)  DO_HOOKS=1 ;;
         --doctor)      DO_DOCTOR=1 ;;
@@ -108,6 +113,18 @@ apply_template() {
     echo "  installed: $dst"
 }
 
+# ensure_home_bin — create ~/bin (worker/preflight symlinks land there
+# unconditionally now) and, if it is not on PATH, print a one-time NOTE
+# telling the user how to add it. Never edits shell rc files — that is the
+# user's call, not setup.sh's.
+ensure_home_bin() {
+    mkdir -p "$HOME/bin"
+    case ":$PATH:" in
+        *":$HOME/bin:"*) ;;
+        *) echo "  NOTE: ~/bin is not on your PATH — add:  export PATH=\"\$HOME/bin:\$PATH\"  to your shell profile (workers/preflights resolve from PATH)" ;;
+    esac
+}
+
 # ---------------------------------------------------------------------------
 # Claude Code
 # ---------------------------------------------------------------------------
@@ -152,13 +169,10 @@ install_codex() {
              "$FRAMEWORK_ROOT/adapters/codex/adapter.py" \
              "$FRAMEWORK_ROOT/adapters/codex/codex-shell-wrap.sh"
 
-    # Put wrapper on PATH (if user has ~/bin and it's on PATH)
-    if [[ -d "$HOME/bin" ]]; then
-        ln -sf "$FRAMEWORK_ROOT/adapters/codex/codex-shell-wrap.sh" "$HOME/bin/codex-bash"
-        echo "  symlink: ~/bin/codex-bash -> codex-shell-wrap.sh"
-    else
-        echo "  NOTE: ~/bin doesn't exist. Put codex-shell-wrap.sh on your PATH manually."
-    fi
+    # Put wrapper on PATH.
+    ensure_home_bin
+    ln -sf "$FRAMEWORK_ROOT/adapters/codex/codex-shell-wrap.sh" "$HOME/bin/codex-bash"
+    echo "  symlink: ~/bin/codex-bash -> codex-shell-wrap.sh"
 }
 
 # ---------------------------------------------------------------------------
@@ -173,26 +187,21 @@ install_gemini() {
              "$FRAMEWORK_ROOT/adapters/gemini/adapter.py" \
              "$FRAMEWORK_ROOT/adapters/gemini/gemini-shell-wrap.sh"
 
-    if [[ -d "$HOME/bin" ]]; then
-        ln -sf "$FRAMEWORK_ROOT/adapters/gemini/gemini-shell-wrap.sh" "$HOME/bin/gemini-bash"
-        echo "  symlink: ~/bin/gemini-bash -> gemini-shell-wrap.sh"
-    else
-        echo "  NOTE: ~/bin doesn't exist. Put gemini-shell-wrap.sh on your PATH manually."
-    fi
+    ensure_home_bin
+    ln -sf "$FRAMEWORK_ROOT/adapters/gemini/gemini-shell-wrap.sh" "$HOME/bin/gemini-bash"
+    echo "  symlink: ~/bin/gemini-bash -> gemini-shell-wrap.sh"
 
     # Worker lane (cross-vendor second opinions — core/infra/backends.json).
     chmod +x "$FRAMEWORK_ROOT/adapters/gemini/gemini-worker.sh" \
              "$FRAMEWORK_ROOT/adapters/gemini/gemini-preflight.sh"
-    if [[ -d "$HOME/bin" ]]; then
-        ln -sf "$FRAMEWORK_ROOT/adapters/gemini/gemini-worker.sh" "$HOME/bin/gemini-worker"
-        ln -sf "$FRAMEWORK_ROOT/adapters/gemini/gemini-preflight.sh" "$HOME/bin/gemini-preflight"
-        echo "  symlink: ~/bin/gemini-worker, ~/bin/gemini-preflight"
-    else
-        echo "  NOTE: ~/bin doesn't exist. Put gemini-worker.sh / gemini-preflight.sh on your PATH manually."
-    fi
+    ln -sf "$FRAMEWORK_ROOT/adapters/gemini/gemini-worker.sh" "$HOME/bin/gemini-worker"
+    ln -sf "$FRAMEWORK_ROOT/adapters/gemini/gemini-preflight.sh" "$HOME/bin/gemini-preflight"
+    echo "  symlink: ~/bin/gemini-worker, ~/bin/gemini-preflight"
     if [[ -d "$HOME/.gemini" && ! -f "$HOME/.gemini/agent-tiers.json" ]]; then
         cp "$FRAMEWORK_ROOT/adapters/gemini/gemini-tiers.json.template" "$HOME/.gemini/agent-tiers.json"
         echo "  installed: ~/.gemini/agent-tiers.json (edit to pin a TOP-tier model)"
+    elif [[ ! -d "$HOME/.gemini" ]]; then
+        echo "  NOTE: gemini CLI not initialized yet (~/.gemini missing) — run the gemini CLI once, then re-run 'setup.sh --gemini' to seed agent-tiers.json"
     fi
 }
 
@@ -203,16 +212,15 @@ install_grok() {
     echo "=== Grok CLI (worker lane) ==="
     chmod +x "$FRAMEWORK_ROOT/adapters/grok/grok-worker.sh" \
              "$FRAMEWORK_ROOT/adapters/grok/grok-preflight.sh"
-    if [[ -d "$HOME/bin" ]]; then
-        ln -sf "$FRAMEWORK_ROOT/adapters/grok/grok-worker.sh" "$HOME/bin/grok-worker"
-        ln -sf "$FRAMEWORK_ROOT/adapters/grok/grok-preflight.sh" "$HOME/bin/grok-preflight"
-        echo "  symlink: ~/bin/grok-worker, ~/bin/grok-preflight"
-    else
-        echo "  NOTE: ~/bin doesn't exist. Put grok-worker.sh / grok-preflight.sh on your PATH manually."
-    fi
+    ensure_home_bin
+    ln -sf "$FRAMEWORK_ROOT/adapters/grok/grok-worker.sh" "$HOME/bin/grok-worker"
+    ln -sf "$FRAMEWORK_ROOT/adapters/grok/grok-preflight.sh" "$HOME/bin/grok-preflight"
+    echo "  symlink: ~/bin/grok-worker, ~/bin/grok-preflight"
     if [[ -d "$HOME/.grok" && ! -f "$HOME/.grok/agent-tiers.json" ]]; then
         cp "$FRAMEWORK_ROOT/adapters/grok/grok-tiers.json.template" "$HOME/.grok/agent-tiers.json"
         echo "  installed: ~/.grok/agent-tiers.json"
+    elif [[ ! -d "$HOME/.grok" ]]; then
+        echo "  NOTE: grok CLI not initialized yet (~/.grok missing) — run the grok CLI once, then re-run 'setup.sh --grok' to seed agent-tiers.json"
     fi
 }
 
@@ -224,17 +232,53 @@ install_antigravity() {
     echo "=== Antigravity CLI (worker lane) ==="
     chmod +x "$FRAMEWORK_ROOT/adapters/antigravity/antigravity-worker.sh" \
              "$FRAMEWORK_ROOT/adapters/antigravity/antigravity-preflight.sh"
-    if [[ -d "$HOME/bin" ]]; then
-        ln -sf "$FRAMEWORK_ROOT/adapters/antigravity/antigravity-worker.sh" "$HOME/bin/antigravity-worker"
-        ln -sf "$FRAMEWORK_ROOT/adapters/antigravity/antigravity-preflight.sh" "$HOME/bin/antigravity-preflight"
-        echo "  symlink: ~/bin/antigravity-worker, ~/bin/antigravity-preflight"
-    else
-        echo "  NOTE: ~/bin doesn't exist. Put antigravity-worker.sh / antigravity-preflight.sh on your PATH manually."
-    fi
+    ensure_home_bin
+    ln -sf "$FRAMEWORK_ROOT/adapters/antigravity/antigravity-worker.sh" "$HOME/bin/antigravity-worker"
+    ln -sf "$FRAMEWORK_ROOT/adapters/antigravity/antigravity-preflight.sh" "$HOME/bin/antigravity-preflight"
+    echo "  symlink: ~/bin/antigravity-worker, ~/bin/antigravity-preflight"
     if [[ -d "$HOME/.gemini/antigravity-cli" && ! -f "$HOME/.gemini/antigravity-cli/agent-tiers.json" ]]; then
         cp "$FRAMEWORK_ROOT/adapters/antigravity/antigravity-tiers.json.template" "$HOME/.gemini/antigravity-cli/agent-tiers.json"
         echo "  installed: ~/.gemini/antigravity-cli/agent-tiers.json"
+    elif [[ ! -d "$HOME/.gemini/antigravity-cli" ]]; then
+        echo "  NOTE: antigravity CLI not initialized yet (~/.gemini/antigravity-cli missing) — run the agy CLI once, then re-run 'setup.sh --antigravity' to seed agent-tiers.json"
     fi
+}
+
+# ---------------------------------------------------------------------------
+# Kiro CLI — gateway worker lanes only (adapters/kiro/README.md). Metered/paid
+# (KIRO_API_KEY, billed per call, including the preflight itself) — opt-in,
+# deliberately NOT part of --all/default, same stance as --grok/--antigravity.
+# ---------------------------------------------------------------------------
+install_kiro() {
+    echo "=== Kiro CLI (gateway worker lanes) ==="
+    ensure_home_bin
+    mkdir -p "$HOME/.kiro/agents"
+
+    local tpl base dst
+    for tpl in "$FRAMEWORK_ROOT"/adapters/kiro/*.json.template; do
+        [[ -e "$tpl" ]] || continue   # bash 3.2: unmatched glob stays literal
+        base="$(basename "$tpl" .json.template)"
+        dst="$HOME/.kiro/agents/$base.json"
+        # -L as well as -e: a dangling symlink is false under -e, and cp would
+        # then write THROUGH the link to wherever it points instead of skipping.
+        if [[ -e "$dst" || -L "$dst" ]]; then
+            echo "  skipped (exists — user-owned model pin): $dst"
+        else
+            cp "$tpl" "$dst"
+            echo "  seeded: $dst"
+        fi
+    done
+
+    chmod +x "$FRAMEWORK_ROOT/adapters/kiro/kiro-preflight.sh"
+    # -n so an existing symlink-to-a-directory is replaced, not linked into.
+    ln -sfn "$FRAMEWORK_ROOT/adapters/kiro/kiro-preflight.sh" "$HOME/bin/kiro-preflight"
+    echo "  symlink: ~/bin/kiro-preflight"
+
+    if ! command -v kiro-cli >/dev/null 2>&1; then
+        echo "  NOTE: kiro-cli not found on PATH — install: curl -fsSL https://cli.kiro.dev/install | bash"
+        echo "  NOTE: auth is KIRO_API_KEY (paid, issued at app.kiro.dev -> API Keys) — see adapters/kiro/README.md"
+    fi
+    return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -1202,6 +1246,25 @@ PY
         fi
     fi
 
+    # -- worker symlink dir: ~/bin exists AND is on PATH. Every install_* above
+    # now creates ~/bin unconditionally (ensure_home_bin) and lands its
+    # worker/preflight symlinks there, so this is a companion check to the
+    # generic worker-lane sweep below — that sweep can only see a symlink if
+    # this half is also true. WARN only: an absent/off-PATH ~/bin degrades
+    # worker lanes, it does not break the harness itself.
+    local hb_exists=0 hb_on_path=0
+    [[ -d "$HOME/bin" ]] && hb_exists=1
+    case ":$PATH:" in *":$HOME/bin:"*) hb_on_path=1 ;; esac
+    if [[ $hb_exists -eq 1 && $hb_on_path -eq 1 ]]; then
+        add_row PASS "worker symlink dir — ~/bin exists and is on PATH"
+    elif [[ $hb_exists -eq 0 && $hb_on_path -eq 0 ]]; then
+        add_row WARN "worker symlink dir — ~/bin missing and not on PATH; add: export PATH=\"\$HOME/bin:\$PATH\" to your shell profile, then re-run an install_* flag"
+    elif [[ $hb_exists -eq 0 ]]; then
+        add_row WARN "worker symlink dir — ~/bin missing (create it: mkdir -p ~/bin, or re-run an install_* flag)"
+    else
+        add_row WARN "worker symlink dir — ~/bin exists but is not on PATH; add: export PATH=\"\$HOME/bin:\$PATH\" to your shell profile"
+    fi
+
     # -- worker lanes (generic): every ENABLED backend in the registry must
     # resolve its cmd[0] and its preflight[0] on PATH. This generalizes the
     # kiro-specific block above to non-gateway lanes (grok-worker, and
@@ -1219,7 +1282,7 @@ PY
                         | .key as $l | ((.value.cmd // [])[0] // ""), ((.value.preflight // [])[0] // "")
                         | [$l, .] | @tsv' "$FRAMEWORK_ROOT/core/infra/backends.json" 2>/dev/null)
         if [[ -n "$wl_missing" ]]; then
-            add_row WARN "worker lanes — enabled backend(s) whose cmd[0]/preflight[0] is not resolvable on PATH: $wl_missing; call-worker.sh execs the registry argv verbatim, so the lane reports UNAVAILABLE (exit 127). Install the symlinks (setup.sh --codex/--gemini/--grok, or ln -sf by hand — see the adapter README)"
+            add_row WARN "worker lanes — enabled backend(s) whose cmd[0]/preflight[0] is not resolvable on PATH: $wl_missing; call-worker.sh execs the registry argv verbatim, so the lane reports UNAVAILABLE (exit 127). Install the symlinks (setup.sh --codex/--gemini/--grok/--antigravity/--kiro, or ln -sf by hand — see the adapter README), and note a lane also needs its vendor CLI installed and authenticated — /worker-setup walks that per lane"
         elif [[ -n "$wl_lanes" ]]; then
             add_row PASS "worker lanes — enabled backend(s) resolvable on PATH: $wl_lanes"
         fi
@@ -1403,6 +1466,7 @@ fi
 [[ $DO_GEMINI -eq 1 ]] && install_gemini
 [[ $DO_GROK -eq 1 ]]   && install_grok
 [[ $DO_ANTIGRAVITY -eq 1 ]] && install_antigravity
+[[ $DO_KIRO -eq 1 ]]   && install_kiro
 [[ $DO_PROJECT -eq 1 ]] && install_project
 
 # Self-heal exec bits before validating: distribution paths that drop POSIX

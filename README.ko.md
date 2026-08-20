@@ -209,8 +209,9 @@ flowchart LR
 2. **확인합니다.** `/plugin` 실행 — `agent-harness`가 *enabled*로 표시됩니다. 새 세션에서 에이전트가 `agent-harness:code-reviewer`, `agent-harness:security-reviewer`로 resolve되고 `/project-init`을 쓸 수 있습니다.
 3. **프로젝트를 스캐폴드합니다.** 아무 저장소에서 `/project-init`을 실행하면 `CLAUDE.md`, 규칙, `gitleaks.toml`이 생성됩니다.
 4. *(선택)* 훅이 많은 다른 플러그인을 쓰는 저장소에서는 `/plugin`으로 agent-harness를 꺼도 됩니다 — 에이전트는 `agent-harness:*` 네임스페이스라 어느 쪽이든 충돌하지 않습니다.
+5. *(선택)* 크로스벤더 워커 레인(codex/antigravity/grok/kiro 세컨드 오피니언)을 쓰려면 `/agent-harness:worker-setup`을 실행하세요 — 설치→인증→검증을 비용 안내와 함께 안내합니다.
 
-플러그인에 포함: **에이전트 3종**, **스킬 9종**, 훅 세트, `/project-init` 커맨드.
+플러그인에 포함: **에이전트 3종**, **스킬 13종**, 훅 세트, `/project-init` 커맨드.
 
 ### Path B — 셸 설치 (Codex CLI / Gemini CLI / 3개 전부)
 
@@ -227,10 +228,17 @@ bash ~/agent/setup.sh                    # 플래그 없음 = 3개 AI 전부
 | `--project` | 현재 저장소 스캐폴드: `CLAUDE.md` / `AGENTS.md` / `GEMINI.md` / `gitleaks.toml` / `hook-config.yml` / git pre-commit + pre-push 훅 |
 | `--hooks-only` | git-hooks만, AI 설정 없음 |
 | `--all` | 위 전부 |
+| `--grok` | **옵트인**, `--all`/기본에 미포함 — grok 워커 레인(자문 전용 크로스벤더 리뷰) |
+| `--antigravity` | **옵트인**, `--all`/기본에 미포함 — antigravity(agy) 워커 레인(크로스벤더 리뷰) |
+| `--kiro` | **옵트인**, `--all`/기본에 미포함 — kiro 게이트웨이 워커 레인(과금형) |
 
 플래그는 조합 가능합니다(`bash setup.sh --claude --project`). 멱등 — 기존 파일은
 건너뛰고, 교체가 필요하면 대화형으로 물어봅니다. 비대화형 실행은 `AGENT_SETUP_YES=1`.
 `--force` 플래그는 없습니다.
+
+크로스벤더 워커 레인 온보딩(설치→인증→검증, 비용 안내 포함)은 단일 플래그가 아니라
+가이드형 절차입니다 — `--grok`/`--antigravity`/`--kiro`를 직접 쓰기보다
+`/agent-harness:worker-setup`(플러그인) 또는 `worker-setup` 스킬(셸 설치)을 실행하세요.
 
 ## 동작 확인
 
@@ -420,7 +428,7 @@ Agent/
 ├── CHANGELOG.md
 │
 ├── agents/             # 에이전트 정의 3종 + master-registry.json
-├── skills/             # 스킬 9종 (spec · supervise · verify-completion · wrap · brain-ingest · harness-audit · manager-audit · persona-review · harness-help)
+├── skills/             # 스킬 13종 (spec · supervise · verify-completion · wrap · brain-ingest · harness-audit · manager-audit · persona-review · harness-help · loop · harness-loop · council-review · worker-setup)
 ├── commands/           # 슬래시 커맨드 1개 (/project-init)
 ├── hooks/              # 플러그인 훅 배선 (hooks.json)
 │
@@ -428,7 +436,7 @@ Agent/
 │   ├── hooks/          #   이식 가능한 훅 스크립트 26개 (배선 22 + 공유 모듈)
 │   ├── infra/          #   세션 조정 · goal 모드 · 감사 · auto-ship
 │   ├── git-hooks/      #   pre-commit · pre-push
-│   └── tests/          #   테스트 스크립트 56개 (verify-all.sh가 전부 실행)
+│   └── tests/          #   테스트 스크립트 76개 (verify-all.sh가 전부 실행)
 │
 ├── adapters/           # claude-code (얇음) · codex · gemini
 ├── rules/              # 범용 정책 문서

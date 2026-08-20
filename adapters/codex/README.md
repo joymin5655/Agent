@@ -54,6 +54,18 @@ cp ~/Agent/adapters/codex/AGENTS.md.template /your/repo/AGENTS.md
 
 Or run `setup.sh --codex` from the repo root, which automates the above.
 
+### Codex CLI itself
+
+If the `codex` CLI isn't installed yet: `npm install -g @openai/codex`
+(universal), `brew install --cask codex` (macOS), or
+`curl -fsSL https://chatgpt.com/codex/install.sh | sh`. Auth is a browser
+login flow: `codex login`. `codex login status` is the auth-aware health
+probe — measured 2026-08-20 on codex 0.147.0: logged out exits 1 and prints
+"Not logged in"; logged in exits 0. It is a local check (reads cached auth
+state, no network call) and not billable, which is why
+`core/infra/backends.json` uses it as the codex backend's `preflight`
+instead of `codex --version` (which says nothing about auth).
+
 ## Test
 
 ```bash
