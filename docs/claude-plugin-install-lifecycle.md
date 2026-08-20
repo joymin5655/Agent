@@ -221,9 +221,19 @@ These are current-state findings, not future design:
    Claude loaded the plugin components successfully. `skills/council-review/SKILL.md`'s
    external-lane dispatch is resolved (2026-08-20): it resolves
    `core/infra/call-worker.sh` via `${CLAUDE_PLUGIN_ROOT:-$PWD}` rather than a
-   bare cwd-relative path, so it works from a plugin install. Other consumers
-   named in this item may still carry the gap — verify per-consumer, not by
-   this one fix.
+   bare cwd-relative path, so it works from a plugin install. `/wrap` step 1d
+   and `/verify-completion`'s `--second-opinion` were fixed the same way
+   (2026-08-21), and `core/tests/council-dispatch-path-test.sh` check (d) now
+   fails CI if any shipped skill shells into `call-worker.sh`,
+   `council-threshold.sh`, or `council-escalation-gate.py` by bare relative
+   path. **Still open**: the same shape for every OTHER `core/` script a skill
+   invokes — 7 SKILL.md files as of 2026-08-21 (`harness-audit`,
+   `harness-loop`, `loop`, `manager-audit`, `spec`, `supervise`, `wrap`;
+   `wrap` still appears for its other helper calls, e.g. the gitleaks fire
+   drill), mostly `bash core/tests/…` and `bash core/infra/…` helper calls.
+   Reproduce the current list with:
+   `grep -rlE '(^|[^"$/A-Za-z0-9_])bash core/(infra|hooks|tests)/' skills/*/SKILL.md`.
+   Verify per-consumer, not by these fixes.
 2. The Claude adapter silently passes when a named core hook is missing. This
    favors session availability but means installation health must be verified
    separately. The same fail-open stance holds in the Codex/Gemini shell

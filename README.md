@@ -461,7 +461,7 @@ Agent/
 │   ├── hooks/          #   26 portable hook scripts (22 wired + shared modules)
 │   ├── infra/          #   session coordination · goal mode · audits · auto-ship
 │   ├── git-hooks/      #   pre-commit · pre-push
-│   └── tests/          #   76 test scripts (verify-all.sh runs them all)
+│   └── tests/          #   78 test scripts (verify-all.sh runs them all)
 │
 ├── adapters/           # claude-code (thin) · codex · gemini
 ├── rules/              # generic policy docs

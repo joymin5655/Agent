@@ -1,7 +1,7 @@
 ---
 name: council-review
 description: Multi-vendor code review council — runs the Claude code-reviewer agent alongside external second opinions (codex, gemini) in parallel, then synthesizes with citation verification, source tagging, and disagreement surfacing. Optionally seats grok as a non-voting advisor (--with-grok). NOT a completion gate (that is /verify-completion), NOT a security audit (security findings route to security-reviewer), and NOT free — every external lane is a paid CLI call the user approves first.
-when_to_use: User wants a code review with independent cross-vendor opinions — "council review", "get a second opinion on this diff", "review with codex/gemini", or `/council-review [--staged|--head|<range>] [--with-grok]`.
+when_to_use: User wants a code review with independent cross-vendor opinions — "council review", "get a second opinion on this diff", "review with codex/gemini", or `/council-review [--staged|--head|<range>] [--with-grok]` — or `council-escalation-gate.py` denied a plain code-reviewer dispatch because the diff is council-scale (line/file threshold or a risk-area path; core/infra/council-threshold.sh).
 tools: Bash, Read, Grep, Glob, Agent
 ---
 
@@ -35,6 +35,26 @@ status line says "rate-limited, retry later", and no upgrade prompt is put to
 the user.
 
 ## Steps
+
+### 0.5. Mark council-active before dispatching the Claude lane
+
+Before this skill's own `code-reviewer` Agent dispatch (step 3), set the
+council-active flag through the gate's own CLI — never write a flag file
+directly. The escape hatch now lives OUTSIDE this repo (keyed to the project
+root) and its content must be the CURRENT diff's hash, which only the CLI
+can produce:
+
+```bash
+CEG="${CLAUDE_PLUGIN_ROOT:-$PWD}/core/hooks/council-escalation-gate.py"
+python3 "$CEG" --council-flag set
+```
+
+This is the escape hatch `council-escalation-gate.py` checks first (TTL
+`AGENT_COUNCIL_ACTIVE_TTL_S`, default 300s, bound to this diff's hash) —
+without it, the same gate that routed the caller here would also deny the
+council's own internal code-reviewer dispatch. Clear it again in step 6 once
+the run is done — the flag only needs to cover this one dispatch, and a
+still-fresh flag left behind would silently un-gate a later, unrelated diff.
 
 ### 1. Assemble the target
 
@@ -76,6 +96,14 @@ Count the external lanes about to run (2, or 3 with `--with-grok`) and ask the
 user ONCE to approve the paid calls. Only on approval set `AGENT_WORKER_YES=1`
 — per-invocation, never exported into the session (the env-only gate contract
 in call-worker.sh: the session that owns the user relationship asks first).
+
+**Approval declined**: skip every external lane (no `call-worker.sh` calls at
+all) and proceed with the Claude `code-reviewer` lane alone — this is the same
+"single-vendor review" degrade the false-council guard (step 5) reports for,
+so the report's first line must say so rather than borrow the council's
+authority. This lane's own `code-reviewer` dispatch still needs the step 0.5
+flag — the gate does not know approval was declined, only that the
+council-active flag is fresh and bound to this diff's hash.
 
 ### 3. Dispatch all lanes in parallel
 
@@ -154,6 +182,18 @@ Citation drops: codex 1, gemini 0
 **False-council guard**: if EVERY external lane is absent, the first line of
 the report must say this was a single-vendor review, not a council — the
 Claude lane always runs, but it must not borrow the council's authority.
+
+### 6. Clear the council-active flag
+
+The flag set in step 0.5 must not outlive this run — a still-fresh flag left
+behind would silently un-gate any LATER, unrelated council-scale diff for the
+rest of its TTL. Clear it once the report above is produced, whether the run
+succeeded or degraded:
+
+```bash
+CEG="${CLAUDE_PLUGIN_ROOT:-$PWD}/core/hooks/council-escalation-gate.py"
+python3 "$CEG" --council-flag clear
+```
 
 ## Degradation
 
