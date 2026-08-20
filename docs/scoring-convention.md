@@ -50,12 +50,20 @@ Stop gates use (the unproven case is the blocked case).
 
 | Producer | Layer | `score` | `dimensions` |
 |---|---|---|---|
-| `core/infra/completion-verify.py` (P3-5) | deterministic | `passed / total` over cited facts | `files`, `tests`, `assertions` |
+| `core/infra/completion-verify.py` (P3-5) | deterministic | `passed / total` over cited facts | `files`, `tests`, `assertions`, `evidence`\*, `trajectory`\* |
+| `core/infra/completion-gate.sh` (P1) | deterministic — wraps completion-verify.py's verdict with gate metadata (ts/slug/wave/mode/claim/reproduce) | passthrough from completion-verify.py | passthrough, plus a liveness-canary precondition on the run itself |
 | `skills/verify-completion` (P3-5) | deterministic **+** semantic judge | combined | the above + a semantic axis |
 | `core/infra/supervisor-goal-audit.sh` | deterministic (static scoring of a plan) | `total / 25` (see mapping) | 5 goal dimensions |
 | `core/infra/rubric-score.py` | deterministic (project rubric) | weighted `passed / total` over checked dims | one dimension per rubric `grader_check` |
 | skill A/B harness (H-3, planned) | assertion + judge | assertions passed / total | per-skill assertions |
 | `grade.sh` (P2-2, planned) | judge | calibrated 0–1 | task-defined |
+
+\* `evidence` and `trajectory` are opt-in (`--require-evidence`, `--diff-base
+<ref>`) — omitted, `completion-verify.py`'s dimensions and output are exactly
+what they were before P1 (a regression battery pins this: `core/tests/completion-verify-test.sh`
+case r1). `evidence` refutes a claim that changed code but cites zero
+tests/assertions; `trajectory` refutes an added (`+`-line) skip/xfail/only
+marker or a changed code file outside the claim's declared files/scope.
 
 ### Mapping the goal-audit 25-point scale onto the convention
 
@@ -90,9 +98,19 @@ A consumer should treat `verdict` as authoritative for the gate decision and
 `score` is for ranking and trend-tracking, not for gating (a 0.9 with a
 load-bearing refutation is still REFUTED).
 
+**First blocking consumer: `core/infra/completion-gate.sh`** (`docs/gate-registry.md`
+`completion-gate` row). Everything above stayed advisory until P1 — this gate
+is the first thing in this repo that actually *enforces* a completion-verify.py
+verdict (`AGENT_VERIFY_BLOCKING=block`, default `dryrun`). It does not
+reimplement the verdict — it runs `completion-verify.py --require-evidence
+--diff-base <ref>`, proves the verifier is alive with a liveness canary before
+trusting the result, and blocks on REFUTED. See `skills/supervise/SKILL.md`
+Step 2d (`--verify-blocking`) for the call site.
+
 ## Related
 
 - `core/infra/completion-verify.py` — the deterministic completion verifier.
+- `core/infra/completion-gate.sh` — the blocking consumer (P1).
 - `skills/verify-completion/SKILL.md` — the independent-context judge that wraps
   it and adds the semantic pass.
 - `core/infra/supervisor-goal-audit.sh` — the 25-point goal scorer.

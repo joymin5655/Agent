@@ -28,6 +28,17 @@ Two layers, and you run **both**:
 
 Both emit the **same verdict schema** (`docs/scoring-convention.md`).
 
+This skill's verdict stays **advisory** — whether/how to enforce it is a
+consumer decision (`docs/scoring-convention.md` "Consuming a verdict": *"That
+choice belongs to each consumer"*). The first BLOCKING consumer is
+`core/infra/completion-gate.sh` (`docs/gate-registry.md` `completion-gate`
+row), invoked from `/supervise`'s wave-audit step with `--verify-blocking`; it
+wraps `completion-verify.py --require-evidence --diff-base` behind a liveness
+canary and a hard `AGENT_VERIFY_BLOCKING=block` mode. This skill and that gate
+are complementary, not redundant: the gate is the deterministic hard stop, this
+skill's semantic pass is what a `needs_semantic` claim (one the gate cannot
+mechanically refute or confirm) gets routed to next.
+
 ## The claim
 
 A claim is a JSON/YAML file (by convention `.agent/claims/<slug>.yml`) the

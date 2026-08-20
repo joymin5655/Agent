@@ -52,6 +52,28 @@ tool result from its own session (path, exit code, diff) — self-assessment
 without evidence is not a status report. Prompt-side rules for frontier-model
 dispatches: `docs/concepts/fable-5-prompting.md`.
 
+### Completion claim file (required for `--verify-blocking` waves)
+
+When the wave runs under `/supervise --verify-blocking`, the contract MUST
+instruct the worker to write a completion claim on finishing —
+`skills/verify-completion/SKILL.md`'s schema, at
+`.agent/claims/<slug>-w<wave-i>.yml` (`core/infra/completion-gate.sh` looks
+there first; if it is absent it falls back to the repo-wide convention
+`.agent/claims/<slug>.yml`, `docs/scoring-convention.md` "Consuming a
+verdict"). With no claim file at either path the gate still runs — block mode
+still stops the wave — but the reason is a plain "claim file missing", not a
+refuted mechanical check, so state the path explicitly in the contract rather
+than leaving the worker to guess it:
+
+```yaml
+claim:
+  summary: "<one line — what this wave accomplished>"
+  files:
+    - { path: "<changed file>", contains: "<a substring proving the change>" }
+  tests:
+    - "<the wave's verification command, exit 0>"
+```
+
 ## Cross-vendor lane dispatch (when the worker is an external CLI)
 
 A dispatch that leaves the Claude runtime — a `core/infra/call-worker.sh` role

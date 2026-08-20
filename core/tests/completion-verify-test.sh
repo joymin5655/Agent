@@ -34,6 +34,17 @@
 #   (i) process-group-signalling test -> verifier survives, still emits a verdict
 #   (j) verdict carries the shared-convention schema keys
 #
+# --require-evidence / --diff-base (P1 grounded-completion-gate) contract:
+#   (r1) no flags                     -> output identical to pre-flag behavior (regression)
+#   (r2) --require-evidence + code diff + tests=0 -> REFUTED, `evidence` dim fails
+#   (r3) same + tests=1 passing       -> CONFIRMED, `evidence` dim passes
+#   (r4) doc-only diff                -> no evidence refutation
+#   (r5) --diff-base, +@pytest.mark.skip -> REFUTED (trajectory)
+#   (r6) --diff-base, +it.only(       -> REFUTED (trajectory)
+#   (r7) pre-existing (context) skip line -> NOT detected (only `+` lines scanned)
+#   (r8) changed code file outside claim's files/scope -> REFUTED; lockfile exempt
+#   (r9) nested dist/build dirs (e.g. src/dist/real.py) NOT exempt; root-only dist/ still is
+#
 # Usage: bash core/tests/completion-verify-test.sh
 set -u
 
@@ -229,6 +240,137 @@ need = ["verdict", "score", "target", "dimensions", "refutations", "schema_versi
 sys.exit(0 if all(k in d for k in need) else 1)
 ' "$OUTFILE"
 check "schema-keys-present" $?
+
+echo
+echo "=== (r1) no flags -> output identical to pre-flag behavior (regression) ==="
+RC=$(run_verify "$PROJ" "$PROJ/claim-ok.json")
+[[ $RC -eq 0 ]]; check "noflags-exit-0" $?
+[[ "$(verdict_of)" == "CONFIRMED" ]]; check "noflags-confirmed" $?
+python3 -c '
+import sys, json
+d = json.load(open(sys.argv[1]))
+sys.exit(0 if "evidence" not in d["dimensions"] and "trajectory" not in d["dimensions"] else 1)
+' "$OUTFILE"
+check "noflags-no-new-dimensions" $?
+
+# --- git-backed fixture for --require-evidence / --diff-base ---
+if ! command -v git >/dev/null 2>&1; then
+  echo "  skip [require-evidence/diff-base] git not available"
+else
+  GPROJ="$TMP_ROOT/gitproj"
+  mkdir -p "$GPROJ/src"
+  ( cd "$GPROJ" && git init -q && git config user.email t@t.com && git config user.name t )
+  printf 'def foo():\n    return 1\n\n# @pytest.mark.skip pre-existing context line — must NOT trigger\n' > "$GPROJ/src/mod.py"
+  printf '# doc\n' > "$GPROJ/README.md"
+  ( cd "$GPROJ" && git add -A && git commit -qm init )
+  BASE="$(cd "$GPROJ" && git rev-parse HEAD)"
+
+  run_verify_flags() { # <root> <claim> <extra flags...>
+    local root="$1" claim="$2"; shift 2
+    python3 "$VERIFY" --root "$root" "$@" "$claim" > "$OUTFILE" 2>/dev/null
+    echo $?
+  }
+
+  echo
+  echo "=== (r2) --require-evidence: code changed, tests+assertions=0 -> REFUTED ==="
+  printf 'def foo():\n    return 2\n\n# @pytest.mark.skip pre-existing context line — must NOT trigger\n' > "$GPROJ/src/mod.py"
+  cat > "$GPROJ/claim-ev.json" <<'EOF'
+{ "claim": { "summary": "x", "files": [ { "path": "src/mod.py" } ] } }
+EOF
+  RC=$(run_verify_flags "$GPROJ" "$GPROJ/claim-ev.json" --require-evidence)
+  [[ $RC -ne 0 ]]; check "evidence-code-notests-refuted-exit" $?
+  [[ "$(verdict_of)" == "REFUTED" ]]; check "evidence-code-notests-refuted" $?
+  refutes_contain "cites no runnable evidence"; check "evidence-refutation-names-reason" $?
+
+  echo
+  echo "=== (r3) --require-evidence: same + a passing test -> CONFIRMED ==="
+  cat > "$GPROJ/claim-ev2.json" <<'EOF'
+{ "claim": { "summary": "x", "files": [ { "path": "src/mod.py" } ], "tests": [ "true" ] } }
+EOF
+  RC=$(run_verify_flags "$GPROJ" "$GPROJ/claim-ev2.json" --require-evidence)
+  [[ $RC -eq 0 ]]; check "evidence-with-test-confirmed-exit" $?
+  [[ "$(verdict_of)" == "CONFIRMED" ]]; check "evidence-with-test-confirmed" $?
+
+  echo
+  echo "=== (r4) --require-evidence: doc-only diff -> no evidence refutation ==="
+  ( cd "$GPROJ" && git checkout -q -- src/mod.py )
+  printf '# doc changed\n' > "$GPROJ/README.md"
+  cat > "$GPROJ/claim-doc.json" <<'EOF'
+{ "claim": { "summary": "x", "files": [ { "path": "README.md" } ] } }
+EOF
+  RC=$(run_verify_flags "$GPROJ" "$GPROJ/claim-doc.json" --require-evidence)
+  [[ "$(verdict_of)" == "CONFIRMED" ]]; check "evidence-doconly-confirmed" $?
+  refutes_contain "cites no runnable evidence"; NOT_FOUND=$?
+  [[ $NOT_FOUND -ne 0 ]]; check "evidence-doconly-no-refutation" $?
+  ( cd "$GPROJ" && git checkout -q -- README.md )
+
+  echo
+  echo "=== (r5) --diff-base: added @pytest.mark.skip -> REFUTED (trajectory) ==="
+  printf 'def foo():\n    return 1\n\n# @pytest.mark.skip pre-existing context line — must NOT trigger\n\n@pytest.mark.skip\ndef test_new(): pass\n' > "$GPROJ/src/mod.py"
+  cat > "$GPROJ/claim-traj.json" <<'EOF'
+{ "claim": { "summary": "x", "files": [ { "path": "src/mod.py" } ] } }
+EOF
+  RC=$(run_verify_flags "$GPROJ" "$GPROJ/claim-traj.json" --diff-base "$BASE")
+  [[ $RC -ne 0 ]]; check "traj-skip-refuted-exit" $?
+  [[ "$(verdict_of)" == "REFUTED" ]]; check "traj-skip-refuted" $?
+  refutes_contain "pytest skip marker"; check "traj-skip-refutation-names-marker" $?
+  ( cd "$GPROJ" && git checkout -q -- src/mod.py )
+
+  echo
+  echo "=== (r6) --diff-base: added it.only( -> REFUTED (trajectory) ==="
+  printf 'def foo():\n    return 1\n\n# @pytest.mark.skip pre-existing context line — must NOT trigger\n' > "$GPROJ/src/mod.py"
+  printf 'it.only("x", () => {})\n' >> "$GPROJ/src/mod.py"
+  RC=$(run_verify_flags "$GPROJ" "$GPROJ/claim-traj.json" --diff-base "$BASE")
+  [[ "$(verdict_of)" == "REFUTED" ]]; check "traj-itonly-refuted" $?
+  refutes_contain "it.only("; check "traj-itonly-refutation-names-marker" $?
+  ( cd "$GPROJ" && git checkout -q -- src/mod.py )
+
+  echo
+  echo "=== (r7) pre-existing (context) skip line -> NOT detected (only + lines scanned) ==="
+  # src/mod.py already carries the pre-existing skip comment from init; a diff
+  # that does not touch that line must not refute on it.
+  printf 'def foo():\n    return 99\n\n# @pytest.mark.skip pre-existing context line — must NOT trigger\n' > "$GPROJ/src/mod.py"
+  cat > "$GPROJ/claim-traj2.json" <<'EOF'
+{ "claim": { "summary": "x", "files": [ { "path": "src/mod.py" } ], "tests": [ "true" ] } }
+EOF
+  RC=$(run_verify_flags "$GPROJ" "$GPROJ/claim-traj2.json" --diff-base "$BASE")
+  [[ "$(verdict_of)" == "CONFIRMED" ]]; check "traj-context-skip-not-detected" $?
+  ( cd "$GPROJ" && git checkout -q -- src/mod.py )
+
+  echo
+  echo "=== (r8) changed code file outside claim scope -> REFUTED; lockfile exempt ==="
+  printf 'x = 1\n' > "$GPROJ/src/other.py"
+  printf '{"lockfileVersion": 1}\n' > "$GPROJ/package-lock.json"
+  ( cd "$GPROJ" && git add -A )
+  RC=$(run_verify_flags "$GPROJ" "$GPROJ/claim-traj2.json" --diff-base "$BASE")
+  [[ "$(verdict_of)" == "REFUTED" ]]; check "traj-outofscope-refuted" $?
+  refutes_contain "changed outside claimed scope: src/other.py"; check "traj-outofscope-names-path" $?
+  refutes_contain "package-lock.json"; LOCKFILE_NAMED=$?
+  [[ $LOCKFILE_NAMED -ne 0 ]]; check "traj-lockfile-exempt" $?
+  ( cd "$GPROJ" && git reset -q --hard "$BASE" )
+
+  echo
+  echo "=== (r9) NESTED dist/build dirs are NOT exempt (repo-root anchored only) ==="
+  # src/dist/real.py is a real source file that happens to sit under a
+  # directory named 'dist' — it must NOT ride the build-artifact exemption
+  # (review Major finding: the old (^|/)dist/ pattern matched mid-path too).
+  # Recreate claim-traj2.json fresh: r8's `git add -A` + `git reset --hard`
+  # swept it away (it was an untracked claim file living in the repo dir,
+  # staged then reverted along with the rest of that reset).
+  cat > "$GPROJ/claim-traj2.json" <<'EOF'
+{ "claim": { "summary": "x", "files": [ { "path": "src/mod.py" } ], "tests": [ "true" ] } }
+EOF
+  mkdir -p "$GPROJ/src/dist" "$GPROJ/dist"
+  printf 'y = 1\n' > "$GPROJ/src/dist/real.py"
+  printf 'bundled\n' > "$GPROJ/dist/bundle.js"
+  ( cd "$GPROJ" && git add -A )
+  RC=$(run_verify_flags "$GPROJ" "$GPROJ/claim-traj2.json" --diff-base "$BASE")
+  [[ "$(verdict_of)" == "REFUTED" ]]; check "traj-nested-dist-refuted" $?
+  refutes_contain "changed outside claimed scope: src/dist/real.py"; check "traj-nested-dist-not-exempt" $?
+  refutes_contain "dist/bundle.js"; NESTED_BUNDLE_NAMED=$?
+  [[ $NESTED_BUNDLE_NAMED -ne 0 ]]; check "traj-root-dist-still-exempt" $?
+  ( cd "$GPROJ" && git reset -q --hard "$BASE" )
+fi
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="

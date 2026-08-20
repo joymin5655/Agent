@@ -33,10 +33,11 @@
 # This mirrors the campaign's `infra-as-verdict` lesson (E-1 batch-3): a broken or
 # absent backend must fail closed, never emit a trusted score.
 #
-# Baseline: on a clean tree (all batteries green) this emits `harness_score: 10.0`
-# (10 code-guarded modes PASS; `vacuous-parity` is GATE-covered and `review-false-clean`
-# is N/A — both reported, neither scored). This SUPERSEDES the pre-L-1 P2-2 target
-# of 8.0 (which came from the retired single-scalar benchmark).
+# Baseline: on a clean tree (all batteries green) this emits `harness_score: 11.0`
+# (11 code-guarded modes PASS — 10 plus P1's `false-done-claim`; `vacuous-parity`
+# is GATE-covered and `review-false-clean` is N/A — both reported, neither scored).
+# This SUPERSEDES the pre-L-1 P2-2 target of 8.0 (which came from the retired
+# single-scalar benchmark).
 #
 # GATE batteries are BANNED from the mode->guard map (operator decision, 2026-08-09):
 # a mode whose guard is also a GATE battery would have two verdict paths for one
@@ -147,6 +148,7 @@ guard_for() {
     loose-coercion)       echo "evals-test.sh" ;;
     stale-ssot)           echo "doc-reality.sh" ;;
     review-false-clean)   echo "@process@" ;;
+    false-done-claim)     echo "completion-gate-test.sh" ;;
     *)                    echo "@unknown@" ;;
   esac
 }

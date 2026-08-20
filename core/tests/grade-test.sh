@@ -33,7 +33,7 @@ ALL_BATTERIES=(
   loop-write-guard-test.sh loop-ledger-test.sh
   completion-verify-test.sh verify-all-test.sh supply-chain-scan-test.sh
   pre-tool-guard-test.sh spec-gate-test.sh llm-judge-test.sh reference-judge-test.sh
-  evals-test.sh doc-reality.sh
+  evals-test.sh doc-reality.sh completion-gate-test.sh
 )
 
 # populate <dir> with every battery as a passing stub
@@ -53,10 +53,10 @@ run_grade() {  # <tests_dir> [extra args...] -> stdout+stderr, sets RC
   RC=$?
 }
 
-echo "=== (a) clean tree: GATE pass + all guards green -> harness_score 10.0 ==="
+echo "=== (a) clean tree: GATE pass + all guards green -> harness_score 11.0 ==="
 D="$(mktemp -d "$TMP_ROOT/aXXXX")"; seed_pass_dir "$D"
 run_grade "$D"
-printf '%s\n' "$OUT" | grep -qE '^harness_score: 10\.0$'; check "baseline-score-10.0" $?
+printf '%s\n' "$OUT" | grep -qE '^harness_score: 11\.0$'; check "baseline-score-11.0" $?
 printf '%s\n' "$OUT" | grep -qE '^mode:review-false-clean N/A'; check "process-mode-is-NA" $?
 printf '%s\n' "$OUT" | grep -qE '^mode:vacuous-parity N/A .*GATE floor'; check "gate-covered-mode-is-NA" $?
 printf '%s\n' "$OUT" | grep -qE '^mode:silent-drop PASS'; check "silent-drop-PASS-when-green" $?
@@ -73,18 +73,18 @@ printf '%s\n' "$OUT" | grep -qE 'GATE: FAIL'; check "gate-fail-message" $?
 ! printf '%s\n' "$OUT" | grep -qE '^mode:'; check "gate-fail-skips-checklist" $?
 
 echo
-echo "=== (c) one guard red -> that mode FAIL, score drops to 9.0 ==="
+echo "=== (c) one guard red -> that mode FAIL, score drops to 10.0 ==="
 D="$(mktemp -d "$TMP_ROOT/cXXXX")"; seed_pass_dir "$D"; make_fail "$D/completion-verify-test.sh"
 run_grade "$D"
 printf '%s\n' "$OUT" | grep -qE '^mode:silent-drop FAIL .*re-opened'; check "regressed-mode-FAIL" $?
-printf '%s\n' "$OUT" | grep -qE '^harness_score: 9\.0$'; check "one-regression-score-9.0" $?
+printf '%s\n' "$OUT" | grep -qE '^harness_score: 10\.0$'; check "one-regression-score-10.0" $?
 
 echo
-echo "=== (d) missing guard battery -> fail-closed FAIL + 0.5 OER penalty (8.5) ==="
+echo "=== (d) missing guard battery -> fail-closed FAIL + 0.5 OER penalty (9.5) ==="
 D="$(mktemp -d "$TMP_ROOT/dXXXX")"; seed_pass_dir "$D"; rm -f "$D/evals-test.sh"
 run_grade "$D"
 printf '%s\n' "$OUT" | grep -qE '^mode:loose-coercion FAIL .*missing .*fail-closed'; check "missing-guard-fail-closed" $?
-printf '%s\n' "$OUT" | grep -qE '^harness_score: 8\.5$'; check "missing-guard-oer-penalty" $?
+printf '%s\n' "$OUT" | grep -qE '^harness_score: 9\.5$'; check "missing-guard-oer-penalty" $?
 
 echo
 echo "=== (e) unparseable rubric -> fail-closed harness_score 0 ==="
@@ -107,16 +107,16 @@ G="$TMP_ROOT/gitrepo"; mkdir -p "$G"
   echo change > agents/reviewer.md && git add -A && git commit -qm on-target  # agents-only candidate
 )
 BASE="$(cd "$G" && git rev-parse HEAD~1)"
-# on-target-only candidate under a SAFE target -> real checklist score 10.0
+# on-target-only candidate under a SAFE target -> real checklist score 11.0
 OUT="$(cd "$G" && GRADE_SKIP_GITLEAKS=1 bash core/tests/grade.sh --base "$BASE" --target 'agents/.*' 2>&1)"
-printf '%s\n' "$OUT" | grep -qE '^harness_score: 10\.0$'; check "on-target-passes-boundary" $?
+printf '%s\n' "$OUT" | grep -qE '^harness_score: 11\.0$'; check "on-target-passes-boundary" $?
 # planted __pycache__ under the executed surface is GITIGNORED — invisible to the
 # clean-tree check — yet python would load a crafted .pyc instead of the verified
 # source. The INTEGRITY phase purges it BEFORE any battery executes.
 ( cd "$G" && printf '__pycache__/\n*.pyc\n' > .gitignore && git add .gitignore && git commit -qm gitignore
   mkdir -p core/hooks/__pycache__ && echo poison > core/hooks/__pycache__/hook_config.cpython-312.pyc )
 OUT="$(cd "$G" && GRADE_SKIP_GITLEAKS=1 bash core/tests/grade.sh --base HEAD --target 'agents/.*' 2>&1)"
-printf '%s\n' "$OUT" | grep -qE '^harness_score: 10\.0$'; check "ignored-pycache-does-not-block" $?
+printf '%s\n' "$OUT" | grep -qE '^harness_score: 11\.0$'; check "ignored-pycache-does-not-block" $?
 [[ ! -d "$G/core/hooks/__pycache__" ]]; check "planted-pycache-purged" $?
 # add an OFF-target commit; the same safe target must discard and name it
 ( cd "$G" && echo drift > core/tests/sneaky.sh && git add -A && git commit -qm off-target )
