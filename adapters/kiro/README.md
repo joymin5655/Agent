@@ -79,7 +79,16 @@ the symlink to find that registry — so `jq` must be installed (`call-worker.sh
 already requires it). Without `jq` the probe refuses (exit 7) rather than guessing
 a binary or a profile name. `bash setup.sh --doctor` reports the whole lane: gateway
 CLI on PATH, one profile file per `--agent` in the registry, and a resolvable
-preflight probe.
+preflight probe. `bash setup.sh --kiro` automates the profile-copy + symlink steps
+above (opt-in — not part of `--all`/default, since every kiro call, including the
+preflight, is metered/paid).
+
+### Kiro CLI itself
+
+If `kiro-cli` isn't installed yet: `curl -fsSL https://cli.kiro.dev/install | bash`
+(macOS/Linux). Auth is `KIRO_API_KEY` (Pro-tier, issued at app.kiro.dev → API Keys,
+shown once) — export it yourself; nothing in this framework stores or logs it. See
+§ Authentication below for why the env var's presence is not itself a health signal.
 
 ## Authentication, and why `kiro-preflight` exists
 

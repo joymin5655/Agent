@@ -130,5 +130,17 @@ printf 'x' | HOME='/tmp/x") (allow file-write* (subpath "/' ANTIGRAVITY_TIERS_FI
 check "unsafe-home-refuses-8" 8 $?
 
 echo
+echo "=== (f) no stray grok-worker reference in the antigravity adapter ==="
+# antigravity-preflight.sh's missing-on-PATH hint once wrongly pointed at
+# ~/bin/grok-worker (copy-paste from the grok adapter) — regression guard.
+if grep -rq "grok-worker" "$REPO_ROOT/adapters/antigravity/" 2>/dev/null; then
+  echo "  FAIL [no-grok-worker-reference] found in: $(grep -rl "grok-worker" "$REPO_ROOT/adapters/antigravity/" 2>/dev/null | tr '\n' ' ')"
+  FAIL=$((FAIL + 1))
+else
+  echo "  ok   [no-grok-worker-reference]"
+  PASS=$((PASS + 1))
+fi
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]

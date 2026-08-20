@@ -201,18 +201,17 @@ shared blind spot doesn't survive review.
   under review could replace a read-only profile with a `shell`+`write` one; a
   pre-dispatch scan cannot close that (plant-after-scan wins). Non-gateway
   backends still inherit the caller's cwd.
-- **Gemini backend: retired (2026-07-17), contract restored (2026-08-19),
-  still disabled.** Upstream deprecated `oauth-personal` for individuals
-  (gemini-cli 0.44–0.46 throws `IneligibleTierError`; re-verified 2026-08-19 —
-  a cached credential now gets 401 UNAUTHENTICATED). The lane's full worker
-  contract ships anyway (`adapters/gemini/gemini-worker.sh` tier bridge +
-  `gemini-preflight` exact-token probe + the `third-opinion-review` role), so
-  re-enabling is one registry flip — but ONLY after `gemini-preflight` exits 0
-  on a fresh login: the probe, not a credential file's presence, is the
-  re-enable condition. `third-opinion-review` carries `fallback: null` on
-  purpose — falling back to `kiro-openai` would duplicate the codex lane's
-  vendor and fake the council's independence signal; an absent lane is
-  reported absent instead.
+- **Gemini backend: retired (2026-07-17) for direct `oauth-personal` access,
+  re-enabled (2026-08-20, #114) via an Antigravity worker bridge.** Upstream
+  deprecated `oauth-personal` for individuals (gemini-cli 0.44–0.46 throws
+  `IneligibleTierError`; a cached credential got 401 UNAUTHENTICATED). Rather
+  than wait on that path, the `gemini` backend in `core/infra/backends.json`
+  now dispatches through `antigravity-worker` (`cmd`) with an
+  `antigravity-preflight` health probe — `enabled: true`, `third-opinion-review`
+  live. `third-opinion-review` still carries `fallback: null` on purpose —
+  falling back to `kiro-openai` would duplicate the codex lane's vendor and
+  fake the council's independence signal; an absent lane is reported absent
+  instead of silently substituted.
 - **Grok advisor lane (2026-08-19).** `grok` registers enabled as vendor `xai`
   carrying the **`advisor-third`** role only — deliberately wired to NO gate
   role: Grok 4.6 benchmarks a tier below the frontier on code correctness, so
@@ -234,10 +233,26 @@ shared blind spot doesn't survive review.
   as evidence input to the semantic judge; the gate logic itself is unchanged
   (a second opinion informs the verdict, it never replaces the judge).
   `/council-review` consumes the review roles in parallel — codex
-  (`second-opinion-review`) + gemini (`third-opinion-review`) beside the
-  Claude `code-reviewer` agent, grok (`advisor-third`) opt-in — and
-  synthesizes with citation verification against the actual files
-  (`skills/council-review/SKILL.md`).
+  (`second-opinion-review`, implementation-correctness lens) + gemini
+  (`third-opinion-review`, architecture/consistency lens) beside the Claude
+  `code-reviewer` agent, grok (`advisor-third`) opt-in and deliberately
+  unscoped — and synthesizes with citation verification against the actual
+  files. Lens preambles (emphasis, not permission) live in
+  `skills/council-review/SKILL.md` step 1.
+- **Lane cost models (2026-08-20).** Onboarding is `/worker-setup`; this is
+  its SSOT for what each lane actually costs. **grok** — the user's xAI
+  account, operated on the free tier by design; a rate-limit hit fails open
+  (lane skipped, retry later, no upgrade prompt — see the rate-limit
+  contract above). **antigravity (gemini lane)** — the user's Google account
+  quota (Antigravity free/AI Pro tiers), authenticated via the OS keyring.
+  **codex** — the user's ChatGPT subscription quota. **kiro-* (openai/zhipu/
+  anthropic gateway lanes)** — `KIRO_API_KEY`, metered/paid per call, and the
+  preflight itself is a real billable round trip on the lane's cheapest tier
+  (`adapters/kiro/README.md` § Cost of a preflight) — never free to check.
+  Tier/cost-aware cross-vendor **task allocation** (which lane gets how much
+  advisory volume, when to prefer a free-quota lane over a metered one) is a
+  candidate follow-up design, not built here — route it through `/spec` when
+  it is taken up.
 - **Tests**: `core/tests/call-worker-test.sh` — PATH-stubbed backends, every
   contract path (including gateway cwd isolation), zero paid calls in CI.
 

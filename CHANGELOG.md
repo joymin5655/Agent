@@ -8,6 +8,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`/worker-setup` skill — guided onboarding for the cross-vendor worker
+  lanes** (codex, antigravity, grok, kiro): a read-only status sweep of
+  `core/infra/backends.json` (live `jq` query, never a hardcoded lane list),
+  a cost-model/tier-allocation briefing before anything installs, then
+  per-lane install → auth → verify with every real round-trip probe
+  announced first (kiro's is billable). Never a dispatcher itself
+  (`core/infra/call-worker.sh` is) and never a paid probe without explicit
+  user approval. Test: `core/tests/worker-setup-skill-test.sh` (14 checks:
+  frontmatter, plugin-cache-safe dispatch, vendor coverage, no model IDs,
+  no credential collection).
+- **council-review dispatch fixed for plugin-cache installs** —
+  `skills/council-review/SKILL.md` step 3 resolved
+  `core/infra/call-worker.sh` via `${CLAUDE_PLUGIN_ROOT:-$PWD}` instead of a
+  bare cwd-relative path, which silently no-op'd every external lane on a
+  plugin install (`docs/claude-plugin-install-lifecycle.md` §7 item 1 — now
+  resolved for this one consumer; other consumers named in that item may
+  still carry the gap). A missing dispatcher now names itself and reports
+  every external lane absent rather than guessing a path. Test:
+  `core/tests/council-dispatch-path-test.sh` (3 checks).
+- **`setup.sh` — `~/bin` created unconditionally + doctor PATH row** — every
+  `install_codex`/`install_gemini`/`install_grok`/`install_antigravity`/
+  `install_kiro` now calls a shared `ensure_home_bin()` instead of silently
+  skipping the symlink when `~/bin` didn't already exist; a NOTE prints once
+  if `~/bin` is not on `PATH`. New doctor row "worker symlink dir" (PASS when
+  `~/bin` exists and is on PATH; WARN naming exactly which half is missing,
+  with the export one-liner) runs just before the existing generic
+  worker-lane PATH sweep. Vendor-CLI-not-initialized NOTEs added to the
+  gemini/grok/antigravity tier-seeding blocks (config dir missing -> told to
+  run the CLI once, then re-run the install flag).
+- **`install_kiro()` + `--kiro` flag** (opt-in, not part of `--all`/default —
+  kiro is metered/paid, same stance as `--grok`/`--antigravity`): seeds every
+  shipped `adapters/kiro/*.json.template` into `~/.kiro/agents/` (existing
+  user-owned profiles never overwritten), symlinks `kiro-preflight`, and
+  notes the `kiro-cli` install command + `KIRO_API_KEY` auth when the CLI
+  isn't on PATH. Always exits 0. Test: `setup-doctor-test.sh` (r)/(r2)
+  sections — throwaway-HOME smoke (profiles seeded, pre-existing profile
+  preserved, preflight symlink resolves) + the new doctor row's PASS/WARN
+  branches (11 checks).
+- **`antigravity-preflight.sh` hint bug fixed** — the missing-on-PATH
+  message wrongly told users to symlink into `~/bin/grok-worker` (copy-paste
+  from the grok adapter); now names `~/bin/antigravity-worker` and mentions
+  `antigravity-preflight`. Regression check added to
+  `core/tests/antigravity-worker-test.sh` (17th check: no stray
+  `grok-worker` string anywhere under `adapters/antigravity/`).
+- **codex preflight is now auth-aware** — `core/infra/backends.json`'s codex
+  backend switched `preflight` from `["codex", "--version"]` (proves the
+  binary exists, nothing about auth) to `["codex", "login", "status"]` +
+  `preflight_timeout_s: 15`. Measured 2026-08-20 on codex 0.147.0: logged out
+  exits 1 and prints "Not logged in"; logged in exits 0 — a local check, no
+  network call, not billable.
+- **Lane cost-model docs** — `docs/model-routing.md` § Cross-vendor lanes
+  gained a "Lane cost models (2026-08-20)" entry (grok/antigravity/codex
+  quota-based, kiro-* metered/paid including its own preflight) as the SSOT
+  `/worker-setup` cites, plus a note that tier/cost-aware cross-vendor task
+  allocation is a candidate `/spec`, not designed yet.
+- **Council lens split — codex and gemini voting lanes get distinct review
+  perspectives** (decided 2026-08-20: perspective diversity over duplicate
+  generalists). Each voting external lane's prompt is now a lens preamble +
+  the shared core: codex (`second-opinion-review`) reviews implementation
+  correctness (logic, edge cases, error handling, concurrency); gemini/agy
+  (`third-opinion-review`) reviews architecture & consistency
+  (design/simplification, contract coherence, doc–code drift). A lens states
+  emphasis, not permission — either lane still reports any defect it sees,
+  and cross-lens agreement keeps (strengthens) the ≥2-vendor high-signal
+  rule. Grok's advisory seat stays deliberately unscoped. Framing lives in
+  `skills/council-review/SKILL.md` step 1; role comments in
+  `core/infra/backends.json` record the split.
 - **Antigravity (`agy`) review lane restores the seated google reviewer** —
   new `adapters/antigravity/` (worker + preflight + tiers template + measured
   posture README), following the grok adapter pattern. The council's
@@ -164,6 +231,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   CI `verify` job has no gitleaks installed, so the new allowlist battery would
   have reported green in CI having asserted nothing. `verify-all-test.sh` case (9)
   pins the lane, including that exit 1 is still a hard FAIL.
+
+### Known limitations (not fixed, tracked here)
+- **Linux sandboxing for grok/antigravity worker lanes** — both workers use
+  `sandbox-exec` (macOS-only) for their write-deny/credential-read-deny
+  profile; on Linux they refuse unless the explicit unsandboxed opt-out
+  (`GROK_WORKER_ALLOW_UNSANDBOXED=1` / `ANTIGRAVITY_WORKER_ALLOW_UNSANDBOXED=1`)
+  is set. `/worker-setup` warns about this rather than solving it — a Linux
+  sandbox equivalent is backlog.
+- **Cross-vendor task-allocation routing** — `/worker-setup` step 2 briefs on
+  cost models and a general allocation shape (prefer free/subscription lanes
+  for advisory volume, reserve metered kiro lanes for gate votes) but does
+  not implement any routing logic. A candidate `/spec` item when this is
+  taken up.
+- **Preflight stderr is not redacted at the adapter layer** — the skill now
+  reports only a probe's exit code and first stderr line (the auth-failure
+  branch is where a vendor CLI is likeliest to echo a key prefix or account
+  identity), but `antigravity-preflight.sh`'s `emit_capture` still strips
+  control characters only. `call-worker.sh` itself is clean: preflight
+  stdout/stderr go to `/dev/null` and never reach `.agent/workers/*.md`
+  (only the argv does, via `unavailable_reason`). Adapter-level redaction of
+  key-shaped tokens is backlog.
+- **No CI gate on remote installers in shipped instruction files** — the
+  `/worker-setup` install step is fenced as user-run with an inspect-before-run
+  note, but nothing mechanically stops a future skill from telling a session to
+  pipe a remote script into a shell. A fifth `supply-chain-scan.sh` class over
+  `skills/`, `agents/`, `commands/`, `rules/` would make this a CI failure
+  instead of a review catch.
+- **Consumer repos do not inherit a `.gitignore` for `.agent/workers/`** —
+  this repo ignores worker captures, but `setup.sh --project` ships no
+  gitignore, so a consumer running worker lanes can `git add -A` full reply
+  bodies of a reviewed diff. Surfaced by the 2026-08-20 security review;
+  pre-existing, not introduced here.
 
 ## [0.5.8] - 2026-08-20
 

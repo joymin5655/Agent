@@ -218,7 +218,12 @@ These are current-state findings, not future design:
 1. Some session and supervisor scripts resolve `core/infra` or the agent
    registry from the active project root. A normal external project scaffold
    does not copy those trees. Those portions can therefore no-op even though
-   Claude loaded the plugin components successfully.
+   Claude loaded the plugin components successfully. `skills/council-review/SKILL.md`'s
+   external-lane dispatch is resolved (2026-08-20): it resolves
+   `core/infra/call-worker.sh` via `${CLAUDE_PLUGIN_ROOT:-$PWD}` rather than a
+   bare cwd-relative path, so it works from a plugin install. Other consumers
+   named in this item may still carry the gap — verify per-consumer, not by
+   this one fix.
 2. The Claude adapter silently passes when a named core hook is missing. This
    favors session availability but means installation health must be verified
    separately. The same fail-open stance holds in the Codex/Gemini shell

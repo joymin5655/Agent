@@ -5,7 +5,8 @@
     "second-opinion-review": {
       "backend": "codex",
       "tier": "TOP",
-      "fallback": "kiro-openai"
+      "fallback": "kiro-openai",
+      "comment": "council's openai voting lane. Lens: implementation correctness (logic, edge cases, error handling, concurrency) — prompt framing lives in skills/council-review/SKILL.md step 1; a lens states emphasis, not permission."
     },
     "second-opinion-verify": {
       "backend": "codex",
@@ -32,7 +33,7 @@
       "backend": "gemini",
       "tier": "TOP",
       "fallback": null,
-      "comment": "council's google lane. fallback deliberately null: falling back to kiro-openai would duplicate the codex lane's vendor and fake the independence signal — an absent lane is reported absent instead."
+      "comment": "council's google voting lane. Lens: architecture & consistency (design/simplification, contract coherence, doc-code drift) — prompt framing in skills/council-review/SKILL.md step 1. fallback deliberately null: falling back to kiro-openai would duplicate the codex lane's vendor and fake the independence signal — an absent lane is reported absent instead."
     },
     "advisor-third": {
       "backend": "grok",
@@ -63,8 +64,11 @@
       },
       "preflight": [
         "codex",
-        "--version"
+        "login",
+        "status"
       ],
+      "preflight_timeout_s": 15,
+      "comment": "preflight = 'codex login status', measured 2026-08-20 on codex 0.147.0: logged-out exits 1 and prints 'Not logged in'; logged-in exits 0. A local check (reads cached auth state, no network inference) and not billable — unlike '--version' it actually distinguishes an authenticated lane from a dead one.",
       "timeout_s": 300
     },
     "gemini": {

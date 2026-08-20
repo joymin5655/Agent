@@ -63,7 +63,7 @@ CLI="$(jq -r --arg lane "$LANE" '(.backends[$lane].cmd // [])[0] // empty' "$REG
     exit 7
 }
 command -v "$CLI" >/dev/null 2>&1 || {
-    echo "antigravity-preflight: worker '$(sanitize "$CLI")' (cmd[0] of lane '$(sanitize "$LANE")') not found on PATH — install: ln -sf .../adapters/antigravity/antigravity-worker.sh ~/bin/grok-worker" >&2
+    echo "antigravity-preflight: worker '$(sanitize "$CLI")' (cmd[0] of lane '$(sanitize "$LANE")') not found on PATH — install: ln -sf .../adapters/antigravity/antigravity-worker.sh ~/bin/antigravity-worker (and ln -sf .../antigravity-preflight.sh ~/bin/antigravity-preflight)" >&2
     exit 1
 }
 

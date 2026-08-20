@@ -29,8 +29,11 @@ ln -sf "$PWD/adapters/grok/grok-preflight.sh" ~/bin/grok-preflight
 cp -n adapters/grok/grok-tiers.json.template  ~/.grok/agent-tiers.json
 ```
 
-(or `setup.sh`, which does the same). Auth: log in once interactively with the
-`grok` CLI; the credential lands in `~/.grok/auth.json`. The preflight refuses
+(or `setup.sh --grok`, which does the same). If the `grok` CLI itself isn't
+installed yet: `curl -fsSL https://x.ai/cli/install.sh | bash` or
+`npm i -g @xai-official/grok`. Auth: log in once interactively with the
+`grok` CLI (first-launch browser OAuth; requires an eligible xAI subscription
+tier) — the credential lands in `~/.grok/auth.json`. The preflight refuses
 the lane until a real inference round trip succeeds — the file's presence
 proves nothing.
 

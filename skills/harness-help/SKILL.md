@@ -42,6 +42,11 @@ trivial work out by design.
   personas in front of a piece of UX/copy/content and report how ordinary users
   would react. A user-perspective lens beside `code-reviewer` (correctness) and
   `security-reviewer` (vulnerabilities) — it judges experience, not code.
+- **`/worker-setup`** — install → auth → verify onboarding for the
+  cross-vendor worker lanes (codex, antigravity, grok, kiro), with a
+  cost-model briefing before anything installs. Reach for it when
+  `setup.sh --doctor` WARNs about a worker lane, or `/council-review`
+  reports a lane absent.
 - **`/project-init`** (command) — scaffold a consumer project with
   `CLAUDE.md`, rules, and `gitleaks.toml`.
 

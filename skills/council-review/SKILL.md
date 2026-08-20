@@ -16,15 +16,15 @@ actual code (not to the reviewers) drops what was hallucinated.
 
 ## Lanes
 
-| Lane | Vendor | Dispatch | Participates in verdict |
-|---|---|---|---|
-| `code-reviewer` agent | anthropic | Agent tool (model pin: sonnet, unchanged) | yes |
-| `second-opinion-review` | openai (codex) | `core/infra/call-worker.sh` | yes |
-| `third-opinion-review` | google (gemini) | `core/infra/call-worker.sh` | yes (when lane enabled) |
-| `advisor-third` (`--with-grok`) | xai (grok) | `core/infra/call-worker.sh` | **no — advisory only** |
+| Lane | Vendor | Lens | Dispatch | Participates in verdict |
+|---|---|---|---|---|
+| `code-reviewer` agent | anthropic | its own agent charter | Agent tool (model pin: sonnet, unchanged) | yes |
+| `second-opinion-review` | openai (codex) | implementation correctness | `core/infra/call-worker.sh` | yes |
+| `third-opinion-review` | google (gemini, via antigravity) | architecture & consistency | `core/infra/call-worker.sh` | yes (when lane enabled) |
+| `advisor-third` (`--with-grok`) | xai (grok) | unscoped (free perspective) | `core/infra/call-worker.sh` | **no — advisory only** |
 
-Lane SSOT is `core/infra/backends.json`. A disabled lane (e.g. gemini while
-its OAuth path is retired) refuses loudly at dispatch; report it as absent —
+Lane SSOT is `core/infra/backends.json`. A disabled lane (e.g. one whose CLI
+or preflight is missing) refuses loudly at dispatch; report it as absent —
 never substitute another vendor for it (a fallback that shares a seated
 vendor would fake the independence signal).
 
@@ -40,7 +40,7 @@ the user.
 
 Default `--staged` (`git diff --staged`); `--head` reviews `HEAD~1..HEAD`; an
 explicit `<range>` is passed through. Abort with a one-liner if the diff is
-empty. Build ONE review prompt used verbatim by every external lane:
+empty. Build ONE shared core, identical for every external lane:
 
 - the diff, plus 3-5 lines of stated intent (from the commit message / user);
 - the output contract — findings only, each with:
@@ -50,6 +50,25 @@ empty. Build ONE review prompt used verbatim by every external lane:
 
 The verbatim-quote field is what makes step 4's hallucination filter possible
 — a finding that cannot quote the code it indicts cannot be verified.
+
+Each voting external lane's prompt = its **lens preamble** + the shared core
+(decided 2026-08-20: perspective diversity over duplicate generalists — two
+lanes reading one diff through different questions surface more than two
+copies of the same question):
+
+- **codex lens** (`second-opinion-review`) — implementation correctness:
+  "does this diff do what it intends?" Logic errors, edge cases, off-by-one,
+  error handling, concurrency, regressions.
+- **gemini lens** (`third-opinion-review`) — architecture & consistency:
+  "is this diff built the way the system is built?" Design and simplification
+  opportunities, API/contract coherence, doc–code drift, cross-file
+  consistency, naming.
+
+A lens states emphasis, not permission — each preamble must also say "report
+any defect you see, in or out of your lens." Grok (`advisor-third`) gets the
+bare shared core, unscoped by design: the advisory seat exists for the
+perspective the lenses didn't assign. The Claude `code-reviewer` lane keeps
+its own agent charter untouched.
 
 ### 2. One cost confirmation
 
@@ -63,11 +82,24 @@ in call-worker.sh: the session that owns the user relationship asks first).
 External lanes in the background (each capture path lands on stdout):
 
 ```bash
-AGENT_WORKER_YES=1 bash core/infra/call-worker.sh second-opinion-review < "$PROMPT" > "$CAP_DIR/codex.path" 2> "$CAP_DIR/codex.err" &
-AGENT_WORKER_YES=1 bash core/infra/call-worker.sh third-opinion-review  < "$PROMPT" > "$CAP_DIR/gemini.path" 2> "$CAP_DIR/gemini.err" &
+# Resolve the dispatcher from the plugin cache (plugin install) or the
+# checkout (repo install) — never bare cwd-relative.
+CW="${CLAUDE_PLUGIN_ROOT:-$PWD}/core/infra/call-worker.sh"
+[[ -f "$CW" ]] || echo "council-review: call-worker.sh not found at $CW — harness root unresolved; external lanes are absent this run" >&2
+
+# per-lane prompts from step 1: lens preamble + shared core (grok: core only)
+AGENT_WORKER_YES=1 bash "$CW" second-opinion-review < "$PROMPT_CODEX"  > "$CAP_DIR/codex.path" 2> "$CAP_DIR/codex.err" &
+AGENT_WORKER_YES=1 bash "$CW" third-opinion-review  < "$PROMPT_GEMINI" > "$CAP_DIR/gemini.path" 2> "$CAP_DIR/gemini.err" &
 # --with-grok only:
-AGENT_WORKER_YES=1 bash core/infra/call-worker.sh advisor-third         < "$PROMPT" > "$CAP_DIR/grok.path" 2> "$CAP_DIR/grok.err" &
+AGENT_WORKER_YES=1 bash "$CW" advisor-third         < "$PROMPT_CORE"   > "$CAP_DIR/grok.path" 2> "$CAP_DIR/grok.err" &
 ```
+
+The `[[ -f "$CW" ]]` line is a diagnostic, not a short-circuit: if the path is
+missing the dispatches below still run and each exits 127, which the
+degradation table already maps to "lane absent" — the echo just names the
+unresolved root instead of leaving a bare shell error. A missing `$CW`
+therefore means every external lane is reported absent this run (step 5's
+false-council guard applies) — never substitute a different resolution.
 
 Simultaneously dispatch the `code-reviewer` agent (Agent tool) on the same
 diff — its frontmatter model pin stands; do not override. Then wait per lane
@@ -92,7 +124,9 @@ sleep-polling.
    context yourself; external self-ratings are input, not verdict.
 5. **Source tagging**: `[claude]` `[codex]` `[gemini]` `[grok:advisory]`.
    Findings reached independently by ≥2 seated vendors are marked
-   **high-signal** and listed first.
+   **high-signal** and listed first. Lenses don't weaken this rule — a defect
+   two lanes reached through *different* questions is, if anything, stronger
+   agreement than two copies of the same question would give.
 6. **Disagreements**: where seated lanes conflict, show both positions and
    adjudicate with a stated reason — against the code, not against authority.
 7. **Grok section** (when present): separate, labeled
