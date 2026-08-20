@@ -1,6 +1,6 @@
 ---
 name: supervise
-description: Dispatch a multi-wave plan to specialist agents with audit + risk-area abort. Supports --auto-push, --auto-merge, --goal-mode for budgeted runs. NOT for writing the plan itself (that is /spec), and NOT for a single small edit with no waves — just make the edit.
+description: Dispatch a multi-wave plan to specialist agents with audit + risk-area abort. Supports --auto-push, --auto-merge, --goal-mode for budgeted runs, --verify-blocking for a hard completion-claim gate. NOT for writing the plan itself (that is /spec), and NOT for a single small edit with no waves — just make the edit.
 when_to_use: User has a written plan and says "run the plan", "/supervise <slug>", or "full auto".
 tools: Bash, Read, Write, Edit, Grep, Glob
 ---
@@ -21,6 +21,7 @@ wave, auditing after each wave, and aborting on risk-area violations.
 | `/supervise <slug> --goal-mode` | Tracks state in SQLite via `core/infra/supervisor-goal.sh`. Resumable across sessions. Requires `sqlite3` + `jq` (the script exits 127 without them — see README Prerequisites). |
 | `/supervise <slug> --auto-push` | Each wave commits + pushes + opens PR. User merges. |
 | `/supervise <slug> --auto-merge` | Each wave commits + pushes + admin-merges via `auto-ship.sh`. |
+| `/supervise <slug> --verify-blocking` | Each wave's 2d audit also runs `core/infra/completion-gate.sh` with `AGENT_VERIFY_BLOCKING=block` — a REFUTED completion claim STOPs the wave (default without this flag: `dryrun`, logs only, never blocks). |
 
 ## Permission friction (plan-scope-allow prerequisite)
 
@@ -162,7 +163,16 @@ b. **Classify the wave and pick lanes** based on its content:
      isolation is the standing exception: verifiers are always fresh.
 c. **Execute** the wave's intended changes — through the dispatched execution
    lane, not inline at the session model (inline is judgment's lane, not
-   execution's).
+   execution's). Under `--verify-blocking`, the wave's delegation contract
+   (`skills/supervise/templates/delegation-contract.md` "Completion claim
+   file") must instruct the worker to write
+   `.agent/claims/<slug>-w<i>.yml` (verify-completion schema) on finishing —
+   completion-gate.sh in step 2d reads it, falling back to the repo-wide
+   `.agent/claims/<slug>.yml` convention if the wave-suffixed path is absent.
+   No instruction, no claim file: the gate still runs and still blocks in
+   block mode, but on a "claim file missing" it cannot check anything
+   against, not a real refutation — write the instruction so the gate has
+   something to check.
 d. **Audit**:
    ```bash
    bash core/infra/supervisor-goal-audit.sh <slug> <i>
@@ -170,6 +180,22 @@ d. **Audit**:
    - PASS: continue.
    - FAIL: STOP. Report to user. Do not auto-fix and retry — the user
      decides next action.
+
+   Then, the **completion-claim gate** (`docs/gate-registry.md` `completion-gate`
+   row — the first blocking consumer of `completion-verify.py`'s verdict,
+   `docs/scoring-convention.md`):
+   ```bash
+   bash core/infra/completion-gate.sh <slug> <i> [claim-path]
+   ```
+   - `--verify-blocking` on the `/supervise` invocation sets
+     `AGENT_VERIFY_BLOCKING=block` for this call (unset/other flags leave the
+     script's own default, `dryrun` — logs the verdict, never blocks).
+   - block mode + REFUTED (exit 1): STOP, same protocol as a 2d audit FAIL —
+     report the printed refutations to the user verbatim, do not auto-fix and
+     retry. The user decides next action.
+   - exit 2 (the gate's own liveness canary failed — a dead completion-verify.py,
+     not a refuted claim) is also a STOP: the gate cannot be trusted, report it
+     as a harness defect, not a wave failure.
 e. **Advance** (if `--goal-mode`):
    ```bash
    core/infra/supervisor-goal.sh advance-wave <slug> <i>

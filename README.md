@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/joymin5655/Agent/actions/workflows/ci.yml/badge.svg)](https://github.com/joymin5655/Agent/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-![Version](https://img.shields.io/badge/version-0.5.7-blue.svg)
+![Version](https://img.shields.io/badge/version-0.5.8-blue.svg)
 ![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-7c3aed.svg)
 ![AI-agnostic](https://img.shields.io/badge/AI-Claude%20%7C%20Codex%20%7C%20Gemini-orange.svg)
 
@@ -42,7 +42,7 @@ The rules are written once: when an event reaches the core, it returns the same
 `core/tests/adapter-parity.sh`. What *differs* per runtime is how much of the
 CLI's activity reaches that core; see [Runtime coverage](#runtime-coverage).
 
-> Status: v0.5.7 · License: **MIT**
+> Status: v0.5.8 · License: **MIT**
 
 ---
 

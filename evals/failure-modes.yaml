@@ -147,3 +147,15 @@ failure_modes:
     caught_in: "recurring — session-limit deaths across the campaign (E-1 batch-3 independent verify, PR #43; H-2 verify, PR #36)"
     detection_signal: "a clean/zero-findings verdict coincides with an agent error, abort, or empty result"
     grader_check: "was every review agent's successful completion confirmed (no error/abort/empty) before trusting a clean verdict?"
+
+  - id: false-done-claim
+    name: Completion reported done with no deterministic evidence
+    description: >
+      A task or wave is reported CONFIRMED/done while the code diff carries no cited
+      runnable evidence (zero tests/assertions), or while the trajectory shows a
+      skip/xfail/only marker added to disable a check, or a changed file outside the
+      claimed scope — a false success the deterministic layer would not catch without
+      explicitly requiring evidence and auditing the diff's trajectory.
+    caught_in: "P1 grounded-completion-gate: completion-verify.py --require-evidence/--diff-base + completion-gate.sh (arXiv 2606.09863: false successes are 45-76% of agent failures, independent verification cuts that to ~3%; arXiv 2406.07791/2410.21819: LLM-judge-only blocking overtrusts itself)"
+    detection_signal: "a claim reports done/CONFIRMED while the code diff cites zero tests/assertions, or the diff adds a skip/xfail/only marker or touches a code file outside the claim's declared scope"
+    grader_check: "does the gate REFUTE a claim that changed code but cites no runnable evidence, or that added a skip/xfail/only marker, or that touched code outside its declared scope, rather than trusting it as done?"

@@ -165,6 +165,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   have reported green in CI having asserted nothing. `verify-all-test.sh` case (9)
   pins the lane, including that exit 1 is still a hard FAIL.
 
+## [0.5.8] - 2026-08-20
+
+### Added
+- **Grounded completion gate (P1)** — a completion CLAIM ("done, tests pass")
+  is now checkable against evidence, not just self-report. False-success
+  claims are 45-76% of agent failures in the literature (arXiv 2606.09863);
+  independent verification cuts that to ~3%, but LLM-judge-only blocking
+  overtrusts itself (arXiv 2406.07791, 2410.21819) — so this lands as a
+  deterministic hard gate with the judge kept strictly advisory on top.
+  `core/infra/completion-verify.py` gains two opt-in flags, additive to its
+  existing behavior (a regression case pins the no-flags output unchanged):
+  `--require-evidence` refutes a claim that changed code but cites zero
+  tests/assertions (new `evidence` dimension); `--diff-base <ref>` audits every
+  ADDED line of `git diff <ref>` for a skip/xfail/`it.only(`/`test.skip`/
+  `describe.only(`/broad-mock marker, and flags a changed code file outside the
+  claim's declared `files`/`scope` (new `trajectory` dimension; lockfiles/build
+  artifacts are exempt via anchored patterns). New consumer
+  `core/infra/completion-gate.sh` (`docs/gate-registry.md` `completion-gate`
+  row — the first BLOCKING consumer of a completion-verify.py verdict,
+  `docs/scoring-convention.md`): `AGENT_VERIFY_BLOCKING=off|dryrun(default)|block`,
+  a liveness canary that fails the gate closed (exit 2) if the verifier cannot
+  REFUTE an obviously-false claim, a JSONL sink written in every reachable
+  mode, and a `needs_semantic` exit-0 advisory (never a hard block) when a
+  claim carries no deterministically-checkable evidence at all. Wired into
+  `/supervise`'s wave-audit step via `--verify-blocking`; `/verify-completion`
+  cross-references it as the blocking counterpart to its own advisory verdict.
+  New failure mode `false-done-claim` in `evals/failure-modes.yaml`. Tests:
+  `core/tests/completion-verify-test.sh` (+22 cases, r1-r9),
+  `core/tests/completion-gate-test.sh` (new, 41 cases).
+
+### Fixed (code-review round, same day)
+- **needs_semantic no longer downgrades a real REFUTED** — the gate's "claim
+  cites nothing checkable, dispatch a semantic pass instead of blocking"
+  advisory used to trigger off `core_total==0` alone, which also fires when
+  `--require-evidence` legitimately refutes an empty claim against a real
+  code diff; that refutation was silently getting waved through as advisory
+  even in block mode. Now gated on whether the `evidence`/`trajectory`
+  dimensions themselves failed, not just on citation count.
+- **Claim path now falls back to the repo convention** —
+  `.agent/claims/<slug>-w<wave-i>.yml` first, then `.agent/claims/<slug>.yml`
+  (`skills/verify-completion/SKILL.md`, `docs/scoring-convention.md`); neither
+  existing is reported as a distinct "claim file missing" refutation, not
+  completion-verify.py's generic parse-error text. `skills/supervise/SKILL.md`
+  and `templates/delegation-contract.md` now instruct the wave's worker to
+  write the claim file on completion.
+- **`dist`/`build`/`.agent`/`node_modules` scope exemptions are repo-root
+  anchored** (`^dist/`, not `(^|/)dist/`) — `src/dist/real.py` no longer rides
+  the build-artifact exemption.
+- **Liveness canary checks both sub-checks independently** (file-existence
+  AND test-failure refutations both present), not just the top-level verdict
+  — catches a partial death (e.g. a regressed `_run()` that always returns
+  success) that a file-check alone would still report as REFUTED.
+- **`AGENT_COMPLETION_VERIFY_BIN` is honored only under `AGENT_REPRODUCE_TEST=1`**
+  — removes the arbitrary-binary-injection surface the seam had on a
+  production block-mode run (security review finding).
+- Empty/unparseable verifier stdout now logs an explicit named refutation
+  instead of a bare, unexplained REFUTED; the record also carries
+  `verifier_stderr` (truncated) and `diff_base_used` (ref or `null`) for
+  post-hoc debugging.
+- `_TRAJECTORY_SKIP_PATTERNS` gained `@unittest.skip`/`skipIf(`/`skipUnless(`.
+
+### Known limitations (not fixed, tracked here per code-review request)
+- **TOCTOU on the sink path**: `resolve_sink`'s confinement check and the
+  later `>>` append are two separate operations — a symlink swapped in
+  between them could redirect the write. Not exploitable by the gate's own
+  callers (no untrusted input reaches the sink path outside the env override
+  already confinement-checked), but not hardened against a concurrent
+  attacker with write access to the sink's parent directory. Backlogged, not
+  fixed in this round.
+
 ## [0.5.7] - 2026-08-02
 
 Release-only version bump: ships the already-merged #101 (decision-time
