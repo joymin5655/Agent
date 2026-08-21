@@ -436,7 +436,7 @@ Agent/
 │   ├── hooks/          #   이식 가능한 훅 스크립트 26개 (배선 22 + 공유 모듈)
 │   ├── infra/          #   세션 조정 · goal 모드 · 감사 · auto-ship
 │   ├── git-hooks/      #   pre-commit · pre-push
-│   └── tests/          #   테스트 스크립트 76개 (verify-all.sh가 전부 실행)
+│   └── tests/          #   테스트 스크립트 78개 (verify-all.sh가 전부 실행)
 │
 ├── adapters/           # claude-code (얇음) · codex · gemini
 ├── rules/              # 범용 정책 문서

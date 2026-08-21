@@ -67,6 +67,23 @@ c. **Risk-area scan** — for each of the 5 risk areas
    - `deploy` (function bundles) → ABORT, user must drive.
    - `payment` → ABORT, user must drive.
    - `domain-output` → advisory; if net removal, ABORT.
+d. **Council-scale pre-merge check** — run the threshold script, resolved
+   from the plugin cache or the checkout (never bare cwd-relative — a plugin
+   install has no `core/` under `$PWD`):
+   ```bash
+   bash "${CLAUDE_PLUGIN_ROOT:-$PWD}/core/infra/council-threshold.sh" --staged
+   ```
+   A missing script is not a pass: report the check as SKIPPED (step 1's
+   "a skipped gate is reported as skipped" rule) rather than reading its
+   nonzero exit as "not council-scale". Exit 10 (line/file threshold or
+   a risk-area path) AND no council/degrade review happened this session for
+   this diff (no `.agent/workers/*-review.md` capture, no single-vendor
+   degrade note) → recommend `/council-review --staged` and confirm with the
+   user before committing solo. This is advisory, not a gate abort — the user
+   can proceed anyway; it exists so a council-scale diff doesn't slip into a
+   commit on the strength of a Claude-only review that
+   `council-escalation-gate.py` never got a chance to catch (e.g. edits made
+   without a Task/Agent dispatch).
 
 ### 2. Commit
 

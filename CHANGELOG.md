@@ -8,6 +8,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Conditional council auto-escalation — a council-scale diff can no longer
+  be signed off by a solo Claude reviewer.** New PreToolUse `Task|Agent` gate
+  `core/hooks/council-escalation-gate.py` denies a plain `code-reviewer`
+  dispatch when `core/infra/council-threshold.sh` judges the staged diff
+  council-scale (line/file threshold, or a path in a declared risk area) and
+  points the caller at `/council-review --staged` instead. Every other case is
+  silent: non-dispatch tools, other subagents, small diffs, and any internal
+  error all fail open — a broken gate must not block review, but it says so on
+  stderr and in the audit log rather than failing open silently.
+  Escape hatches, both deliberately narrow:
+  - `/council-review` marks itself active through the gate's own
+    `--council-flag set|clear` CLI (steps 0.5 and 6) so the council's own
+    internal `code-reviewer` dispatch isn't denied by the gate that routed the
+    caller there. The flag lives OUTSIDE the reviewed workspace (keyed by
+    project root under `~/.agent/state/council`, override
+    `AGENT_COUNCIL_STATE_DIR`), is TTL-bound (`AGENT_COUNCIL_ACTIVE_TTL_S`,
+    default 300s) and content-bound to the current diff's hash — so a stale
+    flag, a flag for a different diff, and an in-repo file a reviewed diff
+    could plant all fail to open the gate. Grant-side state outside the
+    workspace follows the `trust_tier.py` precedent.
+  - An identical dispatch re-issued after a denial is let through once, with a
+    warning, so an agent that genuinely cannot run the council isn't trapped in
+    a loop. The ledger entries expire (`AGENT_COUNCIL_DENY_TTL_S`).
+  `/wrap` gains an advisory step 1d covering the path the hook can't see —
+  edits made without any Task/Agent dispatch — recommending `/council-review`
+  before a solo commit rather than aborting.
+  Tests: `core/tests/council-escalation-gate-test.sh` (24 checks),
+  `core/tests/council-threshold-test.sh` (19 checks).
+
 - **`/worker-setup` skill — guided onboarding for the cross-vendor worker
   lanes** (codex, antigravity, grok, kiro): a read-only status sweep of
   `core/infra/backends.json` (live `jq` query, never a hardcoded lane list),
@@ -232,6 +261,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   have reported green in CI having asserted nothing. `verify-all-test.sh` case (9)
   pins the lane, including that exit 1 is still a hard FAIL.
 
+### Fixed
+- **Council escape hatch never opened for a session running in a
+  subdirectory** — `council-escalation-gate.py` keyed its state directory on
+  the raw root string, which the `--council-flag set` CLI (git top-level) and
+  the hook (the PreToolUse event's `cwd`) spell differently whenever the
+  session's cwd is a subdirectory of the repo, or the checkout is reached
+  through a symlink (macOS `/tmp` and `/var` are symlinks — three distinct
+  keys for one repo were measured). The flag was written where the hook never
+  read it, so `/council-review` step 0.5 was a no-op and the council's own
+  reviewer dispatch was denied. Both paths now canonicalize through
+  `canonical_root()` (git top-level, then `realpath`). Regression: gate test
+  section F13 — verified to fail on the pre-fix code, not just pass on the
+  fixed code.
+- **`/wrap` and `/verify-completion` shelled into `core/` by bare relative
+  path** — same plugin-cache defect class already fixed for
+  `/council-review`: `bash core/infra/council-threshold.sh` and
+  `bash core/infra/call-worker.sh` resolve against `$PWD`, which on a plugin
+  install is the user's project, not the harness. Both now resolve via
+  `${CLAUDE_PLUGIN_ROOT:-$PWD}`, and `/wrap` reports a missing script as
+  SKIPPED rather than reading its nonzero exit as "not council-scale".
+  `core/tests/council-dispatch-path-test.sh` grew a 4th check sweeping every
+  shipped skill for bare invocations of the three council dispatch scripts.
+  The wider "skills shell into bare `core/` paths" gap (7 SKILL.md files as
+  of 2026-08-21, mostly `core/tests/` helper calls) is NOT fixed here — it
+  stays tracked in `docs/claude-plugin-install-lifecycle.md` §7 item 1, with
+  a grep to reproduce the current list.
+
 ### Known limitations (not fixed, tracked here)
 - **Linux sandboxing for grok/antigravity worker lanes** — both workers use
   `sandbox-exec` (macOS-only) for their write-deny/credential-read-deny
@@ -263,6 +319,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gitignore, so a consumer running worker lanes can `git add -A` full reply
   bodies of a reviewed diff. Surfaced by the 2026-08-20 security review;
   pre-existing, not introduced here.
+
 
 ## [0.5.8] - 2026-08-20
 

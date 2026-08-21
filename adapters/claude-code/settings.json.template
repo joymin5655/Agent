@@ -67,7 +67,8 @@
       {
         "matcher": "Task|Agent",
         "hooks": [
-          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh model-routing-advisor.py" }
+          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh model-routing-advisor.py" },
+          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh council-escalation-gate.py" }
         ]
       }
     ],

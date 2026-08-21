@@ -239,6 +239,19 @@ shared blind spot doesn't survive review.
   unscoped — and synthesizes with citation verification against the actual
   files. Lens preambles (emphasis, not permission) live in
   `skills/council-review/SKILL.md` step 1.
+- **Conditional council auto-escalation (2026-08-20).** A council-scale diff
+  (changed lines ≥ `AGENT_COUNCIL_LINES` [200], changed files ≥
+  `AGENT_COUNCIL_FILES` [10], or a risk-area path — `core/infra/council-threshold.sh`,
+  mirroring `spec-gate.py`'s `GUARD_PATTERNS`) denies a plain Claude-solo
+  `code-reviewer` dispatch (`core/hooks/council-escalation-gate.py`, PreToolUse
+  Task/Agent) and points the caller at `/council-review --staged` instead. This
+  is a LANE decision (Claude-solo vs. multi-vendor council), not the MODEL-tier
+  escalation the policy rejects above — the per-call model still is whatever
+  the dispatcher chooses; the gate only routes which reviewer(s) run. The
+  per-invocation cost-approval prompt (`AGENT_WORKER_YES=1`) is unchanged —
+  the gate enforces routing, it does not pre-approve spend. Small/routine
+  diffs are unaffected (silent allow); a diff below threshold never touches
+  this gate.
 - **Lane cost models (2026-08-20).** Onboarding is `/worker-setup`; this is
   its SSOT for what each lane actually costs. **grok** — the user's xAI
   account, operated on the free tier by design; a rate-limit hit fails open
