@@ -7,7 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.9] - 2026-08-25
+
 ### Added
+- **OpenRouter free advisory lane + purpose launcher set + codex global
+  rules** (spec: `.agent/plans/free-lanes-and-launchers/`). New
+  `adapters/openrouter/` worker-lane bridge to OpenRouter `:free` routes
+  (non-voting `advisor-free` role, sensitive-cwd guard + per-dispatch
+  retention warning, fail-open on 429, free exact-token preflight; pin
+  `nvidia/nemotron-3-super-120b-a12b:free` in the adapter-owned tiers file,
+  chosen by live probe over the congested `z-ai/glm-5.2:free`). `/council-review`
+  gains `--with-free` (advisory lane, mirrors `--with-grok`). New
+  `adapters/claude-code/launchers/` purpose launcher set
+  (`claude-build`/`claude-quick`/`claude-research` tier launchers +
+  `claude-ox.template` OpenRouter gateway launcher absorbed as repo SSOT,
+  personal blocklist externalized to the shared
+  `~/.config/agent-harness/sensitive-paths` file) — session-start human
+  allocation, the allowed side of the no-runtime-switching policy. New
+  `adapters/codex/AGENTS.global.md.template` deployed to `~/.codex/AGENTS.md`
+  so manual codex sessions carry the portable harness rules (evidence
+  contract, tier discipline, review-before-done). `docs/model-routing.md`
+  graduates the "tier/cost-aware task allocation" follow-up to a designed
+  free-lane allocation section (NIM evaluated and deferred on ToS; Groq
+  documented as strongest future candidate); new `docs/launchers.md`. Tests:
+  `core/tests/openrouter-worker-test.sh`,
+  `adapters/claude-code/tests/launcher-test.sh` (stubbed, zero paid calls).
+
+### Changed
+- **kiro gateway roster drift absorbed (2.19.1).** The kiro-cli 2.19.1 roster
+  carries no OpenAI models and no `claude-opus-5` (live-probed): `kiro-openai`
+  backend disabled with a dated `disabled_reason` (templates kept for
+  revival); `second-opinion-review`/`second-opinion-verify`/`advisor` fallback
+  `kiro-openai` → `null` with rationale (a fallback must not silently change
+  the vote's vendor — same rule as `third-opinion-review`);
+  `kiro-anthropic-top` re-pinned to `claude-sonnet-4.5` (1.3x).
+  `adapters/kiro/README.md` tier table updated with the roster-recheck rule.
+
+### Security
+- **Free-lane egress hardening (council + security-reviewer, 2026-08-25).**
+  openrouter worker/preflight + ox launcher: sensitive-cwd guard now strips
+  trailing slashes, canonicalizes blocklist entries through `pwd -P` (symlink
+  parity with the cwd side), fails CLOSED when no guard file resolves (an
+  explicitly set `OPENROUTER_SENSITIVE_PATHS_FILE` is honored strictly — no
+  silent template fallback), and announces its guard source / FORCE override
+  on stderr. Prompt egress floor: hard byte cap
+  (`OPENROUTER_PROMPT_MAX_BYTES`, default 256KiB) + credential-shape refusal
+  (private key / AKIA / sk- / ghp_ / xox-) with loud
+  `AGENT_OPENROUTER_UNSAFE_PROMPT=1` override. Key-residue windows closed:
+  TERM-first watchdog + TERM/INT/HUP→EXIT trap chain so the key-bearing curl
+  config is scrubbed on timeout, interrupt, and hangup. ox launcher header
+  now documents the isolation tradeoff (deny rules/hooks absent in gateway
+  sessions) and env-token readability. Battery grew to 27 cases incl. a
+  guard-bypass matrix (trailing slash, symlinked entry, fail-closed,
+  /dev/null, egress floor, byte cap).
 - **Conditional council auto-escalation — a council-scale diff can no longer
   be signed off by a solo Claude reviewer.** New PreToolUse `Task|Agent` gate
   `core/hooks/council-escalation-gate.py` denies a plain `code-reviewer`

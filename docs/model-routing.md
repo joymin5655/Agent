@@ -165,6 +165,7 @@ no-runtime-switching decision below.
 | Claude Code — decision-time reminder | `model-routing-advisor.py` (PreToolUse Task/Agent), advisory: one-line `additionalContext` nudge, never blocks, decision stays with the dispatcher | `core/hooks/model-routing-advisor.py`, `docs/gate-registry.md` GATE model-routing-advisor |
 | Codex CLI | Named profiles (per-profile config files on recent CLI builds): default = workhorse, `quick` = LOW, `deep` = TOP; `model_reasoning_effort` is the effort dial | `adapters/codex/codex-config.toml.template` + `quick.config.toml.template` / `deep.config.toml.template` |
 | Gemini CLI | `settings.json` default model = workhorse; callers escalate with explicit `-m` | `adapters/gemini/gemini-settings.json.template` |
+| Claude Code — purpose launchers | Session-start human choice of tier/gateway (`claude-build`/`claude-quick`/`claude-research`/`claude-ox`); a launcher presets the model before the session exists — the allowed side of the no-runtime-switching line | `adapters/claude-code/launchers/`, `docs/launchers.md` |
 
 ## Cross-vendor second-opinion lane
 
@@ -262,10 +263,31 @@ shared blind spot doesn't survive review.
   anthropic gateway lanes)** — `KIRO_API_KEY`, metered/paid per call, and the
   preflight itself is a real billable round trip on the lane's cheapest tier
   (`adapters/kiro/README.md` § Cost of a preflight) — never free to check.
-  Tier/cost-aware cross-vendor **task allocation** (which lane gets how much
-  advisory volume, when to prefer a free-quota lane over a metered one) is a
-  candidate follow-up design, not built here — route it through `/spec` when
-  it is taken up.
+  **openrouter (`advisor-free`, 2026-08-25)** — OpenRouter `:free` routes,
+  zero-cost by design (20 req/min, 50 req/day; 1,000/day after a one-time
+  ≥$10 credit purchase); a 429 fails open exactly like grok. Free is not
+  costless: a `:free` route's upstream provider may retain/train on prompts,
+  so the worker refuses sensitive working directories (shared
+  `~/.config/agent-harness/sensitive-paths` guard) and prints a retention
+  warning on every dispatch — non-voting `advisor-free` role only, opt-in via
+  `/council-review --with-free` (`adapters/openrouter/README.md`).
+- **Free-lane allocation (designed 2026-08-25,
+  `.agent/plans/free-lanes-and-launchers/spec.md`).** The former
+  "tier/cost-aware task allocation" follow-up is now designed, and the
+  allocation mechanism is deliberately *human-held and deterministic*: a
+  purpose launcher chosen at session start (`docs/launchers.md`) decides the
+  session's tier, and opt-in council flags (`--with-grok`, `--with-free`)
+  decide which free advisory lanes run — prefer-free-over-metered is a
+  standing caller guideline, never a classifier (see § What this policy
+  deliberately does not do). New free lanes are wired only when all four GO
+  criteria hold (sustained card-free quota; OpenAI-compatible endpoint; ToS
+  clean for proprietary code; adds a vendor not already in the roster) AND a
+  consumer role needs the lane. Evaluated 2026-08-25: **NVIDIA NIM —
+  deferred** (trial-only credit pool; API Trial ToS forbids confidential
+  input §2.6(a) yet collects content to improve NVIDIA models §3.3);
+  **Groq — strongest future candidate** (sustained, OpenAI-compatible,
+  ~14,400 req/day), unwired pending a role that needs its Llama/GPT-OSS-class
+  roster; full survey in the spec doc.
 - **Tests**: `core/tests/call-worker-test.sh` — PATH-stubbed backends, every
   contract path (including gateway cwd isolation), zero paid calls in CI.
 
@@ -306,3 +328,18 @@ mapping was checked, not new mappings):
   without benchmark evidence (backlog MC series, `harness-improvement-plan.md`
   §4.13). Intro/promotional pricing on the current mid tier is noted as a
   cost tailwind but changes no mapping (no price constants in-repo).
+
+- **2026-08-25** — free-lane wiring + launcher set landed (spec:
+  `.agent/plans/free-lanes-and-launchers/`). OpenRouter `:free` catalog
+  re-verified: DeepSeek/Qwen free variants delisted during 2026; lane pin =
+  `nvidia/nemotron-3-super-120b-a12b:free` (live preflight pass), alternate
+  `z-ai/glm-5.2:free` (research shortlist #1, but 429 on both live probes)
+  (tiers file only — no registry constants). NIM evaluated and deferred
+  (ToS), Groq noted as strongest future free candidate. Kiro:
+  kiro-cli reinstalled (brew cask 2.19.1) after being found absent — the
+  binary absence itself needed no registry change (enabled=policy /
+  preflight=machine-reality), but the 2.19.1 roster turned out to have
+  dropped all OpenAI models and `claude-opus-5`, which IS registry territory:
+  `kiro-openai` disabled (dated reason), its same-vendor fallbacks nulled on
+  the codex roles, `kiro-anthropic-top` re-pinned to `claude-sonnet-4.5`
+  (`adapters/kiro/README.md` § Tier ladder has the roster-recheck rule).

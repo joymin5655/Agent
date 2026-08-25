@@ -11,6 +11,9 @@
 #   bash setup.sh --antigravity    # antigravity (agy) worker lane only (opt-in)
 #   bash setup.sh --kiro           # kiro gateway lanes only (opt-in — metered/paid,
 #                                   # deliberately NOT part of the default/--all set)
+#   bash setup.sh --openrouter     # openrouter free-tier worker lane only (opt-in —
+#                                   # advisory lane, deliberately NOT part of --all/default)
+#   bash setup.sh --launchers      # purpose launchers (claude-build/quick/research/ox) only
 #   bash setup.sh --project        # +current project scaffold (CLAUDE.md, hook-config.yml, etc.)
 #   bash setup.sh --hooks-only     # install git-hooks (pre-commit, pre-push) only
 #   bash setup.sh --all            # alias for default (all 3 AIs)
@@ -44,6 +47,8 @@ fi
 DO_GROK=${DO_GROK:-0}
 DO_ANTIGRAVITY=${DO_ANTIGRAVITY:-0}
 DO_KIRO=${DO_KIRO:-0}
+DO_OPENROUTER=${DO_OPENROUTER:-0}
+DO_LAUNCHERS=${DO_LAUNCHERS:-0}
 
 for arg in "$@"; do
     case "$arg" in
@@ -53,6 +58,8 @@ for arg in "$@"; do
         --grok)        DO_GROK=1 ;;
         --antigravity) DO_ANTIGRAVITY=1 ;;
         --kiro)        DO_KIRO=1 ;;
+        --openrouter)  DO_OPENROUTER=1 ;;
+        --launchers)   DO_LAUNCHERS=1 ;;
         --project)     DO_PROJECT=1 ;;
         --hooks-only)  DO_HOOKS=1 ;;
         --doctor)      DO_DOCTOR=1 ;;
@@ -169,6 +176,13 @@ install_codex() {
              "$FRAMEWORK_ROOT/adapters/codex/adapter.py" \
              "$FRAMEWORK_ROOT/adapters/codex/codex-shell-wrap.sh"
 
+    # Global AGENTS.md (read by codex for EVERY session, any repo — distinct
+    # from the project-scoped adapters/codex/AGENTS.md.template installed by
+    # install_project()). Portable rules only, no repo-specific paths.
+    local agents_global_target="${CODEX_GLOBAL_AGENTS:-$HOME/.codex/AGENTS.md}"
+    local agents_global_template="$FRAMEWORK_ROOT/adapters/codex/AGENTS.global.md.template"
+    apply_template "$agents_global_template" "$agents_global_target"
+
     # Put wrapper on PATH.
     ensure_home_bin
     ln -sf "$FRAMEWORK_ROOT/adapters/codex/codex-shell-wrap.sh" "$HOME/bin/codex-bash"
@@ -274,11 +288,67 @@ install_kiro() {
     ln -sfn "$FRAMEWORK_ROOT/adapters/kiro/kiro-preflight.sh" "$HOME/bin/kiro-preflight"
     echo "  symlink: ~/bin/kiro-preflight"
 
-    if ! command -v kiro-cli >/dev/null 2>&1; then
+    # AGENT_KIRO_CLI: test seam (like CODEX_GLOBAL_AGENTS) — lets the doctor
+    # battery assert the missing-CLI note deterministically on a machine where
+    # the real kiro-cli IS installed.
+    if ! command -v "${AGENT_KIRO_CLI:-kiro-cli}" >/dev/null 2>&1; then
         echo "  NOTE: kiro-cli not found on PATH — install: curl -fsSL https://cli.kiro.dev/install | bash"
         echo "  NOTE: auth is KIRO_API_KEY (paid, issued at app.kiro.dev -> API Keys) — see adapters/kiro/README.md"
     fi
     return 0
+}
+
+# ---------------------------------------------------------------------------
+# OpenRouter — free-tier worker lane only (adapters/openrouter/README.md).
+# No CLI to install — a direct HTTPS call, credential in the macOS Keychain.
+# ---------------------------------------------------------------------------
+install_openrouter() {
+    echo "=== OpenRouter (worker lane, free advisory) ==="
+    chmod +x "$FRAMEWORK_ROOT/adapters/openrouter/openrouter-worker.sh" \
+             "$FRAMEWORK_ROOT/adapters/openrouter/openrouter-preflight.sh"
+    ensure_home_bin
+    ln -sf "$FRAMEWORK_ROOT/adapters/openrouter/openrouter-worker.sh" "$HOME/bin/openrouter-worker"
+    ln -sf "$FRAMEWORK_ROOT/adapters/openrouter/openrouter-preflight.sh" "$HOME/bin/openrouter-preflight"
+    echo "  symlink: ~/bin/openrouter-worker, ~/bin/openrouter-preflight"
+
+    mkdir -p "$HOME/.openrouter"
+    if [[ ! -f "$HOME/.openrouter/agent-tiers.json" ]]; then
+        cp "$FRAMEWORK_ROOT/adapters/openrouter/openrouter-tiers.json.template" "$HOME/.openrouter/agent-tiers.json"
+        echo "  installed: ~/.openrouter/agent-tiers.json"
+    fi
+
+    # Shared with adapters/claude-code/launchers/claude-ox — one guard file,
+    # two consumers. Never overwritten once present (personal entries live here).
+    mkdir -p "$HOME/.config/agent-harness"
+    if [[ ! -f "$HOME/.config/agent-harness/sensitive-paths" ]]; then
+        cp "$FRAMEWORK_ROOT/adapters/openrouter/sensitive-paths.template" "$HOME/.config/agent-harness/sensitive-paths"
+        echo "  installed: ~/.config/agent-harness/sensitive-paths (generic defaults — add personal paths locally)"
+    fi
+
+    if command -v security >/dev/null 2>&1 && ! security find-generic-password -a "$USER" -s openrouter-api-key -w >/dev/null 2>&1; then
+        echo "  NOTE: no Keychain entry 'openrouter-api-key' yet — register: security add-generic-password -a \"\$USER\" -s openrouter-api-key -w"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Purpose launchers — session-start rung entry points
+# (adapters/claude-code/launchers/README.md). Opt-in.
+# ---------------------------------------------------------------------------
+install_launchers() {
+    echo "=== Purpose launchers ==="
+    local ldir="$FRAMEWORK_ROOT/adapters/claude-code/launchers"
+    chmod +x "$ldir/claude-build" "$ldir/claude-quick" "$ldir/claude-research"
+    ensure_home_bin
+    ln -sf "$ldir/claude-build"    "$HOME/bin/claude-build"
+    ln -sf "$ldir/claude-quick"    "$HOME/bin/claude-quick"
+    ln -sf "$ldir/claude-research" "$HOME/bin/claude-research"
+    echo "  symlink: ~/bin/claude-build, ~/bin/claude-quick, ~/bin/claude-research"
+
+    # claude-ox is user-customizable (OX_MODEL, blocklist overrides live in the
+    # rendered file) — copy-if-absent / drift-confirm via apply_template, same
+    # as every other rendered-not-symlinked file in this script.
+    apply_template "$ldir/claude-ox.template" "$HOME/bin/claude-ox"
+    chmod +x "$HOME/bin/claude-ox" 2>/dev/null || true
 }
 
 # ---------------------------------------------------------------------------
@@ -1282,7 +1352,7 @@ PY
                         | .key as $l | ((.value.cmd // [])[0] // ""), ((.value.preflight // [])[0] // "")
                         | [$l, .] | @tsv' "$FRAMEWORK_ROOT/core/infra/backends.json" 2>/dev/null)
         if [[ -n "$wl_missing" ]]; then
-            add_row WARN "worker lanes — enabled backend(s) whose cmd[0]/preflight[0] is not resolvable on PATH: $wl_missing; call-worker.sh execs the registry argv verbatim, so the lane reports UNAVAILABLE (exit 127). Install the symlinks (setup.sh --codex/--gemini/--grok/--antigravity/--kiro, or ln -sf by hand — see the adapter README), and note a lane also needs its vendor CLI installed and authenticated — /worker-setup walks that per lane"
+            add_row WARN "worker lanes — enabled backend(s) whose cmd[0]/preflight[0] is not resolvable on PATH: $wl_missing; call-worker.sh execs the registry argv verbatim, so the lane reports UNAVAILABLE (exit 127). Install the symlinks (setup.sh --codex/--gemini/--grok/--antigravity/--kiro/--openrouter, or ln -sf by hand — see the adapter README), and note a lane also needs its vendor CLI installed and authenticated — /worker-setup walks that per lane"
         elif [[ -n "$wl_lanes" ]]; then
             add_row PASS "worker lanes — enabled backend(s) resolvable on PATH: $wl_lanes"
         fi
@@ -1467,6 +1537,8 @@ fi
 [[ $DO_GROK -eq 1 ]]   && install_grok
 [[ $DO_ANTIGRAVITY -eq 1 ]] && install_antigravity
 [[ $DO_KIRO -eq 1 ]]   && install_kiro
+[[ $DO_OPENROUTER -eq 1 ]] && install_openrouter
+[[ $DO_LAUNCHERS -eq 1 ]] && install_launchers
 [[ $DO_PROJECT -eq 1 ]] && install_project
 
 # Self-heal exec bits before validating: distribution paths that drop POSIX

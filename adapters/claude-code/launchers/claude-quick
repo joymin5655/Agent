@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# claude-quick — the LOW rung: mechanical/routine work, cheapest model.
+exec claude --model haiku "$@"

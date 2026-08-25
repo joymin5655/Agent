@@ -5,13 +5,15 @@
     "second-opinion-review": {
       "backend": "codex",
       "tier": "TOP",
-      "fallback": "kiro-openai",
-      "comment": "council's openai voting lane. Lens: implementation correctness (logic, edge cases, error handling, concurrency) — prompt framing lives in skills/council-review/SKILL.md step 1; a lens states emphasis, not permission."
+      "fallback": null,
+      "comment": "council's openai voting lane. Lens: implementation correctness (logic, edge cases, error handling, concurrency) — prompt framing lives in skills/council-review/SKILL.md step 1; a lens states emphasis, not permission.",
+      "fallback_comment": "fallback was kiro-openai (same-vendor openai, kept the vote's vendor honest); 2026-08-25 the kiro roster dropped all OpenAI models, and falling back to kiro-zhipu would silently change the vote's vendor — an absent lane is reported absent instead (same rule as third-opinion-review)."
     },
     "second-opinion-verify": {
       "backend": "codex",
       "tier": "TOP",
-      "fallback": "kiro-openai"
+      "fallback": null,
+      "fallback_comment": "fallback was kiro-openai (same-vendor openai, kept the vote's vendor honest); 2026-08-25 the kiro roster dropped all OpenAI models, and falling back to kiro-zhipu would silently change the vote's vendor — an absent lane is reported absent instead (same rule as third-opinion-review)."
     },
     "implementer": {
       "backend": "codex",
@@ -27,7 +29,8 @@
     "advisor": {
       "backend": "codex",
       "tier": "TOP",
-      "fallback": "kiro-openai"
+      "fallback": null,
+      "fallback_comment": "fallback was kiro-openai (same-vendor openai, kept the vote's vendor honest); 2026-08-25 the kiro roster dropped all OpenAI models, and falling back to kiro-zhipu would silently change the vote's vendor — an absent lane is reported absent instead (same rule as third-opinion-review)."
     },
     "third-opinion-review": {
       "backend": "gemini",
@@ -40,6 +43,12 @@
       "tier": "TOP",
       "fallback": null,
       "comment": "opt-in perspective-diversity advisor (xai). Deliberately wired to NO gate role — advisory only, consumers opt in explicitly (/council-review --with-grok)."
+    },
+    "advisor-free": {
+      "backend": "openrouter",
+      "tier": "TOP",
+      "fallback": null,
+      "comment": "opt-in zero-subscription-cost advisor, free tier by design. Deliberately wired to NO gate role — advisory only, consumers opt in explicitly (/council-review --with-free)."
     }
   },
   "backends": {
@@ -98,7 +107,7 @@
       "vendor": "openai",
       "connection": "cli",
       "gateway": "kiro",
-      "enabled": true,
+      "enabled": false,
       "cmd": [
         "kiro-cli",
         "chat",
@@ -121,7 +130,8 @@
       "preflight": [
         "kiro-preflight"
       ],
-      "timeout_s": 420
+      "timeout_s": 420,
+      "disabled_reason": "2026-08-25: the kiro-cli 2.19.1 roster carries no OpenAI-family models (live-probed: the lane's pinned models resolve to 'not available') — gateway-wide reality, not machine state. Re-enable + re-pin the adapter profiles when OpenAI models return to the kiro roster; details in adapters/kiro/README.md § Tier ladder."
     },
     "kiro-zhipu": {
       "vendor": "zhipu",
@@ -188,6 +198,34 @@
       ],
       "comment": "worker lane only (advisor roles) — never a gate vote. Read-only is OS-enforced by grok-worker.sh (sandbox-exec deny-write + neutral cwd): the CLI's own flags do not block writes, measured 2026-08-19 on 0.2.118 (adapters/grok/README.md). Model pin lives in adapters/grok/grok-tiers.json.template -> ~/.grok/agent-tiers.json.",
       "preflight_timeout_s": 90
+    },
+    "openrouter": {
+      "vendor": "openrouter",
+      "connection": "cli",
+      "enabled": true,
+      "cmd": [
+        "openrouter-worker"
+      ],
+      "tier_args": {
+        "LOW": [
+          "--tier",
+          "low"
+        ],
+        "MID": [
+          "--tier",
+          "mid"
+        ],
+        "TOP": [
+          "--tier",
+          "top"
+        ]
+      },
+      "timeout_s": 300,
+      "preflight": [
+        "openrouter-preflight"
+      ],
+      "preflight_timeout_s": 90,
+      "comment": "worker lane only (advisor role) — never a gate vote, and NOT a gateway in the registry sense: openrouter is a routing service, not a vendor CLI wrapping another vendor's session, so no cwd isolation applies here. Gateway-like honesty note instead: the vendor named above (openrouter) is a proxy, not the true model vendor — the actual upstream model is pinned per-tier in adapters/openrouter/openrouter-tiers.json.template -> ~/.openrouter/agent-tiers.json, so an independence read against this lane should look at that pin, not this field. No local sandbox: this worker is a plain HTTPS call with no local tool for a prompt to drive (adapters/openrouter/README.md); the risk it guards is prompt/response retention by an anonymous free-tier provider, enforced via a shared sensitive-cwd guard, not sandbox-exec."
     }
   }
 }

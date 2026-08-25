@@ -1,7 +1,7 @@
 ---
 name: council-review
-description: Multi-vendor code review council — runs the Claude code-reviewer agent alongside external second opinions (codex, gemini) in parallel, then synthesizes with citation verification, source tagging, and disagreement surfacing. Optionally seats grok as a non-voting advisor (--with-grok). NOT a completion gate (that is /verify-completion), NOT a security audit (security findings route to security-reviewer), and NOT free — every external lane is a paid CLI call the user approves first.
-when_to_use: User wants a code review with independent cross-vendor opinions — "council review", "get a second opinion on this diff", "review with codex/gemini", or `/council-review [--staged|--head|<range>] [--with-grok]` — or `council-escalation-gate.py` denied a plain code-reviewer dispatch because the diff is council-scale (line/file threshold or a risk-area path; core/infra/council-threshold.sh).
+description: Multi-vendor code review council — runs the Claude code-reviewer agent alongside external second opinions (codex, gemini) in parallel, then synthesizes with citation verification, source tagging, and disagreement surfacing. Optionally seats grok (--with-grok) and/or an OpenRouter free-tier advisor (--with-free) as non-voting advisors. NOT a completion gate (that is /verify-completion), NOT a security audit (security findings route to security-reviewer), and NOT free for the codex/gemini lanes — those are paid CLI calls the user approves first (--with-free itself costs nothing but still sends the diff to a third party — see step 2).
+when_to_use: User wants a code review with independent cross-vendor opinions — "council review", "get a second opinion on this diff", "review with codex/gemini", or `/council-review [--staged|--head|<range>] [--with-grok] [--with-free]` — or `council-escalation-gate.py` denied a plain code-reviewer dispatch because the diff is council-scale (line/file threshold or a risk-area path; core/infra/council-threshold.sh).
 tools: Bash, Read, Grep, Glob, Agent
 ---
 
@@ -22,6 +22,7 @@ actual code (not to the reviewers) drops what was hallucinated.
 | `second-opinion-review` | openai (codex) | implementation correctness | `core/infra/call-worker.sh` | yes |
 | `third-opinion-review` | google (gemini, via antigravity) | architecture & consistency | `core/infra/call-worker.sh` | yes (when lane enabled) |
 | `advisor-third` (`--with-grok`) | xai (grok) | unscoped (free perspective) | `core/infra/call-worker.sh` | **no — advisory only** |
+| `advisor-free` (`--with-free`) | openrouter (model vendor pinned in `adapters/openrouter/*.template` — see `core/infra/backends.json`'s honesty comment) | unscoped (free perspective) | `core/infra/call-worker.sh` | **no — advisory only** |
 
 Lane SSOT is `core/infra/backends.json`. A disabled lane (e.g. one whose CLI
 or preflight is missing) refuses loudly at dispatch; report it as absent —
@@ -32,7 +33,9 @@ The grok lane runs on the free tier by design (decided 2026-08-19): when its
 quota is exhausted mid-review the lane surfaces `status: rate-limited` and the
 council **fails open** — the review proceeds without the advisory, the lane
 status line says "rate-limited, retry later", and no upgrade prompt is put to
-the user.
+the user. The openrouter free lane carries the same fail-open contract on its
+own 429s (`adapters/openrouter/README.md`), but its cost is retention, not
+quota — see step 2.
 
 ## Steps
 
@@ -85,17 +88,23 @@ copies of the same question):
   consistency, naming.
 
 A lens states emphasis, not permission — each preamble must also say "report
-any defect you see, in or out of your lens." Grok (`advisor-third`) gets the
-bare shared core, unscoped by design: the advisory seat exists for the
-perspective the lenses didn't assign. The Claude `code-reviewer` lane keeps
-its own agent charter untouched.
+any defect you see, in or out of your lens." Grok (`advisor-third`) and the
+OpenRouter free lane (`advisor-free`) both get the bare shared core, unscoped
+by design: the advisory seats exist for the perspective the lenses didn't
+assign. The Claude `code-reviewer` lane keeps its own agent charter untouched.
 
 ### 2. One cost confirmation
 
-Count the external lanes about to run (2, or 3 with `--with-grok`) and ask the
-user ONCE to approve the paid calls. Only on approval set `AGENT_WORKER_YES=1`
-— per-invocation, never exported into the session (the env-only gate contract
-in call-worker.sh: the session that owns the user relationship asks first).
+Count the external lanes about to run (2, plus 1 per optional advisor flag —
+`--with-grok` and/or `--with-free`) and ask the user ONCE to approve the
+calls. Only on approval set `AGENT_WORKER_YES=1` — per-invocation, never
+exported into the session (the env-only gate contract in call-worker.sh: the
+session that owns the user relationship asks first). Note for `--with-free`
+specifically: the lane is free (no subscription cost), but it is
+retention-flagged (the model behind it is commonly anonymous and may
+retain/train on the diff) and cwd-guarded (`adapters/openrouter/README.md`
+§ What "free" costs here) — say so as part of the same approval ask, not as
+a separate prompt.
 
 **Approval declined**: skip every external lane (no `call-worker.sh` calls at
 all) and proceed with the Claude `code-reviewer` lane alone — this is the same
@@ -120,6 +129,8 @@ AGENT_WORKER_YES=1 bash "$CW" second-opinion-review < "$PROMPT_CODEX"  > "$CAP_D
 AGENT_WORKER_YES=1 bash "$CW" third-opinion-review  < "$PROMPT_GEMINI" > "$CAP_DIR/gemini.path" 2> "$CAP_DIR/gemini.err" &
 # --with-grok only:
 AGENT_WORKER_YES=1 bash "$CW" advisor-third         < "$PROMPT_CORE"   > "$CAP_DIR/grok.path" 2> "$CAP_DIR/grok.err" &
+# --with-free only:
+AGENT_WORKER_YES=1 bash "$CW" advisor-free          < "$PROMPT_CORE"   > "$CAP_DIR/free.path" 2> "$CAP_DIR/free.err" &
 ```
 
 The `[[ -f "$CW" ]]` line is a diagnostic, not a short-circuit: if the path is
@@ -150,16 +161,19 @@ sleep-polling.
    (reported — a lane's drop rate is signal about that lane).
 4. **Severity re-rating**: re-rate every surviving finding against repo
    context yourself; external self-ratings are input, not verdict.
-5. **Source tagging**: `[claude]` `[codex]` `[gemini]` `[grok:advisory]`.
-   Findings reached independently by ≥2 seated vendors are marked
-   **high-signal** and listed first. Lenses don't weaken this rule — a defect
-   two lanes reached through *different* questions is, if anything, stronger
-   agreement than two copies of the same question would give.
+5. **Source tagging**: `[claude]` `[codex]` `[gemini]` `[grok:advisory]`
+   `[free:advisory]`. Findings reached independently by ≥2 seated vendors are
+   marked **high-signal** and listed first. Lenses don't weaken this rule — a
+   defect two lanes reached through *different* questions is, if anything,
+   stronger agreement than two copies of the same question would give.
 6. **Disagreements**: where seated lanes conflict, show both positions and
    adjudicate with a stated reason — against the code, not against authority.
 7. **Grok section** (when present): separate, labeled
    "advisory — not part of the verdict"; its findings never flip severity or
    the overall verdict.
+8. **Free-lane section** (when present): same treatment as the grok section
+   — separate, labeled "advisory — not part of the verdict"; its findings
+   never flip severity or the overall verdict.
 
 Security-shaped findings (auth, injection, secrets, crypto) are LISTED but
 not adjudicated here — route them to `security-reviewer` (the
@@ -170,13 +184,14 @@ council too).
 
 ```
 ## Council review — <target>
-Lane status: claude ✓ | codex ✓ | gemini ✗ absent (<reason>) | grok ✓ advisory
+Lane status: claude ✓ | codex ✓ | gemini ✗ absent (<reason>) | grok ✓ advisory | free ✓ advisory
 Citation drops: codex 1, gemini 0
 
 ### High-signal (≥2 vendors)  ...
 ### Findings                  ...
 ### Disagreements             ...
 ### Advisory (grok)           ...
+### Advisory (free)           ...
 ```
 
 **False-council guard**: if EVERY external lane is absent, the first line of
@@ -202,7 +217,7 @@ python3 "$CEG" --council-flag clear
 | call-worker exit 3 | not approved | re-ask or drop the lane |
 | exit 127 / `status: unavailable` | lane disabled / CLI or preflight missing | lane absent, quote reason |
 | exit 124 / `status: timeout` | hung CLI killed | lane absent |
-| exit 1 / `status: rate-limited` | vendor quota/rate limit hit (e.g. grok free tier) | lane absent — fail-open; report "rate-limited, retry later", never an upgrade pitch |
+| exit 1 / `status: rate-limited` | vendor quota/rate limit hit (e.g. grok/openrouter free tier) | lane absent — fail-open; report "rate-limited, retry later", never an upgrade pitch |
 | exit 1 / `status: failed` | backend errored | lane absent, quote stderr tail |
 
 External failures never abort the review — the Claude lane carries it.

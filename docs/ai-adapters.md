@@ -281,6 +281,20 @@ exact-token probe). The lane carries the `advisor-third` role only — advisory,
 never a gate vote. Measurements, cost and positioning:
 `adapters/grok/README.md`.
 
+## OpenRouter — worker lane only (free advisory)
+
+OpenRouter likewise has NO runtime host adapter and is excluded from
+`adapter-parity.sh`. `adapters/openrouter/` is a worker-lane bridge to
+OpenRouter's `:free` routes: `openrouter-worker.sh` (stdin→HTTPS
+chat-completions; the tiers file owns the model pin; Keychain credential via
+a private curl config, never argv) and `openrouter-preflight.sh` (fail-closed
+exact-token probe — free, unlike kiro's). No OS sandbox: the lane runs no
+local tools, so the risk is data, not execution — enforced instead by the
+shared `~/.config/agent-harness/sensitive-paths` cwd guard and a per-dispatch
+retention warning (`:free` upstream providers may retain/train on prompts).
+Role: `advisor-free` only — advisory, never a gate vote, opt-in via
+`/council-review --with-free`. Details: `adapters/openrouter/README.md`.
+
 ## Adding a new runtime
 
 ### 1. Classify before coding

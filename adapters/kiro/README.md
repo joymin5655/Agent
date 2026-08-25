@@ -19,9 +19,16 @@ Tiers come from Kiro's own published `rate_multiplier` (`kiro-cli chat
 
 | Lane | TOP | MID | LOW |
 |---|---|---|---|
-| `kiro-openai` | `gpt-5.6-sol` (2.4x) | `gpt-5.6-terra` (1.2x) | `gpt-5.6-luna` (0.6x) |
-| `kiro-anthropic` | `claude-opus-5` (2.2x) | — | — |
+| `kiro-openai` | **disabled 2026-08-25** — the 2.19.1 roster carries no OpenAI models (was `gpt-5.6-sol`/`-terra`/`-luna`); templates kept for revival | | |
+| `kiro-anthropic` | `claude-sonnet-4.5` (1.3x; was `claude-opus-5`, dropped from the roster) | — | — |
 | `kiro-zhipu` | — | `glm-5` (0.5x) | — |
+
+Roster drift is a fact of a gateway lane: re-verify with
+`kiro-cli chat --list-models` after any kiro-cli upgrade (2026-08-25 check on
+2.19.1: `auto`, `claude-sonnet-4.5`, `claude-sonnet-4`, `claude-haiku-4.5`,
+`deepseek-3.2`, `minimax-m2.5`, `minimax-m2.1`, `glm-5`, `qwen3-coder-next` —
+no OpenAI family). A profile pinning a delisted model fails loudly at dispatch
+("The model '<id>' is not available"), which is the designed failure mode.
 
 ## Model names live here, never in the registry
 
