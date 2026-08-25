@@ -1,0 +1,117 @@
+#!/bin/zsh
+# claude-ox — OpenRouter 게이트웨이로 Claude Code 실행 (기본 `claude`는 무변경).
+# 보안 트레이드오프 (security review 2026-08-25):
+#  * CLAUDE_CONFIG_DIR 격리는 스킬·MCP만이 아니라 ~/.claude의 deny 규칙과
+#    pre-tool 훅(가드레일)도 함께 떨어뜨린다 — 전체 대화가 익명 보존-플래그
+#    엔드포인트로 가는 바로 그 세션에서. 민감 작업은 이 런처로 하지 않는다.
+#  * ANTHROPIC_AUTH_TOKEN은 세션 자신의 Bash 도구에서 읽을 수 있다
+#    (게이트웨이 래퍼의 본질적 한계) — 이 키는 OpenRouter 전용 키로 유지할 것.
+#
+# 키: macOS Keychain 서비스 "openrouter-api-key"
+#   security add-generic-password -a "$USER" -s openrouter-api-key -w
+# 모델 교체: OX_MODEL=<openrouter-model-id> claude-ox
+# 가드 우회: CLAUDE_OX_FORCE=1 claude-ox
+
+emulate -L zsh
+set -u
+
+OX_MODEL="${OX_MODEL:-stealth/ox-alpha}"
+
+# --- 민감 경로 가드 ---------------------------------------------------------
+# 이 모델의 제공자는 익명이며 프롬프트·응답을 보관한다고 명시돼 있다.
+# 차단 목록은 공유 파일(adapters/openrouter/의 openrouter-worker.sh와 동일 소스)에서
+# 읽는다 — 개인/프로젝트별 경로는 그 로컬 파일에만 추가하고 여기 커밋하지 않는다.
+typeset -a BLOCKED
+SENS_FILE="$HOME/.config/agent-harness/sensitive-paths"
+if [[ -f "$SENS_FILE" ]]; then
+  while IFS= read -r line || [[ -n "$line" ]]; do  # ||-clause: keep a final line that lacks a trailing newline (council review 2026-08-25)
+    line="${line%%#*}"
+    line="$(print -r -- "$line" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    [[ -z "$line" ]] && continue
+    case "$line" in
+      "~") line="$HOME" ;;
+      "~/"*) line="$HOME/${line#\~/}" ;;
+    esac
+    BLOCKED+=("$line")
+  done < "$SENS_FILE"
+else
+  # 공유 파일이 아직 설치되지 않은 경우의 제네릭 폴백 (setup.sh --openrouter가 설치함)
+  BLOCKED=(
+    "$HOME/.ssh"
+    "$HOME/.aws"
+    "$HOME/.config"
+    "$HOME/.claude"
+    "$HOME/.claude-ox"
+  )
+fi
+CWD="$(pwd -P)"
+if [[ -z "${CLAUDE_OX_FORCE:-}" ]]; then
+  for b in "${BLOCKED[@]}"; do
+    # trailing slash would break both match arms; strip (never the root itself)
+    while [[ "$b" == */ && "$b" != / ]]; do b="${b%/}"; done
+    # canonicalize like CWD (pwd -P) so symlinked entries still match
+    breal="$(cd "$b" 2>/dev/null && pwd -P)" || breal=""
+    if [[ "$CWD" == "$b" || "$CWD" == "$b"/* || ( -n "$breal" && ( "$CWD" == "$breal" || "$CWD" == "$breal"/* ) ) ]]; then
+      print -u2 "claude-ox: 차단된 경로입니다 — $b"
+      print -u2 "  이 모델은 익명 제3자가 프롬프트·응답을 보관합니다."
+      print -u2 "  그래도 진행하려면: CLAUDE_OX_FORCE=1 claude-ox $*"
+      exit 1
+    fi
+  done
+fi
+
+# --- 크리덴셜 ---------------------------------------------------------------
+KEY="$(security find-generic-password -a "$USER" -s openrouter-api-key -w 2>/dev/null)"
+if [[ -z "$KEY" ]]; then
+  print -u2 "claude-ox: Keychain에 openrouter-api-key 가 없습니다."
+  print -u2 "  등록: security add-generic-password -a \"\$USER\" -s openrouter-api-key -w"
+  exit 1
+fi
+
+# --- 게이트웨이 설정 --------------------------------------------------------
+export ANTHROPIC_BASE_URL="https://openrouter.ai/api"
+export ANTHROPIC_AUTH_TOKEN="$KEY"
+export ANTHROPIC_API_KEY=""   # 필수: 비워야 Anthropic 직결로 폴백하지 않음
+
+# 하네스가 서브에이전트를 model: "sonnet"/"haiku" 로 명시 디스패치하므로
+# 별칭 4종을 모두 고정하지 않으면 OpenRouter에 없는 claude-* ID를 요청하게 된다.
+export ANTHROPIC_DEFAULT_FABLE_MODEL="$OX_MODEL"
+export ANTHROPIC_DEFAULT_OPUS_MODEL="$OX_MODEL"
+export ANTHROPIC_DEFAULT_SONNET_MODEL="$OX_MODEL"
+export ANTHROPIC_DEFAULT_HAIKU_MODEL="$OX_MODEL"
+export ANTHROPIC_DEFAULT_MODEL="$OX_MODEL"
+
+# 실측(2026-08-22): 실제로 모델을 가르는 것은 아래 둘이다. 위의 ANTHROPIC_DEFAULT_*
+# 는 효과를 확인하지 못했지만 해가 없어 남겨 둔다.
+export ANTHROPIC_MODEL="$OX_MODEL"
+export ANTHROPIC_SMALL_FAST_MODEL="$OX_MODEL"
+
+export ANTHROPIC_CUSTOM_MODEL_OPTION="$OX_MODEL"
+export ANTHROPIC_CUSTOM_MODEL_OPTION_NAME="Ox Alpha (OpenRouter)"
+export ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION="stealth/ox-alpha via OpenRouter gateway"
+
+# --- 컨텍스트 격리 (없으면 응답이 아예 안 온다) -----------------------------
+# 실측 2026-08-22: 사용자 하네스를 얹은 순정 `claude -p "2+2"` 의 입력이 950,716
+# 토큰이었다. Anthropic 직결은 프롬프트 캐시가 이를 흡수하지만 OpenRouter 게이트웨이엔
+# 캐시가 없어 매 요청 통째로 전송되고, ox 컨텍스트 1,048,576 의 91%를 시스템 프롬프트가
+# 먹는다. 결과는 타임아웃(180s·120s·100s 전부 stdout 0바이트).
+# 빈 설정 디렉터리로 격리하면 23,068 토큰·6.2초로 떨어진다.
+#
+# 대가: 스킬·플러그인·사용자 CLAUDE.md·근거계약·모델 라우팅이 전부 빠진다.
+# ox 세션은 하네스 없는 맨 Claude Code다. 그걸 감수하지 않으려면 이 래퍼를 쓰지 말 것.
+if [[ -z "${CLAUDE_OX_NO_ISOLATE:-}" ]]; then
+  OX_CFG="${CLAUDE_OX_CONFIG_DIR:-$HOME/.claude-ox}"
+  mkdir -p "$OX_CFG"
+  [[ -f "$OX_CFG/settings.json" ]] || print '{}' > "$OX_CFG/settings.json"
+  export CLAUDE_CONFIG_DIR="$OX_CFG"
+
+  # MCP 서버 초기화가 도구 스키마로 컨텍스트를 다시 부풀린다. 격리의 목적을
+  # 되돌리는 경로라 같은 조건에서 함께 끈다.
+  set -- --strict-mcp-config --mcp-config '{"mcpServers":{}}' "$@"
+fi
+
+print -u2 "⚠️  OpenRouter: $OX_MODEL — 프롬프트·응답이 익명 제3자에게 보관됩니다."
+if [[ -z "${CLAUDE_OX_NO_ISOLATE:-}" ]]; then
+  print -u2 "   격리 모드: 스킬·CLAUDE.md·MCP 미적용 (해제: CLAUDE_OX_NO_ISOLATE=1)"
+fi
+exec claude "$@"

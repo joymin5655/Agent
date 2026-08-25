@@ -72,3 +72,4 @@ tmp/
 .tmp/
 coverage/
 *.tsbuildinfo
+.gstack/

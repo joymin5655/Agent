@@ -1,0 +1,18 @@
+# sensitive-paths — cwd blocklist for lanes that leave the machine to an
+# anonymous, retention-flagged endpoint (adapters/openrouter/openrouter-worker.sh,
+# adapters/claude-code/launchers/claude-ox).
+#
+# One path per line. Leading `~` expands to $HOME. `#` starts a comment (both
+# whole-line and trailing). A dispatch/launch refuses when the caller's cwd is
+# the listed path or under it. Install target: ~/.config/agent-harness/sensitive-paths
+# (setup.sh copies this template there if the file is absent — it never
+# overwrites an existing one).
+#
+# This shipped copy carries GENERIC defaults only. Add your own project- or
+# client-specific paths locally — they must never be committed here.
+
+~/.ssh
+~/.aws
+~/.config
+~/.claude
+~/.claude-ox

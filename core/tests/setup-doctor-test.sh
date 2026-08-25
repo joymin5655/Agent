@@ -1110,7 +1110,10 @@ track_fixture "$IK_HOME"
 mkdir -p "$IK_HOME/.kiro/agents"
 echo '{"model":"user-pinned-model","tools":["read"],"allowedTools":["read"]}' \
   > "$IK_HOME/.kiro/agents/kiro-openai-low.json"
-OUT_R="$(AGENT_SETUP_NO_DOCTOR=1 HOME="$IK_HOME" bash "$SETUP" --kiro 2>&1)"
+# AGENT_KIRO_CLI points at a nonexistent binary so the missing-CLI note is
+# asserted deterministically whether or not the machine has kiro-cli installed
+# (2026-08-25: the real install made the old environment-dependent form fail).
+OUT_R="$(AGENT_SETUP_NO_DOCTOR=1 AGENT_KIRO_CLI=kiro-cli-absent-for-test HOME="$IK_HOME" bash "$SETUP" --kiro 2>&1)"
 RC_R=$?
 [[ $RC_R -eq 0 ]]
 check "install-kiro-exits-0" $?

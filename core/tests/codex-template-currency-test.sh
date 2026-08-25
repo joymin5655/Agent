@@ -51,5 +51,16 @@ for name in quick deep; do
 done
 
 echo
+echo "=== global AGENTS.md template (regression guard) ==="
+# adapters/codex/AGENTS.global.md.template pins no model (it's a portable
+# rules file, not a profile — see quick/deep above for the model-pin check),
+# so its currency invariant is simpler: it must exist, and it is already
+# swept by the sunset-model-ID loop above via the *.template glob. This is
+# a plain existence guard so a future refactor can't silently drop it.
+GLOBAL_AGENTS_TPL="$TEMPLATE_DIR/AGENTS.global.md.template"
+[[ -f "$GLOBAL_AGENTS_TPL" ]]
+check "global-agents-template-exists" $?
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]

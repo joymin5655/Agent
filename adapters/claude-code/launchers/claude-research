@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# claude-research — the MID rung: general implementation/investigation work.
+exec claude --model sonnet "$@"
