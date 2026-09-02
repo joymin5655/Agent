@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.10] - 2026-09-02
+
+### Fixed
+- **`session-quality-gate.py` layer 3 fired without end and blamed the wrong
+  session.** The unverified-session advisory read the whole dirty work tree
+  while claiming the files "changed this session", and recomputed and reprinted
+  on every Stop: `stop_hook_active` gates blocking only, and the note is
+  re-injected as model-visible context, so it fed the turn that produced the
+  next Stop. A file left uncommitted by a *concurrent* session was reported to
+  five unrelated sessions as their own change — 80 firings in 7m22s in one
+  session (median gap 2.4s) and 79 in another, ending only when a verification
+  command happened to land in the sink. The documented exit ("or state
+  explicitly why none applies") was inert: nothing consumed a stated reason, so
+  a session that correctly declined to test someone else's work had none.
+  The diff is now intersected with the files the session actually edited (read
+  off `transcript_path`; sidechain kept, since a subagent's edit is still the
+  session's work) and the note is suppressed once recorded for the same
+  (session, changed-file set), with blocking keyed separately so enabling
+  `AGENT_VERIFY_OBSERVER_BLOCK=1` midway is not swallowed by an earlier
+  advisory. Without a transcript it falls back to the work-tree list and says
+  "attribution unavailable" rather than claiming one. Two ways the intersection
+  could go silently empty are fixed with it: `git diff` and `git ls-files`
+  disagree about their base outside the work-tree root (git now runs at the
+  toplevel, `diff.relative` pinned off), and `core.quotePath` C-quotes
+  non-ASCII paths (`-z` throughout). The FIFO/`S_ISREG`/tail-window hardening
+  moved into one shared traversal instead of being copied per predicate.
+  (#122)
+
 ### Added
 - **`top-edit-advisor.py` hook (PostToolUse Write/Edit/MultiEdit).**
   Accumulation-time counterpart to `model-routing-advisor.py`/
