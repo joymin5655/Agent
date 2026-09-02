@@ -18,7 +18,9 @@ Two layers, calibrated separately (2026-07-27 guard-trim):
      registry recorded exactly that: `quality-completion` shows zero local
      firings because no consumer declares the key. This layer reads the records
      written by core/hooks/verify-observer.py and notes when the session diff
-     carries code changes but no verification command was ever invoked.
+     carries code changes but no verification command was ever invoked. The
+     diff is scoped to files THIS session edited (read off the transcript), and
+     the note is emitted once per file set — see the anti-loop paragraph.
      OBSERVE-ONLY by default (records + advisory, never blocks); opt into
      blocking with AGENT_VERIFY_OBSERVER_BLOCK=1. Effect is measured through the
      gate registry (`verify-observed`) BEFORE it is enforced — a gate whose
@@ -29,7 +31,12 @@ Two layers, calibrated separately (2026-07-27 guard-trim):
 
 Anti-infinite-loop: `stop_hook_active=true` on stdin means this Stop was
 already blocked once. We pass on the second Stop so the user can break out
-by deciding "intentional violation".
+by deciding "intentional violation". That flag governs BLOCKING only. Layer 3
+is advisory and is computed on every Stop, so it carries its own suppression
+(`already_advised`, keyed on session + changed-file set); without it the note
+re-fired every Stop for the life of the session and, because it is re-injected
+as model-visible context, drove the next turn that produced the next Stop —
+measured 2026-09-02 at 80 firings in 7m22s.
 
 Escape hatch: AGENT_QUALITY_GATE_BLOCK=0 → advisory only (no block at all).
 
@@ -45,6 +52,7 @@ Configuration (env vars):
   AGENT_VERIFY_OBSERVED_SINK             override the observer sink path
                                           (same seam as verify-observer.py)
 """
+import hashlib
 import json
 import os
 import re
@@ -150,17 +158,33 @@ def get_changed_files(root: str = "") -> list[str]:
     changed files rather than inheriting whatever the real repo tree looks like.
     """
     cwd = root or None
+    # Invoke at the WORK-TREE ROOT, not at `root`. The two commands below do not
+    # agree about their base when run from a subdirectory: `git diff` prints
+    # work-tree-relative paths while `git ls-files` is scoped to the current
+    # directory and prints cwd-relative ones. Mixing the two bases made layer 3's
+    # intersection empty for any session whose cwd was a subdirectory — the gate
+    # went silent instead of scoping (caught by the subdirectory fixture in
+    # core/tests/verify-observer-test.sh). `diff.relative` is pinned off for the
+    # same reason: a repo can configure git into the cwd-relative form.
+    top = _git_toplevel(root)
+    if top:
+        cwd = top
     try:
+        # -z, not newline-splitting: with core.quotePath on (git's default) a
+        # non-ASCII path comes back C-quoted ("models/\\355\\225\\234.py"), which
+        # then matches nothing when layer 3 intersects it with the transcript's
+        # real paths — the whole file set drops out and the gate goes silent.
+        # NUL-separated output is neither quoted nor ambiguous about whitespace.
         result = subprocess.run(
-            ["git", "diff", "--name-only", "HEAD"],
+            ["git", "-c", "diff.relative=false", "diff", "--name-only", "-z", "HEAD"],
             capture_output=True, text=True, timeout=5, cwd=cwd,
         )
-        files = [f.strip() for f in result.stdout.strip().split("\n") if f.strip()]
+        files = [f for f in result.stdout.split("\0") if f]
         result2 = subprocess.run(
-            ["git", "ls-files", "--others", "--exclude-standard"],
+            ["git", "ls-files", "--others", "--exclude-standard", "--full-name", "-z"],
             capture_output=True, text=True, timeout=5, cwd=cwd,
         )
-        untracked = [f.strip() for f in result2.stdout.strip().split("\n") if f.strip()]
+        untracked = [f for f in result2.stdout.split("\0") if f]
         return files + untracked
     except (subprocess.TimeoutExpired, FileNotFoundError, NotADirectoryError, OSError):
         return []
@@ -214,25 +238,129 @@ def verify_sink_path(root: str) -> str:
     return fallback
 
 
-def session_ran_verification(root: str, session_id: str) -> bool:
-    """True when this session invoked at least one verification command."""
-    if not session_id:
-        return False
+# Tools whose calls mark a file as edited BY THIS SESSION.
+_EDIT_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit")
+
+
+def _realpath(path: str) -> str:
+    try:
+        return os.path.realpath(path)
+    except OSError:
+        return path
+
+
+def _git_toplevel(root: str) -> str:
+    """Work-tree root for `root`, or "" when it is not one.
+
+    get_changed_files() returns git's paths, which are relative to the REPO
+    root — not to `root`, which is only the session cwd and may sit in a
+    subdirectory. Resolving both sides against this is what lets the git list
+    and the transcript list be compared as absolute paths; comparing the raw
+    forms would intersect to nothing and silence the gate everywhere.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, timeout=5, cwd=root or None,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, NotADirectoryError, OSError):
+        return ""
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def session_edited_files(transcript_path: str) -> "set[str] | None":
+    """Absolute paths THIS session edited, or None when that is unknowable.
+
+    Walks the transcript for Edit/Write/MultiEdit/NotebookEdit tool calls — the
+    same traversal core/hooks/top-edit-advisor.py does — so the advisory can be
+    scoped to what the session actually touched.
+
+    Why it exists: get_changed_files() reports the whole dirty work tree with no
+    session baseline, yet the advisory said "changed this session". Measured
+    2026-09-02: a file left dirty by a CONCURRENT session was reported to five
+    unrelated sessions as their own change, and none of them could clear it —
+    the only exit is a verification record, so the honest answer ("not mine")
+    had no effect.
+
+    Unlike top-edit-advisor, sidechain entries are KEPT: a subagent's edit is
+    still this session's work, and dropping it would under-report the diff.
+
+    None (not an empty set) when the transcript is missing or unreadable, so the
+    caller can tell "edited nothing" from "attribution unavailable" — those need
+    different wording and different fallbacks.
+    """
+    if not transcript_path or not os.path.exists(transcript_path):
+        return None
+    edited = set()
+    try:
+        with open(transcript_path, errors="replace") as fh:
+            for line in fh:
+                # Cheap rejects before the JSON parse: transcripts run to
+                # megabytes, this runs on every Stop, and the overwhelming
+                # majority of tool_use lines are Bash/Read/Grep calls whose
+                # bodies would be parsed for nothing. Both checks are substring
+                # tests on the raw line; a name match is confirmed structurally
+                # below, so a stray occurrence in prose costs one parse, not a
+                # false attribution.
+                if '"tool_use"' not in line:
+                    continue
+                if not any(f'"{name}"' in line for name in _EDIT_TOOLS):
+                    continue
+                try:
+                    entry = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(entry, dict):
+                    continue
+                message = entry.get("message")
+                if not isinstance(message, dict):
+                    continue
+                for block in message.get("content") or []:
+                    if (not isinstance(block, dict)
+                            or block.get("type") != "tool_use"
+                            or block.get("name") not in _EDIT_TOOLS):
+                        continue
+                    tool_input = block.get("input")
+                    if not isinstance(tool_input, dict):
+                        continue
+                    target = (tool_input.get("file_path")
+                              or tool_input.get("notebook_path"))
+                    if isinstance(target, str) and target:
+                        edited.add(_realpath(target))
+    except OSError:
+        return None
+    return edited
+
+
+def _fingerprint(changed: "list[str]") -> str:
+    """Stable id for a changed-file SET (order-independent)."""
+    return hashlib.sha256(
+        "\n".join(sorted(changed)).encode("utf-8", "replace")
+    ).hexdigest()[:16]
+
+
+def _iter_sink_records(root: str):
+    """Yield the sink's tail records as dicts. Never raises, never blocks.
+
+    The sink must be a REGULAR FILE, opened without blocking. `open(path,"rb")`
+    hangs forever on a FIFO and reads forever from a character device, and this
+    is reachable with no environment variable at all: a project shipping a FIFO
+    at .agent/logs/verify-observed.jsonl would hang the Stop hook, so the
+    session could not end (measured 2026-07-30). O_NONBLOCK fails/returns fast,
+    and fstat on the descriptor closes the stat-then-open race.
+
+    Both layer-3 predicates read through this one traversal so the hardening
+    above lives in a single place instead of being copied per predicate.
+    """
     path = verify_sink_path(root)
-    # The sink must be a REGULAR FILE, opened without blocking. `open(path,"rb")`
-    # hangs forever on a FIFO and reads forever from a character device, and this
-    # is reachable with no environment variable at all: a project shipping a FIFO
-    # at .agent/logs/verify-observed.jsonl would hang the Stop hook, so the
-    # session could not end (measured 2026-07-30). O_NONBLOCK fails/returns fast,
-    # and fstat on the descriptor closes the stat-then-open race.
     try:
         fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
     except OSError:
-        return False
+        return
     try:
         with os.fdopen(fd, "rb") as fh:
             if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
-                return False
+                return
             fh.seek(0, os.SEEK_END)
             size = fh.tell()
             offset = max(0, size - _SINK_TAIL_BYTES)
@@ -250,7 +378,7 @@ def session_ran_verification(root: str, session_id: str) -> bool:
                 chunk = fh.read(_SINK_TAIL_BYTES)
                 partial = False
     except (OSError, ValueError):
-        return False
+        return
     lines = chunk.decode("utf-8", "ignore").splitlines()
     if partial and lines:
         lines = lines[1:]          # first line is a truncated record
@@ -259,47 +387,125 @@ def session_ran_verification(root: str, session_id: str) -> bool:
         if not line:
             continue
         try:
-            rec = json.loads(line)
+            record = json.loads(line)
         except ValueError:
             continue
-        if not isinstance(rec, dict):
-            continue
-        if (rec.get("event") == "verification_invoked"
-                and rec.get("session_id") == session_id):
+        if isinstance(record, dict):
+            yield record
+
+
+def session_ran_verification(root: str, session_id: str) -> bool:
+    """True when this session invoked at least one verification command."""
+    if not session_id:
+        return False
+    for record in _iter_sink_records(root):
+        if (record.get("event") == "verification_invoked"
+                and record.get("session_id") == session_id):
             return True
     return False
 
 
-def unverified_note(root: str, session_id: str) -> tuple[str, int]:
-    """('' , 0) when there is nothing to say; otherwise (advisory text, n files).
+def already_advised(root: str, session_id: str, fingerprint: str,
+                    blocking: bool = False) -> bool:
+    """True when this session was already advised about this same file set.
+
+    Without this the advisory re-prints on EVERY Stop for as long as the
+    condition holds — and it holds for the rest of the session, because nothing
+    the agent can do from inside a turn clears it. The `stop_hook_active`
+    anti-loop does not cover layer 3 (it gates blocking and the completion suite
+    only), and the note is re-injected as model-visible context each time, so it
+    feeds the very turn that produces the next Stop. Measured 2026-09-02: 80
+    firings in 7m22s in one session, 79 in another, and the only thing that ever
+    ended it was a verification command finally landing in the sink.
+
+    Same shape as council-escalation-gate.py's same-diff-hash single-deny
+    (docs/gate-registry.md): say it once, then let the session proceed.
+
+    Keyed on the file SET, not the session alone — when new unverified code
+    appears the fingerprint changes and the gate speaks again.
+
+    `blocking` keeps "already mentioned" from collapsing into "may never act".
+    AGENT_VERIFY_OBSERVER_BLOCK is re-read every Stop, so a session can turn
+    enforcement on midway; without this, a file set that had already drawn an
+    advisory would stay suppressed and the newly requested block would never
+    fire — silence in the one case where the user explicitly asked to be
+    stopped. Under `blocking` only a prior BLOCK counts as already said.
+    """
+    if not session_id or not fingerprint:
+        return False
+    for record in _iter_sink_records(root):
+        if (record.get("event") == "unverified_session"
+                and record.get("session_id") == session_id
+                and record.get("fingerprint") == fingerprint
+                and (not blocking or record.get("decision") == "blocked")):
+            return True
+    return False
+
+
+def unverified_note(root: str, session_id: str, transcript_path: str = "",
+                    blocking: bool = False) -> "tuple[str, int, str]":
+    """('', 0, '') when there is nothing to say; else (text, n files, fingerprint).
 
     Deliberately makes no claim about whether anything PASSED — see layer 3 in
     the module docstring.
     """
     changed = [f for f in get_changed_files(root) if f.endswith(CODE_EXTS)]
     if not changed:
-        return "", 0
+        return "", 0, ""
+
+    # Scope to what this session actually edited. A dirty file it never touched
+    # belongs to someone else — an earlier session, a concurrent one, a restored
+    # stash — and telling this session to verify that file is both false and
+    # inescapable: the only exit the gate honours is a verification record, so
+    # correctly answering "not mine" changes nothing and the note repeats.
+    edited = session_edited_files(transcript_path)
+    scoped = edited is not None
+    if scoped:
+        top = _git_toplevel(root) or root
+        changed = [f for f in changed if _realpath(os.path.join(top, f)) in edited]
+        if not changed:
+            return "", 0, ""
+
     if session_ran_verification(root, session_id):
-        return "", 0
+        return "", 0, ""
+
+    fingerprint = _fingerprint(changed)
+    if already_advised(root, session_id, fingerprint, blocking):
+        return "", 0, ""
+
     shown = ", ".join(os.path.basename(f) for f in changed[:5])
     if len(changed) > 5:
         shown += f", +{len(changed) - 5} more"
+    # Say only what the data supports: without a transcript there is no session
+    # attribution, so the note must not claim one.
+    scope = ("changed this session" if scoped else
+             "uncommitted in the work tree (session attribution unavailable)")
     return (
-        f"[verify-observer] {len(changed)} code file(s) changed this session and "
+        f"[verify-observer] {len(changed)} code file(s) {scope} and "
         f"no verification command was observed ({shown}).\n"
         "WHY: nothing in this session ran the project's tests, type check, lint, "
         "or build, so no evidence exists that the changes behave as intended. "
         "This gate observes invocations only — it makes no claim about whether "
         "anything passed.\n"
+        # The old text offered "or state explicitly why none applies", which
+        # nothing consumed — no stated reason could clear the condition, so that
+        # branch was an instruction to do something with no effect.
         "FIX: run the narrowest relevant check (a focused test, a type check, or "
-        "this repo's own battery), or state explicitly why none applies."
-    ), len(changed)
+        "this repo's own battery). If none applies, just proceed — this note is "
+        "not repeated for the same file set."
+    ), len(changed), fingerprint
 
 
-def record_verify_firing(root: str, session_id: str, n_files: int, decision: str) -> None:
+def record_verify_firing(root: str, session_id: str, n_files: int, decision: str,
+                         fingerprint: str = "") -> None:
     """Log the layer-3 firing so `telemetry-digest --gates` can measure it.
     `hook` is this gate (not the observer) so the digest counts firings, not the
-    observer's invocation records, which share the sink."""
+    observer's invocation records, which share the sink.
+
+    `fingerprint` doubles as the once-per-file-set key already_advised() reads
+    back, so this write is what stops the note repeating. An unwritable sink
+    therefore degrades to the old repeat behaviour rather than silently
+    suppressing the gate — the safe direction of the two."""
     record = {
         "ts": datetime.now(timezone.utc).isoformat(),
         "guard": VERIFY_GUARD,
@@ -309,6 +515,7 @@ def record_verify_firing(root: str, session_id: str, n_files: int, decision: str
         "event": "unverified_session",
         "decision": decision,
         "changed_code_files": n_files,
+        "fingerprint": fingerprint,
     }
     if os.environ.get("AGENT_REPRODUCE_TEST") == "1":
         record["reproduce_test"] = True
@@ -394,6 +601,9 @@ def main() -> None:
     log_dir = os.path.join(root, ".agent/logs")
 
     session_id = str(stdin_data.get("session_id") or "") if isinstance(stdin_data, dict) else ""
+    # Layer 3 scopes its diff to this session's own edits, read off the
+    # transcript the Stop payload points at.
+    transcript_path = str(stdin_data.get("transcript_path") or "") if isinstance(stdin_data, dict) else ""
 
     block_enabled = os.environ.get("AGENT_QUALITY_GATE_BLOCK", "1") == "1"
     style_block = os.environ.get("AGENT_QUALITY_STYLE_BLOCK", "0") == "1"
@@ -408,7 +618,8 @@ def main() -> None:
 
     # Layer 3. Computed on every Stop (it is an observation, not an enforcement),
     # but never consulted for blocking unless AGENT_VERIFY_OBSERVER_BLOCK=1.
-    verify_text, verify_files_n = unverified_note(root, session_id)
+    verify_text, verify_files_n, verify_fp = unverified_note(
+        root, session_id, transcript_path, verify_block and enforcing)
 
     files = get_changed_files()
     src_files = [
@@ -435,7 +646,8 @@ def main() -> None:
                   file=sys.stderr)
         if verify_text and not (enforcing and verify_block):
             print(verify_text, file=sys.stderr)
-            record_verify_firing(root, session_id, verify_files_n, "advisory")
+            record_verify_firing(root, session_id, verify_files_n, "advisory",
+                                 verify_fp)
             # Two channels on purpose: `systemMessage` is the field this runtime
             # is known to surface for Stop, and `additionalContext` is what the
             # agent reads when supported. Emitting only the latter risks a
@@ -507,6 +719,7 @@ def main() -> None:
         record_verify_firing(
             root, session_id, verify_files_n,
             "blocked" if (enforcing and verify_block and should_block) else "advisory",
+            verify_fp,
         )
     if enforcing and should_block:
         # Teaching format (T-1): WHY + FIX so the agent can self-correct. The

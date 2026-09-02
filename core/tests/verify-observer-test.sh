@@ -64,14 +64,39 @@ print(json.dumps({
 }))'
 }
 
-stop_event() {  # stop_event <root> <active> [session_id]
-  ROOT="$1" ACTIVE="$2" SID="${3:-sess-A}" python3 -c '
+stop_event() {  # stop_event <root> <active> [session_id] [transcript_path]
+  # transcript_path is what layer 3 scopes the diff with; omitted here means the
+  # "attribution unavailable" fallback, which is what most sections exercise.
+  ROOT="$1" ACTIVE="$2" SID="${3:-sess-A}" TRANSCRIPT="${4:-}" python3 -c '
 import os, json
-print(json.dumps({
+event = {
     "ai": "claude-code", "event": "Stop", "hook_event_name": "Stop",
     "session_id": os.environ["SID"], "cwd": os.environ["ROOT"],
     "stop_hook_active": os.environ["ACTIVE"] == "true",
-}))'
+}
+if os.environ.get("TRANSCRIPT"):
+    event["transcript_path"] = os.environ["TRANSCRIPT"]
+print(json.dumps(event))'
+}
+
+mktranscript() {  # mktranscript <name> <abs-file-path>... -> transcript path
+  # Minimal transcript carrying Edit tool_use blocks, the shape
+  # session_edited_files() reads.
+  local name="$1"; shift
+  local t="$TMP_ROOT/transcript-$name.jsonl"
+  : > "$t"
+  local f
+  for f in "$@"; do
+    T="$t" F="$f" python3 -c '
+import os, json
+open(os.environ["T"], "a", encoding="utf-8").write(json.dumps({
+    "type": "assistant",
+    "message": {"role": "assistant", "content": [
+        {"type": "tool_use", "name": "Edit",
+         "input": {"file_path": os.environ["F"]}}]},
+}) + "\n")'
+  done
+  echo "$t"
 }
 
 # observe <command> <sink> [tool] [session] -> echoes observer stdout
@@ -306,6 +331,12 @@ run_stop() {  # run_stop <root> <active> <sink> [session] [env...] -> stdout in 
       python3 "$GATE" 2>/dev/null)
   STOPRC=$?
 }
+run_stop_t() {  # run_stop_t <root> <active> <sink> <session> <transcript>
+  STOPOUT=$(printf '%s' "$(stop_event "$1" "$2" "$4" "$5")" \
+    | env AGENT_VERIFY_OBSERVED_SINK="$3" AGENT_REPRODUCE_TEST=1 \
+      python3 "$GATE" 2>/dev/null)
+  STOPRC=$?
+}
 has_advisory() { [[ "$STOPOUT" == *"verify-observer"* ]]; }
 is_block()     { [[ "$STOPOUT" == *'"decision": "block"'* || "$STOPOUT" == *'"decision":"block"'* ]]; }
 
@@ -441,6 +472,177 @@ else
     ok "mutation/session-check-detected" "forcing 'already verified' removes the advisory"
   else
     bad "mutation/session-check-detected" "advisory survived the mutation"
+  fi
+fi
+
+echo
+echo
+echo "=== F2. session scoping + once-per-file-set (loop regression, 2026-09-02) ==="
+# Regression for the measured failure: layer 3 read the WHOLE dirty work tree
+# and re-fired every Stop, so a file left dirty by a concurrent session was
+# reported to five unrelated sessions, 80 times in 7m22s in the worst case, with
+# no exit except running a verification command on someone else's work.
+
+P=$(mkproj scope-other py); SINK="$TMP_ROOT/scope-other.jsonl"
+TR=$(mktranscript other "$P/never-touched.py")
+run_stop_t "$P" false "$SINK" sess-A "$TR"
+if ! has_advisory; then
+  ok "scope/foreign-dirty-file-ignored" "another session's file is not attributed here"
+else
+  bad "scope/foreign-dirty-file-ignored" "out=$STOPOUT"
+fi
+
+P=$(mkproj scope-mine py); SINK="$TMP_ROOT/scope-mine.jsonl"
+TR=$(mktranscript mine "$P/changed.py")
+run_stop_t "$P" false "$SINK" sess-A "$TR"
+if has_advisory && [[ "$STOPOUT" == *"changed this session"* ]]; then
+  ok "scope/own-edit-advises" "still fires for what this session did touch"
+else
+  bad "scope/own-edit-advises" "out=$STOPOUT"
+fi
+
+run_stop_t "$P" false "$SINK" sess-A "$TR"
+if ! has_advisory; then
+  ok "once/second-stop-silent" "same file set is not repeated"
+else
+  bad "once/second-stop-silent" "out=$STOPOUT"
+fi
+
+printf 'y = 2\n' > "$P/added.py"
+TR2=$(mktranscript mine2 "$P/changed.py" "$P/added.py")
+run_stop_t "$P" false "$SINK" sess-A "$TR2"
+if has_advisory; then
+  ok "once/new-file-reopens" "a larger file set is a new fingerprint"
+else
+  bad "once/new-file-reopens" "out=$STOPOUT"
+fi
+
+P=$(mkproj scope-verified py); SINK="$TMP_ROOT/scope-verified.jsonl"
+TR=$(mktranscript verified "$P/changed.py")
+observe "pytest -q" "$SINK" Bash sess-A >/dev/null
+run_stop_t "$P" false "$SINK" sess-A "$TR"
+if ! has_advisory; then
+  ok "scope/verification-still-silences" "pre-existing exit preserved"
+else
+  bad "scope/verification-still-silences" "out=$STOPOUT"
+fi
+
+P=$(mkproj scope-fallback py); SINK="$TMP_ROOT/scope-fallback.jsonl"
+run_stop "$P" false "$SINK" sess-A
+if has_advisory && [[ "$STOPOUT" == *"attribution unavailable"* ]]; then
+  ok "fallback/no-unsupported-attribution-claim" "wording matches the evidence"
+else
+  bad "fallback/no-unsupported-attribution-claim" "out=$STOPOUT"
+fi
+run_stop "$P" false "$SINK" sess-A
+if ! has_advisory; then
+  ok "fallback/second-stop-still-capped" "loop impossible even with no transcript"
+else
+  bad "fallback/second-stop-still-capped" "out=$STOPOUT"
+fi
+
+M2=$(mutate always-fresh 'if already_advised(root, session_id, fingerprint, blocking):' 'if False:' "$GATE")
+if [[ -z "$M2" ]]; then
+  bad "mutation/anchor-already-advised" "anchor missing — probe is inert"
+else
+  ok "mutation/anchor-already-advised"
+  P=$(mkproj mut2 py); SINK="$TMP_ROOT/mut2.jsonl"
+  printf '%s' "$(stop_event "$P" false sess-A)" \
+    | AGENT_VERIFY_OBSERVED_SINK="$SINK" python3 "$M2" >/dev/null 2>&1
+  STOPOUT=$(printf '%s' "$(stop_event "$P" false sess-A)" \
+    | AGENT_VERIFY_OBSERVED_SINK="$SINK" python3 "$M2" 2>/dev/null)
+  if has_advisory; then
+    ok "mutation/once-suppression-detected" "removing it brings the repeat back"
+  else
+    bad "mutation/once-suppression-detected" "advisory did not repeat"
+  fi
+fi
+
+M3=$(mutate unscoped 'edited = session_edited_files(transcript_path)' 'edited = None' "$GATE")
+if [[ -z "$M3" ]]; then
+  bad "mutation/anchor-session-scope" "anchor missing — probe is inert"
+else
+  ok "mutation/anchor-session-scope"
+  P=$(mkproj mut3 py); SINK="$TMP_ROOT/mut3.jsonl"
+  TR=$(mktranscript mut3 "$P/never-touched.py")
+  STOPOUT=$(printf '%s' "$(stop_event "$P" false sess-A "$TR")" \
+    | AGENT_VERIFY_OBSERVED_SINK="$SINK" python3 "$M3" 2>/dev/null)
+  if has_advisory; then
+    ok "mutation/session-scope-detected" "dropping the scope re-attributes foreign files"
+  else
+    bad "mutation/session-scope-detected" "scope filter is not load-bearing"
+  fi
+fi
+
+# Turning enforcement ON mid-session must still be able to act on a file set
+# that already drew an advisory: "already mentioned" is not "may never block".
+P=$(mkproj escalate py); SINK="$TMP_ROOT/escalate.jsonl"
+TR=$(mktranscript escalate "$P/changed.py")
+run_stop_t "$P" false "$SINK" sess-A "$TR"
+if has_advisory; then
+  ok "escalate/advisory-first" "advisory recorded for the file set"
+else
+  bad "escalate/advisory-first" "out=$STOPOUT"
+fi
+STOPOUT=$(printf '%s' "$(stop_event "$P" false sess-A "$TR")" \
+  | env AGENT_VERIFY_OBSERVED_SINK="$SINK" AGENT_REPRODUCE_TEST=1 \
+    AGENT_VERIFY_OBSERVER_BLOCK=1 python3 "$GATE" 2>/dev/null)
+if is_block; then
+  ok "escalate/block-not-suppressed-by-prior-advisory"
+else
+  bad "escalate/block-not-suppressed-by-prior-advisory" "out=$STOPOUT"
+fi
+STOPOUT=$(printf '%s' "$(stop_event "$P" false sess-A "$TR")" \
+  | env AGENT_VERIFY_OBSERVED_SINK="$SINK" AGENT_REPRODUCE_TEST=1 \
+    AGENT_VERIFY_OBSERVER_BLOCK=1 python3 "$GATE" 2>/dev/null)
+if ! is_block; then
+  ok "escalate/second-block-suppressed" "once per file set holds in block mode too"
+else
+  bad "escalate/second-block-suppressed" "out=$STOPOUT"
+fi
+
+# cwd is a SUBDIRECTORY of the work tree: git reports repo-root-relative paths,
+# so the intersection has to be rebased on the toplevel, not on cwd. Every other
+# fixture is a flat repo where the two coincide, so this path was untested.
+P=$(mkproj scope-subdir py); SINK="$TMP_ROOT/scope-subdir.jsonl"
+mkdir -p "$P/apps/web"
+printf 'z = 3\n' > "$P/apps/web/nested.py"
+TR=$(mktranscript subdir "$P/apps/web/nested.py")
+run_stop_t "$P/apps/web" false "$SINK" sess-A "$TR"
+if has_advisory && [[ "$STOPOUT" == *"nested.py"* ]]; then
+  ok "scope/subdirectory-cwd" "git paths rebased on the work-tree root"
+else
+  bad "scope/subdirectory-cwd" "out=$STOPOUT"
+fi
+
+# core.quotePath (git's default) C-quotes non-ASCII names; a quoted path matches
+# nothing on the transcript side and the whole set drops out silently.
+P=$(mkproj scope-utf8 py); SINK="$TMP_ROOT/scope-utf8.jsonl"
+rm -f "$P/changed.py"
+printf 'k = 1\n' > "$P/한글파일.py"
+TR=$(mktranscript utf8 "$P/한글파일.py")
+run_stop_t "$P" false "$SINK" sess-A "$TR"
+if has_advisory; then
+  ok "scope/non-ascii-path" "non-ASCII filename survives the intersection"
+else
+  bad "scope/non-ascii-path" "quoted path dropped the file set — out=$STOPOUT"
+fi
+
+M4=$(mutate cwd-as-top 'top = _git_toplevel(root) or root' 'top = root' "$GATE")
+if [[ -z "$M4" ]]; then
+  bad "mutation/anchor-toplevel-rebase" "anchor missing — probe is inert"
+else
+  ok "mutation/anchor-toplevel-rebase"
+  P=$(mkproj mut4 py); SINK="$TMP_ROOT/mut4.jsonl"
+  mkdir -p "$P/apps/web"
+  printf 'z = 3\n' > "$P/apps/web/nested.py"
+  TR=$(mktranscript mut4 "$P/apps/web/nested.py")
+  STOPOUT=$(printf '%s' "$(stop_event "$P/apps/web" false sess-A "$TR")" \
+    | AGENT_VERIFY_OBSERVED_SINK="$SINK" python3 "$M4" 2>/dev/null)
+  if ! has_advisory; then
+    ok "mutation/toplevel-rebase-detected" "using cwd as the base loses the file set"
+  else
+    bad "mutation/toplevel-rebase-detected" "rebase is not load-bearing"
   fi
 fi
 
