@@ -28,6 +28,7 @@ diff, the surrounding context, and produce a structured findings list.
    - Is it safe? (input validation, auth, secrets, race conditions)
    - Is it idiomatic for this codebase? (read 2–3 neighbouring files)
    - Is it tested? (corresponding `*.test.*` updated)
+   - Is it minimal? (over-engineering lens — see below)
 3. **Categorise findings** by severity:
    - **Blocker** — must fix before merge (broken logic, security hole,
      missing rollback)
@@ -35,6 +36,26 @@ diff, the surrounding context, and produce a structured findings list.
      critical branch)
    - **Minor** — nice to fix (naming, dead code, style drift)
    - **Note** — informational (alternative approach, future cleanup)
+
+## Over-engineering lens
+
+Flag code whose best fix is deletion or replacement with something that
+already exists:
+
+- Unrequested abstractions, config knobs, or "flexibility" (single caller
+  behind an interface, speculative generality).
+- A new dependency where stdlib or an existing in-repo util covers it.
+- Reimplementation of a function that already exists in the codebase —
+  name the existing one in the finding.
+- A diff that could be materially shorter with identical behavior.
+
+Severity mapping: duplicate-of-existing / avoidable new dependency →
+**Major**; speculative knobs, verbose-but-working code → **Minor**.
+Never a Blocker on minimality alone.
+
+**Not over-engineering** (never flag as such): input validation at trust
+boundaries, error handling that prevents data loss, security measures,
+accessibility, explicitly requested features.
 
 ## Output
 
