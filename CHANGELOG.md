@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`top-edit-advisor.py` hook (PostToolUse Write/Edit/MultiEdit).**
+  Accumulation-time counterpart to `model-routing-advisor.py`/
+  `model-routing-observer.py`, which only see Task/Agent dispatches and so
+  cannot see the leak where the TOP model implements directly and never
+  dispatches at all — a 2026-09-02 audit measured 511 such direct edits
+  across 26 sessions, with a single warning proven insufficient. Repeats a
+  `systemMessage` advisory every +15 measured main-loop edits (env
+  `AGENT_TOP_EDIT_THRESHOLD`) instead of warning once and going silent;
+  never caches a not-TOP verdict since the session model can switch
+  mid-session. Advisory only — never blocks. Tests:
+  `core/tests/top-edit-advisor-test.sh`.
+- **Codex `quick`/`deep` tier profile installation in `setup.sh --codex`.**
+  `install_codex()` now installs the existing `adapters/codex/{quick,deep}.config.toml.template`
+  beside `~/.codex/config.toml`, so the tier ladder documented in
+  `docs/model-routing.md` (`codex --profile quick|deep`) is wired up by
+  setup instead of requiring a manual copy; doctor check 13's remediation
+  now also points at `setup.sh --codex`.
+- **Review-tier ladder (`core/infra/review-tier.sh`) + `/wrap` step 1d
+  integration.** Review dispatches are the second-largest routing cost
+  after implementation, so cadence — not just model tier — is now a lever:
+  every diff gets tier 0 (docs-only or ≤`AGENT_REVIEW_SKIP_LINES` non-risk
+  code lines — skip, self-check only), tier 1 (the common case — one
+  `code-reviewer` pass at wrap/commit time), or tier 2 (council-scale —
+  `/council-review`), delegating the tier-2 judgment to the existing
+  `council-threshold.sh` SSOT instead of re-mirroring its risk-area
+  patterns. `agents/code-reviewer.md` and `docs/model-routing.md` updated
+  to the hybrid timing this implies (wrap-time default, immediate only on
+  risk-area paths). Tests: `core/tests/review-tier-test.sh`.
+- **`council-escalation-gate.py` same-diff-hash escape visibility
+  upgrade.** The loop-safety escape (a council-scale diff already denied
+  once is let through on retry) used to be stderr-only; it now also emits
+  a PreToolUse `additionalContext` advisory (`model-routing-advisor.py`'s
+  emission pattern) so the model/user see that the dispatch skipped
+  review, not just a log line nobody reads. Allow behavior, TTL, and hash
+  binding unchanged.
+
 ## [0.5.9] - 2026-08-25
 
 ### Added

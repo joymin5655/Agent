@@ -83,6 +83,19 @@ PreToolUse advisory on the same Task/Agent dispatches, one line of
 `additionalContext` when a call is about to leak (see "What this policy
 deliberately does not do" for why this stays advisory, not enforcement).
 
+These two hooks only fire when a dispatch is *attempted* — they are blind to
+the leak where the TOP model does the implementation directly and no
+Task/Agent call happens at all. A 2026-09-02 transcript audit measured that
+leak: 511 direct main-loop Edit/Write calls across 26 sessions (17 sessions
+with 10+ edits, one at 65), with earlier single-fire advisories proven
+insufficient — ignored well past their first warning. `core/hooks/top-edit-advisor.py`
+adds a third, accumulation-time layer: a PostToolUse advisory on the TOP
+model's own Write/Edit/MultiEdit calls that repeats every +15 measured edits
+(env `AGENT_TOP_EDIT_THRESHOLD`) instead of warning once and going silent,
+and never caches a not-TOP verdict, since the session model can switch
+mid-session. Same boundary as the other two: advisory only, never blocks,
+never switches a model.
+
 ## Intelligence placement — the advisor pattern
 
 Three placements of TOP-tier intelligence exist, chosen by task shape
@@ -163,6 +176,7 @@ no-runtime-switching decision below.
 | Claude Code — specialist pins | `model:` frontmatter, **enforced**: CI `validate-plugin` drift guard reconciles registry ↔ frontmatter | `agents/*.md`, `agents/master-registry.json` |
 | Claude Code — judgment unpinned / per-call MID (execution dispatch) & LOW overrides; coordination-cost check and worker-reuse (cache) | Convention, documented not CI-checked (frontmatter *absence*, call-time overrides, and call-time reuse-vs-spawn choices are not statically verifiable) | `skills/supervise/SKILL.md` Model policy |
 | Claude Code — decision-time reminder | `model-routing-advisor.py` (PreToolUse Task/Agent), advisory: one-line `additionalContext` nudge, never blocks, decision stays with the dispatcher | `core/hooks/model-routing-advisor.py`, `docs/gate-registry.md` GATE model-routing-advisor |
+| Claude Code — accumulation-time reminder | `top-edit-advisor.py` (PostToolUse Write/Edit/MultiEdit), advisory: `systemMessage` every +15 measured main-loop edits, never blocks | `core/hooks/top-edit-advisor.py`, `docs/gate-registry.md` GATE top-edit-advisor |
 | Codex CLI | Named profiles (per-profile config files on recent CLI builds): default = workhorse, `quick` = LOW, `deep` = TOP; `model_reasoning_effort` is the effort dial | `adapters/codex/codex-config.toml.template` + `quick.config.toml.template` / `deep.config.toml.template` |
 | Gemini CLI | `settings.json` default model = workhorse; callers escalate with explicit `-m` | `adapters/gemini/gemini-settings.json.template` |
 | Claude Code — purpose launchers | Session-start human choice of tier/gateway (`claude-build`/`claude-quick`/`claude-research`/`claude-ox`); a launcher presets the model before the session exists — the allowed side of the no-runtime-switching line | `adapters/claude-code/launchers/`, `docs/launchers.md` |
@@ -253,6 +267,18 @@ shared blind spot doesn't survive review.
   the gate enforces routing, it does not pre-approve spend. Small/routine
   diffs are unaffected (silent allow); a diff below threshold never touches
   this gate.
+- **Review cadence (2026-09-02).** Review dispatches are the second-largest
+  routing cost after implementation, so cadence is a lever alongside model
+  tier. `core/infra/review-tier.sh` (`skills/wrap/SKILL.md` step 1d's SSOT;
+  it delegates the tier-2 judgment to `council-threshold.sh` rather than
+  re-mirroring its risk-area patterns) assigns every diff exactly one tier:
+  **tier 0** — docs-only or ≤`AGENT_REVIEW_SKIP_LINES` (default 50) non-risk
+  code lines — skip, self-check only, no reviewer dispatch; **tier 1** — the
+  common case — one `code-reviewer` pass at wrap/commit time; **tier 2** —
+  council-scale (line/file threshold or a risk-area path) — `/council-review`.
+  Risk-area paths (auth/secret/billing/migration) still get immediate review
+  regardless of tier — `security-reviewer`'s dispatch timing is unchanged by
+  this policy.
 - **Lane cost models (2026-08-20).** Onboarding is `/worker-setup`; this is
   its SSOT for what each lane actually costs. **grok** — the user's xAI
   account, operated on the free tier by design; a rate-limit hit fails open
@@ -301,7 +327,9 @@ shared blind spot doesn't survive review.
   `model-routing-advisor.py` also stays on this side: it is a *deterministic*
   PreToolUse reminder (fixed classification, fixed message, no model logic),
   it never sets `permissionDecision`, and it never touches `model` — the
-  dispatcher reads the nudge and still makes the call. The boundary is
+  dispatcher reads the nudge and still makes the call. `top-edit-advisor.py`
+  is the same shape one layer later: a deterministic PostToolUse reminder
+  keyed on a measured edit count, never a decision. The boundary is
   narrower than "no automated behavior at decision time"; it is "no automated
   *decision*" — a reminder is inside that line, a classifier or a switch is not.
 - **No automatic tier escalation.** Promotion is a caller decision, made

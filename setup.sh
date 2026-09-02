@@ -176,6 +176,15 @@ install_codex() {
              "$FRAMEWORK_ROOT/adapters/codex/adapter.py" \
              "$FRAMEWORK_ROOT/adapters/codex/codex-shell-wrap.sh"
 
+    # Tier ladder profiles (docs/model-routing.md): quick=LOW, deep=TOP,
+    # installed beside the main config so `codex --profile quick|deep` works.
+    local codex_dir; codex_dir="$(dirname "$target")"
+    local prof
+    for prof in quick deep; do
+        apply_template "$FRAMEWORK_ROOT/adapters/codex/$prof.config.toml.template" \
+                       "$codex_dir/$prof.config.toml"
+    done
+
     # Global AGENTS.md (read by codex for EVERY session, any repo — distinct
     # from the project-scoped adapters/codex/AGENTS.md.template installed by
     # install_project()). Portable rules only, no repo-specific paths.
@@ -792,7 +801,7 @@ PY
         if [[ -z "$missing_profiles" ]]; then
             add_row PASS "codex tier profiles — quick/deep profiles present beside ${codex_cfg/#$HOME/~}"
         else
-            add_row WARN "codex tier profiles — missing $missing_profiles beside ${codex_cfg/#$HOME/~}; copy adapters/codex/{quick,deep}.config.toml.template (tier ladder: docs/model-routing.md)"
+            add_row WARN "codex tier profiles — missing $missing_profiles beside ${codex_cfg/#$HOME/~}; copy adapters/codex/{quick,deep}.config.toml.template or re-run setup.sh --codex (tier ladder: docs/model-routing.md)"
         fi
     fi
 
