@@ -195,11 +195,24 @@ run "$(evt Task code-reviewer)"
 first_deny_ok=0
 [[ "$RC" -eq 0 && "$OUT" == *"deny"* ]] && first_deny_ok=1
 run "$(evt Task code-reviewer)"
-if [[ "$first_deny_ok" -eq 1 && "$RC" -eq 0 && -z "$OUT" ]] \
+# 2026-09-02 visibility upgrade: the escape no longer allows with EMPTY
+# stdout — it now also emits a PreToolUse additionalContext advisory
+# (model-routing-advisor.py's emission pattern), so OUT is non-empty here.
+if [[ "$first_deny_ok" -eq 1 && "$RC" -eq 0 && "$OUT" == *"additionalContext"* ]] \
    && grep -q "loop-safety escape" "$WORK/stderr.log"; then
-  ok "d1-second-attempt-same-diff-allowed-with-warning"
+  ok "d1-second-attempt-same-diff-allowed-with-advisory"
 else
-  bad "d1-second-attempt-same-diff-allowed-with-warning" "rc=$RC out='$OUT' stderr=$(cat "$WORK/stderr.log" 2>/dev/null)"
+  bad "d1-second-attempt-same-diff-allowed-with-advisory" "rc=$RC out='$OUT' stderr=$(cat "$WORK/stderr.log" 2>/dev/null)"
+fi
+if [[ "$OUT" != *"permissionDecision"* ]]; then
+  ok "d1b-escape-advisory-never-sets-permission-decision"
+else
+  bad "d1b-escape-advisory-never-sets-permission-decision" "$OUT"
+fi
+if [[ "$OUT" == *"council-review"* ]]; then
+  ok "d1c-escape-advisory-recommends-council-review"
+else
+  bad "d1c-escape-advisory-recommends-council-review" "$OUT"
 fi
 
 echo "=== a genuinely different diff after a deny is denied again (hash changed) ==="

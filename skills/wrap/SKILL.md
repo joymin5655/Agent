@@ -67,23 +67,35 @@ c. **Risk-area scan** — for each of the 5 risk areas
    - `deploy` (function bundles) → ABORT, user must drive.
    - `payment` → ABORT, user must drive.
    - `domain-output` → advisory; if net removal, ABORT.
-d. **Council-scale pre-merge check** — run the threshold script, resolved
-   from the plugin cache or the checkout (never bare cwd-relative — a plugin
-   install has no `core/` under `$PWD`):
+d. **Review-tier check** — run the review-cadence script, resolved from the
+   plugin cache or the checkout (never bare cwd-relative — a plugin install
+   has no `core/` under `$PWD`):
    ```bash
-   bash "${CLAUDE_PLUGIN_ROOT:-$PWD}/core/infra/council-threshold.sh" --staged
+   bash "${CLAUDE_PLUGIN_ROOT:-$PWD}/core/infra/review-tier.sh" --staged
    ```
    A missing script is not a pass: report the check as SKIPPED (step 1's
    "a skipped gate is reported as skipped" rule) rather than reading its
-   nonzero exit as "not council-scale". Exit 10 (line/file threshold or
-   a risk-area path) AND no council/degrade review happened this session for
-   this diff (no `.agent/workers/*-review.md` capture, no single-vendor
-   degrade note) → recommend `/council-review --staged` and confirm with the
-   user before committing solo. This is advisory, not a gate abort — the user
-   can proceed anyway; it exists so a council-scale diff doesn't slip into a
-   commit on the strength of a Claude-only review that
-   `council-escalation-gate.py` never got a chance to catch (e.g. edits made
-   without a Task/Agent dispatch).
+   nonzero exit as "tier 0". `review-tier.sh` delegates the council-scale
+   judgment to `council-threshold.sh` internally, so this single call
+   replaces what used to be a direct `council-threshold.sh` invocation here.
+   - **tier 2** (exit 10, council-scale — line/file threshold or a risk-area
+     path) AND no council/degrade review happened this session for this diff
+     (no `.agent/workers/*-review.md` capture, no single-vendor degrade
+     note) → recommend `/council-review --staged` and confirm with the user
+     before committing solo. This is advisory, not a gate abort — the user
+     can proceed anyway; it exists so a council-scale diff doesn't slip into
+     a commit on the strength of a Claude-only review that
+     `council-escalation-gate.py` never got a chance to catch (e.g. edits
+     made without a Task/Agent dispatch).
+   - **tier 1** (exit 5, the common case) → if no review artifact exists for
+     this diff (the same `.agent/workers/*-review.md` / degrade-note check
+     above), add a non-blocking advisory line recommending one
+     `code-reviewer` pass before committing. Advisory, not a gate abort —
+     same convention as the tier-2 line: the user can proceed anyway.
+   - **tier 0** (exit 0, skip — docs-only or ≤`AGENT_REVIEW_SKIP_LINES`
+     non-risk code lines) → proceed, printing one line noting the tier-0
+     skip so it stays visible rather than silent, e.g. `review-tier: tier 0
+     — skip (self-check only)`.
 
 ### 2. Commit
 

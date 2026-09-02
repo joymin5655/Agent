@@ -31,6 +31,8 @@ The native plugin migration is specified in
 | `adapter.py`               | Translator: Codex envelope → canonical event JSON. |
 | `codex-shell-wrap.sh`      | Drop-in replacement for Codex's `bash` tool. |
 | `codex-config.toml.template` | `~/.codex/config.toml` template. |
+| `quick.config.toml.template` | LOW-tier profile, installed beside `config.toml` as `quick.config.toml`. |
+| `deep.config.toml.template` | TOP-tier profile, installed beside `config.toml` as `deep.config.toml`. |
 | `AGENTS.md.template`       | Project-level instructions Codex reads. |
 
 ## Install
@@ -53,6 +55,9 @@ cp ~/Agent/adapters/codex/AGENTS.md.template /your/repo/AGENTS.md
 ```
 
 Or run `setup.sh --codex` from the repo root, which automates the above.
+It also installs the `quick`/`deep` tier profiles (`docs/model-routing.md`)
+beside `~/.codex/config.toml` — invoke them with `codex --profile quick` or
+`codex --profile deep`.
 
 ### Codex CLI itself
 

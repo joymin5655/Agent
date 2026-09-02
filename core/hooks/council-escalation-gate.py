@@ -43,6 +43,12 @@ concurrent projects don't collide. Two escape hatches live there:
      cost prompt) is not stuck in a permanent deny loop on the same diff.
      Ledger entries carry a timestamp and expire — an un-timestamped entry
      would otherwise be a forever-valid bypass token for that diff hash.
+     2026-09-02 visibility upgrade: alongside the stderr line, this escape
+     now also emits a PreToolUse `hookSpecificOutput.additionalContext`
+     advisory (model-routing-advisor.py's emission pattern) so the model and
+     user actually see that this dispatch skipped review, not just a log
+     line nobody reads — allow behavior, TTL, and hash binding are all
+     unchanged.
 
 CLI (`--council-flag set|clear`): the only supported way to touch the flag —
 the skill never writes the flag file directly, since "set" must write the
@@ -100,6 +106,18 @@ DENY_REASON = (
     "re-issue this exact dispatch once more (the same-diff single-deny "
     "escape lets an identical retry through, once, with a warning) if "
     "council-review genuinely cannot run right now."
+)
+
+# Escape-2 visibility upgrade (2026-09-02): the same-diff-hash single-deny
+# escape used to be stderr-only, which nobody reliably reads. This advisory
+# makes the same fact visible via additionalContext (model-routing-advisor.py's
+# emission pattern) — it does not change the allow decision below, only its
+# visibility.
+ESCAPE_ADVISORY = (
+    "council-escalation: this code-reviewer dispatch was let through WITHOUT "
+    "a council review, via the one-time same-diff-hash escape (this exact "
+    "diff was already denied once). Recommend running `/council-review "
+    "--staged` before treating this diff as reviewed."
 )
 
 
@@ -308,6 +326,16 @@ def emit_deny():
     sys.stdout.write(json.dumps(out))
 
 
+def emit_escape_advisory():
+    out = {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "additionalContext": ESCAPE_ADVISORY,
+        }
+    }
+    sys.stdout.write(json.dumps(out))
+
+
 def council_flag_cli(args):
     """`--council-flag set|clear` — the only supported way to touch the
     council-active flag (the skill never writes it directly): "set" must
@@ -397,6 +425,7 @@ def main():
             file=sys.stderr,
         )
         log_event(root, "allow", "same-diff-hash escape (already denied once)")
+        emit_escape_advisory()
         return
 
     record_denied(root, h)
