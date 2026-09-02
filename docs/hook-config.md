@@ -116,6 +116,22 @@ verification was invoked in that session, emits an advisory.
 
 Behavior:
 
+- **Scoped to this session's own edits.** The diff is intersected with the files
+  the session actually edited, read off `transcript_path` (Edit/Write/MultiEdit/
+  NotebookEdit tool calls, sidechain included). Before this, the gate read the
+  whole dirty work tree and called it "changed this session": on 2026-09-02 a
+  file left uncommitted by a *concurrent* session was reported to five unrelated
+  sessions as their own change. With no transcript the note falls back to the
+  work-tree list and says so, rather than claiming an attribution it cannot
+  support.
+- **Emitted once per file set.** `stop_hook_active` gates blocking only, so
+  layer 3 — advisory, computed every Stop — used to re-fire on every Stop for
+  the rest of the session, and since it is re-injected as model-visible context
+  it fed the turn that produced the next Stop (measured: 80 firings in 7m22s,
+  and 79 in a second session). It is now suppressed once recorded for the same
+  (session, changed-file set); a *new* unverified file changes the fingerprint
+  and the gate speaks again. Same shape as `council-escalation-gate.py`'s
+  same-diff-hash single-deny.
 - **Observe-only by default.** It reports and logs; it never blocks. Opt into
   blocking with `AGENT_VERIFY_OBSERVER_BLOCK=1`. The registry entry is `observe`
   so `telemetry-digest --gates` can measure the fire-rate *before* anyone argues
