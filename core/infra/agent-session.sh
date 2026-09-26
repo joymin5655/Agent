@@ -68,6 +68,9 @@ iso_minus_minutes() {
 }
 
 init_lock_file() {
+  # The mkdir-mutex lives under LOCK_DIR too: without the dir every
+  # acquire_mutex attempt fails until the timeout, which looked like contention.
+  mkdir -p "$LOCK_DIR" 2>/dev/null || true
   if [[ ! -f "$LOCK_FILE" ]]; then
     echo '{"sessions":[],"shared_resource_locks":{}}' > "$LOCK_FILE"
   fi
@@ -98,7 +101,10 @@ worktree_add_retry() {
 }
 
 acquire_mutex() {
-  local timeout=10 i
+  # AGENT_SESSION_MUTEX_TIMEOUT (seconds, default 10): short-budget callers such
+  # as the SessionEnd hook (1.5s runtime budget) pass 1 so a busy lock cannot
+  # stall them past their deadline.
+  local timeout="${AGENT_SESSION_MUTEX_TIMEOUT:-10}" i
   for ((i=0; i<timeout*10; i++)); do
     if mkdir "$LOCK_MUTEX_DIR" 2>/dev/null; then
       echo "$$" > "$LOCK_HOLDER"
@@ -122,7 +128,7 @@ acquire_mutex() {
     fi
     sleep 0.1
   done
-  echo "agent-session: mutex timeout (10s)" >&2
+  echo "agent-session: mutex timeout (${timeout}s)" >&2
   return 1
 }
 

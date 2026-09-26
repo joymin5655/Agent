@@ -59,6 +59,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 
 DISPATCH_TOOLS = {"Task", "Agent"}
 EFFORT_LEVELS = {"low", "medium", "high", "xhigh", "max"}
+SUBAGENT_EVENTS = {"SubagentStart", "SubagentStop"}
 
 # Fail-safe import (same guard pattern as secret-content-scan.py): a broken or
 # missing hook_config.py must never tax this observer — it just falls back to
@@ -148,11 +149,61 @@ def total_tokens(event):
     return None
 
 
+def _sink_path():
+    return os.environ.get("AGENT_MODEL_ROUTING_SINK") or os.path.join(
+        os.getcwd(), ".agent", "logs", "model-routing.jsonl"
+    )
+
+
+def handle_subagent_event(event, hook_event_name):
+    """SubagentStart/SubagentStop — a measured dispatch record distinct from
+    the PostToolUse-derived ones below (Task/Agent tool_input doesn't carry
+    agent_id or a completion payload; these events do). `source` tags which
+    lane produced the record so downstream consumers (manager-audit) can tell
+    them apart without double-counting the same dispatch twice."""
+    agent_type = event.get("agent_type", "")
+    agent_type = agent_type if isinstance(agent_type, str) else ""
+    agent_id = event.get("agent_id", "")
+    agent_id = agent_id if isinstance(agent_id, str) else ""
+
+    bare = agent_type.rsplit(":", 1)[-1] if agent_type else ""
+    tier = tier_of(registry_model(bare)) if bare in registry_ids() else "unknown"
+
+    record = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "gate": "model-routing-observer",
+        "event": hook_event_name,
+        "agent_type": agent_type,
+        "agent_id": agent_id,
+        "verdict": "pinned_specialist" if tier != "unknown" else "inherit_top",
+        "effort": None,
+        "tier": tier,
+        "session_id": os.environ.get("AGENT_SESSION_ID", ""),
+        "origin": _log_origin(),
+        "source": "subagent_event",
+    }
+    if hook_event_name == "SubagentStop":
+        last_msg = event.get("last_assistant_message", "")
+        last_msg = last_msg if isinstance(last_msg, str) else ""
+        record["last_assistant_message_len"] = len(last_msg)
+
+    sink = _sink_path()
+    os.makedirs(os.path.dirname(sink), exist_ok=True)
+    with open(sink, "a", encoding="utf-8") as f:
+        f.write(json.dumps(record) + "\n")
+
+
 def main():
     try:
         event = json.loads(sys.stdin.read())
     except Exception:
         return
+
+    hook_event_name = event.get("hook_event_name") or event.get("event") or ""
+    if hook_event_name in SUBAGENT_EVENTS:
+        handle_subagent_event(event, hook_event_name)
+        return
+
     if event.get("tool_name") not in DISPATCH_TOOLS:
         return
     tool_input = event.get("tool_input") or {}
@@ -171,9 +222,7 @@ def main():
 
     verdict = classify(subagent_type, model)
 
-    sink = os.environ.get("AGENT_MODEL_ROUTING_SINK") or os.path.join(
-        os.getcwd(), ".agent", "logs", "model-routing.jsonl"
-    )
+    sink = _sink_path()
     record = {
         "ts": datetime.now(timezone.utc).isoformat(),
         "gate": "model-routing-observer",
@@ -186,6 +235,7 @@ def main():
         "total_tokens": total_tokens(event),
         "session_id": os.environ.get("AGENT_SESSION_ID", ""),
         "origin": _log_origin(),
+        "source": "post_tool_use",
     }
     os.makedirs(os.path.dirname(sink), exist_ok=True)
     with open(sink, "a", encoding="utf-8") as f:

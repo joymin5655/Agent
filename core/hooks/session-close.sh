@@ -19,6 +19,33 @@ resolve_canonical_root() {
 
 PROJECT_ROOT="$(resolve_canonical_root)"
 
+# 0. SessionEnd — cheap lock/session release ONLY. ALL SessionEnd hooks share
+# a 1.5s budget (docs/hook-protocol.md), so this branch must skip everything
+# below that costs a python startup, a network round-trip, or brain capture:
+# the TODO scan, tmpfile cleanup, macOS notification, and the session-store
+# broadcast (which shells out to python3) all stay on Stop, which has no such
+# shared-budget constraint. `stop`/`stop-cwd` are pure bash+jq lock-file edits.
+INPUT="$(cat 2>/dev/null || true)"
+HOOK_EVENT="$(printf '%s' "$INPUT" | grep -o '"hook_event_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed -E 's/.*:"([^"]*)"$/\1/')" || true
+if [[ -z "$HOOK_EVENT" ]]; then
+  HOOK_EVENT="$(printf '%s' "$INPUT" | grep -o '"event"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed -E 's/.*:"([^"]*)"$/\1/')" || true
+fi
+
+if [[ "$HOOK_EVENT" == "SessionEnd" ]]; then
+  SESSION_SH="$PROJECT_ROOT/core/infra/agent-session.sh"
+  if [[ -x "$SESSION_SH" ]]; then
+    # 1s mutex budget: SessionEnd hooks share a 1.5s runtime budget, and
+    # update_lock() would otherwise wait up to 10s on a contended lock.
+    export AGENT_SESSION_MUTEX_TIMEOUT=1
+    if [[ -n "${AGENT_SESSION_ID:-}" ]]; then
+      "$SESSION_SH" stop >/dev/null 2>&1 || true
+    else
+      "$SESSION_SH" stop-cwd >/dev/null 2>&1 || true
+    fi
+  fi
+  exit 0
+fi
+
 # 1. TODO summary (project-specific — only fires if TODO.md exists)
 TODO_FILE="$PROJECT_ROOT/TODO.md"
 if [[ -f "$TODO_FILE" ]]; then
