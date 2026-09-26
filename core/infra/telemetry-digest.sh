@@ -27,7 +27,15 @@
 #       UNINSTRUMENTED (gate emits a decision but writes no log — sink '-').
 #     Still an OBSERVER (exit 0 always). --registry default: docs/gate-registry.md;
 #     --logs-dir default: <repo-root>/.agent/logs. Env seams: AGENT_GATE_REGISTRY,
-#     AGENT_GATE_LOGS_DIR.
+#     AGENT_GATE_LOGS_DIR. Also reports a per-gate block-rate table (W1-5:
+#     fired/blocked/rate%, blocked = records with decision=="deny").
+#
+#     W1-5 origin filter (applies to --gates AND --model): both modes count only
+#     records whose `origin` field is "session" or ABSENT (a legacy pre-W1-4
+#     record — kept, not lost); origin=="test" (this repo's own
+#     core/tests/verify-all.sh exports AGENT_LOG_ORIGIN=test) is test-battery
+#     noise and is excluded entirely, so running the test suite never inflates
+#     a gate's FATIGUE/block-rate or the model-routing spend report.
 #
 #   bash core/infra/telemetry-digest.sh --model [--routing-log <path>]
 #                                       [--model-registry <path>] [--json]
@@ -208,17 +216,26 @@ except Exception as e:
 
 # --- count in-window firings per sink, once per distinct sink ----------------
 def count_sink(sink, match, hook):
-    """Return (fired, suppressed) in-window counts for (sink, match, hook) —
-    suppressed = matching records excluded as reproduce_test. match '*' counts
-    every valid JSON-object line; otherwise counts lines whose guard field ==
-    match. When a record ALSO carries a `hook` field it must equal the registry
-    hook — two gates sharing one sink AND one guard value (secrets-bash vs
-    secrets-content, both guard=secrets in security-violations.jsonl) would
+    """Return (fired, suppressed, blocked) in-window counts for (sink, match,
+    hook) — suppressed = matching records excluded as reproduce_test. match '*'
+    counts every valid JSON-object line; otherwise counts lines whose guard
+    field == match. When a record ALSO carries a `hook` field it must equal the
+    registry hook — two gates sharing one sink AND one guard value (secrets-bash
+    vs secrets-content, both guard=secrets in security-violations.jsonl) would
     otherwise each count the union and double-report. Records without a hook
     field keep matching on guard alone (older schema stays countable).
     The sink is confined to logs_dir: a registry line with a '../' traversal
     resolves outside and is refused (returns None — treated like an absent sink),
-    so a bad registry entry can never make the digest read arbitrary files."""
+    so a bad registry entry can never make the digest read arbitrary files.
+
+    W1-5: only origin=="session" (real usage) or a MISSING origin (a legacy
+    pre-W1-4 record, kept rather than lost) counts toward `fired`/`blocked`.
+    origin=="test" (verify-all.sh's AGENT_LOG_ORIGIN=test) is test-battery
+    noise and is excluded entirely, same as the reproduce_test filter above it —
+    without this, running verify-all.sh would itself inflate FATIGUE/block-rate
+    on the very gates it exercises.
+    `blocked` counts firings whose `decision` field == "deny" (a record with no
+    decision field, or a non-deny decision such as "ask", is fired-but-not-blocked)."""
     path = os.path.join(logs_dir, sink)
     real_logs = os.path.realpath(logs_dir)
     real_path = os.path.realpath(path)
@@ -226,6 +243,7 @@ def count_sink(sink, match, hook):
         return None
     n = 0
     suppressed = 0
+    blocked = 0
     try:
         with open(path, encoding="utf-8") as f:
             for line in f:
@@ -256,12 +274,17 @@ def count_sink(sink, match, hook):
                 if rec.get("reproduce_test") is True:
                     suppressed += 1
                     continue
+                origin = rec.get("origin")
+                if not (origin is None or origin == "session"):
+                    continue
                 n += 1
+                if rec.get("decision") == "deny":
+                    blocked += 1
     except FileNotFoundError:
         return None            # sink absent — distinct from 0 firings
     except Exception:
         return None
-    return n, suppressed
+    return n, suppressed, blocked
 
 
 reports = []
@@ -269,6 +292,7 @@ for g in gates:
     classes = []
     fired = None
     suppressed = 0
+    blocked = 0
     if g["sink"] == "-":
         classes.append("UNINSTRUMENTED")
     else:
@@ -277,7 +301,7 @@ for g in gates:
             classes.append("DEAD")          # sink never created == never fired
             fired = 0
         else:
-            fired, suppressed = counts
+            fired, suppressed, blocked = counts
             if fired == 0:
                 classes.append("DEAD")
             elif fired >= fatigue:
@@ -285,9 +309,11 @@ for g in gates:
     lr = parse_ts(g["last_reviewed"] + "T00:00:00")
     if lr is not None and (now - lr).days > stale_days:
         classes.append("STALE")
+    block_rate = round(100.0 * blocked / fired, 1) if fired else None
     reports.append({
         "id": g["id"], "hook": g["hook"], "decision": g["decision"],
         "sink": g["sink"], "fired": fired, "suppressed": suppressed,
+        "blocked": blocked, "block_rate": block_rate,
         "last_reviewed": g["last_reviewed"],
         "flags": classes, "assumption": g["assumption"],
     })
@@ -335,6 +361,18 @@ else:
     for fl in ("DEAD", "FATIGUE", "STALE", "UNINSTRUMENTED"):
         if flag_counts.get(fl):
             print("  {}: {}".format(fl, flag_counts[fl]))
+    print()
+    # W1-5: block rate by gate (session-origin firings only, see count_sink).
+    print("-- block rate by gate --")
+    if not reports:
+        print("  (none)")
+    for r in reports:
+        if r["fired"]:
+            rate_str = "{}%".format(r["block_rate"])
+        else:
+            rate_str = "n/a"
+        print("  {:<20} fired={:<5} blocked={:<5} rate={}".format(
+            r["id"], r["fired"] if r["fired"] is not None else 0, r["blocked"], rate_str))
     print()
     print("gate-digest: {} gate(s), {} DEAD, {} FATIGUE, {} STALE, {} UNINSTRUMENTED".format(
         len(gates), flag_counts.get("DEAD", 0), flag_counts.get("FATIGUE", 0),
@@ -490,6 +528,12 @@ def main():
             skipped += 1
             continue
         if not isinstance(rec, dict) or rec.get("gate") != "model-routing-observer":
+            continue
+        # W1-5: same origin filter as count_sink() above — only origin=="session"
+        # or a missing origin (legacy pre-W1-4 record) counts; origin=="test"
+        # (verify-all.sh) is test-battery noise, excluded entirely.
+        origin = rec.get("origin")
+        if not (origin is None or origin == "session"):
             continue
         built = build_record(rec)
         if built is None:
