@@ -1,5 +1,5 @@
 {
-  "_comment": "Shipped default agent registry. core/hooks/supervisor.py and session-init.py read this (they look for agents/master-registry.json, then .claude/agents/master-registry.json, then .agent/agents/registry.json). To customize per project, copy this file into your project at one of those paths and edit. Each `model` MUST equal the model: frontmatter in agents/<id>.md — the CI drift guard (validate-plugin) enforces it.",
+  "_comment": "Shipped default agent registry. core/hooks/supervisor.py and session-init.py read this (they look for agents/master-registry.json, then .claude/agents/master-registry.json, then .agent/agents/registry.json). To customize per project, copy this file into your project at one of those paths and edit. Each `model` MUST equal the model: frontmatter in agents/<id>.md, and each `effort` MUST equal the effort: frontmatter — the CI drift guard (registry-drift.sh / validate-plugin) enforces both.",
   "version": 1,
   "agents": [
     {
@@ -12,6 +12,7 @@
       },
       "aliases": ["reviewer", "diff-reviewer"],
       "model": "sonnet",
+      "effort": "high",
       "memory_scope": "local"
     },
     {
@@ -23,7 +24,8 @@
         "file_globs": ["**/auth/**", "**/secrets/**", "**/.env*"]
       },
       "aliases": [],
-      "model": "opus",
+      "model": "fable",
+      "effort": "max",
       "memory_scope": "local"
     },
     {
@@ -36,6 +38,7 @@
       },
       "aliases": ["persona-panel", "citizen-panel"],
       "model": "sonnet",
+      "effort": "medium",
       "memory_scope": "local"
     }
   ]

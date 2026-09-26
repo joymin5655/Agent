@@ -153,7 +153,7 @@ printf '%s\n' "$GATE_OUT" | grep -qF 'no tools: allowlist'; check "reviewer-no-a
 echo
 echo "=== (5c) review/verify agent with a read-only MULTILINE tools list -> PASS ==="
 FX=$(build_fixture)
-printf -- '---\nname: style-verifier\nmodel: sonnet\ntools:\n  - Read\n  - Grep\n---\n# style-verifier\n' > "$FX/agents/style-verifier.md"
+printf -- '---\nname: style-verifier\nmodel: sonnet\neffort: medium\ntools:\n  - Read\n  - Grep\n---\n# style-verifier\n' > "$FX/agents/style-verifier.md"
 python3 - "$FX/agents/master-registry.json" <<'PY'
 import json, sys
 p = sys.argv[1]
@@ -167,7 +167,7 @@ run_gate "$FX"
 echo
 echo "=== (5d) MULTILINE tools list smuggling a write tool -> FAIL ==="
 FX=$(build_fixture)
-printf -- '---\nname: style-verifier\nmodel: sonnet\ntools:\n  - Read\n  - Edit\n---\n# style-verifier\n' > "$FX/agents/style-verifier.md"
+printf -- '---\nname: style-verifier\nmodel: sonnet\neffort: medium\ntools:\n  - Read\n  - Edit\n---\n# style-verifier\n' > "$FX/agents/style-verifier.md"
 python3 - "$FX/agents/master-registry.json" <<'PY'
 import json, sys
 p = sys.argv[1]
@@ -230,6 +230,43 @@ printf '# demo — no frontmatter here\n' > "$FX/skills/demo/SKILL.md"
 run_gate "$FX"
 [[ $GATE_RC -eq 1 ]]; check "skill-no-frontmatter-fails" $?
 printf '%s\n' "$GATE_OUT" | grep -qF 'has no frontmatter'; check "skill-no-frontmatter-named" $?
+
+echo
+echo "=== (8) agent missing effort: frontmatter -> FAIL + named ==="
+FX=$(build_fixture)
+grep -v '^effort:' "$REPO_ROOT/agents/code-reviewer.md" > "$FX/agents/code-reviewer.md"
+run_gate "$FX"
+[[ $GATE_RC -eq 1 ]]; check "missing-effort-fails" $?
+printf '%s\n' "$GATE_OUT" | grep -qF 'agent missing effort: frontmatter'; check "missing-effort-named" $?
+printf '%s\n' "$GATE_OUT" | grep -qF 'code-reviewer.md'; check "missing-effort-names-the-file" $?
+
+echo
+echo "=== (8b) agent effort: frontmatter with an invalid value -> FAIL + named ==="
+FX=$(build_fixture)
+python3 - "$FX/agents/code-reviewer.md" <<'PY'
+import re, sys
+p = sys.argv[1]
+s = open(p, encoding="utf-8").read()
+s = re.sub(r"(?m)^effort:.*$", "effort: extreme", s, count=1)
+open(p, "w", encoding="utf-8").write(s)
+PY
+run_gate "$FX"
+[[ $GATE_RC -eq 1 ]]; check "invalid-effort-fails" $?
+printf '%s\n' "$GATE_OUT" | grep -qF 'effort: frontmatter invalid value'; check "invalid-effort-named" $?
+
+echo
+echo "=== (8c) registry effort != agent .md effort -> FAIL + named ==="
+FX=$(build_fixture)
+python3 - "$FX/agents/master-registry.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p))
+d["agents"][0]["effort"] = "definitely-not-the-md-effort"
+json.dump(d, open(p, "w"))
+PY
+run_gate "$FX"
+[[ $GATE_RC -eq 1 ]]; check "effort-drift-fails" $?
+printf '%s\n' "$GATE_OUT" | grep -qF 'effort drift'; check "effort-drift-named" $?
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="

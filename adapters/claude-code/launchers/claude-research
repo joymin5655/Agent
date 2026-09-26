@@ -1,3 +1,6 @@
 #!/usr/bin/env bash
 # claude-research — the MID rung: general implementation/investigation work.
-exec claude --model sonnet "$@"
+# --effort medium: `claude --help` documents --effort on this machine
+# (2.1.282, docs/runtime-registry.json) — pin it alongside the model so the
+# rung's effort doesn't silently drift with a session default.
+exec claude --model sonnet --effort medium "$@"

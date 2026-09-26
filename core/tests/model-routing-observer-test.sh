@@ -33,7 +33,7 @@ REG="$WORK/registry.json"
 trap '[[ -n "$WORK" && -d "$WORK" ]] && rm -rf "$WORK"' EXIT
 
 cat > "$REG" <<'EOF'
-{"agents": [{"id": "code-reviewer", "model": "sonnet"}, {"id": "security-reviewer", "model": "opus"}]}
+{"agents": [{"id": "code-reviewer", "model": "sonnet"}, {"id": "security-reviewer", "model": "fable"}]}
 EOF
 
 ok()  { echo "  ok   [$1]"; PASS=$((PASS + 1)); }
@@ -101,6 +101,36 @@ last="$(tail -1 "$SINK")"
 for field in '"subagent_type": "general-purpose"' '"model": "opus"' '"session_id": "test"' '"ts"'; do
   if [[ "$last" == *"$field"* ]]; then ok "b-field-present [$field]"; else bad "b-field" "missing $field in $last"; fi
 done
+
+echo
+echo "=== W2-3: effort field ==="
+run '{"event":"PostToolUse","tool_name":"Task","tool_input":{"subagent_type":"Explore","prompt":"x","effort":"high"}}'
+last="$(tail -1 "$SINK")"
+if [[ "$last" == *'"effort": "high"'* ]]; then ok "f1-effort-recorded"; else bad "f1-effort-recorded" "$last"; fi
+run "$(evt Task Explore)"
+last="$(tail -1 "$SINK")"
+if [[ "$last" == *'"effort": null'* ]]; then ok "f2-no-effort-is-null"; else bad "f2-no-effort-is-null" "$last"; fi
+
+echo
+echo "=== W2-3: fable-family models classify TOP, same as opus ==="
+run "$(evt Task Explore fable)"
+last="$(tail -1 "$SINK")"
+if [[ "$last" == *'"tier": "TOP"'* ]]; then ok "g1-override-fable-is-top"; else bad "g1-override-fable-is-top" "$last"; fi
+run "$(evt Task Explore claude-fable-5-1)"
+last="$(tail -1 "$SINK")"
+if [[ "$last" == *'"tier": "TOP"'* ]]; then ok "g2-override-fable-alias-is-top"; else bad "g2-override-fable-alias-is-top" "$last"; fi
+run "$(evt Task Explore opus)"
+last="$(tail -1 "$SINK")"
+if [[ "$last" == *'"tier": "TOP"'* ]]; then ok "g3-override-opus-is-top"; else bad "g3-override-opus-is-top" "$last"; fi
+run "$(evt Agent agent-harness:security-reviewer)"
+last="$(tail -1 "$SINK")"
+if [[ "$last" == *'"tier": "TOP"'* ]]; then ok "g4-pinned-fable-specialist-is-top"; else bad "g4-pinned-fable-specialist-is-top" "$last"; fi
+run "$(evt Task Explore sonnet)"
+last="$(tail -1 "$SINK")"
+if [[ "$last" == *'"tier": "MID"'* ]]; then ok "g5-override-sonnet-is-mid"; else bad "g5-override-sonnet-is-mid" "$last"; fi
+run "$(evt Task Explore)"
+last="$(tail -1 "$SINK")"
+if [[ "$last" == *'"tier": "unknown"'* ]]; then ok "g6-inherit-top-tier-is-unknown"; else bad "g6-inherit-top-tier-is-unknown" "$last"; fi
 
 echo
 echo "=== spend signal: prompt_chars + total_tokens ==="

@@ -1,14 +1,18 @@
-# Concept — Prompting Frontier Models (Fable-5 Class)
+# Concept — Prompting Frontier Models (Fable 5.1 Class)
 
-Frontier reasoning models (Anthropic's Claude Fable 5 / Mythos 5 generation and
-peers) change what dispatch prompts, delegation contracts, and verification
-gates need to say. Capability went up; several old prompt habits became either
+Frontier reasoning models (Anthropic's Claude Fable 5.1 generation and peers)
+change what dispatch prompts, delegation contracts, and verification gates
+need to say. Capability went up; several old prompt habits became either
 unnecessary or actively harmful. This doc distills the vendor guidance into the
 rules the supervisor applies when it writes dispatch prompts — the harness
 counterpart of a style guide for delegation.
 
+See also: [`../launchers.md`](../launchers.md) — the session-start launcher
+set whose rungs these rules apply to once the model behind TOP/TOP-F is
+Fable 5.1 class (`docs/model-routing.md` § The ladder).
+
 Sources (accessed 2026-07):
-- Anthropic, *Prompting best practices for Claude Fable 5* (platform docs,
+- Anthropic, *Prompting best practices for Claude Fable 5.1* (platform docs,
   `docs/build-with-claude/prompt-engineering`)
 - Anthropic, *How the agent loop works* (Agent SDK docs) — loop-side
   implications are audited separately in

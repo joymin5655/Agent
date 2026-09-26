@@ -18,7 +18,15 @@ budget) that exists on every rung:
 |---|---|---|
 | **LOW** | Mechanical work: build/type/lint cleanup, lookups, searches, fan-out workers | ~0.1–0.2× the workhorse |
 | **MID** (workhorse) | Implementation, code review, verification judges | baseline |
-| **TOP** | Planning, architecture, security review, deep design | 2–5× the workhorse |
+| **TOP** | Planning, architecture, orchestration judgment, deep design (opus-class @ high effort) | 2–5× the workhorse |
+| **TOP-F** | Security review, completion verdicts only — a reserved sub-rung, not a general escalation target (fable-class @ max effort) | ≥TOP |
+
+TOP and TOP-F are both "the top rung" for cost-intuition purposes; the split
+is about which two verdict-shaped tasks are allowed to reach past TOP into
+the fable-class ceiling, not a new cost tier for everything else (`spec.md`
+§7 Q3). The exact model alias behind each class still lives only in its
+consumer — an agent's `model:` frontmatter, an adapter's tier file — never
+here.
 
 **Effort before tier-up.** Before promoting a task one rung, raise the effort
 dial *within* the rung first. A MID model at high effort beats a TOP model at
@@ -36,11 +44,12 @@ than any doc review cycle).
 |---|---|---|---|---|
 | Planning / architecture | TOP | Session's top model — agents **unpinned** (frontmatter absence = inherit) | `--profile deep` | top-tier model, caller-explicit `-m` |
 | Orchestration judgment — work distribution, gate verdicts, result synthesis | TOP | Session's top model, main loop (never dispatched below the session model) | `--profile deep` | top-tier model, caller-explicit `-m` |
-| Security review | TOP | `security-reviewer` pin (opus-class) | `--profile deep` | top-tier model, caller-explicit `-m` |
+| Security review | **TOP-F** | `security-reviewer` pin — see the `model:` pin in `agents/security-reviewer.md` | `--profile deep` | top-tier model, caller-explicit `-m` |
 | Code review | MID | `code-reviewer` pin (sonnet-class) | mid model, caller-explicit `-m` + high effort | workhorse model |
 | Persona/citizen review | MID | `persona-review-orchestrator` pin (sonnet-class) | mid model, caller-explicit `-m` + high effort | workhorse model |
 | Implementation | MID | Dispatched at workhorse tier — explicit `model` override on the Agent dispatch; the session keeps judgment and dispatches hands | config default (unprefixed) | workhorse model |
-| Verification judge | **MID floor** | **never below sonnet-class** — see Floors | mid model, high effort or above | workhorse model or above |
+| Verification judge (interim checks) | **MID floor** | **never below sonnet-class** — see Floors | mid model, high effort or above | workhorse model or above |
+| Completion verdict (`/verify-completion` terminal judge) | **TOP-F reserved** | may escalate past the MID floor to the `security-reviewer`-class pin when the dispatch is the terminal verdict, not an interim check | `--profile deep` | top-tier model |
 | Mechanical fixes | LOW | per-call `model` override on the Agent dispatch (no low-tier agent is shipped) | `--profile quick` | lightest model |
 | Lookups / search | LOW | per-call low-tier override | `--profile quick` | lightest model |
 | Fan-out workers | **LOW default** | low-tier override; promote individual workers only when a task demands it | `--profile quick` | lightest model |
@@ -169,6 +178,39 @@ no-runtime-switching decision below.
   succeeds cheaply or fails visibly. A light model that fails the task saves
   nothing; its cost saving is negative.
 
+## The effort axis
+
+Tier (which model) and effort (how hard that model thinks) are two separate
+dials — a vendor-published 2026-09 study ("Spending your effort", vendor
+blog, 2026-09) measured effort as the primary *verification-budget* dial:
+raising it buys large accuracy gains only in domains with many hidden edge
+cases (security 64%→87%, hardware 34%→75% in the cited study), and buys
+almost nothing in ops/docs-shaped work — because a detailed enough spec
+already forecloses most of the edge cases effort would otherwise have to
+find. That is the same finding `spec-gate` already assumes operationally: a
+task that passed the spec gate with a concrete spec is safe to implement at
+low effort, because the spec did the edge-case work up front; a task with no
+spec is where effort has to do it instead.
+
+Default effort per pipeline stage (a starting point per call —
+`docs/concepts/fable-5-prompting.md` rule 1, "effort before tier-up", still
+governs promoting effort before promoting tier):
+
+| Stage | Default effort | Why |
+|---|---|---|
+| `/spec` (brainstorm → spec.md/plan.md) | low | Interview + read-only probing do the edge-case-finding; the model is drafting against what the user already surfaced, not discovering it |
+| `/supervise` implementation waves | low → medium | A wave dispatched against an approved, concrete plan is spec-gated work — the plan already forecloses most hidden edge cases; promote to medium only for a wave with no prior spec-gate pass |
+| Code review (`code-reviewer`, council lanes) | high | Reviewing is exactly the "hidden edge case" shape the vendor study measured gains in — a shallow pass misses the defect it exists to catch |
+| `/verify-completion` terminal verdict | high | A refute-by-default judge that verifies at low effort silently degrades into a rubber stamp — the gate's entire value is in the verification budget |
+| Security review (`security-reviewer`) | max | The domain the vendor study measured the largest gain in (64%→87%); this is also the one TOP-F reservation (see The ladder) — tier and effort both maxed together, deliberately, for the one review class where a missed finding is a security incident |
+
+**How the harness records this today.** Effort is not yet a silent default —
+it is a stated field: agents carry an `effort:` value alongside their
+`model:` pin in frontmatter, and the dispatch-observation hooks that already
+log tier decisions (`model-routing.jsonl`) log the effort level a call
+actually ran at, so the table above is checked against what happened, not
+just what this doc recommends.
+
 ## Enforcement map
 
 | Runtime | Mechanism | Where |
@@ -177,8 +219,9 @@ no-runtime-switching decision below.
 | Claude Code — judgment unpinned / per-call MID (execution dispatch) & LOW overrides; coordination-cost check and worker-reuse (cache) | Convention, documented not CI-checked (frontmatter *absence*, call-time overrides, and call-time reuse-vs-spawn choices are not statically verifiable) | `skills/supervise/SKILL.md` Model policy |
 | Claude Code — decision-time reminder | `model-routing-advisor.py` (PreToolUse Task/Agent), advisory: one-line `additionalContext` nudge, never blocks, decision stays with the dispatcher | `core/hooks/model-routing-advisor.py`, `docs/gate-registry.md` GATE model-routing-advisor |
 | Claude Code — accumulation-time reminder | `top-edit-advisor.py` (PostToolUse Write/Edit/MultiEdit), advisory: `systemMessage` every +15 measured main-loop edits, never blocks | `core/hooks/top-edit-advisor.py`, `docs/gate-registry.md` GATE top-edit-advisor |
-| Codex CLI | Named profiles (per-profile config files on recent CLI builds): default = workhorse, `quick` = LOW, `deep` = TOP; `model_reasoning_effort` is the effort dial | `adapters/codex/codex-config.toml.template` + `quick.config.toml.template` / `deep.config.toml.template` |
-| Gemini CLI | `settings.json` default model = workhorse; callers escalate with explicit `-m` | `adapters/gemini/gemini-settings.json.template` |
+| Codex CLI | GPT-6 named profiles (per-profile config files): `quick` = LOW (`gpt-6-luna` @ low effort), default = MID (`gpt-6-sol` @ medium effort), `deep` = TOP (`gpt-6-astra` @ xhigh effort); `model_reasoning_effort` is the effort dial | `adapters/codex/codex-config.toml.template` + `quick.config.toml.template` / `deep.config.toml.template` |
+| Gemini CLI (direct `oauth-personal`) | `settings.json` default model = workhorse; callers escalate with explicit `-m`. Retired for individuals (2026-07-17) — see the Cross-vendor lane note below; kept here only as the adapter-template record | `adapters/gemini/gemini-settings.json.template` |
+| Antigravity (the live gemini lane) | Tiers keyed by model ID in a single tiers file the antigravity-worker resolves per call — MID/TOP entries, moved from the vendor-owned directory to a harness-owned path so an agy CLI reinstall can't silently reset the pin; `--effort` flag optional alongside the tier's own baked-in reasoning level | `~/.agent/antigravity-tiers.json` (installed from `adapters/antigravity/antigravity-tiers.json.template`), `adapters/antigravity/antigravity-worker.sh` |
 | Claude Code — purpose launchers | Session-start human choice of tier/gateway (`claude-build`/`claude-quick`/`claude-research`/`claude-ox`); a launcher presets the model before the session exists — the allowed side of the no-runtime-switching line | `adapters/claude-code/launchers/`, `docs/launchers.md` |
 
 ## Cross-vendor second-opinion lane

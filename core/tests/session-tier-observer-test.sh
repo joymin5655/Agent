@@ -46,6 +46,39 @@ grep -q "session=TOP (claude-fable-5)" "$WORK/err1"; check "advisory-on-stderr" 
 grep -q "docs/model-routing.md" "$WORK/err1";      check "advisory-cites-policy" $?
 [[ "$last" == *'"tier": "TOP"'* && "$last" == *'"source": "stdin"'* ]]
 check "jsonl-record-tier-source" $?
+[[ "$last" == *'"family": "fable"'* ]];            check "fable-family-not-lumped-as-opus" $?
+
+echo
+echo "=== 1b. opus model -> TOP tier, family opus (distinct from fable) ==="
+run_hook '{"session_id":"s1b","model":{"id":"claude-opus-5-5"}}' >/dev/null 2>"$WORK/err1b"
+last="$(tail -1 "$SINK")"
+[[ "$last" == *'"tier": "TOP"'* && "$last" == *'"family": "opus"'* ]]
+check "opus-family-top" $?
+
+echo
+echo "=== 1c. claude-fable-5-1 alias -> TOP tier, family fable ==="
+run_hook '{"session_id":"s1c","model":{"id":"claude-fable-5-1"}}' >/dev/null 2>"$WORK/err1c"
+last="$(tail -1 "$SINK")"
+[[ "$last" == *'"tier": "TOP"'* && "$last" == *'"family": "fable"'* ]]
+check "fable-5-1-alias-top" $?
+
+echo
+echo "=== 1d. session effort.level carried on stdin -> recorded verbatim ==="
+run_hook '{"session_id":"s1d","model":{"id":"claude-sonnet-5"},"effort":{"level":"high"}}' >/dev/null 2>"$WORK/err1d"
+last="$(tail -1 "$SINK")"
+[[ "$last" == *'"effort": "high"'* ]];              check "effort-level-dict-recorded" $?
+
+echo
+echo "=== 1e. plain string effort field -> recorded verbatim ==="
+run_hook '{"session_id":"s1e","model":{"id":"claude-sonnet-5"},"effort":"max"}' >/dev/null 2>"$WORK/err1e"
+last="$(tail -1 "$SINK")"
+[[ "$last" == *'"effort": "max"'* ]];               check "effort-plain-string-recorded" $?
+
+echo
+echo "=== 1f. no effort field on stdin -> null, not a crash ==="
+run_hook '{"session_id":"s1f","model":{"id":"claude-sonnet-5"}}' >/dev/null 2>"$WORK/err1f"
+last="$(tail -1 "$SINK")"
+[[ "$last" == *'"effort": null'* ]];                check "effort-absent-is-null" $?
 
 echo
 echo "=== 2. transcript tail fallback (resume shape) ==="

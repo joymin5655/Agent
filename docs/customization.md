@@ -198,3 +198,46 @@ surface with its own gates; the threat model here is *durable repo-file
 self-weakening*, the same accepted-risk class as the `/tmp/agent-plan-approved`
 flag. Tier consumption by `auto-ship.sh`/`supervise` (blocking `--auto-merge`
 in collab) is backlog LE-2.
+
+---
+
+## Shipped defaults vs a personal profile
+
+The repo's shipped gate defaults are conservative by design — every mode
+env var this doc's sibling hooks read defaults to `dryrun` (or an
+equivalent observe-only state): `AGENT_SPEC_GATE_MODE`, `AGENT_TDD_GUARD_MODE`,
+and `AGENT_VERIFY_BLOCKING` all ship `dryrun`, `AGENT_SUPERVISOR_MODE` ships
+`dispatch` (its own observe-only escape hatch is `observe`). A fresh clone or
+a collaborator's checkout must never fail hooks it never asked to enforce —
+that is what "deploy-safe" means here.
+
+A solo-daily working profile overrides those defaults through ordinary env
+layering, never by editing a shipped hook script:
+
+- **Global** (`~/.claude/settings.json` `env`): `AGENT_VERIFY_BLOCKING=block`,
+  `AGENT_SPEC_GATE_MODE=dryrun` (stay in dryrun until you've confirmed the
+  gate's scope actually matches how you work — promote to `block` only
+  after that check), `AGENT_SUPERVISOR_MODE=observe`, `AGENT_LOG_ORIGIN=session`.
+- **Per-repo** (`.claude/settings.local.json` `env`, this repo only):
+  `AGENT_SPEC_GATE_MODE=block`, `AGENT_TDD_GUARD_MODE=block` — this repo's
+  own AGENTS.md §1 ("plan before code") and §4 (TDD discipline) are stricter
+  than the shipped default, so working *on* the harness enforces on itself
+  what the harness ships off for everyone else.
+
+**Personal settings files are never committed.** `settings.local.json` is
+gitignored by convention and `~/.claude/settings.json` lives outside any
+repo — the layering exists precisely so a maintainer's own working posture
+never becomes another consumer's forced default. See the `update-config`
+skill for the mechanics of editing these files safely.
+
+**The council's Google lane stays vendor-pinned.** `core/infra/backends.json`'s
+`third-opinion-review` role dispatches its `gemini` backend (the
+Antigravity-bridged lane, see `docs/model-routing.md` § Cross-vendor
+second-opinion lane), and that backend's own comment records the constraint
+`backends-schema-test.sh` checks: its model pin (owned by
+`adapters/antigravity/antigravity-tiers.json.template`, not the registry —
+no-model-ids) must stay Google-vendor (`gemini-*`) models only — because
+Antigravity itself can also serve other vendors' models, an unpinned lane
+would silently duplicate another lane's vendor instead of giving council a
+genuine second vendor's read. This is a vendor-identity constraint, not a
+tier or effort one; it does not change with a personal profile.

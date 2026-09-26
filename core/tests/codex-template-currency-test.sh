@@ -51,6 +51,24 @@ for name in quick deep; do
 done
 
 echo
+echo "=== default (unprefixed) template pins a model + effort (regression guard) ==="
+DEFAULT_TPL="$TEMPLATE_DIR/codex-config.toml.template"
+grep -Eq '^[[:space:]]*model[[:space:]]*=[[:space:]]*"[^"]+"' "$DEFAULT_TPL"
+check "default-pins-a-model" $?
+grep -Eq '^[[:space:]]*model_reasoning_effort[[:space:]]*=' "$DEFAULT_TPL"
+check "default-sets-reasoning-effort" $?
+
+echo
+echo "=== deep profile's effort is at least high (TOP tier, regression guard) ==="
+# Codex accepts low|medium|high|xhigh (docs/runtime-registry.json notes an
+# effort ceiling above high — the deep profile already uses xhigh; guard
+# against a future edit silently dropping to medium/low, which would defeat
+# the point of a TOP-tier profile).
+DEEP_TPL="$TEMPLATE_DIR/deep.config.toml.template"
+grep -Eq '^[[:space:]]*model_reasoning_effort[[:space:]]*=[[:space:]]*"(high|xhigh|max)"' "$DEEP_TPL"
+check "deep-effort-is-high-or-above" $?
+
+echo
 echo "=== global AGENTS.md template (regression guard) ==="
 # adapters/codex/AGENTS.global.md.template pins no model (it's a portable
 # rules file, not a profile — see quick/deep above for the model-pin check),

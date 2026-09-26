@@ -101,7 +101,8 @@
       "preflight": [
         "antigravity-preflight"
       ],
-      "preflight_timeout_s": 90
+      "preflight_timeout_s": 90,
+      "comment": "agy (Antigravity CLI) also serves Claude models alongside its own — for vendor independence this lane's model pin (adapters/antigravity/antigravity-tiers.json.template, owned by that adapter — model IDs are forbidden here) must stay Google-vendor models only (gemini-* pattern), never a Claude/GPT id, or the council's third-opinion-review vote duplicates another lane's vendor instead of giving a genuine second vendor's read."
     },
     "kiro-openai": {
       "vendor": "openai",

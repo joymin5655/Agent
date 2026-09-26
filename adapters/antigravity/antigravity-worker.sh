@@ -29,11 +29,14 @@
 #
 # Tier policy: model IDs are forbidden in core/infra/backends.json
 # (no-model-ids gate), so the model pin lives in a tiers file THIS adapter owns:
-# $ANTIGRAVITY_TIERS_FILE > ~/.gemini/antigravity-cli/agent-tiers.json > the
-# shipped template. agy bakes effort into the model ID, so tiers differ by
-# MODEL: .model is MID's; .tiers.TOP may carry one ["--model","<id>"] override,
-# which the worker collapses so only a single -m reaches agy. Every model ID is
-# validated against a tight regex before use.
+# $ANTIGRAVITY_TIERS_FILE > ~/.agent/antigravity-tiers.json (one-time migrated
+# from the old ~/.gemini/antigravity-cli/agent-tiers.json path if only that one
+# exists) > the shipped template. agy bakes effort into the model ID, so tiers
+# differ by MODEL: .model is MID's; .tiers.TOP may carry one
+# ["--model","<id>"] override, which the worker collapses so only a single -m
+# reaches agy. A tier may also carry ["--effort","<level>"], passed through
+# verbatim as agy's own separate --effort flag. Every model ID is validated
+# against a tight regex before use; every effort level against an allowlist.
 #
 # usage: antigravity-worker [--tier mid|top] < prompt.md
 # env:   ANTIGRAVITY_TIERS_FILE, ANTIGRAVITY_WORKER_ALLOW_UNSANDBOXED=1,
@@ -61,22 +64,46 @@ fi
 command -v jq >/dev/null 2>&1 || { echo "antigravity-worker: jq is required to read the tiers file" >&2; exit 2; }
 command -v agy >/dev/null 2>&1 || { echo "antigravity-worker: agy CLI not found on PATH (install: https://antigravity.google/cli/install.sh — auth lives in the OS keyring)" >&2; exit 127; }
 
-TIERS_FILE="${ANTIGRAVITY_TIERS_FILE:-$HOME/.gemini/antigravity-cli/agent-tiers.json}"
-[[ -f "$TIERS_FILE" ]] || TIERS_FILE="$SELF_DIR/antigravity-tiers.json.template"
-[[ -f "$TIERS_FILE" ]] || { echo "antigravity-worker: no tiers file (looked at ~/.gemini/antigravity-cli/agent-tiers.json and the shipped template)" >&2; exit 2; }
+NEW_TIERS_FILE="$HOME/.agent/antigravity-tiers.json"
+OLD_TIERS_FILE="$HOME/.gemini/antigravity-cli/agent-tiers.json"
 
-# A model ID is the only free-form token the tiers file feeds to argv; pin its
-# shape so a tampered tiers file cannot smuggle a flag through the model slot.
+if [[ -n "${ANTIGRAVITY_TIERS_FILE:-}" ]]; then
+    TIERS_FILE="$ANTIGRAVITY_TIERS_FILE"
+elif [[ -f "$NEW_TIERS_FILE" && -f "$OLD_TIERS_FILE" ]]; then
+    # Both paths exist: the new path wins, but a stale old copy silently
+    # shadowing an edit to the new one is a surprising failure mode — warn.
+    echo "antigravity-worker: both $NEW_TIERS_FILE and $OLD_TIERS_FILE exist — using $NEW_TIERS_FILE; the old copy is unused and stale, remove it to silence this warning" >&2
+    TIERS_FILE="$NEW_TIERS_FILE"
+elif [[ -f "$NEW_TIERS_FILE" ]]; then
+    TIERS_FILE="$NEW_TIERS_FILE"
+elif [[ -f "$OLD_TIERS_FILE" ]]; then
+    # One-time migration off the vendor CLI's own config dir.
+    mkdir -p "$HOME/.agent"
+    cp "$OLD_TIERS_FILE" "$NEW_TIERS_FILE"
+    echo "antigravity-worker: migrated tiers file $OLD_TIERS_FILE -> $NEW_TIERS_FILE (one-time); the old path will no longer be read" >&2
+    TIERS_FILE="$NEW_TIERS_FILE"
+else
+    TIERS_FILE="$SELF_DIR/antigravity-tiers.json.template"
+fi
+[[ -f "$TIERS_FILE" ]] || { echo "antigravity-worker: no tiers file (looked at $NEW_TIERS_FILE, $OLD_TIERS_FILE, and the shipped template)" >&2; exit 2; }
+
+# A model ID / effort level is the only free-form tokens the tiers file feeds
+# to argv; pin their shape so a tampered tiers file cannot smuggle a flag
+# through either slot.
 valid_model() { [[ "$1" =~ ^gemini-[0-9]+\.[0-9]+-(pro|flash)-(low|medium|high)$ ]]; }
+valid_effort() { [[ "$1" =~ ^(low|medium|high|max)$ ]]; }
 
 BASE_MODEL="$(jq -r '.model // empty' "$TIERS_FILE")"
 [[ -n "$BASE_MODEL" ]] || { echo "antigravity-worker: tiers file $TIERS_FILE pins no .model" >&2; exit 2; }
 TIER_KEY="$(printf '%s' "$TIER" | tr '[:lower:]' '[:upper:]')"
 
-# Resolve ONE model for this tier: the tier's ["--model","<id>"] override if
-# present, else .model. Only --model + a valid id is accepted in a tier's args —
-# anything else means a tampered tiers file, refuse.
+# Resolve ONE model (and an optional --effort) for this tier: the tier's
+# ["--model","<id>"] / ["--effort","<level>"] overrides if present, else
+# .model with no --effort. Only --model + a valid id, or --effort + a valid
+# level, is accepted in a tier's args — anything else means a tampered tiers
+# file, refuse.
 MODEL="$BASE_MODEL"
+EFFORT=""
 TIER_TOKS=()
 while IFS= read -r tok; do
     [[ -n "$tok" ]] && TIER_TOKS+=("$tok")
@@ -87,12 +114,18 @@ while [[ $i -lt ${#TIER_TOKS[@]} ]]; do
         --model)
             MODEL="${TIER_TOKS[$((i+1))]:-}"
             i=$((i+2)) ;;
+        --effort)
+            EFFORT="${TIER_TOKS[$((i+1))]:-}"
+            i=$((i+2)) ;;
         *)
-            echo "antigravity-worker: tiers file $TIERS_FILE carries a non-allowlisted tier token ('${TIER_TOKS[$i]}') — only --model <id> is permitted; refusing" >&2
+            echo "antigravity-worker: tiers file $TIERS_FILE carries a non-allowlisted tier token ('${TIER_TOKS[$i]}') — only --model <id> and --effort <level> are permitted; refusing" >&2
             exit 2 ;;
     esac
 done
 valid_model "$MODEL" || { echo "antigravity-worker: resolved model '$MODEL' is not a valid agy model id — refusing" >&2; exit 2; }
+if [[ -n "$EFFORT" ]]; then
+    valid_effort "$EFFORT" || { echo "antigravity-worker: resolved effort '$EFFORT' is not a valid agy effort level — refusing" >&2; exit 2; }
+fi
 
 PRINT_TIMEOUT="${ANTIGRAVITY_WORKER_PRINT_TIMEOUT:-5m}"
 
@@ -110,8 +143,10 @@ cat > "$PROMPT_FILE"
 # Flags BEFORE the positional prompt (measured: flags after -p are misparsed).
 # --dangerously-skip-permissions is NEVER present. --output-format json gives
 # call-worker the status/response envelope; --print-timeout caps a hung run.
-CMD=(agy --model "$MODEL" --output-format json --print-timeout "$PRINT_TIMEOUT"
-     -p "$(cat "$PROMPT_FILE")")
+CMD=(agy --model "$MODEL")
+[[ -n "$EFFORT" ]] && CMD+=(--effort "$EFFORT")
+CMD+=(--output-format json --print-timeout "$PRINT_TIMEOUT"
+      -p "$(cat "$PROMPT_FILE")")
 
 if command -v sandbox-exec >/dev/null 2>&1; then
     # Deny writes outside this run's WORK_DIR and the agy state dir; deny reads

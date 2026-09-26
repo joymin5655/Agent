@@ -19,7 +19,8 @@ for a given user request.
     "file_globs": ["*.sql", "src/api/*"]
   },
   "aliases": ["alternative-name"],
-  "model": "sonnet | opus | haiku (optional)",
+  "model": "sonnet | opus | haiku | fable (optional)",
+  "effort": "low | medium | high | max (optional)",
   "memory_scope": "local | project | user (default: local)"
 }
 ```
@@ -55,4 +56,4 @@ Document deviations in your adoption log (see `rules/external-plugin-policy.md`
 - `agents/code-reviewer.md`, `agents/security-reviewer.md` — concrete
   agent definitions distributed with the framework.
 - `core/hooks/supervisor.py` — the orchestrator.
-- `agents/master-registry.json` — the shipped default registry, read by the hooks. Each `model` is kept in sync with `agents/<id>.md` by the CI drift guard.
+- `agents/master-registry.json` — the shipped default registry, read by the hooks. Each `model` (and, when present, `effort`) is kept in sync with `agents/<id>.md` frontmatter by the CI drift guard (`core/tests/registry-drift.sh`).
