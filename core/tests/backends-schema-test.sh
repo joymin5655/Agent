@@ -135,6 +135,15 @@ grep -Eiq '(api[-_]?key|access[-_]?token|secret|password|bearer)' "$REGISTRY"
 [[ $? -ne 0 ]]; check "no-credential-shaped-keys" $?
 
 echo
+echo "=== agy/antigravity lane pins Google-vendor models only (vendor independence) ==="
+# agy also serves Claude models, so the council's google lane must stay
+# gemini-* — a comment saying so is the guard against a future edit quietly
+# pinning a non-Google model into that lane's tiers file.
+jq -e '.backends.gemini.comment // "" | test("(?i)google-vendor|gemini-\\*")' \
+  "$REGISTRY" >/dev/null 2>&1
+check "gemini-lane-vendor-independence-comment" $?
+
+echo
 echo "=== shipped kiro profile templates: read-only + model pin ==="
 # These are the SHIPPED templates (adapters/kiro/*.json.template), not a fixture.
 # The profile's tool list is the lane's real isolation boundary — it overrides

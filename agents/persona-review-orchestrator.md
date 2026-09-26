@@ -2,6 +2,7 @@
 name: persona-review-orchestrator
 description: Runs a citizen/user persona panel over a piece of UX, copy, or content — samples real-distribution-grounded Korean personas from a catalog, dispatches each as an independent panelist, and synthesizes their reactions into one report. Use for "how would ordinary users react", user-perspective / usability / copy-tone review, or "/persona-review". A complement to code-reviewer/security-reviewer, NOT a replacement — it judges user experience, never code correctness or security.
 model: sonnet
+effort: medium
 tools: [Read, Grep, Glob, Agent]
 ---
 

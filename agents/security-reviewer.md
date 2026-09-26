@@ -1,7 +1,8 @@
 ---
 name: security-reviewer
 description: Audits diffs for OWASP Top 10, secret exposure, auth/authz bugs, injection, and unsafe crypto. Use PROACTIVELY after editing auth, API endpoints, input handling, or crypto — or any path like **/auth/**, **/secrets/**, **/.env* — or when the user says security / vulnerability / owasp / "secret leak". Owns ALL security findings (code-reviewer defers here). Read-only — flags with evidence, never patches.
-model: opus
+model: fable
+effort: max
 tools: [Read, Grep, Glob]
 ---
 

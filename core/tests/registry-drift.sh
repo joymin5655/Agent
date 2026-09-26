@@ -25,6 +25,11 @@
 #   7. skill negative-trigger — every shipped skills/*/SKILL.md description
 #        must contain at least one "NOT " negative example (T-3: negative
 #        examples measurably improve skill-routing accuracy).
+#   8. agent effort frontmatter — every agents/*.md must carry an `effort:`
+#        frontmatter line whose value is one of low/medium/high/max (W2-1:
+#        effort is the verification-budget axis alongside model); when a
+#        registry entry for that id also carries an `effort` field, it must
+#        equal the frontmatter value (same drift contract as check 4's model).
 #
 # This is pillar-② (CI/CD structural enforcement) as a standalone script: the CI
 # job becomes a thin caller, and the check is no longer un-runnable outside GitHub.
@@ -108,8 +113,27 @@ try:
         mdmodel = mm.group(1) if mm else None
         if rmodel != mdmodel:
             fail.append(f"model drift: registry '{aid}'={rmodel} but agents/{aid}.md={mdmodel}")
+        rentry_effort = entry.get("effort")
+        em = re.search(r"(?m)^effort:\s*(\S+)", parts[1]) if len(parts) >= 3 else None
+        mdeffort = em.group(1) if em else None
+        if rentry_effort is not None and rentry_effort != mdeffort:
+            fail.append(f"effort drift: registry '{aid}'={rentry_effort} but agents/{aid}.md={mdeffort}")
 except Exception as e:
     fail.append(f"master-registry.json unreadable: {e}")
+
+# 8) every agent carries an effort: frontmatter field with a valid value
+#    (W2-1: effort is the verification-budget axis alongside model — spending
+#    your effort blog's principle, made mechanically checkable).
+VALID_EFFORT = {"low", "medium", "high", "max"}
+for a in sorted(pathlib.Path("agents").glob("*.md")):
+    parts = a.read_text(encoding="utf-8").split("---", 2)
+    if len(parts) < 3:
+        continue  # no frontmatter -> already failed check 3
+    em = re.search(r"(?m)^effort:\s*(\S+)", parts[1])
+    if not em:
+        fail.append(f"agent missing effort: frontmatter: {a}")
+    elif em.group(1) not in VALID_EFFORT:
+        fail.append(f"agent effort: frontmatter invalid value '{em.group(1)}' (want one of {sorted(VALID_EFFORT)}): {a}")
 
 # 5) review/verify agents must carry a read-only toolset (O-1 write
 #    single-threading — the toolset is the one mechanical enforcement point:

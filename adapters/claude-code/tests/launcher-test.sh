@@ -61,6 +61,7 @@ echo "=== claude-research — MID rung (sonnet) ==="
 : > "$RECORD"
 env PATH="$STUB_DIR:/usr/bin:/bin" bash "$LAUNCHERS_DIR/claude-research" hello >/dev/null 2>&1
 grep -q -- '--model sonnet' "$RECORD"; check "research-pins-sonnet" 0 $?
+grep -q -- '--effort medium' "$RECORD"; check "research-pins-medium-effort" 0 $?
 
 echo
 echo "=== claude-ox — Keychain + isolation + sensitive-cwd guard ==="
@@ -84,6 +85,7 @@ rc=$?
 check "ox-allowed-cwd-exits-0" 0 "$rc"
 grep -q "CLAUDE_CONFIG_DIR=$OXHOME/.claude-ox" "$RECORD"; check "ox-isolates-config-dir" 0 $?
 grep -q -- '--strict-mcp-config' "$RECORD"; check "ox-strips-mcp-by-default" 0 $?
+grep -q -- '--permission-mode manual' "$RECORD"; check "ox-forces-manual-permission-mode" 0 $?
 
 : > "$RECORD"
 out="$(cd "$BLOCKED_DIR/sub" && env PATH="$STUB_DIR:/usr/bin:/bin" HOME="$OXHOME" USER="${USER:-tester}" \

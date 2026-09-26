@@ -24,6 +24,14 @@ carries no model field as of 2026-07, verified empirically):
                      may differ from
 
 Family → tier map: fable/opus → TOP, sonnet → MID, haiku → LOW, else unknown.
+The record's "family" field distinguishes fable from opus even though both
+tier as TOP (W2-3 — TOP itself split into opus-5-5@high general / fable-5-1@max
+security-review-and-completion-verdict per spec.md §7 Q3).
+
+Session effort (W2-3): best-effort probe of event["effort"]["level"] or a
+plain event["effort"] string, recorded verbatim (one of low/medium/high/xhigh/
+max) or null when the SessionStart payload carries none — no known runtime
+surfaces this today, so null is the honest default, not a bug.
 
 Output: one stderr advisory line when a tier is detected (stdout stays empty —
 SessionStart stdout injects session context, and an observer must not add
@@ -80,6 +88,39 @@ def tier_of(model_id):
         if family in lowered:
             return tier
     return "unknown"
+
+
+def family_of(model_id):
+    """The matched TIER_MAP family name (e.g. "fable", "opus"), or "unknown" —
+    so a fable session is labeled TOP with family "fable", not lumped in with
+    opus just because both map to the same tier (W2-3)."""
+    lowered = (model_id or "").lower()
+    for family, _tier in TIER_MAP:
+        if family in lowered:
+            return family
+    return "unknown"
+
+
+EFFORT_LEVELS = {"low", "medium", "high", "xhigh", "max"}
+
+
+def from_stdin_effort(event):
+    """Best-effort session effort level probe, mirroring from_stdin's style:
+    event["effort"]["level"] (dict shape, future-proof) or a plain string at
+    event["effort"]. Returns None when absent or not a recognized level —
+    null in the record is the honest "not carried on this SessionStart"."""
+    effort = event.get("effort")
+    value = None
+    if isinstance(effort, dict):
+        candidate = effort.get("level")
+        if isinstance(candidate, str):
+            value = candidate.strip()
+    elif isinstance(effort, str):
+        value = effort.strip()
+    if not value:
+        return None
+    value = value.lower()
+    return value if value in EFFORT_LEVELS else None
 
 
 def from_stdin(event):
@@ -238,6 +279,7 @@ def main():
     if not model_id:
         source = "none"
     tier = tier_of(model_id)
+    family = family_of(model_id)
     if tier != "unknown":
         note = " (configured default)" if source == "settings-default" else ""
         print(
@@ -246,6 +288,8 @@ def main():
             file=sys.stderr,
         )
 
+    effort = from_stdin_effort(event)
+
     sink = resolve_sink()
     record = {
         "ts": datetime.now(timezone.utc).isoformat(),
@@ -253,6 +297,8 @@ def main():
         "model": model_id or "",
         "source": source,
         "tier": tier,
+        "family": family,
+        "effort": effort,
         "session_id": _session_id(event),
     }
     append_record(sink, record)

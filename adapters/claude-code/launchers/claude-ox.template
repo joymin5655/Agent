@@ -114,4 +114,11 @@ print -u2 "⚠️  OpenRouter: $OX_MODEL — 프롬프트·응답이 익명 제3
 if [[ -z "${CLAUDE_OX_NO_ISOLATE:-}" ]]; then
   print -u2 "   격리 모드: 스킬·CLAUDE.md·MCP 미적용 (해제: CLAUDE_OX_NO_ISOLATE=1)"
 fi
-exec claude "$@"
+# --permission-mode manual: Claude Code 2.1.283+ defaults third-party-provider
+# (non-Anthropic ANTHROPIC_BASE_URL) sessions to "auto" mode, which bypasses
+# this harness's ask/deny PreToolUse hooks entirely. Force back to the
+# ask-every-time mode so gate hooks still run for this gateway session.
+# NOTE (measured 2.1.282, `claude --help`): "default" is NOT one of this CLI's
+# --permission-mode choices (acceptEdits|auto|bypassPermissions|manual|
+# dontAsk|plan) — "manual" is the ask-every-time equivalent, used here instead.
+exec claude --permission-mode manual "$@"

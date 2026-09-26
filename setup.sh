@@ -276,12 +276,21 @@ install_antigravity() {
     ln -sf "$FRAMEWORK_ROOT/adapters/antigravity/antigravity-worker.sh" "$HOME/bin/antigravity-worker"
     ln -sf "$FRAMEWORK_ROOT/adapters/antigravity/antigravity-preflight.sh" "$HOME/bin/antigravity-preflight"
     echo "  symlink: ~/bin/antigravity-worker, ~/bin/antigravity-preflight"
-    if [[ -d "$HOME/.gemini/antigravity-cli" && ! -f "$HOME/.gemini/antigravity-cli/agent-tiers.json" ]]; then
-        cp "$FRAMEWORK_ROOT/adapters/antigravity/antigravity-tiers.json.template" "$HOME/.gemini/antigravity-cli/agent-tiers.json"
-        echo "  installed: ~/.gemini/antigravity-cli/agent-tiers.json"
-    elif [[ ! -d "$HOME/.gemini/antigravity-cli" ]]; then
-        echo "  NOTE: antigravity CLI not initialized yet (~/.gemini/antigravity-cli missing) — run the agy CLI once, then re-run 'setup.sh --antigravity' to seed agent-tiers.json"
+    # Tiers file lives under ~/.agent (not the vendor CLI's own config dir) so
+    # it does not depend on ~/.gemini/antigravity-cli existing. If only the old
+    # path (pre-2026-09) has a file, the worker migrates it on first dispatch —
+    # this install step never needs the old dir to be present.
+    mkdir -p "$HOME/.agent"
+    if [[ ! -f "$HOME/.agent/antigravity-tiers.json" ]]; then
+        OLD_ANTIGRAVITY_TIERS="$HOME/.gemini/antigravity-cli/agent-tiers.json"
+        if [[ -f "$OLD_ANTIGRAVITY_TIERS" ]]; then
+            echo "  NOTE: found an old-path tiers file ($OLD_ANTIGRAVITY_TIERS) — antigravity-worker migrates it to ~/.agent/antigravity-tiers.json on first dispatch"
+        else
+            cp "$FRAMEWORK_ROOT/adapters/antigravity/antigravity-tiers.json.template" "$HOME/.agent/antigravity-tiers.json"
+            echo "  installed: ~/.agent/antigravity-tiers.json"
+        fi
     fi
+    command -v agy >/dev/null 2>&1 || echo "  NOTE: agy CLI not found on PATH yet — install it, then verify with 'agy models' (adapters/antigravity/README.md)"
 }
 
 # ---------------------------------------------------------------------------

@@ -5,4 +5,8 @@
 # claude-quick/claude-research/claude-ox (adapters/claude-code/launchers/README.md):
 # a session-start human choice should have a name at every rung, even the one
 # that is just plain `claude`.
+#
+# Optional: pass --effort high yourself for a harder TOP-rung session
+# (`claude --help` documents low|medium|high|xhigh|max) — not forced here,
+# since this rung's whole point is "no opinion beyond the model default".
 exec claude "$@"

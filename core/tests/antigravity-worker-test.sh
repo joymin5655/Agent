@@ -130,6 +130,62 @@ printf 'x' | HOME='/tmp/x") (allow file-write* (subpath "/' ANTIGRAVITY_TIERS_FI
 check "unsafe-home-refuses-8" 8 $?
 
 echo
+echo "=== (f-migration) tiers-file path migration (~/.gemini/antigravity-cli -> ~/.agent) ==="
+FAKE_HOME="$TMP/fakehome"
+
+# (1) only the NEW path has a file -> used directly, no migration chatter.
+rm -rf "$FAKE_HOME"; mkdir -p "$FAKE_HOME/.agent"
+cat > "$FAKE_HOME/.agent/antigravity-tiers.json" <<'JSON'
+{ "model": "gemini-3.8-flash-medium", "tiers": { "MID": [], "TOP": ["--model", "gemini-3.1-pro-high"] } }
+JSON
+: > "$RECORD"
+err="$(printf 'x' | HOME="$FAKE_HOME" bash "$WORKER" --tier mid 2>&1 >/dev/null)"
+grep -q -- '--model gemini-3.8-flash-medium' "$RECORD"; check "new-path-only-used" 0 $?
+printf '%s' "$err" | grep -qi 'migrat'; check "new-path-only-no-migration-chatter" 1 $?
+
+# (2) only the OLD path has a file -> migrated to the new path + warning naming both.
+rm -rf "$FAKE_HOME"; mkdir -p "$FAKE_HOME/.gemini/antigravity-cli"
+cat > "$FAKE_HOME/.gemini/antigravity-cli/agent-tiers.json" <<'JSON'
+{ "model": "gemini-3.1-pro-low", "tiers": { "MID": [], "TOP": ["--model", "gemini-3.1-pro-high"] } }
+JSON
+: > "$RECORD"
+err="$(printf 'x' | HOME="$FAKE_HOME" bash "$WORKER" --tier mid 2>&1 >/dev/null)"
+grep -q -- '--model gemini-3.1-pro-low' "$RECORD"; check "old-path-only-model-used" 0 $?
+[[ -f "$FAKE_HOME/.agent/antigravity-tiers.json" ]]; check "old-path-only-new-file-created" 0 $?
+printf '%s' "$err" | grep -q "$FAKE_HOME/.gemini/antigravity-cli/agent-tiers.json"; check "migration-message-names-old-path" 0 $?
+printf '%s' "$err" | grep -q "$FAKE_HOME/.agent/antigravity-tiers.json"; check "migration-message-names-new-path" 0 $?
+
+# (3) BOTH paths have a file -> new wins, stale-old warning.
+cat > "$FAKE_HOME/.agent/antigravity-tiers.json" <<'JSON'
+{ "model": "gemini-3.8-flash-medium", "tiers": { "MID": [], "TOP": ["--model", "gemini-3.1-pro-high"] } }
+JSON
+: > "$RECORD"
+err="$(printf 'x' | HOME="$FAKE_HOME" bash "$WORKER" --tier mid 2>&1 >/dev/null)"
+grep -q -- '--model gemini-3.8-flash-medium' "$RECORD"; check "both-paths-new-wins" 0 $?
+printf '%s' "$err" | grep -qi 'stale'; check "both-paths-stale-warning" 0 $?
+
+# ANTIGRAVITY_TIERS_FILE explicit override still bypasses migration entirely.
+: > "$RECORD"
+err="$(printf 'x' | HOME="$FAKE_HOME" ANTIGRAVITY_TIERS_FILE="$TIERS" bash "$WORKER" --tier mid 2>&1 >/dev/null)"
+grep -q -- '--model gemini-3.1-pro-low' "$RECORD"; check "explicit-tiers-file-still-wins" 0 $?
+
+echo
+echo "=== (g) --effort tier token: valid pass-through + invalid refusal ==="
+EFFORT_TIERS="$TMP/effort-tiers.json"
+cat > "$EFFORT_TIERS" <<'JSON'
+{ "model": "gemini-3.8-flash-medium", "tiers": { "MID": [], "TOP": ["--model", "gemini-3.1-pro-high", "--effort", "high"] } }
+JSON
+: > "$RECORD"
+printf 'x' | ANTIGRAVITY_TIERS_FILE="$EFFORT_TIERS" bash "$WORKER" --tier top >/dev/null 2>&1
+check "effort-token-dispatch-exits-0" 0 $?
+grep -qE -- '--effort high .*-p ' "$RECORD"; check "effort-precedes-positional-prompt" 0 $?
+cat > "$TMP/bad-effort.json" <<'JSON'
+{ "model": "gemini-3.8-flash-medium", "tiers": { "MID": [], "TOP": ["--effort", "ultra-mega"] } }
+JSON
+printf 'x' | ANTIGRAVITY_TIERS_FILE="$TMP/bad-effort.json" bash "$WORKER" --tier top >/dev/null 2>&1
+check "invalid-effort-level-exits-2" 2 $?
+
+echo
 echo "=== (f) no stray grok-worker reference in the antigravity adapter ==="
 # antigravity-preflight.sh's missing-on-PATH hint once wrongly pointed at
 # ~/bin/grok-worker (copy-paste from the grok adapter) — regression guard.

@@ -6,10 +6,10 @@ invocation typed from memory.
 
 | Launcher | Rung | What it runs |
 |---|---|---|
-| `claude-build` | TOP | `claude` unchanged — full harness, default model selection. Exists for set symmetry: every rung gets a name, even the plain one. |
+| `claude-build` | TOP | `claude` unchanged — full harness, default model selection. Exists for set symmetry: every rung gets a name, even the plain one. Pass `--effort high` yourself for a harder session; not forced. |
 | `claude-quick` | LOW | `claude --model haiku` — mechanical/routine work. |
-| `claude-research` | MID | `claude --model sonnet` — general implementation/investigation work. |
-| `claude-ox` | gateway | `claude` routed through the OpenRouter gateway (`ANTHROPIC_BASE_URL` override), isolated config dir, sensitive-cwd guarded. See `claude-ox.template` and `adapters/openrouter/README.md`. |
+| `claude-research` | MID | `claude --model sonnet --effort medium` — general implementation/investigation work. |
+| `claude-ox` | gateway | `claude --permission-mode manual` routed through the OpenRouter gateway (`ANTHROPIC_BASE_URL` override), isolated config dir, sensitive-cwd guarded. `--permission-mode manual` forces back the ask-every-time mode, since 2.1.283+ defaults third-party-provider sessions to `auto` (bypasses the harness's ask/deny hooks). See `claude-ox.template` and `adapters/openrouter/README.md`. |
 
 ## Policy note
 
