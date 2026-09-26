@@ -198,6 +198,64 @@ PY
   rm -f "$CONFIG_YML"
 fi
 
+echo "=== (i) PyYAML absent -> exactly one stderr warning, never stdout (W1-6) ==="
+# Simulate absence regardless of what's actually installed: a fake `yaml.py`
+# that raises ImportError on import, placed FIRST on PYTHONPATH so it shadows
+# any real PyYAML in site-packages.
+FAKE_YAML_DIR="$(mktemp -d)"
+cat > "$FAKE_YAML_DIR/yaml.py" <<'EOF'
+raise ImportError("simulated PyYAML absence for test")
+EOF
+cat > "$CONFIG_YML" <<'EOF'
+python_hooks:
+  secret_patterns: []
+EOF
+WARN_MSG='hook_config: PyYAML not installed — hook-config.yml skipped (project path protection inactive); run: python3 -m pip install --user pyyaml'
+STDOUT_I=$(PYTHONPATH="$FAKE_YAML_DIR:$REPO_ROOT/core/hooks" python3 -c "
+import hook_config
+hook_config.load_extensions('$PROJECT_DIR')
+" 2>"$FAKE_YAML_DIR/stderr.txt")
+STDERR_I=$(cat "$FAKE_YAML_DIR/stderr.txt")
+COUNT_I=$(printf '%s\n' "$STDERR_I" | grep -Fc "$WARN_MSG")
+if [[ "$COUNT_I" -eq 1 ]]; then
+  echo "  ok   [pyyaml-absent-warns-once-on-stderr]"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL [pyyaml-absent-warns-once-on-stderr] count=$COUNT_I :: $STDERR_I"
+  FAIL=$((FAIL + 1))
+fi
+if [[ -z "$STDOUT_I" ]]; then
+  echo "  ok   [pyyaml-absent-warning-not-on-stdout]"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL [pyyaml-absent-warning-not-on-stdout] :: $STDOUT_I"
+  FAIL=$((FAIL + 1))
+fi
+rm -f "$CONFIG_YML"
+
+echo "=== (j) PyYAML present -> no warning ==="
+if python3 -c "import yaml" 2>/dev/null; then
+  cat > "$CONFIG_YML" <<'EOF'
+python_hooks:
+  secret_patterns: []
+EOF
+  STDERR_J=$(PYTHONPATH="$REPO_ROOT/core/hooks" python3 -c "
+import hook_config
+hook_config.load_extensions('$PROJECT_DIR')
+" 2>&1 1>/dev/null)
+  if [[ -z "$STDERR_J" ]]; then
+    echo "  ok   [pyyaml-present-no-warning]"
+    PASS=$((PASS + 1))
+  else
+    echo "  FAIL [pyyaml-present-no-warning] :: $STDERR_J"
+    FAIL=$((FAIL + 1))
+  fi
+  rm -f "$CONFIG_YML"
+else
+  echo "  skip [pyyaml-present-no-warning] PyYAML not importable in this environment"
+fi
+rm -rf "$FAKE_YAML_DIR"
+
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]

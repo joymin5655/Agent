@@ -87,6 +87,27 @@ OUT_B="$(PATH=/usr/bin:/bin bash "$SETUP" --doctor 2>&1)"
 check "gitleaks-warn-without-path" $?
 
 echo
+echo "=== (b2) PyYAML WARN when import fails; PASS in the normal environment ==="
+# 2026-09-26 incident: a Mac python3 with no PyYAML made hook_config.py
+# silently skip hook-config.yml (project secret-path protection fail-OPEN).
+# Isolate the absent case via a PYTHONPATH stub module that raises
+# ImportError — this shadows any real PyYAML install on sys.path (the stub
+# dir precedes site-packages) without touching the host's actual install.
+STUB_YAML_DIR="$(safe_mktemp_d)" || { echo "FAIL: mktemp -d failed (PyYAML stub fixture)"; exit 1; }
+track_fixture "$STUB_YAML_DIR"
+cat > "$STUB_YAML_DIR/yaml.py" <<'EOF'
+raise ImportError("no yaml (test stub)")
+EOF
+OUT_B2A="$(PYTHONPATH="$STUB_YAML_DIR" bash "$SETUP" --doctor 2>&1)"
+[[ "$OUT_B2A" == *"[WARN"*"PyYAML"*"inactive"* ]]
+check "pyyaml-warn-when-import-fails" $?
+rm -rf "$STUB_YAML_DIR"
+
+OUT_B2B="$(bash "$SETUP" --doctor 2>&1)"
+[[ "$OUT_B2B" == *"[PASS"*"PyYAML"* ]]
+check "pyyaml-pass-in-normal-environment" $?
+
+echo
 echo "=== (c) missing hook executable bit -> exit 1 + FAIL line naming it ==="
 TMP_COPY="$(safe_mktemp_d)" || { echo "FAIL: mktemp -d failed (repo copy fixture)"; exit 1; }
 track_fixture "$TMP_COPY"

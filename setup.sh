@@ -536,6 +536,18 @@ doctor() {
         add_row PASS "jq — not required (no core/hooks/*.sh shells out to it)"
     fi
 
+    # 4b. PyYAML — hook_config.py needs it to parse hook-config.yml (project
+    #     path protection). Absent PyYAML fails OPEN (protection silently
+    #     inactive), not closed, so this is WARN not FAIL (real incident,
+    #     2026-09-26: a Mac python3 without PyYAML skipped the config and
+    #     4 test batteries failed downstream). WARN text says INACTIVE
+    #     explicitly so this row cannot be misread as merely cosmetic.
+    if python3 -c 'import yaml' >/dev/null 2>&1; then
+        add_row PASS "PyYAML — importable (hook-config.yml path protection active)"
+    else
+        add_row WARN "PyYAML missing — hook-config.yml path protection inactive (python3 -m pip install --user pyyaml)"
+    fi
+
     # 5. core/hooks/*.sh + *.py executable. hook_config.py is a library module
     #    imported by secret-content-scan.py (never invoked directly as a hook
     #    process) and is intentionally exempt from this check.
@@ -1388,7 +1400,7 @@ PY
 
 # ---------------------------------------------------------------------------
 # Dependency bootstrap (--bootstrap [--dry-run]) — installs what doctor only
-# WARNs about (checks 3/14/19: gitleaks, sqlite3, jq, gh). Unlike every other
+# WARNs about (checks 3/4b/14/19: gitleaks, sqlite3, jq, gh, PyYAML). Unlike every other
 # install_* function above, this one mutates the SYSTEM (package manager), not
 # just $HOME config files — so its consent model is deliberately stricter and
 # does NOT read AGENT_SETUP_YES (that var means "skip template-overwrite
@@ -1439,40 +1451,52 @@ bootstrap() {
         command -v "$d" >/dev/null 2>&1 || missing+=("$d")
     done
 
-    if [[ ${#missing[@]} -eq 0 ]]; then
-        echo "All bootstrap-managed dependencies already present: ${deps[*]}"
+    # PyYAML (python3 -c 'import yaml') is checked alongside the PATH-binary
+    # deps above but is a language-level module, not an OS package — it is
+    # installed via pip below, independent of the brew/apt detection that
+    # follows, so a host with no supported OS package manager can still get
+    # PyYAML guidance instead of bailing out before reaching it.
+    local pyyaml_missing=0
+    python3 -c 'import yaml' >/dev/null 2>&1 || pyyaml_missing=1
+
+    if [[ ${#missing[@]} -eq 0 && $pyyaml_missing -eq 0 ]]; then
+        echo "All bootstrap-managed dependencies already present: ${deps[*]} pyyaml"
         return 0
     fi
 
-    # AGENT_BOOTSTRAP_PKG_MGR (test seam): SET (even to "") short-circuits real
-    # OS/package-manager detection — the only way to exercise the apt branch
-    # (or the unsupported-OS branch) from a macOS dev/CI box, since `uname -s`
-    # itself can't be usefully faked without root or a PATH-stub arms race.
-    local pkg_mgr
-    if [[ -n "${AGENT_BOOTSTRAP_PKG_MGR+x}" ]]; then
-        pkg_mgr="$AGENT_BOOTSTRAP_PKG_MGR"
-    else
-        case "$(uname -s)" in
-            Darwin) pkg_mgr="brew" ;;
-            Linux)  command -v apt-get >/dev/null 2>&1 && pkg_mgr="apt" || pkg_mgr="" ;;
-            *)      pkg_mgr="" ;;
-        esac
-    fi
+    local -a installed=() skipped=() failed=()
 
-    if [[ -z "$pkg_mgr" ]]; then
-        echo "No supported package manager detected (supported: macOS/brew, Linux/apt)."
-        echo "Missing: ${missing[*]} — install manually. See docs/getting-started.md prerequisites."
-        return 1
-    fi
-    if [[ "$pkg_mgr" == "brew" ]] && ! command -v brew >/dev/null 2>&1; then
-        echo "macOS detected but Homebrew not found. Install from https://brew.sh, then re-run --bootstrap."
-        echo "Missing: ${missing[*]}"
-        return 1
-    fi
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        # AGENT_BOOTSTRAP_PKG_MGR (test seam): SET (even to "") short-circuits real
+        # OS/package-manager detection — the only way to exercise the apt branch
+        # (or the unsupported-OS branch) from a macOS dev/CI box, since `uname -s`
+        # itself can't be usefully faked without root or a PATH-stub arms race.
+        local pkg_mgr
+        if [[ -n "${AGENT_BOOTSTRAP_PKG_MGR+x}" ]]; then
+            pkg_mgr="$AGENT_BOOTSTRAP_PKG_MGR"
+        else
+            case "$(uname -s)" in
+                Darwin) pkg_mgr="brew" ;;
+                Linux)  command -v apt-get >/dev/null 2>&1 && pkg_mgr="apt" || pkg_mgr="" ;;
+                *)      pkg_mgr="" ;;
+            esac
+        fi
 
-    echo "Missing dependencies: ${missing[*]}"
-    echo "Package manager: $pkg_mgr"
-    echo
+        if [[ -z "$pkg_mgr" ]]; then
+            echo "No supported package manager detected (supported: macOS/brew, Linux/apt)."
+            echo "Missing: ${missing[*]} — install manually. See docs/getting-started.md prerequisites."
+            return 1
+        fi
+        if [[ "$pkg_mgr" == "brew" ]] && ! command -v brew >/dev/null 2>&1; then
+            echo "macOS detected but Homebrew not found. Install from https://brew.sh, then re-run --bootstrap."
+            echo "Missing: ${missing[*]}"
+            return 1
+        fi
+
+        echo "Missing dependencies: ${missing[*]}"
+        echo "Package manager: $pkg_mgr"
+        echo
+    fi
 
     # Non-interactive stdin -> forced dry-run downgrade. This is unconditional
     # (checked even if the caller didn't pass --dry-run) — a script piping into
@@ -1486,38 +1510,60 @@ bootstrap() {
         downgrade_note="NOTE: stdin is not a terminal (non-interactive) — downgraded to --dry-run. Nothing was installed. Re-run interactively (or pass --dry-run explicitly to suppress this note)."
     fi
 
-    local -a installed=() skipped=() failed=()
-    for d in "${missing[@]}"; do
-        local install_cmd=""
-        case "$pkg_mgr" in
-            brew) install_cmd="brew install $d" ;;
-            apt)  install_cmd="sudo apt-get install -y $d" ;;
-            *)
-                # Unreachable via real OS detection (brew/apt/"" only) — but the
-                # AGENT_BOOTSTRAP_PKG_MGR seam is a public test hook, and a bogus
-                # value must fail loud, not eval "" and report "installed".
-                echo "  ERROR: unrecognized package manager '$pkg_mgr' — cannot install $d" >&2
-                failed+=("$d")
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        for d in "${missing[@]}"; do
+            local install_cmd=""
+            case "$pkg_mgr" in
+                brew) install_cmd="brew install $d" ;;
+                apt)  install_cmd="sudo apt-get install -y $d" ;;
+                *)
+                    # Unreachable via real OS detection (brew/apt/"" only) — but the
+                    # AGENT_BOOTSTRAP_PKG_MGR seam is a public test hook, and a bogus
+                    # value must fail loud, not eval "" and report "installed".
+                    echo "  ERROR: unrecognized package manager '$pkg_mgr' — cannot install $d" >&2
+                    failed+=("$d")
+                    continue
+                    ;;
+            esac
+            if [[ $effective_dry_run -eq 1 ]]; then
+                echo "  [dry-run] would run: $install_cmd"
                 continue
-                ;;
-        esac
-        if [[ $effective_dry_run -eq 1 ]]; then
-            echo "  [dry-run] would run: $install_cmd"
-            continue
-        fi
-        if confirm_bootstrap "  Install $d via $pkg_mgr? ($install_cmd)"; then
-            echo "  Installing $d ..."
-            if eval "$install_cmd"; then
-                installed+=("$d")
+            fi
+            if confirm_bootstrap "  Install $d via $pkg_mgr? ($install_cmd)"; then
+                echo "  Installing $d ..."
+                if eval "$install_cmd"; then
+                    installed+=("$d")
+                else
+                    echo "  ERROR: install failed for $d (command: $install_cmd)" >&2
+                    failed+=("$d")
+                fi
             else
-                echo "  ERROR: install failed for $d (command: $install_cmd)" >&2
-                failed+=("$d")
+                echo "  ... skipped: $d"
+                skipped+=("$d")
+            fi
+        done
+    fi
+
+    # PyYAML — pip install, same asks-first policy as the OS-package deps
+    # above (no auto-yes, --dry-run only prints the plan).
+    if [[ $pyyaml_missing -eq 1 ]]; then
+        local pip_cmd="python3 -m pip install --user pyyaml"
+        echo "Missing: PyYAML (python3 -c 'import yaml' failed)"
+        if [[ $effective_dry_run -eq 1 ]]; then
+            echo "  [dry-run] would run: $pip_cmd"
+        elif confirm_bootstrap "  Install PyYAML via pip? ($pip_cmd)"; then
+            echo "  Installing PyYAML ..."
+            if eval "$pip_cmd"; then
+                installed+=("pyyaml")
+            else
+                echo "  ERROR: install failed for PyYAML (command: $pip_cmd)" >&2
+                failed+=("pyyaml")
             fi
         else
-            echo "  ... skipped: $d"
-            skipped+=("$d")
+            echo "  ... skipped: pyyaml"
+            skipped+=("pyyaml")
         fi
-    done
+    fi
 
     echo
     if [[ $effective_dry_run -eq 1 ]]; then

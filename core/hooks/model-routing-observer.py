@@ -21,6 +21,11 @@ Each record also carries a spend signal for downstream audits
   total_tokens — best-effort probe of tool_response usage; null when the
                  runtime doesn't surface usage on PostToolUse
 
+Each record also carries origin (W1-4, hook_config.log_origin()): "session" by
+default, or AGENT_LOG_ORIGIN's value verbatim (test runners export
+AGENT_LOG_ORIGIN=test) — so a test-battery-produced record is distinguishable
+from a real-session one downstream (telemetry-digest.sh --model).
+
 Pure observer: emits nothing on stdout, never blocks, always exits 0; any
 exception is swallowed (a broken observer must not tax dispatches). Analyze
 with jq, e.g.:
@@ -39,6 +44,19 @@ from datetime import datetime, timezone
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 DISPATCH_TOOLS = {"Task", "Agent"}
+
+# Fail-safe import (same guard pattern as secret-content-scan.py): a broken or
+# missing hook_config.py must never tax this observer — it just falls back to
+# the "session" default origin.
+try:
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import hook_config  # noqa: E402
+
+    def _log_origin():
+        return hook_config.log_origin()
+except Exception:
+    def _log_origin():
+        return os.environ.get("AGENT_LOG_ORIGIN") or "session"
 
 
 def registry_ids():
@@ -106,6 +124,7 @@ def main():
         "prompt_chars": len(prompt),
         "total_tokens": total_tokens(event),
         "session_id": os.environ.get("AGENT_SESSION_ID", ""),
+        "origin": _log_origin(),
     }
     os.makedirs(os.path.dirname(sink), exist_ok=True)
     with open(sink, "a", encoding="utf-8") as f:

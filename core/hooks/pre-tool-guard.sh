@@ -66,8 +66,13 @@ log_violation() {
   local sid="${AGENT_SESSION_ID:-main}"
   local repro="false"
   case "${AGENT_REPRODUCE_TEST:-}" in 1|true|TRUE|True) repro="true" ;; esac
-  printf '{"ts":"%s","guard":"%s","hook":"pre-tool-guard.sh","reason":%s,"session_id":"%s","decision":"%s","reproduce_test":%s,"schema_version":"2.0.0"}\n' \
-    "$ts" "$guard" "$(printf '%s' "$reason" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))' 2>/dev/null || echo "\"$reason\"")" "$sid" "$decision" "$repro" \
+  # W1-4: origin tags the record so a test-battery-produced block is
+  # distinguishable from a real-session block (all 7,443 prior records carry
+  # session_id=main, so origin is the only way to tell them apart).
+  local origin="${AGENT_LOG_ORIGIN:-session}"
+  origin="${origin//[^A-Za-z0-9_.-]/}"   # keep the JSON well-formed whatever the env holds
+  printf '{"ts":"%s","guard":"%s","hook":"pre-tool-guard.sh","reason":%s,"session_id":"%s","decision":"%s","reproduce_test":%s,"origin":"%s","schema_version":"2.0.0"}\n' \
+    "$ts" "$guard" "$(printf '%s' "$reason" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))' 2>/dev/null || echo "\"$reason\"")" "$sid" "$decision" "$repro" "$origin" \
     >> "$log_file" 2>/dev/null || true
   [[ -x "$repo_root/core/infra/agent-session.sh" ]] && \
     "$repo_root/core/infra/agent-session.sh" broadcast blocked \

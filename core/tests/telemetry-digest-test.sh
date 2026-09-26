@@ -386,5 +386,48 @@ check "model-fuzz-no-raw-control-bytes" $?
 [[ "$OUT_P" == *"FAKE-INJECTED-LINE"* ]]; check "model-fuzz-injected-text-inert" $?
 
 echo
+echo "=== (q) --gates: origin filter (W1-5) — 'session' + legacy (no origin) count, 'test' excluded ==="
+ORIGIN_DIR="$TMP_DIR/origin"
+mkdir -p "$ORIGIN_DIR/logs"
+cat > "$ORIGIN_DIR/registry.md" <<EOF
+<!-- gate-registry:begin -->
+GATE origin-gate | h.sh | deny | origin.jsonl | secrets | $NEW_REVIEW | origin filter regression.
+<!-- gate-registry:end -->
+EOF
+{
+  printf '{"ts":"%s","guard":"secrets","origin":"session","decision":"deny"}\n' "$NOW_TS"
+  printf '{"ts":"%s","guard":"secrets","origin":"session","decision":"ask"}\n' "$NOW_TS"
+  printf '{"ts":"%s","guard":"secrets"}\n' "$NOW_TS"
+  printf '{"ts":"%s","guard":"secrets","origin":"test","decision":"deny"}\n' "$NOW_TS"
+  printf '{"ts":"%s","guard":"secrets","origin":"test","decision":"deny"}\n' "$NOW_TS"
+} > "$ORIGIN_DIR/logs/origin.jsonl"
+OUT_Q="$(bash "$SCRIPT" --gates --registry "$ORIGIN_DIR/registry.md" --logs-dir "$ORIGIN_DIR/logs" --json 2>&1)"
+printf '%s' "$OUT_Q" | python3 -c "import json,sys; d=json.load(sys.stdin); r={x['id']:x for x in d['reports']}; sys.exit(0 if r['origin-gate']['fired']==3 else 1)"
+check "gates-origin-session-and-legacy-counted" $?
+printf '%s' "$OUT_Q" | python3 -c "import json,sys; d=json.load(sys.stdin); r={x['id']:x for x in d['reports']}; sys.exit(0 if r['origin-gate']['blocked']==1 else 1)"
+check "gates-origin-test-excluded-from-blocked" $?
+[[ "$OUT_Q" == *'"block_rate": 33.3'* ]]
+check "gates-origin-block-rate-computed" $?
+
+OUT_Q2="$(bash "$SCRIPT" --gates --registry "$ORIGIN_DIR/registry.md" --logs-dir "$ORIGIN_DIR/logs" 2>&1)"
+[[ "$OUT_Q2" == *"block rate by gate"* ]]
+check "gates-block-rate-table-present" $?
+[[ "$OUT_Q2" == *"origin-gate"*"fired=3"*"blocked=1"* ]]
+check "gates-block-rate-table-shows-gate" $?
+
+echo
+echo "=== (r) --model mode: origin filter (W1-5) — 'test' records excluded, legacy (no origin) kept ==="
+cat > "$MODEL_DIR/origin-routing.jsonl" <<'EOF'
+{"gate":"model-routing-observer","subagent_type":"executor","model":"sonnet","verdict":"override","prompt_chars":400,"total_tokens":1000,"session_id":"s1","origin":"session"}
+{"gate":"model-routing-observer","subagent_type":"legacy-record","model":"sonnet","verdict":"override","prompt_chars":100,"total_tokens":200,"session_id":"s1"}
+{"gate":"model-routing-observer","subagent_type":"test-noise","model":"sonnet","verdict":"override","prompt_chars":999,"total_tokens":9999,"session_id":"s1","origin":"test"}
+EOF
+OUT_R="$(bash "$SCRIPT" --model --routing-log "$MODEL_DIR/origin-routing.jsonl" --model-registry "$MODEL_DIR/registry.json" --json 2>&1)"
+printf '%s' "$OUT_R" | python3 -c "import json,sys; d=json.load(sys.stdin); sys.exit(0 if d['records']==2 else 1)"
+check "model-origin-session-and-legacy-counted" $?
+[[ "$OUT_R" != *"test-noise"* ]]
+check "model-origin-test-excluded" $?
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]

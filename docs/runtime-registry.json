@@ -1,0 +1,111 @@
+{
+  "$comment": "Runtime-spec registry — the SSOT for 'what CLI version / hook surface / instruction files did we last verify against'. Consumed by core/tests/runtime-currency.sh (gate). Model IDs never live here (no-model-ids policy): each entry names the adapter files that OWN its pins (`pin_files`) and, for first-party vendor runtimes, a denylist of RETIRED model-ID patterns (`retired_model_patterns`, Python regex) that must not appear on a pin line of those files. Gateway lanes (kiro/openrouter) own their own rosters, so they carry no retired list — only freshness. Dates are YYYY-MM-DD; a `measured_on` / `checked_on` older than AGENT_CURRENCY_MAX_AGE_DAYS (default 45) is a WARN (FAIL with --strict).",
+  "schema_version": 1,
+  "max_age_days_default": 45,
+  "runtimes": {
+    "claude-code": {
+      "kind": "first-party",
+      "vendor": "anthropic",
+      "cli_version_measured": "2.1.282",
+      "measured_on": "2026-09-26",
+      "docs": [
+        {"url": "https://code.claude.com/docs/en/hooks", "checked_on": "2026-09-26"},
+        {"url": "https://code.claude.com/docs/en/model-config", "checked_on": "2026-09-26"},
+        {"url": "https://code.claude.com/docs/en/plugins-reference", "checked_on": "2026-09-26"},
+        {"url": "https://code.claude.com/docs/en/memory", "checked_on": "2026-09-26"}
+      ],
+      "hook_events_wired": ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"],
+      "hook_events_available_count": 33,
+      "instruction_files": ["CLAUDE.md", "AGENTS.md (native since 2.1.277)", ".claude/rules/*.md"],
+      "skills_dirs": ["skills/ (plugin)", "~/.claude/skills"],
+      "plugin_manifest": ".claude-plugin/plugin.json",
+      "pin_files": ["agents/*.md", "adapters/claude-code/launchers/claude-quick", "adapters/claude-code/launchers/claude-research", "adapters/claude-code/launchers/claude-build"],
+      "retired_model_patterns": ["claude-sonnet-4[.-]5", "claude-opus-5(?![.-]5)", "claude-3-", "claude-opus-4-1"],
+      "notes": "MultiEdit matcher removed upstream; Task is a legacy alias of Agent; effort: accepted in agent frontmatter; third-party-provider sessions default to auto permission mode (2.1.283)."
+    },
+    "codex": {
+      "kind": "first-party",
+      "vendor": "openai",
+      "cli_version_measured": "0.157.0",
+      "measured_on": "2026-09-26",
+      "docs": [
+        {"url": "https://learn.chatgpt.com/docs/hooks", "checked_on": "2026-09-26"},
+        {"url": "https://learn.chatgpt.com/docs/config-file/config-reference", "checked_on": "2026-09-26"},
+        {"url": "https://learn.chatgpt.com/docs/agent-configuration/agents-md", "checked_on": "2026-09-26"},
+        {"url": "https://learn.chatgpt.com/docs/models", "checked_on": "2026-09-26"},
+        {"url": "https://developers.openai.com/plugins/build/plugins", "checked_on": "2026-09-26"}
+      ],
+      "hook_events_wired": [],
+      "hook_events_available": ["SessionStart", "SessionEnd", "PreToolUse", "PermissionRequest", "PostToolUse", "PreCompact", "PostCompact", "UserPromptSubmit", "SubagentStart", "SubagentStop", "Stop", "Interrupt"],
+      "instruction_files": ["~/.codex/AGENTS.md", "AGENTS.md (git root → cwd, trusted projects only)"],
+      "skills_dirs": [".agents/skills", "~/.agents/skills"],
+      "plugin_manifest": "plugin.json (agent-plugins.org 1.0.0; .codex-plugin/plugin.json legacy)",
+      "pin_files": ["adapters/codex/quick.config.toml.template", "adapters/codex/deep.config.toml.template", "adapters/codex/codex-config.toml.template"],
+      "retired_model_patterns": ["gpt-5\\.[2-6]", "gpt-4", "o[34](-mini)?(?![a-z0-9])", "codex-mini"],
+      "sandbox_values_measured": ["read-only", "workspace-write", "danger-full-access"],
+      "notes": "Native hooks are first-class (same hookSpecificOutput.permissionDecision schema as Claude; exit 2 = block). Shell wrapper adapter is obsolete → W4. gpt-5.5 retires 2026-10-14."
+    },
+    "antigravity": {
+      "kind": "first-party",
+      "vendor": "google",
+      "cli_version_measured": "1.2.7",
+      "measured_on": "2026-09-26",
+      "docs": [
+        {"url": "https://antigravity.google/docs/hooks/", "checked_on": "2026-09-26"},
+        {"url": "https://antigravity.google/docs/cli/headless/", "checked_on": "2026-09-26"},
+        {"url": "https://antigravity.google/docs/cli/install/", "checked_on": "2026-09-26"},
+        {"url": "https://antigravity.google/docs/permissions/", "checked_on": "2026-09-26"}
+      ],
+      "hook_events_wired": [],
+      "hook_events_available": ["PreToolUse", "PostToolUse", "PreInvocation", "PostInvocation", "Stop"],
+      "instruction_files": ["GEMINI.md", "AGENTS.md"],
+      "skills_dirs": [".agents/skills", "~/.gemini/antigravity-cli/skills"],
+      "plugin_manifest": "hooks.json inside plugin (~/.gemini/config/plugins)",
+      "pin_files": ["adapters/antigravity/antigravity-tiers.json.template"],
+      "retired_model_patterns": ["gemini-2\\.", "gemini-3\\.0", "gemini-3-flash(?![a-z0-9-])"],
+      "models_measured": ["gemini-3.8-flash-{high,medium,low}", "gemini-3.7-flash-*", "gemini-3.6-flash-*", "gemini-3.1-pro-{high,low}", "claude-sonnet-4-6", "claude-opus-4-6-thinking", "gpt-oss-120b-medium"],
+      "notes": "Headless shell denial is a SOFT deny (exit 0 + stderr) — preflights must read JSON status, not exit code. --effort low|medium|high|max exists (1.2.x). agy also serves Claude models: the council lane must stay pinned to gemini-* for vendor independence. Gemini CLI individual access ended 2026-06-18."
+    },
+    "gemini-cli": {
+      "kind": "first-party",
+      "vendor": "google",
+      "status": "retired-for-individuals",
+      "cli_version_measured": "0.46.0",
+      "measured_on": "2026-09-26",
+      "docs": [
+        {"url": "https://developers.googleblog.com/an-important-update-transitioning-gemini-cli-to-antigravity-cli/", "checked_on": "2026-09-26"}
+      ],
+      "pin_files": ["adapters/gemini/gemini-settings.json.template"],
+      "retired_model_patterns": [],
+      "notes": "Kept for enterprise (Code Assist) users only; not a council lane since 2026-08-19."
+    },
+    "kiro": {
+      "kind": "gateway",
+      "vendor": "aws",
+      "cli_version_measured": "2.19.1",
+      "measured_on": "2026-08-25",
+      "docs": [],
+      "pin_files": ["adapters/kiro/*.json.template"],
+      "notes": "Gateway roster owns its model IDs (claude-sonnet-4.5 is current THERE). OpenAI lanes disabled 2026-08-25."
+    },
+    "openrouter": {
+      "kind": "gateway",
+      "vendor": "openrouter",
+      "cli_version_measured": "n/a (HTTP)",
+      "measured_on": "2026-08-25",
+      "docs": [],
+      "pin_files": ["adapters/openrouter/openrouter-tiers.json.template"],
+      "notes": "Free-tier advisory lane; roster changes weekly, pins live in the tiers file."
+    },
+    "grok": {
+      "kind": "first-party",
+      "vendor": "xai",
+      "cli_version_measured": "unknown",
+      "measured_on": "2026-08-18",
+      "docs": [],
+      "pin_files": ["adapters/grok/grok-tiers.json.template"],
+      "retired_model_patterns": [],
+      "notes": "Opt-in advisory lane; not re-surveyed in the 2026-09 cycle."
+    }
+  }
+}
