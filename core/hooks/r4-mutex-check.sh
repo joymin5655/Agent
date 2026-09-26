@@ -28,6 +28,92 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 0
 fi
 
+# ---------------------------------------------------------------------------
+# Resolve canonical repo root (handles worktrees) — needed both by the
+# WorktreeCreate/WorktreeRemove branch below and by the resource-lock path.
+# ---------------------------------------------------------------------------
+resolve_canonical_root() {
+  local common_dir root
+  if common_dir="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"; then
+    if [[ "$(basename "$common_dir")" == ".git" ]]; then
+      root="$(dirname "$common_dir")"
+    else
+      root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+    fi
+    (cd "$root" 2>/dev/null && pwd -P) && return 0
+  fi
+  git rev-parse --show-toplevel 2>/dev/null || pwd -P
+}
+
+ROOT="$(resolve_canonical_root)"
+WORKTREES_DIR="$ROOT/.worktrees"
+LOCK_FILE="$ROOT/.agent/locks/active-sessions.json"
+
+# ---------------------------------------------------------------------------
+# Resolve current session ID — shared by WorktreeCreate/WorktreeRemove
+# registration and the resource-mutex path below.
+# ---------------------------------------------------------------------------
+resolve_session_id() {
+  local sid=""
+  if [[ -n "${AGENT_SESSION_ID:-}" ]]; then
+    sid="$AGENT_SESSION_ID"
+  fi
+  if [[ -z "$sid" ]]; then
+    local cwd wt_rel wt_name
+    cwd="$(pwd -P)"
+    if [[ "$cwd" == "$WORKTREES_DIR"/* ]]; then
+      wt_rel="${cwd#"$WORKTREES_DIR"/}"
+      wt_name="${wt_rel%%/*}"
+      if [[ "$wt_name" =~ ^(claude|codex|gemini)-(.+)$ ]]; then
+        sid="${BASH_REMATCH[1]}-wt-${BASH_REMATCH[2]}"
+      fi
+    fi
+  fi
+  if [[ -z "$sid" ]]; then
+    sid="${AGENT:-claude}-main"
+  fi
+  echo "$sid"
+}
+
+HOOK_EVENT=$(printf '%s' "$INPUT" | jq -r '.hook_event_name // .event // ""' 2>/dev/null) || HOOK_EVENT=""
+
+case "$HOOK_EVENT" in
+  WorktreeCreate|WorktreeRemove)
+    # Register/release the worktree as a session-held resource in the SAME
+    # lock file the resource-mutex path below reads (.agent/locks/active-sessions.json,
+    # shared_resource_locks map) — reuses the existing R4 mechanism rather than
+    # inventing a second lock store. Probe stdin keys defensively: the Claude
+    # docs (2026-09-26) don't pin an exact field name for the worktree path, so
+    # try path / worktree_path / name / branch in that order, first hit wins.
+    # Per docs/hook-protocol.md these events are observation-only — NEVER emit
+    # a decision (empty stdout always), exit 0 always.
+    WT_PATH=$(printf '%s' "$INPUT" | jq -r '.path // .worktree_path // .name // .branch // ""' 2>/dev/null) || WT_PATH=""
+    if [[ -z "$WT_PATH" ]]; then
+      exit 0
+    fi
+    RESOURCE="worktree:${WT_PATH}"
+    SESSION_ID="$(resolve_session_id)"
+    mkdir -p "$(dirname "$LOCK_FILE")" 2>/dev/null || true
+    # Delegate the write to agent-session.sh claim/release: its update_lock()
+    # runs under the .mutex.d mkdir-mutex, so two concurrent Worktree events
+    # cannot lose each other's update (an inline jq+mv here would race).
+    # Same canonical root => same lock file. A 1s mutex budget keeps a busy
+    # lock from stalling the hook; claim exits 1 when another session owns the
+    # worktree, which is not our problem to decide here (observation only).
+    SESSION_SH="$(cd "$(dirname "${BASH_SOURCE[0]}")/../infra" && pwd)/agent-session.sh"
+    if [[ -x "$SESSION_SH" ]]; then
+      if [[ "$HOOK_EVENT" == "WorktreeCreate" ]]; then
+        AGENT_SESSION_ID="$SESSION_ID" AGENT_SESSION_MUTEX_TIMEOUT=1 \
+          "$SESSION_SH" claim "$RESOURCE" >/dev/null 2>&1 || true
+      else
+        AGENT_SESSION_ID="$SESSION_ID" AGENT_SESSION_MUTEX_TIMEOUT=1 \
+          "$SESSION_SH" release "$RESOURCE" >/dev/null 2>&1 || true
+      fi
+    fi
+    exit 0
+    ;;
+esac
+
 TOOL_NAME=$(printf '%s' "$INPUT" | jq -r '.tool_name // .tool // ""')
 COMMAND=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // ""')
 
@@ -66,46 +152,9 @@ if [[ -z "$RESOURCE" ]]; then
   exit 0
 fi
 
-# ---------------------------------------------------------------------------
-# Resolve canonical repo root (handles worktrees)
-# ---------------------------------------------------------------------------
-resolve_canonical_root() {
-  local common_dir root
-  if common_dir="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"; then
-    if [[ "$(basename "$common_dir")" == ".git" ]]; then
-      root="$(dirname "$common_dir")"
-    else
-      root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-    fi
-    (cd "$root" 2>/dev/null && pwd -P) && return 0
-  fi
-  git rev-parse --show-toplevel 2>/dev/null || pwd -P
-}
-
-ROOT="$(resolve_canonical_root)"
-LOCK_FILE="$ROOT/.agent/locks/active-sessions.json"
-WORKTREES_DIR="$ROOT/.worktrees"
-
-# ---------------------------------------------------------------------------
-# Resolve current session ID
-# ---------------------------------------------------------------------------
-SESSION_ID=""
-if [[ -n "${AGENT_SESSION_ID:-}" ]]; then
-  SESSION_ID="$AGENT_SESSION_ID"
-fi
-if [[ -z "$SESSION_ID" ]]; then
-  CWD="$(pwd -P)"
-  if [[ "$CWD" == "$WORKTREES_DIR"/* ]]; then
-    rel="${CWD#"$WORKTREES_DIR"/}"
-    wt_name="${rel%%/*}"
-    if [[ "$wt_name" =~ ^(claude|codex|gemini)-(.+)$ ]]; then
-      SESSION_ID="${BASH_REMATCH[1]}-wt-${BASH_REMATCH[2]}"
-    fi
-  fi
-fi
-if [[ -z "$SESSION_ID" ]]; then
-  SESSION_ID="${AGENT:-claude}-main"
-fi
+# ROOT / LOCK_FILE / WORKTREES_DIR were already resolved above (shared with
+# the WorktreeCreate/WorktreeRemove branch).
+SESSION_ID="$(resolve_session_id)"
 
 # ---------------------------------------------------------------------------
 # Look up the resource owner

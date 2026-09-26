@@ -207,3 +207,23 @@ jobs:
             exit 1
           fi
           chmod +x core/hooks/pre-tool-guard.sh
+
+  plugin-validate:
+    name: claude plugin validate --strict (skips if the CLI is unavailable)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Best-effort install — same package the harness documents for a native
+      # install (docs/runtime-registry.json claude-code entry). Never fail the
+      # job on install failure: a network hiccup or a registry outage here is an
+      # infra flake, not a manifest defect, and this check is advisory (not a
+      # required status check — see job name).
+      - name: Install the claude CLI (best-effort)
+        run: npm install -g @anthropic-ai/claude-code || true
+      - name: Validate plugin manifest (explicit skip if the CLI never landed)
+        run: |
+          if ! command -v claude >/dev/null 2>&1; then
+            echo "::notice::claude CLI unavailable — plugin validate skipped"
+            exit 0
+          fi
+          claude plugin validate --strict .

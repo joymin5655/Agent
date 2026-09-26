@@ -61,6 +61,22 @@ import sys
 import tempfile
 from datetime import datetime, timezone
 
+# Fail-safe import (same pattern as model-routing-observer.py): hook_config
+# supplies the W1-4 origin tag; a broken/missing module must never tax this
+# observer, so it falls back to reading AGENT_LOG_ORIGIN directly.
+try:
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import hook_config
+
+    def _log_origin():
+        return hook_config.log_origin()
+except Exception:
+    def _log_origin():
+        return os.environ.get("AGENT_LOG_ORIGIN") or "session"
+
+
+MODEL_SWITCH_EVENTS = {"PreModelSwitch", "PostModelSwitch"}
+
 TIER_MAP = (("fable", "TOP"), ("opus", "TOP"), ("sonnet", "MID"), ("haiku", "LOW"))
 
 TRANSCRIPT_TAIL_BYTES = 65536
@@ -248,6 +264,51 @@ def append_record(sink, record):
                 pass
 
 
+def _switch_model_field(event, key):
+    """A PreModelSwitch/PostModelSwitch model field is a plain string per the
+    docs (to_model / from_model), unlike SessionStart's model dict — cleaned
+    through the same allowlist as from_stdin's result."""
+    value = event.get(key)
+    return clean_model(value) if isinstance(value, str) else None
+
+
+def handle_model_switch(event, hook_event_name, sink):
+    """PreModelSwitch (to_model only) / PostModelSwitch (from_model, to_model)
+    — log the transition; on PostModelSwitch, emit a stderr ADVISORY (never a
+    block — docs/model-routing.md's "no-runtime-switching" policy is advisory
+    only) when the switch crosses tiers."""
+    from_model = _switch_model_field(event, "from_model")
+    to_model = _switch_model_field(event, "to_model")
+    tier_from = tier_of(from_model) if from_model else "unknown"
+    tier_to = tier_of(to_model) if to_model else "unknown"
+
+    if (
+        hook_event_name == "PostModelSwitch"
+        and tier_from != "unknown"
+        and tier_to != "unknown"
+        and tier_from != tier_to
+    ):
+        print(
+            f"[model-routing] advisory: session switched tiers mid-run "
+            f"({tier_from} -> {tier_to}, {from_model or '?'} -> {to_model or '?'}); "
+            "docs/model-routing.md's no-runtime-switching policy — informational only, not blocking",
+            file=sys.stderr,
+        )
+
+    record = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "gate": "session-tier-observer",
+        "event": hook_event_name,
+        "from_model": from_model or "",
+        "to_model": to_model or "",
+        "tier_from": tier_from,
+        "tier_to": tier_to,
+        "session_id": _session_id(event),
+        "origin": _log_origin(),
+    }
+    append_record(sink, record)
+
+
 def _session_id(event):
     """String-typed, control-stripped, capped — stdin-supplied like the model."""
     value = event.get("session_id")
@@ -262,6 +323,11 @@ def main():
     except Exception:
         return
     if not isinstance(event, dict):
+        return
+
+    hook_event_name = event.get("hook_event_name") or event.get("event") or ""
+    if hook_event_name in MODEL_SWITCH_EVENTS:
+        handle_model_switch(event, hook_event_name, resolve_sink())
         return
 
     model_id, source = None, "none"

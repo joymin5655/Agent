@@ -124,6 +124,65 @@ def extract_error_signature(result_text: str) -> str:
     return result_text[:120] if result_text else "unknown"
 
 
+def _record_failure(signature: str, tool_use_id, now: float) -> list:
+    """Append a failure record (dedup by tool_use_id when the runtime gives
+    us one) and return the pruned+updated record list.
+
+    PostToolUseFailure (Claude's explicit-failure event, added alongside the
+    existing PostToolUse text/exit-status heuristic below) and a PostToolUse
+    for the SAME tool call can both reach this hook once both are wired. Since
+    neither the canonical event JSON (docs/hook-protocol.md) nor today's live
+    PostToolUse payload is guaranteed to carry tool_use_id, dedup is
+    best-effort: when a tool_use_id IS present on this call we skip if a
+    record with the same id is already in the window; when it's absent (the
+    common case today) we fall back to the pre-existing behavior of counting
+    every classified failure, accepting a possible double-count for that one
+    call as a known, documented trade-off rather than silently dropping data.
+    """
+    records = load_state()
+    records = [r for r in records if now - r.get("ts", 0) < WINDOW_SECONDS]
+    if tool_use_id:
+        for r in records:
+            if r.get("tool_use_id") == tool_use_id:
+                save_state(records)
+                return records
+    entry = {"ts": now, "sig": signature}
+    if tool_use_id:
+        entry["tool_use_id"] = tool_use_id
+    records.append(entry)
+    save_state(records)
+    return records
+
+
+def _maybe_fire(records: list) -> None:
+    if len(records) < THRESHOLD:
+        return
+    signature = records[-1].get("sig", "")
+    short_sig = signature[:60]
+    similar = sum(1 for r in records if r.get("sig", "")[:60] == short_sig)
+
+    if similar >= THRESHOLD:
+        msg = (
+            f"Circuit Breaker: same error repeated {similar} times in {WINDOW_SECONDS}s. "
+            f"Change your approach — the current strategy is not working. "
+            f"Error pattern: {short_sig}..."
+        )
+    else:
+        msg = (
+            f"Circuit Breaker: {len(records)} errors in {WINDOW_SECONDS}s. "
+            f"Multiple failures detected — consider a different approach."
+        )
+
+    output = {
+        "hookSpecificOutput": {
+            "hookEventName": "PostToolUse",
+            "additionalContext": msg,
+        }
+    }
+    print(json.dumps(output))
+    save_state([])
+
+
 def main() -> None:
     try:
         data = json.load(sys.stdin)
@@ -132,6 +191,21 @@ def main() -> None:
 
     tool_name = data.get("tool_name", "")
     if tool_name != "Bash":
+        return
+
+    hook_event_name = data.get("hook_event_name") or data.get("event") or ""
+
+    if hook_event_name == "PostToolUseFailure":
+        # Explicit failure event (docs: tool_name, tool_input, tool_use_id,
+        # error) — the failure is a GIVEN, no exit-status/text heuristic
+        # needed. Counted directly from the `error` field.
+        error = data.get("error", "")
+        error_text = error if isinstance(error, str) else json.dumps(error)
+        signature = extract_error_signature(error_text)
+        tool_use_id = data.get("tool_use_id")
+        now = time.time()
+        records = _record_failure(signature, tool_use_id, now)
+        _maybe_fire(records)
         return
 
     result = data.get("tool_result") or data.get("tool_response") or {}
@@ -158,35 +232,9 @@ def main() -> None:
         return
 
     signature = extract_error_signature(result_text)
-    records = load_state()
-    records = [r for r in records if now - r.get("ts", 0) < WINDOW_SECONDS]
-    records.append({"ts": now, "sig": signature})
-    save_state(records)
-
-    if len(records) >= THRESHOLD:
-        short_sig = signature[:60]
-        similar = sum(1 for r in records if r.get("sig", "")[:60] == short_sig)
-
-        if similar >= THRESHOLD:
-            msg = (
-                f"Circuit Breaker: same error repeated {similar} times in {WINDOW_SECONDS}s. "
-                f"Change your approach — the current strategy is not working. "
-                f"Error pattern: {short_sig}..."
-            )
-        else:
-            msg = (
-                f"Circuit Breaker: {len(records)} errors in {WINDOW_SECONDS}s. "
-                f"Multiple failures detected — consider a different approach."
-            )
-
-        output = {
-            "hookSpecificOutput": {
-                "hookEventName": "PostToolUse",
-                "additionalContext": msg,
-            }
-        }
-        print(json.dumps(output))
-        save_state([])
+    tool_use_id = data.get("tool_use_id")
+    records = _record_failure(signature, tool_use_id, now)
+    _maybe_fire(records)
 
 
 if __name__ == "__main__":

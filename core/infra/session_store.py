@@ -85,10 +85,12 @@ class SessionStore:
         self.lock_file = self.lock_dir / "active-sessions.json"
         self.feed_file = self.lock_dir / "work-feed.jsonl"
         self.archive_dir = self.lock_dir / "archive"
+        # .mutex.d is agent-session.sh's mkdir-mutex TOKEN: its existence IS the
+        # lock. Never create it here — doing so held the mutex for every caller
+        # until the 2s stale rule freed it (masked by the 10s acquire timeout).
         self.mutex_dir = self.lock_dir / ".mutex.d"
         self.lock_dir.mkdir(parents=True, exist_ok=True)
         self.archive_dir.mkdir(parents=True, exist_ok=True)
-        self.mutex_dir.mkdir(parents=True, exist_ok=True)
 
     # ---------- atomic JSON read/write ----------
 

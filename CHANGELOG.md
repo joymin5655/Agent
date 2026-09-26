@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Claude Code hook manifests brought current with 2.1.282** (W3-1/W3-2/W3-3/W3-4).
+  `hooks/hooks.json` and `adapters/claude-code/settings.json.template`: matchers
+  `Write|Edit|MultiEdit` → `Write|Edit`, `Task|Agent` → `Agent`,
+  `ExitPlanMode|Task|Agent` → `ExitPlanMode|Agent` (`MultiEdit` is no longer a
+  documented tool; `Task` is a legacy alias of `Agent`). Wired 8 Claude-only
+  extended events non-canonical to the cross-AI protocol: `PostToolUseFailure`
+  → `circuit-breaker.py`, `SessionEnd` → `session-close.sh` (`timeout: 2`),
+  `WorktreeCreate`/`WorktreeRemove` → `r4-mutex-check.sh`, `PreModelSwitch`/
+  `PostModelSwitch` → `session-tier-observer.py`, `SubagentStart`/`SubagentStop`
+  → `model-routing-observer.py`. `PermissionRequest` deliberately left unwired
+  (different `decision` schema; exit 2 not honored — see
+  `docs/hook-protocol.md` §12). `secret-content-scan.py`'s MCP matcher
+  collapsed from an explicit per-tool pipe-list to per-vendor `mcp__<server>__.*`
+  wildcards; `rubric-commit-judge.sh` gained a narrowing `"if": "Bash(git commit*)"`.
+  `adapter.sh` header now documents the extended events and the no-op-vs-fail-open
+  distinction. `docs/hook-protocol.md` gained §12; `docs/runtime-registry.json`
+  claude-code `hook_events_wired` reflects the full wired list.
+- **CI**: added `plugin-validate` job running `claude plugin validate --strict .`
+  (best-effort CLI install; explicit `::notice::` skip if the CLI never lands —
+  never a silent pass, and not a required check).
+
 ## [0.5.10] - 2026-09-02
 
 ### Fixed

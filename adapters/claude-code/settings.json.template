@@ -1,5 +1,5 @@
 {
-  "_comment": "Claude Code hook wire-up template. Copy to ~/.claude/settings.json (or merge into existing). Replace {{FRAMEWORK_ROOT}} with the absolute path to your Agent/ checkout (e.g., $HOME/Agent). Kept in lockstep with hooks/hooks.json (the plugin manifest) — core/tests/hook-template-parity.sh fails the suite on drift.",
+  "_comment": "Claude Code hook wire-up template. Copy to ~/.claude/settings.json (or merge into existing). Replace {{FRAMEWORK_ROOT}} with the absolute path to your Agent/ checkout (e.g., $HOME/Agent). Kept in lockstep with hooks/hooks.json (the plugin manifest) — core/tests/hook-template-parity.sh fails the suite on drift. Events beyond the canonical 5 (PostToolUseFailure, SessionEnd, PreModelSwitch/PostModelSwitch, SubagentStart/SubagentStop, WorktreeCreate/WorktreeRemove) are Claude-only extensions — see docs/hook-protocol.md §12.",
   "hooks": {
     "SessionStart": [
       {
@@ -8,6 +8,14 @@
           { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh agent-session-start.sh" },
           { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh session-init.py" },
           { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh session-tier-observer.py" }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "*",
+        "hooks": [
+          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh session-close.sh", "timeout": 2 }
         ]
       }
     ],
@@ -46,7 +54,7 @@
         ]
       },
       {
-        "matcher": "Write|Edit|MultiEdit",
+        "matcher": "Write|Edit",
         "hooks": [
           { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh check-hardcoding.py" },
           { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh secret-content-scan.py" },
@@ -59,22 +67,38 @@
         ]
       },
       {
-        "matcher": "WebFetch|mcp__supabase__execute_sql|mcp__supabase__apply_migration|mcp__supabase__deploy_edge_function|mcp__firecrawl__firecrawl_scrape|mcp__firecrawl__firecrawl_crawl|mcp__firecrawl__firecrawl_search|mcp__firecrawl__firecrawl_extract|mcp__firecrawl__firecrawl_map|mcp__claude_ai_Notion__notion-create-pages|mcp__claude_ai_Notion__notion-update-page|mcp__claude_ai_Notion__notion-create-comment|mcp__claude_ai_Google_Drive__create_file|mcp__claude_ai_Google_Drive__copy_file|mcp__stitch__upload_design_md|mcp__stitch__create_design_system_from_design_md",
+        "matcher": "WebFetch|mcp__supabase__.*|mcp__firecrawl__.*|mcp__claude_ai_Notion__.*|mcp__claude_ai_Google_Drive__.*|mcp__stitch__.*",
         "hooks": [
           { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh secret-content-scan.py" }
         ]
       },
       {
-        "matcher": "Task|Agent",
+        "matcher": "Agent",
         "hooks": [
           { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh model-routing-advisor.py" },
           { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh council-escalation-gate.py" }
         ]
       }
     ],
+    "PreModelSwitch": [
+      {
+        "matcher": "*",
+        "hooks": [
+          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh session-tier-observer.py" }
+        ]
+      }
+    ],
+    "PostModelSwitch": [
+      {
+        "matcher": "*",
+        "hooks": [
+          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh session-tier-observer.py" }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
-        "matcher": "ExitPlanMode|Task|Agent",
+        "matcher": "ExitPlanMode|Agent",
         "hooks": [
           { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh plan-gate.py" },
           { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh supervisor.py" },
@@ -86,11 +110,11 @@
         "hooks": [
           { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh circuit-breaker.py" },
           { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh verify-observer.py" },
-          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh rubric-commit-judge.sh" }
+          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh rubric-commit-judge.sh", "if": "Bash(git commit*)" }
         ]
       },
       {
-        "matcher": "Write|Edit|MultiEdit",
+        "matcher": "Write|Edit",
         "hooks": [
           { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh r4-file-mutex-register.sh" },
           { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh top-edit-advisor.py" }
@@ -100,6 +124,46 @@
         "matcher": "NotebookEdit",
         "hooks": [
           { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh top-edit-advisor.py" }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh circuit-breaker.py" }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh model-routing-observer.py" }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh model-routing-observer.py" }
+        ]
+      }
+    ],
+    "WorktreeCreate": [
+      {
+        "matcher": "*",
+        "hooks": [
+          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh r4-mutex-check.sh" }
+        ]
+      }
+    ],
+    "WorktreeRemove": [
+      {
+        "matcher": "*",
+        "hooks": [
+          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh r4-mutex-check.sh" }
         ]
       }
     ]

@@ -261,3 +261,64 @@ exit 0
 The protocol is versioned via the framework `CHANGELOG.md`. Breaking changes to event schema bump the framework minor version (e.g., 0.1.x → 0.2.0). All 3 AI adapters MUST update in lockstep.
 
 If you propose a protocol change: open a PR with the canonical doc + all 3 adapter changes + cross-AI parity test in one PR.
+
+---
+
+## 12. Claude Code extended events (adapter-level, non-canonical)
+
+The 5 categories in §1 are the portable subset every adapter must translate. Claude
+Code's native surface exposes more (33 documented events as of 2.1.282 — see
+`docs/runtime-registry.json` → `claude-code.hook_events_available_count`); some of
+those extras are wired directly into `hooks/hooks.json` /
+`adapters/claude-code/settings.json.template` as **Claude-only** extensions. They are
+NOT part of the cross-AI contract: `core/tests/adapter-parity.sh` only exercises the
+canonical 5, and a Codex/Gemini adapter is never expected to translate these. Verified
+against https://code.claude.com/docs/en/hooks (checked 2026-09-26).
+
+| Event | Stdin fields (beyond the common set in §2) | Wired to | Why |
+|---|---|---|---|
+| `PostToolUseFailure` | `tool_name`, `tool_input`, `tool_use_id`, `error` | `circuit-breaker.py` (matcher `Bash`) | Direct failure signal — the hook previously had to infer a Bash failure by parsing `PostToolUse` output; this event reports it without parsing. |
+| `SessionEnd` | — (no matcher-relevant field) | `session-close.sh` (`timeout: 2`) | Lock/resource release only. All hooks on this event share a 1.5s default budget; the explicit `timeout: 2` keeps `session-close.sh` (already the heavier cleanup) within its own small headroom without slowing `SessionEnd` for anyone else. Heavier Stop-time work (quality gate, brain capture) stays on `Stop`, which has no such shared-budget constraint. |
+| `WorktreeCreate` | — (lifecycle event, no tool fields) | `r4-mutex-check.sh` | Registers the new worktree/session at creation time instead of only at first tool use. |
+| `WorktreeRemove` | — (lifecycle event, no tool fields) | `r4-mutex-check.sh` | Same script re-run on teardown to release the mutex registration; the script's own logic (not the wiring) distinguishes create vs. remove via the event field it receives. |
+| `PreModelSwitch` | `to_model` | `session-tier-observer.py` | Advisory: logs and flags a runtime model switch against the "no-runtime-switching" tier policy before it happens. |
+| `PostModelSwitch` | `from_model`, `to_model` | `session-tier-observer.py` | Same script, after the switch — records what actually changed. |
+| `SubagentStart` | `agent_type`, `agent_id` | `model-routing-observer.py` | Measures actual dispatch (model/effort in use) at subagent spawn, complementing the `PreToolUse`-time `model-routing-advisor.py` (which fires when the parent invokes `Agent`, before the child session exists). |
+| `SubagentStop` | `agent_type`, `agent_id`, `last_assistant_message` | `model-routing-observer.py` | Same script, closing the loop with the subagent's final message once it completes. |
+| `PermissionRequest` | (a different `decision` object shape than `permissionDecision`) | **Not wired** | `PermissionRequest`'s stdout contract is a distinct `decision` schema (not `hookSpecificOutput.permissionDecision`), and exit code `2` is not honored on this event per the docs. Wiring an existing `allow`/`deny`/`ask`-shaped hook here would silently do nothing — worse than not wiring it, because it would look enforced. Revisit only with a hook written specifically against that schema. |
+
+All matchers above use `*` (match-all) except `PostToolUseFailure`, which reuses the
+`Bash`-scoped matcher already established for `PostToolUse` (§7 chain-ordering table),
+since `circuit-breaker.py` only tracks Bash failures.
+
+### `if:` field usage (W3-4)
+
+The `if` field (permission-rule syntax, e.g. `"Bash(git *)"`, `"Edit(*.ts)"`) is a
+single scalar string per hook handler entry, evaluated only on `PreToolUse`,
+`PostToolUse`, `PostToolUseFailure`, `PermissionRequest`, and `PermissionDenied` — it
+is not an array and does not apply to lifecycle events. Two decisions in this pass:
+
+1. **`secret-content-scan.py`'s WebFetch/MCP matcher** — the previous matcher was an
+   explicit pipe-list of individual MCP tool names (`mcp__supabase__execute_sql`,
+   `mcp__supabase__apply_migration`, …). The docs confirm a matcher containing any
+   character outside `[A-Za-z0-9_\- ,|]` is evaluated as an **unanchored JS regex**,
+   and that `mcp__<server>__.*` is the documented way to match every tool from a
+   server. The matcher was collapsed to per-vendor wildcards
+   (`mcp__supabase__.*|mcp__firecrawl__.*|mcp__claude_ai_Notion__.*|mcp__claude_ai_Google_Drive__.*|mcp__stitch__.*`),
+   which also closes a gap: any *new* tool a vendor's MCP server adds is now scanned
+   by default instead of needing a manifest edit to add it to an explicit list.
+   This is a `matcher` change, not an `if` rule — `if` narrows within an already-matched
+   event/tool and doesn't do cross-tool wildcarding.
+2. **`rubric-commit-judge.sh` on `PostToolUse` `Bash`** — this hook's own body already
+   greps `tool_input.command` for a `git … commit` shape and exits 0 immediately
+   otherwise (see its docstring). Its only work is scoring commits, so it carries
+   `"if": "Bash(git commit*)"` — a *narrowing* of the same condition the hook already
+   enforces internally, not a new condition. If the `if` glob and the hook's internal
+   regex ever disagree on an edge case, the hook's own check is authoritative (the
+   `if` field only saves invoking the script; it cannot itself cause the hook to
+   score a non-commit or skip a commit its regex would have caught, because a false
+   `if`-match still exits 0 inside the script).
+3. Every other wired hook keeps `matcher`-only filtering: `pre-tool-guard.sh`,
+   `context-mode-guard.sh`, and the rest fire on every `Bash`/`Write|Edit`/`*` call
+   in their group and make their own internal decision — adding an `if` there would
+   duplicate logic the hook already owns without narrowing anything real.
