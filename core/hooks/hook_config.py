@@ -53,6 +53,7 @@ Both `.agent/hook-config.yml` (only if PyYAML importable) and
 import json
 import os
 import re
+import sys
 
 # Defensive caps — bound config influence so a pathological config cannot
 # explode scan cost or memory.
@@ -155,11 +156,30 @@ def _coerce_pattern_list(value, limit):
     return out
 
 
+# W1-6: a Mac python3 without PyYAML silently skipped hook-config.yml entirely
+# (project-declared secret path protection failed OPEN, with no signal). Warn
+# once per process on stderr — never stdout, which is the hook JSON channel.
+_pyyaml_warned = False
+
+
+def _warn_pyyaml_missing():
+    global _pyyaml_warned
+    if _pyyaml_warned:
+        return
+    _pyyaml_warned = True
+    print(
+        "hook_config: PyYAML not installed — hook-config.yml skipped "
+        "(project path protection inactive); run: python3 -m pip install --user pyyaml",
+        file=sys.stderr,
+    )
+
+
 def _read_yaml(path):
     """Parse a YAML file into a dict, or {} on any problem. Never raises."""
     try:
         import yaml  # optional dependency — absent => skip yml entirely
     except ImportError:
+        _warn_pyyaml_missing()
         return {}
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -371,3 +391,17 @@ def load_session_config(repo_root: str) -> dict:
         return {"completion_tests": cmds}
     except Exception:
         return {"completion_tests": []}
+
+
+def log_origin() -> str:
+    """Return the log-origin tag for JSONL writers (W1-4).
+
+    Every existing security-violations.jsonl / model-routing.jsonl record
+    carries session_id=main, so a block produced by a test battery is
+    indistinguishable from a real-session block. AGENT_LOG_ORIGIN, when set
+    and non-empty, is recorded verbatim as the "origin" field — test runners
+    (core/tests/verify-all.sh) export AGENT_LOG_ORIGIN=test so every
+    test-produced record is tagged "test". Default: "session".
+    """
+    origin = os.environ.get("AGENT_LOG_ORIGIN", "")
+    return origin if origin else "session"

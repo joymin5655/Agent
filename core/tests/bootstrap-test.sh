@@ -471,5 +471,26 @@ rm -rf "$SCRATCH_J"
 [[ -n "${STUB_SCANNER_DIR:-}" ]] && rm -rf "$STUB_SCANNER_DIR"
 
 echo
+echo "=== (k) PyYAML missing (PYTHONPATH stub, all OS deps present) -> --dry-run prints pip plan, zero installs ==="
+# Same ImportError-raising stub module setup-doctor-test.sh uses: it shadows
+# any real PyYAML on sys.path (PYTHONPATH precedes site-packages) without
+# touching the host's actual install.
+STUB_K="$(safe_mktemp_d)" || { echo "FAIL: mktemp -d"; exit 1; }
+build_stub "$STUB_K" sqlite3 jq gitleaks gh
+STUB_YAML_K="$(safe_mktemp_d)" || { echo "FAIL: mktemp -d"; exit 1; }
+cat > "$STUB_YAML_K/yaml.py" <<'EOF'
+raise ImportError("no yaml (test stub)")
+EOF
+OUT_K="$(PYTHONPATH="$STUB_YAML_K" PATH="$STUB_K" "$BASH_BIN" "$SETUP" --bootstrap --dry-run 2>&1)"
+RC_K=$?
+[[ $RC_K -eq 0 ]]
+check "pyyaml-dry-run-exit-0" $?
+[[ "$OUT_K" == *"Missing: PyYAML"* ]]
+check "pyyaml-dry-run-names-missing" $?
+[[ "$OUT_K" == *"[dry-run] would run: python3 -m pip install --user pyyaml"* ]]
+check "pyyaml-dry-run-prints-pip-plan" $?
+rm -rf "$STUB_K" "$STUB_YAML_K"
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]

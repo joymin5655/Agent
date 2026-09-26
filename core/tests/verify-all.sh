@@ -56,6 +56,11 @@
 #   bash core/tests/verify-all.sh --list   # print the check labels only
 set -u
 
+# W1-4: tag every record this run's batteries produce in security-violations.jsonl
+# / model-routing.jsonl as origin="test", so a test-battery-produced block stays
+# distinguishable from a real-session block downstream (telemetry-digest.sh).
+export AGENT_LOG_ORIGIN=test
+
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TESTS_DIR="${VERIFY_ALL_TESTS_DIR:-$REPO_ROOT/core/tests}"
 
