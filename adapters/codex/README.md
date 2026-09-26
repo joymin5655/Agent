@@ -5,8 +5,8 @@ Bridge for [OpenAI Codex CLI](https://github.com/openai/codex).
 ## How it works
 
 Current Codex releases expose native hooks and plugins, but Agent has not wired
-that path yet. This shipped compatibility adapter enforces gates **on the
-configured shell route** by wrapping the shell tool with a script that:
+that path yet. This shipped compatibility adapter enforces gates **only when explicitly
+invoked**, using a script that:
 
 1. Receives the shell command Codex wants to run.
 2. Synthesises a canonical PreToolUse event JSON.
@@ -45,7 +45,7 @@ git clone https://github.com/joymin5655/Agent.git ~/Agent
 mkdir -p ~/bin
 ln -sf ~/Agent/adapters/codex/codex-shell-wrap.sh ~/bin/codex-bash
 
-# 3. Configure Codex to use the wrapper
+# 3. For a NEW installation, render the baseline config (merge for an existing one)
 cp ~/Agent/adapters/codex/codex-config.toml.template /tmp/codex-config.toml
 sed -i.bak "s|{{FRAMEWORK_ROOT}}|$HOME/Agent|g" /tmp/codex-config.toml
 mv /tmp/codex-config.toml ~/.codex/config.toml
@@ -54,8 +54,14 @@ mv /tmp/codex-config.toml ~/.codex/config.toml
 cp ~/Agent/adapters/codex/AGENTS.md.template /your/repo/AGENTS.md
 ```
 
-Or run `setup.sh --codex` from the repo root, which automates the above.
-It also installs the `quick`/`deep` tier profiles (`docs/model-routing.md`)
+Do not interpret the baseline config or PATH symlink as native tool interception.
+The template configures Codex's native sandbox and the optional brain MCP; invoke
+`codex-shell-wrap.sh` explicitly for compatibility checks. Do not overwrite an
+existing config wholesale; preserve providers, permissions, plugins, and personal settings.
+
+`setup.sh --codex` automates baseline installation and asks before replacing a differing file.
+For policy updates alone use `setup.sh --instructions-only`, which preserves personal text.
+The full Codex install also installs the `quick`/`deep` tier profiles (`docs/model-routing.md`)
 beside `~/.codex/config.toml` — invoke them with `codex --profile quick` or
 `codex --profile deep`.
 

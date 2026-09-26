@@ -273,7 +273,7 @@ OUT_J3="$(CODEX_CONFIG=/nonexistent/codex/config.toml bash "$SETUP" --doctor 2>&
 check "codex-config-absent-skip" $?
 
 echo
-echo "=== (k) codex wiring: brain MCP + wrapper wired to real files -> PASS ==="
+echo "=== (k) codex wiring: brain path exists; legacy wrapper is not enforcement ==="
 CXW_FIX="$(safe_mktemp_d)" || { echo "FAIL: mktemp -d failed (codex wiring fixture)"; exit 1; }
 track_fixture "$CXW_FIX"
 touch "$CXW_FIX/brain-mcp.py" "$CXW_FIX/codex-shell-wrap.sh"
@@ -285,8 +285,15 @@ command = "python3"
 args = ["$CXW_FIX/brain-mcp.py"]
 EOF
 OUT_K="$(CODEX_CONFIG="$CXW_FIX/config.toml" bash "$SETUP" --doctor 2>&1)"
-[[ "$OUT_K" == *"[PASS"*"codex wiring — brain MCP + shell wrapper wired"* ]]
-check "codex-wired-pass" $?
+[[ "$OUT_K" == *"[PASS"*"codex wiring — brain MCP path exists"* ]]
+check "codex-brain-path-pass" $?
+[[ "$OUT_K" == *"[WARN"*"legacy [tools.shell] is not proof"* ]]
+check "codex-legacy-wrapper-not-enforcement" $?
+sed '/^\[tools.shell\]/,+1d' "$CXW_FIX/config.toml" > "$CXW_FIX/native.toml"
+OUT_K_NATIVE="$(CODEX_CONFIG="$CXW_FIX/native.toml" bash "$SETUP" --doctor 2>&1)"
+[[ "$OUT_K_NATIVE" == *"[PASS"*"codex wiring — brain MCP path exists"* &&
+   "$OUT_K_NATIVE" != *"legacy [tools.shell] is not proof"* ]]
+check "codex-brain-without-wrapper-pass" $?
 
 echo
 echo "=== (k2) codex wiring: brain MCP section absent -> WARN naming it, warn != fail ==="
