@@ -10,7 +10,8 @@ For Gemini CLI, see also [`GEMINI.md`](GEMINI.md) (if present) or use this file.
 
 ## What this repo is
 
-An **AI-agnostic agent framework**: rules, hooks, agents, skills, and automation that work identically across Claude Code / Codex CLI / Gemini CLI.
+An **AI-agnostic agent framework**: rules, hooks, agents, skills, and automation with shared policy across Claude Code / Codex CLI / Gemini CLI.
+Runtime enforcement coverage differs; see `docs/cross-runtime-harness-design.md`.
 
 The repo itself is the framework. Consumers `git clone` it and run `setup.sh` to install configs into their AI runtime (`~/.claude/`, `~/.codex/`, `~/.gemini/`) and optionally scaffold a target project.
 

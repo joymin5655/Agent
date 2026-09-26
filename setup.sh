@@ -17,6 +17,7 @@
 #   bash setup.sh --project        # +current project scaffold (CLAUDE.md, hook-config.yml, etc.)
 #   bash setup.sh --hooks-only     # install git-hooks (pre-commit, pre-push) only
 #   bash setup.sh --all            # alias for default (all 3 AIs)
+#   bash setup.sh --instructions-only  # sync common Claude/Codex policy; preserve personal text
 #   bash setup.sh --doctor         # environment diagnosis only — no installs, read-only
 #   bash setup.sh --bootstrap      # install MISSING deps (gitleaks/sqlite3/jq/gh) via
 #                                   # brew/apt, one y/N prompt per package — never auto-yes
@@ -36,6 +37,7 @@ DO_GEMINI=0
 DO_PROJECT=0
 DO_HOOKS=0
 DO_DOCTOR=0
+DO_INSTRUCTIONS=0
 DO_BOOTSTRAP=0
 BOOTSTRAP_DRY_RUN=0
 
@@ -62,6 +64,7 @@ for arg in "$@"; do
         --launchers)   DO_LAUNCHERS=1 ;;
         --project)     DO_PROJECT=1 ;;
         --hooks-only)  DO_HOOKS=1 ;;
+        --instructions-only) DO_INSTRUCTIONS=1 ;;
         --doctor)      DO_DOCTOR=1 ;;
         --bootstrap)   DO_BOOTSTRAP=1 ;;
         --dry-run)     BOOTSTRAP_DRY_RUN=1 ;;
@@ -102,6 +105,17 @@ apply_template() {
     # each exit path instead; a sed failure under set -e leaks one temp file,
     # which is acceptable.
     sed "s|{{FRAMEWORK_ROOT}}|$FRAMEWORK_ROOT|g" "$src" > "$rendered"
+    if [[ "$src" == "$FRAMEWORK_ROOT/adapters/codex/AGENTS.global.md.template" ]]; then
+        python3 - "$FRAMEWORK_ROOT" "$rendered" <<'PY_SYNC'
+from pathlib import Path
+import runpy
+import sys
+root, target = map(Path, sys.argv[1:])
+render = runpy.run_path(str(root / "core/infra/sync-instructions.py"))["render"]
+target.write_text(render(target.read_text(),
+                         (root / "rules/policy/operating-contract.md").read_text()))
+PY_SYNC
+    fi
     if [[ -f "$dst" ]]; then
         if cmp -s "$rendered" "$dst"; then
             echo "  up-to-date: $dst"
@@ -140,6 +154,8 @@ install_claude() {
     local target="${CLAUDE_SETTINGS:-$HOME/.claude/settings.json}"
     local template="$FRAMEWORK_ROOT/adapters/claude-code/settings.json.template"
     apply_template "$template" "$target"
+    python3 "$FRAMEWORK_ROOT/core/infra/sync-instructions.py" \
+        --claude "${CLAUDE_GLOBAL_INSTRUCTIONS:-$(dirname "$target")/CLAUDE.md}"
     chmod +x "$FRAMEWORK_ROOT/adapters/claude-code/adapter.sh"
 
     # Agent-brain MCP server. Claude reads MCP from .mcp.json / user config (NOT
@@ -191,6 +207,7 @@ install_codex() {
     local agents_global_target="${CODEX_GLOBAL_AGENTS:-$HOME/.codex/AGENTS.md}"
     local agents_global_template="$FRAMEWORK_ROOT/adapters/codex/AGENTS.global.md.template"
     apply_template "$agents_global_template" "$agents_global_target"
+    python3 "$FRAMEWORK_ROOT/core/infra/sync-instructions.py" --codex "$agents_global_target"
 
     # Put wrapper on PATH.
     ensure_home_bin
@@ -821,9 +838,9 @@ PY
     fi
 
     # 15. codex wiring — check 13 verifies tier profiles; this verifies the
-    #     framework is actually WIRED into the codex config: the brain MCP
-    #     server ([mcp_servers.brain] -> core/brain/brain-mcp.py) and the
-    #     shell wrapper (codex-shell-wrap.sh). Absent config -> skipped.
+    #     brain MCP declaration points to a file. This static check does NOT
+    #     prove a live MCP connection or native hook interception.
+    #     Obsolete shell-wrapper config is reported separately. Absent config -> skipped.
     #     Wiring absent -> WARN (setup.sh can install it, but nothing before
     #     this check verified it STAYED installed). Wiring present but
     #     pointing at a file that does not exist -> FAIL (the config claims a
@@ -852,27 +869,17 @@ PY
         else
             cx_missing="brain MCP ([mcp_servers.brain])"
         fi
-        # Unanchored substring heuristic: a comment mentioning the wrapper also
-        # matches — acceptable under the WARN policy (asymmetric on purpose with
-        # the anchored section-header check above; TOML has no fixed home for
-        # the wrapper command). Same || true guard as the brain extraction.
-        if grep -q 'codex-shell-wrap\.sh' "$codex_cfg" 2>/dev/null; then
-            cx_path="$(grep -o '"[^"]*codex-shell-wrap\.sh"' "$codex_cfg" 2>/dev/null | head -1 | tr -d '"' || true)"
-            if [[ -z "$cx_path" ]]; then
-                cx_missing="${cx_missing:+$cx_missing, }shell wrapper (codex-shell-wrap.sh mentioned but no quoted path)"
-            elif [[ ! -f "$cx_path" ]]; then
-                cx_shown="$(sanitize_display "$cx_path")"
-                cx_broken="${cx_broken:+$cx_broken; }shell wrapper -> $cx_shown"
-            fi
-        else
-            cx_missing="${cx_missing:+$cx_missing, }shell wrapper (codex-shell-wrap.sh)"
+        # A config string naming a wrapper does not prove native tool interception.
+        # Current Codex does not route shell tools via the legacy [tools.shell] table.
+        if grep -q '^\[tools\.shell\]' "$codex_cfg" 2>/dev/null; then
+            add_row WARN "codex wiring — legacy [tools.shell] is not proof of native hook enforcement; migrate the obsolete table"
         fi
         if [[ -n "$cx_broken" ]]; then
             add_row FAIL "codex wiring — wired path missing on disk: $cx_broken"
         elif [[ -n "$cx_missing" ]]; then
             add_row WARN "codex wiring — not wired: $cx_missing; see adapters/codex/codex-config.toml.template (bash setup.sh --codex installs it)"
         else
-            add_row PASS "codex wiring — brain MCP + shell wrapper wired in ${codex_cfg/#$HOME/~}"
+            add_row PASS "codex wiring — brain MCP path exists in ${codex_cfg/#$HOME/~}; runtime registration and native hook coverage require a live check"
         fi
     fi
 
@@ -1528,6 +1535,25 @@ bootstrap() {
 
 echo "Framework root: $FRAMEWORK_ROOT"
 echo
+
+if [[ $DO_INSTRUCTIONS -eq 1 ]]; then
+    if [[ $DO_CLAUDE -eq 1 || $DO_CODEX -eq 1 || $DO_GEMINI -eq 1 ||
+          $DO_PROJECT -eq 1 || $DO_HOOKS -eq 1 || $DO_BOOTSTRAP -eq 1 ||
+          $DO_DOCTOR -eq 1 || $DO_GROK -eq 1 || $DO_ANTIGRAVITY -eq 1 ||
+          $DO_KIRO -eq 1 || $DO_OPENROUTER -eq 1 || $DO_LAUNCHERS -eq 1 ]]; then
+        echo "--instructions-only cannot be combined with other install modes" >&2
+        exit 2
+    fi
+    instruction_mode=()
+    if [[ $BOOTSTRAP_DRY_RUN -eq 1 ]]; then
+        instruction_mode=(--check)
+    fi
+    python3 "$FRAMEWORK_ROOT/core/infra/sync-instructions.py" \
+        --claude "${CLAUDE_GLOBAL_INSTRUCTIONS:-$HOME/.claude/CLAUDE.md}" \
+        --codex "${CODEX_GLOBAL_AGENTS:-${CODEX_HOME:-$HOME/.codex}/AGENTS.md}" \
+        ${instruction_mode[@]+"${instruction_mode[@]}"}
+    exit $?
+fi
 
 if [[ $DO_DOCTOR -eq 1 ]]; then
     doctor
