@@ -492,5 +492,21 @@ check "pyyaml-dry-run-prints-pip-plan" $?
 rm -rf "$STUB_K" "$STUB_YAML_K"
 
 echo
+echo "=== (k2) no package manager + PyYAML missing -> exit 1 AND PyYAML plan still printed ==="
+STUB_K2="$(safe_mktemp_d)" || { echo "FAIL: mktemp -d"; exit 1; }
+build_stub "$STUB_K2" sqlite3 jq gitleaks
+STUB_YAML_K2="$(safe_mktemp_d)" || { echo "FAIL: mktemp -d"; exit 1; }
+cat > "$STUB_YAML_K2/yaml.py" <<'EOF'
+raise ImportError("no yaml (test stub)")
+EOF
+OUT_K2="$(AGENT_BOOTSTRAP_PKG_MGR="" PYTHONPATH="$STUB_YAML_K2" PATH="$STUB_K2" "$BASH_BIN" "$SETUP" --bootstrap --dry-run 2>&1)"
+RC_K2=$?
+[[ $RC_K2 -eq 1 && "$OUT_K2" == *"No supported package manager detected"*"gh"* ]]
+check "no-pkg-mgr-still-exit-1" $?
+[[ "$OUT_K2" == *"[dry-run] would run: python3 -m pip install --user pyyaml"* ]]
+check "no-pkg-mgr-still-reaches-pyyaml" $?
+rm -rf "$STUB_K2" "$STUB_YAML_K2"
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]

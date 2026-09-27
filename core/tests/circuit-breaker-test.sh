@@ -243,5 +243,17 @@ else
 fi
 
 echo
+echo "=== E. concurrent failures do not lose updates (state lock) ==="
+PAR_STATE="$STATE_DIR/par.json"; rm -f "$PAR_STATE"
+for i in $(seq 1 20); do
+  printf '%s' "$(ev_text "Traceback: parallel failure $i")" \
+    | AGENT_CIRCUIT_BREAKER_STATE="$PAR_STATE" AGENT_CIRCUIT_BREAKER_THRESHOLD=100 \
+      python3 "$HOOK" >/dev/null 2>&1 &
+done
+wait
+N=$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$PAR_STATE" 2>/dev/null || echo 0)
+if [[ "$N" -eq 20 ]]; then ok "parallel-20-failures-all-recorded" "n=$N"; else bad "parallel-lost-update" "n=$N (want 20)"; fi
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]

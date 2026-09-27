@@ -296,7 +296,7 @@ since `circuit-breaker.py` only tracks Bash failures.
 The `if` field (permission-rule syntax, e.g. `"Bash(git *)"`, `"Edit(*.ts)"`) is a
 single scalar string per hook handler entry, evaluated only on `PreToolUse`,
 `PostToolUse`, `PostToolUseFailure`, `PermissionRequest`, and `PermissionDenied` — it
-is not an array and does not apply to lifecycle events. Two decisions in this pass:
+is not an array and does not apply to lifecycle events. Decisions in this pass:
 
 1. **`secret-content-scan.py`'s WebFetch/MCP matcher** — the previous matcher was an
    explicit pipe-list of individual MCP tool names (`mcp__supabase__execute_sql`,
@@ -309,15 +309,14 @@ is not an array and does not apply to lifecycle events. Two decisions in this pa
    by default instead of needing a manifest edit to add it to an explicit list.
    This is a `matcher` change, not an `if` rule — `if` narrows within an already-matched
    event/tool and doesn't do cross-tool wildcarding.
-2. **`rubric-commit-judge.sh` on `PostToolUse` `Bash`** — this hook's own body already
-   greps `tool_input.command` for a `git … commit` shape and exits 0 immediately
-   otherwise (see its docstring). Its only work is scoring commits, so it carries
-   `"if": "Bash(git commit*)"` — a *narrowing* of the same condition the hook already
-   enforces internally, not a new condition. If the `if` glob and the hook's internal
-   regex ever disagree on an edge case, the hook's own check is authoritative (the
-   `if` field only saves invoking the script; it cannot itself cause the hook to
-   score a non-commit or skip a commit its regex would have caught, because a false
-   `if`-match still exits 0 inside the script).
+2. **`rubric-commit-judge.sh` on `PostToolUse` `Bash`** — W3-4 gave it
+   `"if": "Bash(git commit*)"`, and that was later removed. `if` patterns prefix-match the
+   subcommand text, so the glob missed `git -C <dir> commit …` and the `rtk git commit …`
+   form that a command-rewriting PreToolUse hook produces. Because the hook was never
+   invoked for those commands, its own permissive regex
+   (`\bgit\b[^|;&]*\bcommit(\s|$)`) could not act as the authoritative check. The entry
+   now fires on every `Bash` call, like the hooks in item 3, and the script exits 0 within
+   milliseconds for a non-commit.
 3. Every other wired hook keeps `matcher`-only filtering: `pre-tool-guard.sh`,
    `context-mode-guard.sh`, and the rest fire on every `Bash`/`Write|Edit`/`*` call
    in their group and make their own internal decision — adding an `if` there would

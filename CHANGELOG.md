@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Deferred council findings (runtime-currency-2026-09).**
+  - The `rubric-commit-judge` manifest entry no longer carries `"if": "Bash(git commit*)"`,
+    which missed `git -C <dir> commit` and `rtk git commit`. The hook's internal regex now
+    does all of the filtering.
+  - `circuit-breaker.py` serializes its shared state file with `flock` and writes it
+    atomically (tmp + rename). Before this, concurrent sessions lost failure records.
+  - `setup.sh --bootstrap` with no usable OS package manager (or no Homebrew) now still
+    reaches the PyYAML pip step instead of returning early. It still exits 1.
+  - `session-tier-observer.py` stamps `origin` on its session-start record, which the W1
+    log-origin tag had missed.
+
 ### Changed
 - **Claude Code hook manifests brought current with 2.1.282** (W3-1/W3-2/W3-3/W3-4).
   `hooks/hooks.json` and `adapters/claude-code/settings.json.template`: matchers

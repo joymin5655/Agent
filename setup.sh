@@ -1474,6 +1474,7 @@ bootstrap() {
     fi
 
     local -a installed=() skipped=() failed=()
+    local no_pkg_mgr=0
 
     if [[ ${#missing[@]} -gt 0 ]]; then
         # AGENT_BOOTSTRAP_PKG_MGR (test seam): SET (even to "") short-circuits real
@@ -1491,20 +1492,21 @@ bootstrap() {
             esac
         fi
 
+        # No usable OS package manager: report the missing binaries but fall
+        # through so the PyYAML (pip) step below still runs; exit 1 at the end.
         if [[ -z "$pkg_mgr" ]]; then
             echo "No supported package manager detected (supported: macOS/brew, Linux/apt)."
             echo "Missing: ${missing[*]} — install manually. See docs/getting-started.md prerequisites."
-            return 1
-        fi
-        if [[ "$pkg_mgr" == "brew" ]] && ! command -v brew >/dev/null 2>&1; then
+            no_pkg_mgr=1
+        elif [[ "$pkg_mgr" == "brew" ]] && ! command -v brew >/dev/null 2>&1; then
             echo "macOS detected but Homebrew not found. Install from https://brew.sh, then re-run --bootstrap."
             echo "Missing: ${missing[*]}"
-            return 1
+            no_pkg_mgr=1
+        else
+            echo "Missing dependencies: ${missing[*]}"
+            echo "Package manager: $pkg_mgr"
+            echo
         fi
-
-        echo "Missing dependencies: ${missing[*]}"
-        echo "Package manager: $pkg_mgr"
-        echo
     fi
 
     # Non-interactive stdin -> forced dry-run downgrade. This is unconditional
@@ -1519,7 +1521,7 @@ bootstrap() {
         downgrade_note="NOTE: stdin is not a terminal (non-interactive) — downgraded to --dry-run. Nothing was installed. Re-run interactively (or pass --dry-run explicitly to suppress this note)."
     fi
 
-    if [[ ${#missing[@]} -gt 0 ]]; then
+    if [[ ${#missing[@]} -gt 0 && $no_pkg_mgr -eq 0 ]]; then
         for d in "${missing[@]}"; do
             local install_cmd=""
             case "$pkg_mgr" in
@@ -1581,6 +1583,7 @@ bootstrap() {
     else
         echo "=== Bootstrap complete — installed: ${installed[*]:-none}; skipped: ${skipped[*]:-none}; failed: ${failed[*]:-none} ==="
     fi
+    [[ $no_pkg_mgr -eq 1 ]] && return 1
     return 0
 }
 
