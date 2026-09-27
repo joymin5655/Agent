@@ -46,7 +46,7 @@ evaluation source, not either one.
 | Runtime | Shipped Agent path | Honest support |
 |---|---|---|
 | Claude Code | native plugin hooks | Tier A for configured tools |
-| Codex | exclusive shell wrapper | Tier B shell; Tier C uncovered writes |
+| Codex | native hooks (fixtures + live `codex exec` e2e, 2026-09-27) | Tier A for Bash, `apply_patch`, MCP |
 | Gemini CLI | exclusive shell wrapper | Tier B shell; Tier C uncovered writes |
 | Antigravity | none | planned |
 
@@ -112,51 +112,54 @@ See `adapters/claude-code/README.md` for current registration.
 
 ### Current path
 
-The shipped Codex adapter is a compatibility wrapper:
+The shipped Codex adapter uses Codex's native hook path (XRH-02, delivered):
 
-- `codex-shell-wrap.sh` intercepts the configured shell path;
-- the translator constructs a canonical `PreToolUse` event;
-- core `deny` and `ask` both block at the wrapper;
-- a session wrapper simulates lifecycle events;
-- native file-write tools are not covered.
+- config lives in `~/.codex/hooks.json` (merged by `setup.sh --codex`) or a
+  plugin's `hooks/codex-hooks.json`, or a trusted project's `.codex/`;
+- `adapter.py`'s native mode reads the Claude-shaped stdin Codex sends
+  (`hook_event_name`, `tool_name`, `tool_input`, `tool_use_id`, `session_id`,
+  `cwd`, `transcript_path`) and runs the requested core hook per event;
+- `apply_patch` carries the patch text in `tool_input.command`; the adapter
+  splits it into one canonical `Write`/`Edit` event per file (absolute paths
+  from `cwd`) and aggregates deny > ask > advisory > allow across files;
+- `PreToolUse`, `PostToolUse`, `SessionStart`, `SessionEnd`, `UserPromptSubmit`,
+  and `Stop` are wired for the `Bash`, `apply_patch`, and `mcp__*` matchers;
+- Codex only runs a hook after the user reviews and trusts it with `/hooks`
+  (trust is tracked per hook hash; a changed hook needs re-review), and
+  project-local `.codex/` hooks load only in a trusted project.
 
-This is shell-route enforcement, not runtime-wide enforcement.
+The compatibility shell wrapper (`legacy/codex-shell-wrap/codex-shell-wrap.sh`)
+is retired to `legacy/` and is a fallback only for `[features] hooks = false`
+builds — see `legacy/codex-shell-wrap/README.md`.
 
-### Upstream native path
-
-Current Codex supports:
-
-- `.codex-plugin/plugin.json`;
-- plugin `hooks/hooks.json`;
-- skills and MCP servers;
-- native lifecycle hooks;
-- native Bash, `apply_patch`, MCP, and local-function hook coverage;
-- sandbox and permission configuration.
-
-XRH-02 in the
-[cross-runtime design](cross-runtime-harness-design.md#xrh-02--codex-native-path)
-migrates Agent to that path. The wrapper remains until native end-to-end tests
-prove equivalent or stronger coverage.
+Verified end-to-end for Bash and `apply_patch` in one live `codex exec` session
+(codex-cli 0.157.0, 2026-09-27); MCP tool calls are fixture-tested only. Not yet
+done: `setup.sh --doctor` detecting the plugin install path (it checks the
+`setup.sh --codex` merge target only).
 
 ### Decision mapping
 
-Codex currently supports `allow` and `deny` from `PreToolUse`.
-`permissionDecision: "ask"` is parsed but unsupported: the hook fails and the
-tool call continues.
+Codex supports native `allow` and `deny` from `PreToolUse`.
+`permissionDecision: "ask"` is parsed but unsupported: Codex marks the hook
+failed and continues the tool call. The same fail-open behavior applies to any
+hook failure — non-zero exit (other than 2), timeout, or invalid JSON.
 
-Therefore the native Codex adapter (XRH-02 target — the shipped `adapter.sh`
-stdin path does no such translation today; only `codex-shell-wrap.sh`'s own
-Mode-1 logic maps ask to block) must never pass canonical `ask` through
-unchanged:
+The native adapter (`adapters/codex/adapter.py`, `run_native`) now does this
+translation itself, so canonical `ask` never reaches Codex unchanged:
 
-1. use a separately proven native permission flow when one already owns the
-   tool call; otherwise
-2. return fail-closed `deny` with a reason explaining how to retry after user
-   approval.
+1. a core hook's `ask` decision, a non-zero exit, a timeout, or unparseable
+   output all become an explicit `deny` JSON on stdout (exit 0) — fail-closed,
+   because Codex would otherwise run the tool unchecked;
+2. the deny reason for `ask` tells the agent to get the user's explicit
+   approval and retry.
 
-See `adapters/codex/README.md` for shipped wrapper behavior and the
+Non-`PreToolUse` events stay fail-open by design: an adapter or hook error
+there is warned on stderr and the event is dropped rather than blocking an
+observation-only hook.
+
+See `adapters/codex/README.md` for the shipped adapter and the
 [official Codex hook reference](https://learn.chatgpt.com/docs/hooks) for the
-native target.
+native contract.
 
 ## Gemini CLI
 

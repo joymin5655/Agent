@@ -5,7 +5,7 @@ set -euo pipefail
 ADAPTER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ADAPTER="$ADAPTER_DIR/adapter.sh"
 TRANSLATOR="$ADAPTER_DIR/adapter.py"
-WRAPPER="$ADAPTER_DIR/codex-shell-wrap.sh"
+WRAPPER="$ADAPTER_DIR/../../legacy/codex-shell-wrap/codex-shell-wrap.sh"  # W4: legacy fallback
 
 PASS=0
 FAIL=0

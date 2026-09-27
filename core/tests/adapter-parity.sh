@@ -160,8 +160,46 @@ parity_case "deny-hardcoded-content" check-hardcoding.py deny    Write  ""  "app
 unset AGENT_HARDCODING_MODE   # unset = the shipped default (dryrun/advisory)
 parity_case "advisory-hardcoded-default" check-hardcoding.py advisory Write "" "app.js" "$HC_FIXTURE"
 parity_case "allow-quoted-content"   check-hardcoding.py allow   Write  ""  "app.js"  "const s = \"it's 100% fine\""
-unset AGENT_REPRODUCE_TEST AGENT_HARDCODING_SINK
+unset AGENT_HARDCODING_SINK
 rm -rf "$_HC_SCRATCH"
+
+# native_case <label> <hook> <expected> <claude-canonical-json> <codex-native-json>
+# Codex >= 0.157 native hooks (W4): the codex adapter receives Codex's OWN stdin
+# (hook_event_name, apply_patch patch text in tool_input.command, mcp__ names),
+# not the synthetic flags above. The logically-identical Claude event must reach
+# the same decision. Deliberate asymmetry: Codex cannot `ask` (it errors and runs
+# the tool), so a canonical ask is expected as deny on the codex side only.
+native_case() {
+    local label="$1" hook="$2" expected="$3" cjson="$4" xjson="$5" c_dec x_dec x_want="$3"
+    [[ "$expected" == "ask" ]] && x_want="deny"
+    c_dec=$(printf '%s' "$cjson" | bash "$CLAUDE_ADAPTER" "$hook" 2>/dev/null | norm)
+    x_dec=$(printf '%s' "$xjson" | bash "$CODEX_ADAPTER" "$hook" 2>/dev/null | norm)
+    printf '  %-22s claude=%-9s codex-native=%-9s (want %s / %s)\n' "$label" "$c_dec" "$x_dec" "$expected" "$x_want"
+    if [[ "$c_dec" == "$expected" && "$x_dec" == "$x_want" ]]; then
+        _ok "native:$label"
+    else
+        _no "native:$label — claude=$c_dec codex-native=$x_dec"
+    fi
+}
+
+echo "--- codex native stdin (Bash / apply_patch / mcp) vs claude canonical ---"
+Z=""
+NATIVE_SECRET="x = op${Z}en(\"secr${Z}ets/api.key\").read()"
+nx() { _T="$1" _I="$2" python3 -c 'import json,os; print(json.dumps({"hook_event_name":"PreToolUse","session_id":"parity","cwd":os.getcwd(),"tool_use_id":"c1","tool_name":os.environ["_T"],"tool_input":json.loads(os.environ["_I"])}))'; }
+nc() { _T="$1" _I="$2" python3 -c 'import json,os; print(json.dumps({"event":"PreToolUse","tool_name":os.environ["_T"],"tool_input":json.loads(os.environ["_I"])}))'; }
+jin() { _S="$1" python3 -c 'import json,os,sys; print(json.dumps({sys.argv[1]: os.environ["_S"]}))' "$2"; }
+PATCH=$'*** Begin Patch\n*** Add File: app.py\n+'"$NATIVE_SECRET"$'\n*** End Patch'
+native_case "native-bash-deny" pre-tool-guard.sh deny \
+    "$(nc Bash '{"command":"cat secrets/foo.env"}')" "$(nx Bash '{"command":"cat secrets/foo.env"}')"
+native_case "native-bash-ask"  pre-tool-guard.sh ask \
+    "$(nc Bash '{"command":"git commit --no-verify -m x"}')" "$(nx Bash '{"command":"git commit --no-verify -m x"}')"
+native_case "native-patch-deny" secret-content-scan.py deny \
+    "$(nc Write "$(_C="$NATIVE_SECRET" python3 -c 'import json,os; print(json.dumps({"file_path":"app.py","content":os.environ["_C"]+"\n"}))')")" \
+    "$(nx apply_patch "$(jin "$PATCH" command)")"
+native_case "native-mcp-deny" secret-content-scan.py deny \
+    "$(nc mcp__supabase__execute_sql "$(jin "$NATIVE_SECRET" query)")" \
+    "$(nx mcp__supabase__execute_sql "$(jin "$NATIVE_SECRET" query)")"
+unset AGENT_REPRODUCE_TEST
 
 echo
 echo "=== Parity: $PASS passed, $FAIL failed ==="
