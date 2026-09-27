@@ -12,14 +12,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `hooks/hooks.json` and `adapters/claude-code/settings.json.template`: matchers
   `Write|Edit|MultiEdit` → `Write|Edit`, `Task|Agent` → `Agent`,
   `ExitPlanMode|Task|Agent` → `ExitPlanMode|Agent` (`MultiEdit` is no longer a
-  documented tool; `Task` is a legacy alias of `Agent`). Wired 8 Claude-only
+  documented tool; `Task` is a legacy alias of `Agent`). Wired 6 Claude-only
   extended events non-canonical to the cross-AI protocol: `PostToolUseFailure`
   → `circuit-breaker.py`, `SessionEnd` → `session-close.sh` (`timeout: 2`),
-  `WorktreeCreate`/`WorktreeRemove` → `r4-mutex-check.sh`, `PreModelSwitch`/
-  `PostModelSwitch` → `session-tier-observer.py`, `SubagentStart`/`SubagentStop`
-  → `model-routing-observer.py`. `PermissionRequest` deliberately left unwired
-  (different `decision` schema; exit 2 not honored — see
-  `docs/hook-protocol.md` §12). `secret-content-scan.py`'s MCP matcher
+  `PreModelSwitch`/`PostModelSwitch` → `session-tier-observer.py`,
+  `SubagentStart`/`SubagentStop` → `model-routing-observer.py`.
+  `PermissionRequest` deliberately left unwired (different `decision` schema;
+  exit 2 not honored), and so are `WorktreeCreate`/`WorktreeRemove` (a
+  `WorktreeCreate` hook replaces git's worktree creation and must print the new
+  path — the observer `r4-mutex-check.sh` would have broken every Claude
+  worktree; wired during W3, unwired before release) — see
+  `docs/hook-protocol.md` §12. `secret-content-scan.py`'s MCP matcher
   collapsed from an explicit per-tool pipe-list to per-vendor `mcp__<server>__.*`
   wildcards; `rubric-commit-judge.sh` gained a narrowing `"if": "Bash(git commit*)"`.
   `adapter.sh` header now documents the extended events and the no-op-vs-fail-open
@@ -28,6 +31,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **CI**: added `plugin-validate` job running `claude plugin validate --strict .`
   (best-effort CLI install; explicit `::notice::` skip if the CLI never lands —
   never a silent pass, and not a required check).
+
+### Fixed
+- **`session-close.sh` missed `SessionEnd` in `json.dumps`-style input.** The
+  event-name `sed` required `:"` with no space, so `"hook_event_name": "SessionEnd"`
+  fell through to the full Stop path (TODO scan, notification, broadcast) inside
+  the 1.5s SessionEnd budget. The extraction now allows whitespace after the colon.
+- **`circuit-breaker.py` answered `PostToolUseFailure` with `hookEventName:
+  "PostToolUse"`.** The advisory now echoes the event it was invoked for.
+- **`runtime-currency.sh` read a future `measured_on`/`checked_on` as fresh.** A
+  date after today is now a FAIL (typo), not a negative age.
+- **`codex-template-currency-test.sh` denylist lagged the registry** (`gpt-5\.[234]`
+  vs `docs/runtime-registry.json`'s `gpt-5\.[2-6]`); synced, registry named as SSOT.
 
 ## [0.5.10] - 2026-09-02
 

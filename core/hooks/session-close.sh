@@ -26,9 +26,9 @@ PROJECT_ROOT="$(resolve_canonical_root)"
 # broadcast (which shells out to python3) all stay on Stop, which has no such
 # shared-budget constraint. `stop`/`stop-cwd` are pure bash+jq lock-file edits.
 INPUT="$(cat 2>/dev/null || true)"
-HOOK_EVENT="$(printf '%s' "$INPUT" | grep -o '"hook_event_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed -E 's/.*:"([^"]*)"$/\1/')" || true
+HOOK_EVENT="$(printf '%s' "$INPUT" | grep -o '"hook_event_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed -E 's/.*:[[:space:]]*"([^"]*)"$/\1/')" || true
 if [[ -z "$HOOK_EVENT" ]]; then
-  HOOK_EVENT="$(printf '%s' "$INPUT" | grep -o '"event"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed -E 's/.*:"([^"]*)"$/\1/')" || true
+  HOOK_EVENT="$(printf '%s' "$INPUT" | grep -o '"event"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed -E 's/.*:[[:space:]]*"([^"]*)"$/\1/')" || true
 fi
 
 if [[ "$HOOK_EVENT" == "SessionEnd" ]]; then

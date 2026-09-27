@@ -91,6 +91,9 @@ grepq 'FAIL \[registry-parse\]'; check "malformed-line" $?
 mkreg 2026-13-99 2026-09-25 '[]' "$TMP/r.json"
 expect "bad-date-rc1" 1 env AGENT_CURRENCY_REGISTRY="$TMP/r.json" bash "$GATE"
 grepq 'unparseable date'; check "bad-date-line" $?
+mkreg 2026-10-20 2026-09-25 '[]' "$TMP/r.json"  # future date (typo) must not read as fresh
+expect "future-date-rc1" 1 env AGENT_CURRENCY_REGISTRY="$TMP/r.json" bash "$GATE"
+grepq 'FAIL \[rt-measured_on-future\]'; check "future-date-line" $?
 mkreg 2026-09-20 2026-09-25 '["x"]' "$TMP/r.json"
 sed -i.bak 's|adapters/x/\*.toml|adapters/none/*.toml|' "$TMP/r.json"
 expect "pin-files-missing-rc1" 1 env AGENT_CURRENCY_REGISTRY="$TMP/r.json" bash "$GATE"

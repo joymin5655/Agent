@@ -23,8 +23,11 @@ check() {
   else echo "  FAIL [$name]"; FAIL=$((FAIL + 1)); fi
 }
 
-# Retired model-ID stems (matched as gpt-5.X with optional -suffix).
-DENY_REGEX='gpt-5\.[234]([^0-9]|$)'
+# Retired model-ID stems (matched as gpt-5.X with optional -suffix). Kept in
+# sync with docs/runtime-registry.json codex.retired_model_patterns (SSOT, also
+# enforced over pin files by core/tests/runtime-currency.sh): gpt-5.5/5.6 are
+# retired pre-emptively ahead of the 2026-10-14 sunset.
+DENY_REGEX='gpt-5\.[2-6]([^0-9]|$)'
 
 echo "=== sunset model IDs are absent from template model assignments ==="
 found=0
