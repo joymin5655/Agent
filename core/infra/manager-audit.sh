@@ -20,6 +20,7 @@
 #
 # Usage: bash core/infra/manager-audit.sh <plan-slug> [--json] [--session <id>] [--since <ISO-ts>]
 #    or: bash core/infra/manager-audit.sh --global [--json]
+#   --session matches a record's runtime session_id or its agent_session_id
 #   --since scopes routing records to one run (the observer log accumulates
 #   across sessions; /supervise Step 0 records the run start ts to pass here)
 #   --global takes NO slug and skips the slug-scoped lanes (restatement-quality,
@@ -185,7 +186,7 @@ if [[ -f "$ROUTING_LOG" ]]; then
         def mult($t): {LOW: 0.15, MID: 1, TOP: 3.5}[$t] // 1;
         [ .[]
           | select(.gate == "model-routing-observer")
-          | select($session == "" or .session_id == $session)
+          | select($session == "" or .session_id == $session or .agent_session_id == $session)
           | select($since == "" or ((.ts // "") >= $since))
           | .resolved_model = (if .model != "" then .model
                                elif .verdict == "pinned_specialist"

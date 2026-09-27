@@ -103,6 +103,7 @@ cat > "$LOGS/routing.jsonl" <<'EOF'
 {"gate":"model-routing-observer","subagent_type":"fanout-worker","model":"opus","verdict":"override","prompt_chars":50,"total_tokens":9000,"session_id":"s1","ts":"2026-07-17T01:22:00Z"}
 {"gate":"other-gate","subagent_type":"noise","model":"","verdict":"inherit_top","session_id":"s1","ts":"2026-07-17T01:23:00Z"}
 {"gate":"model-routing-observer","subagent_type":"other-session","model":"","verdict":"inherit_top","prompt_chars":10,"session_id":"s2","ts":"2026-07-17T01:24:00Z"}
+{"gate":"model-routing-observer","subagent_type":"dual-id-worker","model":"","verdict":"inherit_top","prompt_chars":10,"session_id":"uuid-9","agent_session_id":"s1","ts":"2026-07-17T01:24:30Z"}
 {"gate":"model-routing-observer","subagent_type":"mixed-worker","model":"sonnet","verdict":"override","prompt_chars":20,"total_tokens":50,"session_id":"s1","ts":"2026-07-17T01:25:00Z"}
 {"gate":"model-routing-observer","subagent_type":"mixed-worker","model":"opus","verdict":"override","prompt_chars":20,"total_tokens":50,"session_id":"s1","ts":"2026-07-17T01:26:00Z"}
 {"gate":"model-routing-observer","subagent_type":"mixed-worker","model":"opus","verdict":"override","prompt_chars":20,"total_tokens":50,"session_id":"s1","ts":"2026-07-17T01:27:00Z"}
@@ -185,6 +186,15 @@ if has_finding routing-waste top-inherit-leak WARN; then ok "w1-inherit-top-leak
 if jq -e '.findings[] | select(.check=="top-inherit-leak") | .evidence | contains("Explore") and (contains("other-session") | not)' <<< "$OUT" >/dev/null 2>&1; then
     ok "w2-session-filter-applied"
 else bad "w2-session-filter" "$(jq -c '.findings[] | select(.check=="top-inherit-leak")' <<< "$OUT")"; fi
+# dual session ids: --session matches either the runtime UUID or AGENT_SESSION_ID
+if jq -e '.findings[] | select(.check=="top-inherit-leak") | .evidence | contains("dual-id-worker")' <<< "$OUT" >/dev/null 2>&1; then
+    ok "w2b-session-filter-matches-agent-session-id"
+else bad "w2b-agent-session-id" "$(jq -c '.findings[] | select(.check=="top-inherit-leak")' <<< "$OUT")"; fi
+run good --session uuid-9
+if jq -e '.findings[] | select(.check=="top-inherit-leak") | .evidence | contains("dual-id-worker") and (contains("Explore") | not)' <<< "$OUT" >/dev/null 2>&1; then
+    ok "w2c-session-filter-matches-runtime-uuid"
+else bad "w2c-runtime-uuid" "$(jq -c '.findings[] | select(.check=="top-inherit-leak")' <<< "$OUT")"; fi
+run good --session s1
 if has_finding routing-waste verify-floor-violation FAIL; then ok "w3-verify-below-MID-FAIL"; else bad "w3" "$OUT"; fi
 if has_finding routing-waste fanout-not-low WARN; then ok "w4-fanout-not-low-WARN"; else bad "w4" "$OUT"; fi
 if jq -e '.findings[] | select(.check=="fanout-not-low") | .evidence | select(contains("mixed-worker")) | contains("MID/TOP")' <<< "$OUT" >/dev/null 2>&1; then

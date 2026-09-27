@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **model-routing-observer records both session ids.** `session_id` now prefers the hook
+  event's runtime session UUID (falls back to `AGENT_SESSION_ID`), and the env id is kept
+  as `agent_session_id`, so concurrent sessions in one cwd stay distinguishable.
+  `manager-audit.sh --session <id>` matches either field, keeping existing filters working.
 - **Claude Code hook manifests brought current with 2.1.282** (W3-1/W3-2/W3-3/W3-4).
   `hooks/hooks.json` and `adapters/claude-code/settings.json.template`: matchers
   `Write|Edit|MultiEdit` → `Write|Edit`, `Task|Agent` → `Agent`,
