@@ -47,7 +47,8 @@ with jq, e.g.:
 
 Seams: AGENT_MODEL_ROUTING_SINK (default <root>/.agent/logs/model-routing.jsonl),
 AGENT_REGISTRY_PATH (default <repo>/agents/master-registry.json),
-AGENT_SESSION_ID. Registered in docs/gate-registry.md (GATE model-routing-observer).
+AGENT_SESSION_ID (recorded as agent_session_id; session_id prefers the event's
+runtime session_id). Registered in docs/gate-registry.md (GATE model-routing-observer).
 """
 
 import json
@@ -155,6 +156,16 @@ def _sink_path():
     )
 
 
+def _session_id(event):
+    """Runtime session UUID from the hook event, so concurrent sessions in one
+    cwd stay distinguishable; AGENT_SESSION_ID when the event carries none.
+    The env id is also recorded separately as agent_session_id."""
+    sid = event.get("session_id")
+    if isinstance(sid, str) and sid.strip():
+        return sid
+    return os.environ.get("AGENT_SESSION_ID", "")
+
+
 def handle_subagent_event(event, hook_event_name):
     """SubagentStart/SubagentStop — a measured dispatch record distinct from
     the PostToolUse-derived ones below (Task/Agent tool_input doesn't carry
@@ -178,7 +189,8 @@ def handle_subagent_event(event, hook_event_name):
         "verdict": "pinned_specialist" if tier != "unknown" else "inherit_top",
         "effort": None,
         "tier": tier,
-        "session_id": os.environ.get("AGENT_SESSION_ID", ""),
+        "session_id": _session_id(event),
+        "agent_session_id": os.environ.get("AGENT_SESSION_ID", ""),
         "origin": _log_origin(),
         "source": "subagent_event",
     }
@@ -233,7 +245,8 @@ def main():
         "tier": effective_tier(subagent_type, model, verdict),
         "prompt_chars": len(prompt),
         "total_tokens": total_tokens(event),
-        "session_id": os.environ.get("AGENT_SESSION_ID", ""),
+        "session_id": _session_id(event),
+        "agent_session_id": os.environ.get("AGENT_SESSION_ID", ""),
         "origin": _log_origin(),
         "source": "post_tool_use",
     }

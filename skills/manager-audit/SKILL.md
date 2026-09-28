@@ -37,7 +37,8 @@ mirrors harness-audit: deleting this skill weakens no gate.
 bash core/infra/manager-audit.sh <slug> --json
 ```
 
-Optional: `--session <id>` to scope routing records to one session. Render the
+Optional: `--session <id>` to scope routing records to one session (matches the
+runtime session UUID or `AGENT_SESSION_ID`). Render the
 findings as a per-lane table (lane / check / severity / evidence). The script
 always exits 0 — severity lives in the findings, not the exit code.
 

@@ -40,6 +40,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `core/tests/version-parity.sh` now covers the root manifest.
 
 ### Changed
+- **model-routing-observer records both session ids.** `session_id` now prefers the hook
+  event's runtime session UUID (falls back to `AGENT_SESSION_ID`), and the env id is kept
+  as `agent_session_id`, so concurrent sessions in one cwd stay distinguishable.
+  `manager-audit.sh --session <id>` matches either field, keeping existing filters working.
 - **`setup.sh --codex`** now merges `hooks.json.template` into
   `~/.codex/hooks.json` beside `config.toml` via `merge-hooks.py`, symlinks
   each `skills/<name>` into `~/.agents/skills`, repoints an old

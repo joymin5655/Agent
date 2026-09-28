@@ -172,5 +172,23 @@ else
 fi
 
 echo
+echo "=== session ids: runtime UUID (stdin) + AGENT_SESSION_ID ==="
+run '{"event":"PostToolUse","session_id":"uuid-1","tool_name":"Task","tool_input":{"subagent_type":"Explore","prompt":"x"}}'
+last="$(tail -1 "$SINK")"
+if [[ "$last" == *'"session_id": "uuid-1"'* && "$last" == *'"agent_session_id": "test"'* ]]; then
+  ok "s1-stdin-uuid-preferred-env-kept"
+else bad "s1-stdin-uuid" "$last"; fi
+run "$(evt Task Explore)"
+last="$(tail -1 "$SINK")"
+if [[ "$last" == *'"session_id": "test"'* && "$last" == *'"agent_session_id": "test"'* ]]; then
+  ok "s2-no-stdin-uuid-falls-back-to-env"
+else bad "s2-fallback" "$last"; fi
+run '{"hook_event_name":"SubagentStop","session_id":"uuid-2","agent_type":"Explore","agent_id":"a1"}'
+last="$(tail -1 "$SINK")"
+if [[ "$last" == *'"session_id": "uuid-2"'* && "$last" == *'"agent_session_id": "test"'* ]]; then
+  ok "s3-subagent-event-dual-ids"
+else bad "s3-subagent-event" "$last"; fi
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]
