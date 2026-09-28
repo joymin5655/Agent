@@ -6,7 +6,8 @@ warning advising the AI to change strategy. Prevents infinite retry loops on the
 broken command.
 
 Threshold: 3 failures within 60 seconds (configurable via env vars).
-State file: /tmp/agent-circuit-breaker.json (per-machine, ephemeral)
+State file: /tmp/agent-circuit-breaker.json (per-machine, ephemeral; flock-serialized
+via <state>.lock, atomic rename on write)
 
 Hook protocol: reads canonical event JSON from stdin. Writes additionalContext JSON to
 stdout when threshold crossed. Empty stdout otherwise. Exit always 0.
@@ -37,12 +38,18 @@ adds a sink so the residual false-positive/negative rate can be measured).
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
 import sys
 import time
 from pathlib import Path
+
+try:
+    import fcntl
+except ImportError:  # non-POSIX: run unlocked
+    fcntl = None
 
 STATE_FILE = Path(os.environ.get("AGENT_CIRCUIT_BREAKER_STATE", "/tmp/agent-circuit-breaker.json"))
 WINDOW_SECONDS = int(os.environ.get("AGENT_CIRCUIT_BREAKER_WINDOW", "60"))
@@ -60,10 +67,34 @@ def load_state() -> list:
 
 
 def save_state(records: list) -> None:
+    # tmp + rename so a concurrent reader never sees a half-written file.
+    tmp = STATE_FILE.with_name(f"{STATE_FILE.name}.{os.getpid()}.tmp")
     try:
-        STATE_FILE.write_text(json.dumps(records))
+        tmp.write_text(json.dumps(records))
+        os.replace(tmp, STATE_FILE)
     except OSError:
-        pass
+        with contextlib.suppress(OSError):
+            tmp.unlink()
+
+
+@contextlib.contextmanager
+def state_lock():
+    """Serialize the load->modify->save cycle: the state file is shared by
+    every session on the machine, so concurrent hooks would lose updates."""
+    fh = None
+    if fcntl is not None:
+        try:
+            fh = open(f"{STATE_FILE}.lock", "a")  # noqa: SIM115 — held for the with-block
+            fcntl.flock(fh, fcntl.LOCK_EX)
+        except OSError:
+            if fh:
+                fh.close()
+            fh = None
+    try:
+        yield
+    finally:
+        if fh:
+            fh.close()
 
 
 # Zero-count phrasings a PASSING run prints. Scrubbed before failure matching so
@@ -238,4 +269,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    with state_lock():
+        main()

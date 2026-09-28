@@ -215,5 +215,15 @@ OUT="$(AGENT_RUBRIC_TOTAL_TIMEOUT=1 python3 "$SCORER" --rubric "$T/r.json" 2>/de
 refut_has "total budget"; check "l-budget-cap" $?
 
 echo
+echo "=== manifest: rubric-commit-judge must not be gated by a narrow if ==="
+# `Bash(git commit*)` misses `git -C d commit` and rtk-rewritten `rtk git commit`;
+# the hook's internal regex is the filter, so the manifest entry carries no `if`.
+for mf in "$REPO_ROOT/hooks/hooks.json" "$REPO_ROOT/adapters/claude-code/settings.json.template"; do
+  n="$(jq '[.. | objects | select((.command? // "") | test("rubric-commit-judge")) | select(has("if"))] | length' "$mf" 2>/dev/null || echo err)"
+  base="$(basename "$mf")"
+  [[ "$n" == "0" ]]; check "m-no-if-gate $base" $?
+done
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]

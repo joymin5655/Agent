@@ -366,6 +366,7 @@ def main():
         "family": family,
         "effort": effort,
         "session_id": _session_id(event),
+        "origin": _log_origin(),
     }
     append_record(sink, record)
 

@@ -188,5 +188,14 @@ grep -rq "permissionDecision" "$WORK"/out* 2>/dev/null
 [[ $? -ne 0 ]]; check "no-decision-payload" $?
 
 echo
+echo "=== origin tag on the session-start record (W1 log-origin) ==="
+run_hook '{"session_id":"so","model":{"id":"claude-sonnet-5"}}' AGENT_LOG_ORIGIN= >/dev/null 2>/dev/null
+last="$(tail -1 "$SINK")"
+[[ "$last" == *'"origin": "session"'* ]];          check "origin-default-session" $?
+run_hook '{"session_id":"so2","model":{"id":"claude-sonnet-5"}}' AGENT_LOG_ORIGIN=test >/dev/null 2>/dev/null
+last="$(tail -1 "$SINK")"
+[[ "$last" == *'"origin": "test"'* ]];             check "origin-env-test" $?
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]
