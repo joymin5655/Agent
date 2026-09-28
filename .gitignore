@@ -54,7 +54,9 @@ secrets/
 
 # --- Local working directories ------------------------------------------------
 .worktrees/
-.agents/
+# .agents/ is local scratch EXCEPT the Codex repo marketplace (W4 portable plugin).
+.agents/*
+!.agents/plugins/
 .omc/
 .codegraph/
 

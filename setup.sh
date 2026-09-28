@@ -190,7 +190,7 @@ install_codex() {
     apply_template "$template" "$target"
     chmod +x "$FRAMEWORK_ROOT/adapters/codex/adapter.sh" \
              "$FRAMEWORK_ROOT/adapters/codex/adapter.py" \
-             "$FRAMEWORK_ROOT/adapters/codex/codex-shell-wrap.sh"
+             "$FRAMEWORK_ROOT/adapters/codex/merge-hooks.py"
 
     # Tier ladder profiles (docs/model-routing.md): quick=LOW, deep=TOP,
     # installed beside the main config so `codex --profile quick|deep` works.
@@ -209,10 +209,39 @@ install_codex() {
     apply_template "$agents_global_template" "$agents_global_target"
     python3 "$FRAMEWORK_ROOT/core/infra/sync-instructions.py" --codex "$agents_global_target"
 
-    # Put wrapper on PATH.
-    ensure_home_bin
-    ln -sf "$FRAMEWORK_ROOT/adapters/codex/codex-shell-wrap.sh" "$HOME/bin/codex-bash"
-    echo "  symlink: ~/bin/codex-bash -> codex-shell-wrap.sh"
+    # Native hooks (W4): merge Agent's entries into the hooks.json beside
+    # config.toml. Other tools' hooks in that file are preserved.
+    python3 "$FRAMEWORK_ROOT/adapters/codex/merge-hooks.py" \
+        "$FRAMEWORK_ROOT/adapters/codex/hooks.json.template" "$FRAMEWORK_ROOT" \
+        "$codex_dir/hooks.json"
+    echo "  NOTE: Codex runs a new or changed hook only after you trust it — start codex and review them with /hooks."
+    echo "        Project-local .codex/ hooks load only in a trusted project ([projects.\"<path>\"] trust_level = \"trusted\");"
+    echo "        setup never records trust for you."
+
+    # Skills: Codex reads user skills from ~/.agents/skills and follows symlinks.
+    # An entry that already exists and is not our symlink is left alone.
+    local skills_dir="$HOME/.agents/skills" skill name linked=0
+    mkdir -p "$skills_dir"
+    for skill in "$FRAMEWORK_ROOT"/skills/*/; do
+        skill="${skill%/}"; name="$(basename "$skill")"
+        if [[ -e "$skills_dir/$name" || -L "$skills_dir/$name" ]] &&
+           [[ "$(readlink "$skills_dir/$name" 2>/dev/null)" != "$skill" ]]; then
+            echo "  skipped: $skills_dir/$name exists and is not an Agent symlink"
+            continue
+        fi
+        ln -sfn "$skill" "$skills_dir/$name"
+        linked=$((linked + 1))
+    done
+    echo "  symlink: ~/.agents/skills/<name> -> skills/<name> ($linked skills)"
+
+    # The shell wrapper retired to legacy/codex-shell-wrap/ (native hooks replace
+    # it). A ~/bin/codex-bash symlink an earlier setup created now dangles; repoint
+    # it rather than delete it, so a config still naming codex-bash keeps working.
+    if [[ -L "$HOME/bin/codex-bash" &&
+          "$(readlink "$HOME/bin/codex-bash")" == "$FRAMEWORK_ROOT/adapters/codex/codex-shell-wrap.sh" ]]; then
+        ln -sfn "$FRAMEWORK_ROOT/legacy/codex-shell-wrap/codex-shell-wrap.sh" "$HOME/bin/codex-bash"
+        echo "  repointed: ~/bin/codex-bash -> legacy/codex-shell-wrap/ (retired; native hooks enforce now)"
+    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -901,6 +930,50 @@ PY
             add_row WARN "codex wiring — not wired: $cx_missing; see adapters/codex/codex-config.toml.template (bash setup.sh --codex installs it)"
         else
             add_row PASS "codex wiring — brain MCP path exists in ${codex_cfg/#$HOME/~}; runtime registration and native hook coverage require a live check"
+        fi
+    fi
+
+    # 15b. codex native hooks (W4) — the enforcement path on Codex >= 0.157.
+    #      Agent's adapter entries must be in the hooks.json beside config.toml
+    #      and resolve on disk; `[features] hooks = false` switches every hook off;
+    #      Codex runs a hook only after /hooks trust, so no pre_tool_use trust
+    #      record means nothing is enforced yet. A trust record's hash freshness
+    #      (Codex re-asks after a hook changes) is not verified here. Key format
+    #      observed in a real codex-cli 0.157.0 config.toml after /hooks approval:
+    #      [hooks.state."<abs hooks.json>:session_start:0:0"] trusted_hash = ...;
+    #      the pre_tool_use event token is inferred from that snake_case scheme.
+    if [[ ! -f "$codex_cfg" ]]; then
+        add_row PASS "codex native hooks — no codex config at ${codex_cfg/#$HOME/~} (check skipped)"
+    else
+        local cx_hooks cx_state
+        cx_hooks="$(dirname "$codex_cfg")/hooks.json"
+        cx_state="$(python3 - "$cx_hooks" <<'PY' 2>/dev/null || echo "UNREADABLE"
+import json, os, re, sys
+path = sys.argv[1]
+if not os.path.exists(path):
+    print("NONE"); sys.exit()
+cmds = [h.get("command", "") for gs in (json.load(open(path)).get("hooks") or {}).values()
+        for g in gs for h in g.get("hooks", [])]
+ours = [c for c in cmds if "/adapters/codex/adapter.sh" in c]
+if not ours:
+    print("NONE"); sys.exit()
+missing = sorted({m.group(1) for c in ours for m in [re.match(r'^"?([^"]*/adapters/codex/adapter\.sh)', c)]
+                  if m and not os.path.exists(m.group(1))})
+print("BROKEN " + missing[0] if missing else f"OK {len(ours)}")
+PY
+)"
+        if sed -n '/^\[features\]/,/^\[/p' "$codex_cfg" | grep -qE '^[[:space:]]*hooks[[:space:]]*=[[:space:]]*false'; then
+            add_row WARN "codex native hooks — [features] hooks = false in ${codex_cfg/#$HOME/~}: no Agent gate runs in Codex (legacy fallback: legacy/codex-shell-wrap/)"
+        elif [[ "$cx_state" == NONE ]]; then
+            add_row WARN "codex native hooks — not installed in ${cx_hooks/#$HOME/~}: Codex tool calls are unguarded; run setup.sh --codex"
+        elif [[ "$cx_state" == UNREADABLE ]]; then
+            add_row FAIL "codex native hooks — ${cx_hooks/#$HOME/~} is not valid JSON; Codex cannot load any hook from it"
+        elif [[ "$cx_state" == BROKEN* ]]; then
+            add_row FAIL "codex native hooks — wired adapter missing on disk: $(sanitize_display "${cx_state#BROKEN }") (moved checkout? re-run setup.sh --codex)"
+        elif ! grep -qF "\"$cx_hooks:pre_tool_use:" "$codex_cfg"; then
+            add_row WARN "codex native hooks — ${cx_state#OK } entries installed but no PreToolUse trust record found: start codex and approve them with /hooks"
+        else
+            add_row PASS "codex native hooks — ${cx_state#OK } entries in ${cx_hooks/#$HOME/~} with a PreToolUse trust record (re-trust after hook changes)"
         fi
     fi
 

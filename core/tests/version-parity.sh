@@ -7,10 +7,11 @@
 #
 # Exit 0: every declared version agrees. Exit 1: drift (prints each source).
 #
-# Why: the version ships from seven declarations in five files — README.md badge + status line, the
+# Why: the version ships from eight declarations in six files — README.md badge + status line, the
 # README.ko.md mirror of both, .claude-plugin/plugin.json (what the plugin
 # runtime reports), .claude-plugin/marketplace.json (what the marketplace
-# offers), and the CHANGELOG's latest release heading. Before this gate they
+# offers), the root plugin.json (the portable manifest Codex installs, W4),
+# and the CHANGELOG's latest release heading. Before this gate they
 # had drifted three ways (README + marketplace at 0.5.1, plugin.json +
 # CHANGELOG at 0.5.3) with nothing failing. A missing file or unmatched
 # pattern is a FAIL, not a skip — a guard that can silently skip is the
@@ -46,7 +47,8 @@ grab("README.ko badge", "README.ko.md", r"badge/version-(\d+\.\d+\.\d+)-blue")
 grab("README.ko status","README.ko.md", r"> 상태: v(\d+\.\d+\.\d+)")
 
 for label, path in [("plugin.json", ".claude-plugin/plugin.json"),
-                    ("marketplace.json", ".claude-plugin/marketplace.json")]:
+                    ("marketplace.json", ".claude-plugin/marketplace.json"),
+                    ("root plugin.json (Codex/portable)", "plugin.json")]:
     p = root / path
     if not p.is_file():
         problems.append(f"{label}: file missing ({path})")

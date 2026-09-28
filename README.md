@@ -161,10 +161,15 @@ is **not** identical, and this is the honest table:
 
 | Capability | Claude Code | Codex CLI | Gemini CLI |
 |---|---|---|---|
-| PreToolUse: shell commands | native hooks | shell wrapper | shell wrapper |
-| PreToolUse: native file-write tools | native hooks | not intercepted | not intercepted |
-| PostToolUse | native hooks | none | none |
-| Session lifecycle | native hooks | simulated (`core/infra/codex-session.sh`) | simulated (`core/infra/gemini-session.sh`) |
+| PreToolUse: shell commands | native hooks | native hooks | shell wrapper |
+| PreToolUse: native file-write tools | native hooks | native hooks (`apply_patch`) | not intercepted |
+| PostToolUse | native hooks | native hooks (Bash, `apply_patch`) | none |
+| Session lifecycle | native hooks | native hooks (SessionStart/SessionEnd/Stop) | simulated (`core/infra/gemini-session.sh`) |
+
+Codex hooks fail open by default: an unsupported `ask` decision or a crashed
+hook lets the tool call continue, so the Codex adapter turns both into a
+fail-closed `deny`. Codex also runs a hook only after you review and trust it
+with `/hooks` — installing `hooks.json` alone does not enforce anything yet.
 
 Per-runtime details and workarounds:
 [`adapters/codex/README.md`](adapters/codex/README.md) ·
@@ -268,8 +273,9 @@ Ask your AI to read a file under `secrets/`:
 🚫 Tool blocked: Direct secrets/ access blocked. Use environment variable.
 ```
 
-That exact block fires on the configured Claude hook and Codex/Gemini shell
-routes — same script, same decision. Native file-write coverage still differs.
+That exact block fires on the configured Claude hook, Codex's native hook path,
+and the Gemini shell route — same script, same decision. Gemini's native
+file-write coverage still differs.
 
 No AI runtime attached yet? [`docs/demo.md`](docs/demo.md) reproduces three
 gate-catches (a denied secret read, a REFUTED false-"done" claim, a caught
