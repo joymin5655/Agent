@@ -27,23 +27,24 @@
       "kind": "first-party",
       "vendor": "openai",
       "cli_version_measured": "0.157.0",
-      "measured_on": "2026-09-26",
+      "measured_on": "2026-09-27",
       "docs": [
-        {"url": "https://learn.chatgpt.com/docs/hooks", "checked_on": "2026-09-26"},
-        {"url": "https://learn.chatgpt.com/docs/config-file/config-reference", "checked_on": "2026-09-26"},
-        {"url": "https://learn.chatgpt.com/docs/agent-configuration/agents-md", "checked_on": "2026-09-26"},
-        {"url": "https://learn.chatgpt.com/docs/models", "checked_on": "2026-09-26"},
-        {"url": "https://developers.openai.com/plugins/build/plugins", "checked_on": "2026-09-26"}
+        {"url": "https://learn.chatgpt.com/docs/hooks", "checked_on": "2026-09-27"},
+        {"url": "https://learn.chatgpt.com/docs/config-file/config-reference", "checked_on": "2026-09-27"},
+        {"url": "https://learn.chatgpt.com/docs/agent-configuration/agents-md", "checked_on": "2026-09-27"},
+        {"url": "https://learn.chatgpt.com/docs/models", "checked_on": "2026-09-27"},
+        {"url": "https://developers.openai.com/plugins/build/plugins", "checked_on": "2026-09-27"},
+        {"url": "https://learn.chatgpt.com/docs/build-skills", "checked_on": "2026-09-27"}
       ],
-      "hook_events_wired": [],
+      "hook_events_wired": ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SessionEnd"],
       "hook_events_available": ["SessionStart", "SessionEnd", "PreToolUse", "PermissionRequest", "PostToolUse", "PreCompact", "PostCompact", "UserPromptSubmit", "SubagentStart", "SubagentStop", "Stop", "Interrupt"],
       "instruction_files": ["~/.codex/AGENTS.md", "AGENTS.md (git root → cwd, trusted projects only)"],
       "skills_dirs": [".agents/skills", "~/.agents/skills"],
       "plugin_manifest": "plugin.json (agent-plugins.org 1.0.0; .codex-plugin/plugin.json legacy)",
-      "pin_files": ["adapters/codex/quick.config.toml.template", "adapters/codex/deep.config.toml.template", "adapters/codex/codex-config.toml.template"],
+      "pin_files": ["adapters/codex/quick.config.toml.template", "adapters/codex/deep.config.toml.template", "adapters/codex/codex-config.toml.template", "adapters/codex/hooks.json.template"],
       "retired_model_patterns": ["gpt-5\\.[2-6]", "gpt-4", "o[34](-mini)?(?![a-z0-9])", "codex-mini"],
       "sandbox_values_measured": ["read-only", "workspace-write", "danger-full-access"],
-      "notes": "Native hooks are first-class (same hookSpecificOutput.permissionDecision schema as Claude; exit 2 = block). Shell wrapper adapter is obsolete → W4. gpt-5.5 retires 2026-10-14."
+      "notes": "Native hooks are first-class (same hookSpecificOutput.permissionDecision schema as Claude; exit 2 = block). W4: adapters/codex/adapter.py translates canonical ask and any hook failure into fail-closed deny on PreToolUse; the shell wrapper adapter retired to legacy/codex-shell-wrap/ as a hooks=false fallback. Hooks run only after /hooks trust. gpt-5.5 retires 2026-10-14."
     },
     "antigravity": {
       "kind": "first-party",

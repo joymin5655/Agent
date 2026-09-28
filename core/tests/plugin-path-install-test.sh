@@ -170,5 +170,26 @@ check "control-clean-manifest-passes" $?
 rm -rf "$RFX"
 
 echo
+echo "=== (e) Codex portable manifest (W4): root plugin.json + repo marketplace resolve ==="
+# Shapes per developers.openai.com/plugins/build/plugins (checked 2026-09-27);
+# the live `codex plugin marketplace add <repo>` + `codex plugin add` install was
+# verified by hand on codex-cli 0.157.0 the same day.
+python3 - "$REPO_ROOT" <<'PY'
+import json, os, sys
+root = sys.argv[1]
+man = json.load(open(os.path.join(root, "plugin.json")))
+assert man["$schema"].startswith("https://agent-plugins.org/schemas/"), man["$schema"]
+claude = json.load(open(os.path.join(root, ".claude-plugin/plugin.json")))
+assert man["name"] == claude["name"], "portable and Claude manifests must name the same plugin"
+hooks = man["extensions"]["com.openai"]["hooks"]
+assert hooks.startswith("./") and os.path.isfile(os.path.join(root, hooks)), hooks
+mk = json.load(open(os.path.join(root, ".agents/plugins/marketplace.json")))
+entry = next(p for p in mk["plugins"] if p["name"] == man["name"])
+assert entry["source"] == {"source": "local", "path": "./"}, entry["source"]
+assert entry["policy"]["installation"] in ("AVAILABLE", "INSTALLED_BY_DEFAULT", "NOT_AVAILABLE")
+PY
+check "codex-portable-manifest-resolves" $?
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]

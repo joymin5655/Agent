@@ -16,10 +16,12 @@ Project-specific AGENTS.md instructions remain scoped to their project.
 
 ## Harness coverage
 
-- The compatibility shell wrapper enforces gates only when it is explicitly invoked.
-  A symlink on PATH or the presence of this repository does not connect Codex tools to it.
-  Native file writes are not intercepted by that wrapper. Verify the current host's
-  hooks and approval configuration before asserting coverage.
+- Agent's gates run as Codex native hooks (`~/.codex/hooks.json` or the plugin's
+  `hooks/codex-hooks.json`), covering Bash, `apply_patch`, and MCP tools. Codex
+  only runs a hook after it is reviewed and trusted with `/hooks` — installing
+  the hooks file does not by itself connect Codex tools to it. An action needing
+  approval is denied, not queued — ask the user explicitly, then retry. Verify
+  the current host's hooks and trust state before asserting coverage.
 - For an existing agent session, use the repository's session coordinator to register
   a worktree. `core/infra/codex-session.sh` launches a NEW interactive Codex session;
   do not run it merely to register the current one.

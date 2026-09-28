@@ -95,7 +95,7 @@ Independent of stdout JSON, exit codes follow this convention:
 | Exit code | Meaning |
 |---|---|
 | `0` | Hook ran successfully (decision in stdout, or empty for pass-through) |
-| `1` | Hook errored — current shipped behavior is **fail-open in every adapter**: the Claude adapter silently passes when a named core hook is missing or crashes, and the Codex/Gemini shell wraps discard a crashed hook's output (`2>/dev/null \|\| true`) and fall through to executing the command. This favors session availability over enforcement; a fail-closed option is part of the XRH-02 native-path acceptance criteria (`cross-runtime-harness-design.md` § 11) |
+| `1` | Hook errored — behavior now differs by adapter. The Claude adapter and the Gemini shell wrap still **fail open**: Claude silently passes when a named core hook is missing or crashes, and the Gemini wrap discards a crashed hook's output (`2>/dev/null \|\| true`) and falls through to executing the command. The **Codex native adapter fails closed on `PreToolUse`** (XRH-02, delivered): any hook exit other than `0`, a timeout, or unparseable output becomes an explicit `deny` JSON on stdout (exit `0` — Codex would continue the tool call on any non-zero exit other than `2`); so does a core hook that is missing or not executable in the checkout, or a missing `python3` (static deny from `adapter.sh`); non-`PreToolUse` events stay fail-open (warned on stderr) |
 | `2` | Hook explicit DENY — runtime should block (Claude Code shorthand; equivalent to JSON `deny`) |
 | `15` | Project risk area trip — secret leak detected (auto-ship convention) |
 | `12-16` | Risk-area-specific abort codes — configurable in `hook-config.yml` |

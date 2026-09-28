@@ -155,10 +155,15 @@ flowchart LR
 
 | 능력 | Claude Code | Codex CLI | Gemini CLI |
 |---|---|---|---|
-| PreToolUse: 셸 명령 | 네이티브 훅 | 셸 래퍼 | 셸 래퍼 |
-| PreToolUse: 네이티브 파일 쓰기 도구 | 네이티브 훅 | 미가로채기 | 미가로채기 |
-| PostToolUse | 네이티브 훅 | 없음 | 없음 |
-| 세션 라이프사이클 | 네이티브 훅 | 시뮬레이션 (`core/infra/codex-session.sh`) | 시뮬레이션 (`core/infra/gemini-session.sh`) |
+| PreToolUse: 셸 명령 | 네이티브 훅 | 네이티브 훅 | 셸 래퍼 |
+| PreToolUse: 네이티브 파일 쓰기 도구 | 네이티브 훅 | 네이티브 훅 (`apply_patch`) | 미가로채기 |
+| PostToolUse | 네이티브 훅 | 네이티브 훅 (Bash, `apply_patch`) | 없음 |
+| 세션 라이프사이클 | 네이티브 훅 | 네이티브 훅 (SessionStart/SessionEnd/Stop) | 시뮬레이션 (`core/infra/gemini-session.sh`) |
+
+Codex 훅은 기본적으로 fail-open입니다: 지원되지 않는 `ask` 판정이나 훅 크래시가
+발생하면 도구 호출이 그대로 계속되므로, Codex 어댑터는 이 둘을 fail-closed `deny`로
+바꿔서 돌려줍니다. 또한 Codex는 `/hooks`로 검토·신뢰한 훅만 실행합니다 —
+`hooks.json`을 설치하는 것만으로는 아직 아무것도 강제되지 않습니다.
 
 런타임별 상세와 우회 방법:
 [`adapters/codex/README.md`](adapters/codex/README.md) ·

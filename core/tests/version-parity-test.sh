@@ -21,7 +21,7 @@ DIR="$(mktemp -d)"
 cleanup() { rm -rf "$DIR"; }
 trap cleanup EXIT
 
-# fixture <badge_en> <status_en> <badge_ko> <status_ko> <plugin> <market> <changelog>
+# fixture <badge_en> <status_en> <badge_ko> <status_ko> <plugin> <market> <changelog> [root-plugin]
 fixture() {
   mkdir -p "$DIR/.claude-plugin"
   printf '![Version](https://img.shields.io/badge/version-%s-blue.svg)\n\n> Status: v%s\n' "$1" "$2" > "$DIR/README.md"
@@ -31,6 +31,7 @@ fixture() {
   # (no top-level "version" key there)
   printf '{"plugins":[{"name":"agent-harness"}],"metadata":{"version":"%s"}}\n' "$6" > "$DIR/.claude-plugin/marketplace.json"
   printf '# Changelog\n\n## [Unreleased]\n\n## [%s] — 2026-07-21\n' "$7" > "$DIR/CHANGELOG.md"
+  printf '{"name":"agent-harness","version":"%s"}\n' "${8:-$5}" > "$DIR/plugin.json"
 }
 
 # --- (a) consistent fixture -> PASS ---
@@ -59,6 +60,16 @@ if bash "$GATE" "$DIR" >/dev/null; then
   no "c: lagging marketplace fails" "expected exit 1, got pass"
 else
   ok "c: lagging marketplace fails"
+fi
+
+# --- (c2) root portable plugin.json (Codex manifest) lags -> FAIL naming it ---
+fixture 1.2.3 1.2.3 1.2.3 1.2.3 1.2.3 1.2.3 1.2.3 1.2.2
+if OUT="$(bash "$GATE" "$DIR")"; then
+  no "c2: lagging root plugin.json fails" "expected exit 1, got pass"
+elif grep -q "root plugin.json (Codex/portable): 1.2.2" <<<"$OUT"; then
+  ok "c2: lagging root plugin.json fails naming source"
+else
+  no "c2: lagging root plugin.json fails naming source" "not named in: $OUT"
 fi
 
 # --- (d) CHANGELOG latest release != plugin.json -> FAIL ---
