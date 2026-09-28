@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # claude-extended-events-test.sh — verify the Claude-only extended hook events
 # (W3-2): PostToolUseFailure -> circuit-breaker.py, SessionEnd -> session-close.sh,
-# WorktreeCreate/WorktreeRemove -> r4-mutex-check.sh, PreModelSwitch/PostModelSwitch
-# -> session-tier-observer.py, SubagentStart/SubagentStop -> model-routing-observer.py.
+# PreModelSwitch/PostModelSwitch -> session-tier-observer.py, SubagentStart/SubagentStop
+# -> model-routing-observer.py. WorktreeCreate/WorktreeRemove are deliberately NOT
+# wired (a WorktreeCreate hook replaces git's worktree creation — docs/hook-protocol.md
+# §12); §3 asserts they stay unwired while still covering r4-mutex-check.sh's
+# retained worktree branch as script logic.
 #
 # NOTE: core/tests/adapter-parity.sh covers ONLY the canonical 5 events
 # (PreToolUse/PostToolUse/SessionStart/Stop/UserPromptSubmit — docs/hook-protocol.md
-# §1). These 8 events are Claude-only extensions layered on top; they cannot
+# §1). These 6 wired events are Claude-only extensions layered on top; they cannot
 # regress cross-AI parity because Codex/Gemini never see them. This battery is
 # their only coverage.
 #
@@ -73,6 +76,8 @@ print(json.dumps({
 done
 [[ "$LAST" == *"Circuit Breaker"* ]]
 check "posttoolusefailure-threshold-fires" $? "got: $LAST"
+EV_NAME=$(printf '%s' "$LAST" | python3 -c 'import json,sys; print(json.load(sys.stdin)["hookSpecificOutput"]["hookEventName"])' 2>/dev/null)
+check "posttoolusefailure-advisory-echoes-its-event-name" $([[ "$EV_NAME" == "PostToolUseFailure" ]]; echo $?) "hookEventName=$EV_NAME"
 
 echo
 echo "=== 1c. dedupe: repeated tool_use_id in PostToolUseFailure does not double-count ==="
@@ -109,18 +114,54 @@ check "sessionend-empty-stdout" $((${#OUT} == 0 ? 0 : 1)) "out=$OUT"
 check "sessionend-under-1s" $((ELAPSED_MS < 1000 ? 0 : 1)) "elapsed_ms=$ELAPSED_MS"
 
 echo
+echo "=== 2a. SessionEnd as json.dumps-style JSON (\": \" separators) still takes the cheap path ==="
+# The W4 Codex adapter emits json.dumps output ("key": "value"). The cheap-path
+# branch must recognize SessionEnd there too; a TODO.md with an unchecked item
+# makes the full path observable (it prints a summary line), the cheap path never does.
+SE_ROOT="$WORK/se-repo"
+mkdir -p "$SE_ROOT"
+(cd "$SE_ROOT" && git init -q && printf -- '- [ ] pending\n' > TODO.md)
+spaced_event() {
+  E="$1" python3 -c 'import json, os; print(json.dumps({"ai": "claude-code", "hook_event_name": os.environ["E"], "session_id": "ext-2a"}))'
+}
+OUT=$(cd "$SE_ROOT" && spaced_event SessionEnd | AGENT_SESSION_ID="ext-2a-nonexistent" \
+  bash "$REPO_ROOT/core/hooks/session-close.sh" 2>/dev/null)
+check "sessionend-spaced-json-cheap-path" $((${#OUT} == 0 ? 0 : 1)) "out=$OUT"
+OUT=$(cd "$SE_ROOT" && spaced_event Stop | AGENT_SESSION_ID="ext-2a-nonexistent" \
+  bash "$REPO_ROOT/core/hooks/session-close.sh" 2>/dev/null)
+[[ "$OUT" == *"TODO.md has 1 unchecked"* ]]
+check "stop-spaced-json-full-path-control" $? "out=$OUT"
+
+echo
 echo "=== 2b. Stop event -> session-close.sh still runs the full (non-cheap) path ==="
 STOP_EVENT='{"ai":"claude-code","hook_event_name":"Stop","session_id":"ext-2b","cwd":"'"$REPO_ROOT"'"}'
 OUT=$(printf '%s' "$STOP_EVENT" | AGENT_SESSION_ID="ext-2b-nonexistent" bash "$ADAPTER" session-close.sh 2>/dev/null); RC=$?
 check "stop-event-still-exit-0" $((RC == 0 ? 0 : 1)) "rc=$RC"
 
 # ---------------------------------------------------------------------------
-# 3. WorktreeCreate/WorktreeRemove -> r4-mutex-check.sh
-#    Registers/releases a shared_resource_locks entry keyed "worktree:<path>".
-#    Never emits a decision — empty stdout always.
+# 3. WorktreeCreate/WorktreeRemove — NOT wired (docs/hook-protocol.md §12).
+#    Claude Code treats a WorktreeCreate hook as a REPLACEMENT for git's own
+#    worktree creation: it must create the worktree and print its path on
+#    stdout, and empty stdout fails the creation. r4-mutex-check.sh is an
+#    observer (empty stdout always), so wiring it breaks every Claude worktree.
+#    3a guards against re-wiring; 3b keeps the retained script branch honest
+#    (registers/releases a shared_resource_locks entry keyed "worktree:<path>").
 # ---------------------------------------------------------------------------
 echo
-echo "=== 3. WorktreeCreate/WorktreeRemove -> r4-mutex-check.sh ==="
+echo "=== 3a. WorktreeCreate/WorktreeRemove stay unwired in both manifests ==="
+TEMPLATE_JSON="$REPO_ROOT/adapters/claude-code/settings.json.template"
+for MANIFEST in "$HOOKS_JSON" "$TEMPLATE_JSON"; do
+  WIRED=$(python3 -c '
+import json, sys
+hooks = json.load(open(sys.argv[1], encoding="utf-8")).get("hooks", {})
+print(",".join(e for e in ("WorktreeCreate", "WorktreeRemove") if e in hooks))
+' "$MANIFEST"); RC=$?
+  check "worktree-events-unwired:${MANIFEST#"$REPO_ROOT"/}" $(( RC == 0 && ${#WIRED} == 0 ? 0 : 1 )) \
+    "rc=$RC wired=$WIRED"
+done
+
+echo
+echo "=== 3b. r4-mutex-check.sh worktree branch (script logic, invoked directly) ==="
 WT_ROOT="$WORK/r4-repo"
 mkdir -p "$WT_ROOT"
 (cd "$WT_ROOT" && git init -q && git commit -q --allow-empty -m init)
@@ -241,8 +282,6 @@ hooks = data.get("hooks", {})
 expected = [
     ("PostToolUseFailure", "circuit-breaker.py"),
     ("SessionEnd", "session-close.sh"),
-    ("WorktreeCreate", "r4-mutex-check.sh"),
-    ("WorktreeRemove", "r4-mutex-check.sh"),
     ("PreModelSwitch", "session-tier-observer.py"),
     ("PostModelSwitch", "session-tier-observer.py"),
     ("SubagentStart", "model-routing-observer.py"),
@@ -265,9 +304,9 @@ else:
 PY
 )
   case "$MANIFEST_REPORT" in
-    OK) ok "manifest-wires-all-8-event-hook-pairs" ;;
-    MISSING*) bad "manifest-wires-all-8-event-hook-pairs" "pending manifest wiring: ${MANIFEST_REPORT#MISSING }" ;;
-    *) bad "manifest-wires-all-8-event-hook-pairs" "$MANIFEST_REPORT" ;;
+    OK) ok "manifest-wires-all-6-event-hook-pairs" ;;
+    MISSING*) bad "manifest-wires-all-6-event-hook-pairs" "pending manifest wiring: ${MANIFEST_REPORT#MISSING }" ;;
+    *) bad "manifest-wires-all-6-event-hook-pairs" "$MANIFEST_REPORT" ;;
   esac
 fi
 

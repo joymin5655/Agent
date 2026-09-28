@@ -7,7 +7,7 @@
 #
 # Claude-only extended events (adapter-level, non-canonical — docs/hook-protocol.md
 # §12): PostToolUseFailure, SessionEnd, PreModelSwitch, PostModelSwitch,
-# SubagentStart, SubagentStop, WorktreeCreate, WorktreeRemove. These pass through
+# SubagentStart, SubagentStop. These pass through
 # exactly like the canonical 5 — this script does not branch on `hook_event_name`,
 # it just execs whatever core hook is named on argv. A core hook that has no
 # `event` handling for one of these fields simply reads stdin, finds nothing it
@@ -16,7 +16,9 @@
 # receive a request it understands and errored/crashed — see docs/hook-protocol.md
 # §4 exit-code table). PermissionRequest is deliberately NOT wired (see hooks.json
 # and docs/hook-protocol.md §12 for why: different `decision` object shape, and
-# exit 2 is not honored on that event).
+# exit 2 is not honored on that event). WorktreeCreate/WorktreeRemove are not
+# wired either: a WorktreeCreate hook replaces git's worktree creation and must
+# print the new path, which an observer hook never does (§12).
 #
 # Usage (from ~/.claude/settings.json hooks block):
 #   "command": "/path/to/Agent/adapters/claude-code/adapter.sh <hook-name>"

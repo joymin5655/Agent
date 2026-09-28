@@ -1,5 +1,5 @@
 {
-  "_comment": "Claude Code hook wire-up template. Copy to ~/.claude/settings.json (or merge into existing). Replace {{FRAMEWORK_ROOT}} with the absolute path to your Agent/ checkout (e.g., $HOME/Agent). Kept in lockstep with hooks/hooks.json (the plugin manifest) — core/tests/hook-template-parity.sh fails the suite on drift. Events beyond the canonical 5 (PostToolUseFailure, SessionEnd, PreModelSwitch/PostModelSwitch, SubagentStart/SubagentStop, WorktreeCreate/WorktreeRemove) are Claude-only extensions — see docs/hook-protocol.md §12.",
+  "_comment": "Claude Code hook wire-up template. Copy to ~/.claude/settings.json (or merge into existing). Replace {{FRAMEWORK_ROOT}} with the absolute path to your Agent/ checkout (e.g., $HOME/Agent). Kept in lockstep with hooks/hooks.json (the plugin manifest) — core/tests/hook-template-parity.sh fails the suite on drift. Events beyond the canonical 5 (PostToolUseFailure, SessionEnd, PreModelSwitch/PostModelSwitch, SubagentStart/SubagentStop) are Claude-only extensions; WorktreeCreate/WorktreeRemove are deliberately unwired — see docs/hook-protocol.md §12.",
   "hooks": {
     "SessionStart": [
       {
@@ -148,22 +148,6 @@
         "matcher": "*",
         "hooks": [
           { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh model-routing-observer.py" }
-        ]
-      }
-    ],
-    "WorktreeCreate": [
-      {
-        "matcher": "*",
-        "hooks": [
-          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh r4-mutex-check.sh" }
-        ]
-      }
-    ],
-    "WorktreeRemove": [
-      {
-        "matcher": "*",
-        "hooks": [
-          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh r4-mutex-check.sh" }
         ]
       }
     ]

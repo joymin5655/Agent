@@ -8,6 +8,7 @@
 #   (F) freshness  — `measured_on` and every docs[].checked_on must be within
 #                    AGENT_CURRENCY_MAX_AGE_DAYS (default: registry
 #                    max_age_days_default, 45). Stale = WARN; with --strict = FAIL.
+#                    A date after today is a typo, not "fresh" = FAIL always.
 #                    Rationale: gate-registry.md flags a gate STALE when its
 #                    assumption is unreviewed; a runtime spec is the same kind of
 #                    assumption and rots at the same rate (see docs/runtime-registry.json).
@@ -106,6 +107,8 @@ for rid, rt in runtimes.items():
         a = age_days(s or "")
         if a is None:
             report("FAIL", f"{rid}-{label}-date", f"unparseable date {s!r}")
+        elif a < 0:
+            report("FAIL", f"{rid}-{label}-future", f"{s} is {-a}d after today (typo?)")
         elif a > max_age:
             report("FAIL" if strict else "WARN", f"{rid}-{label}-stale", f"{a}d old (> {max_age}d)")
         else:

@@ -79,6 +79,10 @@ HOOK_EVENT=$(printf '%s' "$INPUT" | jq -r '.hook_event_name // .event // ""' 2>/
 
 case "$HOOK_EVENT" in
   WorktreeCreate|WorktreeRemove)
+    # NOT wired in hooks/hooks.json or settings.json.template: Claude Code treats
+    # a WorktreeCreate hook as a replacement for git's worktree creation (it must
+    # print the new path), so this observer branch would break every worktree.
+    # Kept as tested logic — docs/hook-protocol.md §12.
     # Register/release the worktree as a session-held resource in the SAME
     # lock file the resource-mutex path below reads (.agent/locks/active-sessions.json,
     # shared_resource_locks map) — reuses the existing R4 mechanism rather than

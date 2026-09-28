@@ -14,7 +14,7 @@
         {"url": "https://code.claude.com/docs/en/plugins-reference", "checked_on": "2026-09-26"},
         {"url": "https://code.claude.com/docs/en/memory", "checked_on": "2026-09-26"}
       ],
-      "hook_events_wired": ["SessionStart", "SessionEnd", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop", "PreModelSwitch", "PostModelSwitch", "SubagentStart", "SubagentStop", "WorktreeCreate", "WorktreeRemove"],
+      "hook_events_wired": ["SessionStart", "SessionEnd", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop", "PreModelSwitch", "PostModelSwitch", "SubagentStart", "SubagentStop"],
       "hook_events_available_count": 33,
       "instruction_files": ["CLAUDE.md", "AGENTS.md (native since 2.1.277)", ".claude/rules/*.md"],
       "skills_dirs": ["skills/ (plugin)", "~/.claude/skills"],
