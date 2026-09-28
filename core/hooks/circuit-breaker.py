@@ -161,14 +161,14 @@ def _record_failure(signature: str, tool_use_id, now: float) -> list:
 
     PostToolUseFailure (Claude's explicit-failure event, added alongside the
     existing PostToolUse text/exit-status heuristic below) and a PostToolUse
-    for the SAME tool call can both reach this hook once both are wired. Since
-    neither the canonical event JSON (docs/hook-protocol.md) nor today's live
-    PostToolUse payload is guaranteed to carry tool_use_id, dedup is
-    best-effort: when a tool_use_id IS present on this call we skip if a
-    record with the same id is already in the window; when it's absent (the
-    common case today) we fall back to the pre-existing behavior of counting
-    every classified failure, accepting a possible double-count for that one
-    call as a known, documented trade-off rather than silently dropping data.
+    for the SAME tool call can both reach this hook once both are wired.
+    Claude Code documents tool_use_id on both PostToolUse and
+    PostToolUseFailure input, and the Claude/Codex adapters pass it through, so
+    on those runtimes a record with the same id already in the window is
+    skipped. The canonical event JSON (docs/hook-protocol.md) does not require
+    the field, so when it's absent we fall back to counting every classified
+    failure, accepting a possible double-count for that one call as a known,
+    documented trade-off rather than silently dropping data.
     """
     records = load_state()
     records = [r for r in records if now - r.get("ts", 0) < WINDOW_SECONDS]
