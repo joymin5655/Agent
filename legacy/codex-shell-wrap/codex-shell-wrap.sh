@@ -2,6 +2,11 @@
 # codex-shell-wrap.sh — Intercepts Codex's shell tool calls and gates them via
 # the framework's pre-tool-guard + r4-mutex + secret-content-scan hooks.
 #
+# LEGACY (2026-09-27, W4): superseded by Codex native hooks
+# (adapters/codex/hooks.json.template, installed by `setup.sh --codex`). Kept only
+# as the documented fallback for a Codex build running with `[features] hooks=false`;
+# it covers the shell route only (apply_patch/MCP writes bypass it). See README.md here.
+#
 # Install:
 #   1. Copy or symlink this script onto PATH as 'codex-bash' (e.g., ~/bin/codex-bash).
 #   2. In ~/.codex/config.toml, point the shell tool's executable at codex-bash:
@@ -19,9 +24,9 @@
 
 set -euo pipefail
 
-ADAPTER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-FRAMEWORK_ROOT="$(cd "$ADAPTER_DIR/../.." && pwd)"
-ADAPTER="$ADAPTER_DIR/adapter.sh"
+WRAP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+FRAMEWORK_ROOT="$(cd "$WRAP_DIR/../.." && pwd)"
+ADAPTER="$FRAMEWORK_ROOT/adapters/codex/adapter.sh"
 
 # Reconstruct command — codex passes ["bash", "-lc", "<cmd>"] or similar.
 if [[ "${1:-}" == "-lc" || "${1:-}" == "-c" ]]; then

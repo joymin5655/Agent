@@ -97,12 +97,14 @@ vendor-specific mission lifecycle.
 
 The current limitations are equally important:
 
-- the shipped Codex and Gemini enforcement paths are shell wrappers;
-- those wrappers do not intercept every native file-write tool;
+- the shipped Gemini enforcement path is a shell wrapper that does not
+  intercept every native file-write tool; Codex's native hook path shipped in
+  W4 (XRH-02) and covers Bash, `apply_patch`, and MCP tools (fixtures plus
+  one live `codex exec` session, 2026-09-27; MCP was fixture-tested only);
 - the parity test proves translation through the same core hook, not native
   runtime registration, sandbox behavior, or complete tool coverage;
-- the repository has a Claude plugin manifest, but no Codex or Antigravity
-  package yet;
+- the repository has a Claude plugin manifest and a portable root
+  `plugin.json` for Codex, but no Antigravity package yet;
 - Gemini is disabled as an external worker on the default individual-user path.
 
 The target is to retain the core contract while replacing wrapper-only paths
@@ -213,7 +215,7 @@ skills:
   layout: skills/<name>/SKILL.md
 plugins:
   supported: true
-  manifest: .codex-plugin/plugin.json
+  manifest: plugin.json  # portable (agent-plugins.org 1.0.0); .codex-plugin/plugin.json legacy
 mcp:
   supported: true
   transports: [stdio, streamable-http]
@@ -263,11 +265,13 @@ Support is declared per distribution and per tool class.
 Tier B is not automatically runtime-wide. A shell wrapper that does not see
 native file-write calls is Tier B for shell and Tier C for file writes.
 Tier B is also **conditional on the wrapper's own dependencies**: the shipped
-shell wraps only parse a decision when `python3` is on PATH and the hook
-exits cleanly — on a host without `python3`, or on a hook crash, they execute
-the command unchecked (fail-open, `hook-protocol.md` § 4). A Tier B claim
-therefore carries an implicit environment precondition until the fail-closed
-work in XRH-02/03 lands.
+Gemini shell wrap only parses a decision when `python3` is on PATH and the
+hook exits cleanly — on a host without `python3`, or on a hook crash, it
+executes the command unchecked (fail-open, `hook-protocol.md` § 4). A Tier B
+claim therefore carries an implicit environment precondition until the
+fail-closed work in XRH-03 lands. Codex graduated from this wrapper-based
+Tier B to native Tier A in XRH-02 (§ 11): its native adapter fails closed on
+`PreToolUse` instead of inheriting this precondition.
 
 Promotion rules:
 
@@ -297,11 +301,12 @@ Runtime mappings:
   `defer`. The portable core uses the first three; `defer` remains an adapter
   extension. Claude documents precedence as
   `deny > defer > ask > allow` ([Claude hooks][claude-hooks]).
-- **Codex** supports native `allow` and `deny` for `PreToolUse`, but currently
-  parses and rejects `permissionDecision: "ask"` while continuing the tool
-  call. The adapter must never emit that unsupported result. A canonical `ask`
-  becomes fail-closed `deny` unless a separately tested native permission flow
-  owns that tool call ([Codex hooks][codex-hooks]).
+- **Codex** supports native `allow` and `deny` for `PreToolUse`, but parses
+  and rejects `permissionDecision: "ask"` while continuing the tool call. The
+  shipped native adapter (XRH-02) never emits that unsupported result: it
+  turns a canonical `ask` — and any hook failure — into fail-closed `deny`
+  unless a separately tested native permission flow owns that tool call
+  ([Codex hooks][codex-hooks]).
 - **Gemini CLI** supports `allow` and `deny` in `BeforeTool`; its policy engine
   can express static `ask_user` rules. A dynamic canonical `ask` becomes
   fail-closed `deny` unless a policy-backed prompt path is installed and tested
@@ -311,12 +316,12 @@ Runtime mappings:
 - **Wrappers and gateways** may treat `ask` as `deny` when they cannot interact
   with the user. They must explain how to retry with approval.
 
-An adapter error on a mutating pre-effect event fails closed — as a **target
-rule**: the shipped wrapper paths currently fail open on a crashed hook
-(`hook-protocol.md` § 4), and closing that gap is part of the XRH-02/03
-acceptance criteria. An error on an observation event records a warning and
-continues unless the mission's explicit completion gate requires that
-observation.
+An adapter error on a mutating pre-effect event fails closed. Codex's native
+adapter meets this rule (XRH-02, delivered); the Gemini shell wrapper still
+fails open on a crashed hook (`hook-protocol.md` § 4), and closing that gap is
+part of the XRH-03 acceptance criteria. An error on an observation event
+records a warning and continues unless the mission's explicit completion gate
+requires that observation.
 
 ## 8. Runtime distribution strategy
 
@@ -340,23 +345,34 @@ The current install and event lifecycle is documented in
 
 ### 8.2 Codex
 
-The target native package uses:
+The native package (delivered, XRH-02) uses:
 
-- `.codex-plugin/plugin.json`;
-- `hooks/hooks.json`;
-- `skills/`;
-- optional `.mcp.json`;
+- root `plugin.json` (agent-plugins.org 1.0.0) with `extensions.com.openai.hooks`
+  pointing at `hooks/codex-hooks.json` — `.codex-plugin/plugin.json` is the
+  legacy layout, kept only as a compatibility note;
+- `.agents/plugins/marketplace.json` for `codex plugin marketplace add`;
+- `skills/` (symlinked into `~/.agents/skills` or read from `.agents/skills`);
 - `AGENTS.md`;
 - Codex sandbox and approval configuration.
 
-Codex sets `PLUGIN_ROOT` and compatibility `CLAUDE_PLUGIN_ROOT` for plugin
-hooks, so the existing relative hook commands can be migrated without copying
-the core ([Codex plugin packaging][codex-plugin]).
+For the shell-install path, `adapters/codex/hooks.json.template` merges (via
+`adapters/codex/merge-hooks.py`) into `~/.codex/hooks.json` beside
+`config.toml`, owning only entries whose command runs `adapter.sh` and leaving
+other tools' hooks untouched.
 
-The shell wrapper stays available as a compatibility path until native
-end-to-end tests cover shell, `apply_patch`, and MCP tools. The native path
-must not inherit the current wrapper's “ask means block” behavior without
-documenting the difference to users.
+Codex sets `PLUGIN_ROOT` and compatibility `CLAUDE_PLUGIN_ROOT` for plugin
+hooks, so the existing relative hook commands migrated without copying the
+core ([Codex plugin packaging][codex-plugin]).
+
+The shell wrapper (`legacy/codex-shell-wrap/codex-shell-wrap.sh`) moved to
+`legacy/` and stays available only as a fallback for `[features] hooks =
+false` builds. The native adapter does not inherit the wrapper's "ask means
+block" behavior silently — it documents the ask-to-deny translation in
+`docs/ai-adapters.md` and in the deny reason it returns. A live `codex exec`
+session (codex-cli 0.157.0, 2026-09-27) confirmed the Bash and `apply_patch`
+denials end-to-end. Remaining gap: `setup.sh --doctor` checks the
+`setup.sh --codex` merge target but does not yet detect a plugin-based
+install; MCP coverage is fixture-tested only.
 
 ### 8.3 Gemini CLI
 
@@ -518,23 +534,46 @@ Acceptance:
 - an unknown capability never defaults to supported;
 - docs and registry contain the same enforcement tier and status.
 
-### XRH-02 — Codex native path
+### XRH-02 — Codex native path (delivered, W4)
 
-Deliver:
+Delivered, with evidence:
 
-- a Codex plugin manifest that reuses the shared skills and hook core;
-- native hook translation for the portable event subset;
-- explicit fail-closed handling for canonical `ask`;
-- setup and doctor checks that distinguish native plugin and wrapper mode;
-- compatibility migration for existing wrapper users.
+- a portable root `plugin.json` (`extensions.com.openai.hooks`) plus
+  `.agents/plugins/marketplace.json`, reusing the shared skills and hook core
+  — `codex plugin marketplace add` + `codex plugin add agent-harness@agent`
+  installs it and the skills appear in a live Codex session (manually
+  verified 2026-09-27);
+- native hook translation for the portable event subset in
+  `adapters/codex/adapter.py` (`run_native`), covering `Bash`, `apply_patch`
+  (split per file), and `mcp__*` — `core/tests/codex-native-hooks-test.sh`
+  (41 checks) and the `adapter-parity.sh` native section;
+- explicit fail-closed handling for canonical `ask` and any hook failure
+  (non-zero exit, timeout, invalid JSON) — same test suite;
+- a `setup.sh --doctor` check ("codex native hooks") that distinguishes
+  `[features] hooks = false`, not-installed, invalid JSON, a moved adapter
+  path, and installed-but-untrusted from a passing installation
+  (`core/tests/setup-doctor-test.sh`);
+- `setup.sh --codex` merges the template into `~/.codex/hooks.json` via
+  `adapters/codex/merge-hooks.py` without touching other tools' entries, and
+  the shell wrapper moved to `legacy/codex-shell-wrap/` as the compatibility
+  migration path for `hooks = false` builds.
 
-Acceptance:
+Remaining (not yet delivered):
 
-- native `PreToolUse` blocks a shell secret read;
-- native `PreToolUse` blocks an `apply_patch` fixture;
-- an MCP mutation fixture reaches the same core policy;
-- canonical `ask` never becomes a Codex hook error followed by execution;
-- disabling the plugin makes the doctor report enforcement unavailable.
+- a live check of an MCP tool call through the native hooks (Bash and
+  `apply_patch` were live-verified in one `codex exec` session, 2026-09-27);
+- `setup.sh --doctor` detects the `setup.sh --codex` merge target only; it
+  does not yet distinguish a plugin-based install from no install at all.
+
+Acceptance (met unless noted):
+
+- native `PreToolUse` blocks a shell secret read — met (fixture);
+- native `PreToolUse` blocks an `apply_patch` fixture — met (fixture);
+- an MCP mutation fixture reaches the same core policy — met (fixture);
+- canonical `ask` never becomes a Codex hook error followed by execution — met;
+- disabling the plugin makes the doctor report enforcement unavailable — met
+  for the `hooks = false` and not-installed cases; the plugin-install path
+  specifically is not yet distinguished (see remaining items above).
 
 ### XRH-03 — Google distribution split
 

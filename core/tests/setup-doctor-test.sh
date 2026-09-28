@@ -343,6 +343,39 @@ check "codex-broken-wiring-fail" $?
 rm -rf "$CXW_FIX"
 
 echo
+echo "=== (k3b) codex native hooks (W4): installed / untrusted / disabled / broken / absent ==="
+CXN_FIX="$(safe_mktemp_d)" || { echo "FAIL: mktemp -d failed (codex native hooks fixture)"; exit 1; }
+track_fixture "$CXN_FIX"
+FW_ROOT="$(cd "$(dirname "$SETUP")" && pwd)"
+python3 "$FW_ROOT/adapters/codex/merge-hooks.py" "$FW_ROOT/adapters/codex/hooks.json.template" \
+    "$FW_ROOT" "$CXN_FIX/hooks.json" >/dev/null
+printf '[features]\nhooks = true\n' > "$CXN_FIX/config.toml"
+OUT_K4="$(CODEX_CONFIG="$CXN_FIX/config.toml" bash "$SETUP" --doctor 2>&1)"
+[[ "$OUT_K4" == *"[WARN"*"codex native hooks — "*"installed but no PreToolUse trust record found"* ]]
+check "codex-native-untrusted-warn" $?
+# Trust-record shape copied from a real codex-cli 0.157.0 config.toml after /hooks
+# approval ([hooks.state."<abs hooks.json>:session_start:0:0"]); pre_tool_use is
+# the same scheme's token for PreToolUse (inferred — see setup.sh check 15b).
+printf '[hooks.state."%s:pre_tool_use:0:0"]\ntrusted_hash = "sha256:x"\n' "$CXN_FIX/hooks.json" >> "$CXN_FIX/config.toml"
+OUT_K4="$(CODEX_CONFIG="$CXN_FIX/config.toml" bash "$SETUP" --doctor 2>&1)"
+[[ "$OUT_K4" == *"[PASS"*"codex native hooks — "*"with a PreToolUse trust record"* ]]
+check "codex-native-trusted-pass" $?
+printf '[features]\nhooks = false\n' > "$CXN_FIX/config.toml"
+OUT_K4="$(CODEX_CONFIG="$CXN_FIX/config.toml" bash "$SETUP" --doctor 2>&1)"
+[[ "$OUT_K4" == *"[WARN"*"codex native hooks — [features] hooks = false"* ]]
+check "codex-native-disabled-warn" $?
+printf '[features]\nhooks = true\n' > "$CXN_FIX/config.toml"
+sed "s|$FW_ROOT/adapters|/nonexistent/adapters|g" "$CXN_FIX/hooks.json" > "$CXN_FIX/h2" && mv "$CXN_FIX/h2" "$CXN_FIX/hooks.json"
+OUT_K4="$(CODEX_CONFIG="$CXN_FIX/config.toml" bash "$SETUP" --doctor 2>&1)"; RC_K4=$?
+[[ $RC_K4 -eq 1 && "$OUT_K4" == *"[FAIL"*"codex native hooks — wired adapter missing on disk: /nonexistent/adapters/codex/adapter.sh"* ]]
+check "codex-native-broken-fail" $?
+printf '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"other"}]}]}}' > "$CXN_FIX/hooks.json"
+OUT_K4="$(CODEX_CONFIG="$CXN_FIX/config.toml" bash "$SETUP" --doctor 2>&1)"
+[[ "$OUT_K4" == *"[WARN"*"codex native hooks — not installed"* ]]
+check "codex-native-absent-warn" $?
+rm -rf "$CXN_FIX"
+
+echo
 echo "=== (k5) codex wiring: header present but atypical path shape -> WARN not-wired, NO crash ==="
 CXA_FIX="$(safe_mktemp_d)" || { echo "FAIL: mktemp -d failed (codex wiring anchor fixture)"; exit 1; }
 track_fixture "$CXA_FIX"

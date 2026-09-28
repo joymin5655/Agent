@@ -7,7 +7,95 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Codex native hook path (W4-1)**: `adapters/codex/adapter.py`'s native mode
+  (`run_native`) translates Codex's native `PreToolUse` stdin (Claude-shaped:
+  `hook_event_name`, `tool_name`, `tool_input`, `tool_use_id`, `session_id`,
+  `cwd`, `transcript_path`) into canonical events, splitting `apply_patch`'s
+  patch text (carried in `tool_input.command`, same field as Bash) into one
+  `Write`/`Edit` event per file with absolute paths, and aggregating
+  deny > ask > advisory > allow across files. A canonical `ask` and any hook
+  failure (non-zero exit other than `2`, a timeout, invalid JSON, or a zero-op
+  patch) become a fail-closed `deny` JSON; non-`PreToolUse` events stay
+  fail-open by design. `adapters/codex/hooks.json.template` (merged into
+  `~/.codex/hooks.json` by the new `adapters/codex/merge-hooks.py`, which
+  replaces only Agent-owned entries and leaves other tools' hooks alone) wires
+  SessionStart/UserPromptSubmit/PreToolUse/PostToolUse/Stop/SessionEnd.
+  Hardened after a security review: one 25s check budget per hook across all
+  files of a patch, a 100-file cap, indented patch markers denied as ambiguous,
+  `normpath` on patch paths, `Move to` destinations checked with the source
+  file's content (regular files only), a deny for a missing guard, missing
+  `python3`, or an unknown decision verb, and every per-file event run on
+  `PostToolUse` (council review).
+  `core/tests/codex-native-hooks-test.sh` (41 checks) and a new
+  `adapter-parity.sh` native section cover it; one live `codex exec` session
+  (codex-cli 0.157.0, 2026-09-27) confirmed the Bash and `apply_patch` denials
+  end-to-end.
+- **Portable plugin manifest + marketplace (W4-2)**: root `plugin.json`
+  (`agent-plugins.org` 1.0.0, `extensions.com.openai.hooks` →
+  `hooks/codex-hooks.json`) and `.agents/plugins/marketplace.json`, so
+  `codex plugin marketplace add joymin5655/Agent` + `codex plugin add
+  agent-harness@agent` installs the same hooks and skills — install verified
+  with the codex CLI (skills appear in `codex debug prompt-input`) on 2026-09-27.
+  `core/tests/version-parity.sh` now covers the root manifest.
+
+### Changed
+- **`setup.sh --codex`** now merges `hooks.json.template` into
+  `~/.codex/hooks.json` beside `config.toml` via `merge-hooks.py`, symlinks
+  each `skills/<name>` into `~/.agents/skills`, repoints an old
+  `~/bin/codex-bash` symlink to `legacy/codex-shell-wrap/`, and prints a reminder that Codex only enforces a
+  hook after you trust it with `/hooks`.
+- **`setup.sh --doctor`** gained a "codex native hooks" check: WARN when
+  `[features] hooks = false` or nothing is installed, FAIL on invalid JSON or
+  a moved adapter path, WARN when entries are installed but nothing is
+  trusted yet, PASS otherwise (`core/tests/setup-doctor-test.sh`).
+- `docs/runtime-registry.json`, `docs/ai-adapters.md`,
+  `docs/cross-runtime-harness-design.md`, and `docs/hook-protocol.md` brought
+  current with the native path: Codex `hook_events_wired`, Tier A coverage for
+  Bash + `apply_patch` + MCP tools, the ask→deny translation now living in the
+  adapter itself, and the fail-open/fail-closed split by adapter in the
+  exit-code table.
+- **Claude Code hook manifests brought current with 2.1.282** (W3-1/W3-2/W3-3/W3-4).
+  `hooks/hooks.json` and `adapters/claude-code/settings.json.template`: matchers
+  `Write|Edit|MultiEdit` → `Write|Edit`, `Task|Agent` → `Agent`,
+  `ExitPlanMode|Task|Agent` → `ExitPlanMode|Agent` (`MultiEdit` is no longer a
+  documented tool; `Task` is a legacy alias of `Agent`). Wired 6 Claude-only
+  extended events non-canonical to the cross-AI protocol: `PostToolUseFailure`
+  → `circuit-breaker.py`, `SessionEnd` → `session-close.sh` (`timeout: 2`),
+  `PreModelSwitch`/`PostModelSwitch` → `session-tier-observer.py`,
+  `SubagentStart`/`SubagentStop` → `model-routing-observer.py`.
+  `PermissionRequest` deliberately left unwired (different `decision` schema;
+  exit 2 not honored), and so are `WorktreeCreate`/`WorktreeRemove` (a
+  `WorktreeCreate` hook replaces git's worktree creation and must print the new
+  path — the observer `r4-mutex-check.sh` would have broken every Claude
+  worktree; wired during W3, unwired before release) — see
+  `docs/hook-protocol.md` §12. `secret-content-scan.py`'s MCP matcher
+  collapsed from an explicit per-tool pipe-list to per-vendor `mcp__<server>__.*`
+  wildcards; `rubric-commit-judge.sh` gained a narrowing `"if": "Bash(git commit*)"`.
+  `adapter.sh` header now documents the extended events and the no-op-vs-fail-open
+  distinction. `docs/hook-protocol.md` gained §12; `docs/runtime-registry.json`
+  claude-code `hook_events_wired` reflects the full wired list.
+- **CI**: added `plugin-validate` job running `claude plugin validate --strict .`
+  (best-effort CLI install; explicit `::notice::` skip if the CLI never lands —
+  never a silent pass, and not a required check).
+
+### Deprecated
+- **`codex-shell-wrap.sh` moved to `legacy/codex-shell-wrap/`** (W4-3). It
+  remains a fallback only for `[features] hooks = false` builds, or an admin
+  `requirements.toml` that allows managed hooks only; `adapters/codex/tests/run.sh`
+  (T5/T6) still exercises it so the fallback path doesn't rot.
+
 ### Fixed
+- **`session-close.sh` missed `SessionEnd` in `json.dumps`-style input.** The
+  event-name `sed` required `:"` with no space, so `"hook_event_name": "SessionEnd"`
+  fell through to the full Stop path (TODO scan, notification, broadcast) inside
+  the 1.5s SessionEnd budget. The extraction now allows whitespace after the colon.
+- **`circuit-breaker.py` answered `PostToolUseFailure` with `hookEventName:
+  "PostToolUse"`.** The advisory now echoes the event it was invoked for.
+- **`runtime-currency.sh` read a future `measured_on`/`checked_on` as fresh.** A
+  date after today is now a FAIL (typo), not a negative age.
+- **`codex-template-currency-test.sh` denylist lagged the registry** (`gpt-5\.[234]`
+  vs `docs/runtime-registry.json`'s `gpt-5\.[2-6]`); synced, registry named as SSOT.
 - **Deferred council findings (runtime-currency-2026-09).**
   - The `rubric-commit-judge` manifest entry no longer carries `"if": "Bash(git commit*)"`,
     which missed `git -C <dir> commit` and `rtk git commit`. The hook's internal regex now
@@ -18,28 +106,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     reaches the PyYAML pip step instead of returning early. It still exits 1.
   - `session-tier-observer.py` stamps `origin` on its session-start record, which the W1
     log-origin tag had missed.
-
-### Changed
-- **Claude Code hook manifests brought current with 2.1.282** (W3-1/W3-2/W3-3/W3-4).
-  `hooks/hooks.json` and `adapters/claude-code/settings.json.template`: matchers
-  `Write|Edit|MultiEdit` → `Write|Edit`, `Task|Agent` → `Agent`,
-  `ExitPlanMode|Task|Agent` → `ExitPlanMode|Agent` (`MultiEdit` is no longer a
-  documented tool; `Task` is a legacy alias of `Agent`). Wired 8 Claude-only
-  extended events non-canonical to the cross-AI protocol: `PostToolUseFailure`
-  → `circuit-breaker.py`, `SessionEnd` → `session-close.sh` (`timeout: 2`),
-  `WorktreeCreate`/`WorktreeRemove` → `r4-mutex-check.sh`, `PreModelSwitch`/
-  `PostModelSwitch` → `session-tier-observer.py`, `SubagentStart`/`SubagentStop`
-  → `model-routing-observer.py`. `PermissionRequest` deliberately left unwired
-  (different `decision` schema; exit 2 not honored — see
-  `docs/hook-protocol.md` §12). `secret-content-scan.py`'s MCP matcher
-  collapsed from an explicit per-tool pipe-list to per-vendor `mcp__<server>__.*`
-  wildcards; `rubric-commit-judge.sh` gained a narrowing `"if": "Bash(git commit*)"`.
-  `adapter.sh` header now documents the extended events and the no-op-vs-fail-open
-  distinction. `docs/hook-protocol.md` gained §12; `docs/runtime-registry.json`
-  claude-code `hook_events_wired` reflects the full wired list.
-- **CI**: added `plugin-validate` job running `claude plugin validate --strict .`
-  (best-effort CLI install; explicit `::notice::` skip if the CLI never lands —
-  never a silent pass, and not a required check).
 
 ## [0.5.10] - 2026-09-02
 
