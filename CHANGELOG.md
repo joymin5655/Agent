@@ -110,6 +110,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     reaches the PyYAML pip step instead of returning early. It still exits 1.
   - `session-tier-observer.py` stamps `origin` on its session-start record, which the W1
     log-origin tag had missed.
+- **Antigravity lane counted a soft-denied run as success (W5-1).** Headless agy
+  soft-denies a tool call it cannot get approval for: the run continues and exits 0
+  with a stderr notice. `antigravity-worker.sh` now exits 9 on that notice and 10 when
+  the `--output-format json` envelope is unparseable or its `status` is not
+  `SUCCESS`. It captures agy's output outside the sandbox's writable dir, so a
+  prompt-driven write cannot forge the envelope. `antigravity-preflight.sh` reports a
+  soft-deny as exit 8 (lane absent), reads the probe token from `.response` only, and
+  treats `authentication required` as an auth failure. New
+  `core/tests/antigravity-preflight-test.sh`.
 
 ## [0.5.10] - 2026-09-02
 

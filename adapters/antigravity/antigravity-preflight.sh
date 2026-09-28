@@ -8,7 +8,11 @@
 #   (b) a cached credential (the OS keyring) can be stale — presence of the
 #       file is not an auth check;
 #   (c) exit 0 + a reply body is not proof of inference — the probe demands ONE
-#       EXACT TOKEN back;
+#       EXACT TOKEN back, read from the json envelope's .response only (an
+#       error path that echoes the prompt carries the token too);
+#   (e) a SOFT-DENIED tool call (headless agy exits 0 and continues; the worker
+#       turns it into exit 9) means this lane cannot complete work unattended
+#       — reported as a distinct "absent" exit, never as healthy;
 #   (d) the probe exercises the argv the dispatch will run: cmd[0] is resolved
 #       from core/infra/backends.json (the same file, the same jq lookup
 #       call-worker.sh uses), probed on the lane's cheapest tier (mid — same
@@ -20,7 +24,7 @@
 #        ANTIGRAVITY_PREFLIGHT_TIMEOUT_S (default 60)
 # exit:  0 reachable+authenticated | 1 worker/CLI missing | 3 auth rejected
 #        4 probe timed out | 5 probe failed / no success token | 6 mktemp
-#        failure | 7 registry/lane unusable
+#        failure | 7 registry/lane unusable | 8 tool call soft-denied (absent)
 set -uo pipefail
 
 self="${BASH_SOURCE[0]}"
@@ -68,11 +72,12 @@ command -v "$CLI" >/dev/null 2>&1 || {
 }
 
 OUT="$(mktemp)" || { echo "antigravity-preflight: mktemp failed — refusing rather than probing blind" >&2; exit 6; }
-trap 'rm -f "$OUT"' EXIT INT TERM
+ERR="$(mktemp)" || { rm -f "$OUT"; echo "antigravity-preflight: mktemp failed — refusing rather than probing blind" >&2; exit 6; }
+trap 'rm -f "$OUT" "$ERR"' EXIT INT TERM
 
 # (a)+(c)+(d) Real round trip through the worker on the cheapest tier. Portable
 # watchdog — macOS ships no GNU timeout (same shape as call-worker.sh).
-printf '%s' "$PROBE_PROMPT" | "$CLI" --tier mid > "$OUT" 2>&1 &
+printf '%s' "$PROBE_PROMPT" | "$CLI" --tier mid > "$OUT" 2> "$ERR" &
 probe_pid=$!
 ( sleep "$PROBE_TIMEOUT_S" && kill -KILL "$probe_pid" 2>/dev/null ) &
 watchdog_pid=$!
@@ -81,25 +86,32 @@ wait "$probe_pid" || probe_rc=$?
 kill "$watchdog_pid" 2>/dev/null || true
 wait "$watchdog_pid" 2>/dev/null || true
 
-emit_capture() { tr -d '\000-\010\013-\037\177' < "$OUT" | sed -e 's/^/antigravity-preflight:   /' >&2; }
+emit_capture() { cat "$ERR" "$OUT" | tr -d '\000-\010\013-\037\177' | sed -e 's/^/antigravity-preflight:   /' >&2; }
 
 if [[ $probe_rc -eq 137 ]]; then
     echo "antigravity-preflight: probe timed out after ${PROBE_TIMEOUT_S}s — refusing" >&2
     exit 4
 fi
 # Auth text FIRST — a CLI can print an auth failure and still exit 0.
-if grep -qiE 'not logged in|please log in|log ?in with|unauthorized|unauthenticated|forbidden|access denied|authentication failed|invalid.*(api.?key|credential|token)|(credential|token|session|login|subscription)[^.]{0,40}(expired|has expired)' "$OUT"; then
+if grep -qiE 'not logged in|please log in|log ?in with|unauthorized|unauthenticated|forbidden|access denied|authentication (failed|required)|invalid.*(api.?key|credential|token)|(credential|token|session|login|subscription)[^.]{0,40}(expired|has expired)' "$OUT" "$ERR"; then
     echo "antigravity-preflight: the CLI reports an authentication failure — refusing" >&2
     emit_capture
     exit 3
+fi
+if [[ $probe_rc -eq 9 ]]; then
+    echo "antigravity-preflight: agy soft-denied a tool call during the probe — lane reported ABSENT (it cannot finish work unattended)" >&2
+    emit_capture
+    exit 8
 fi
 if [[ $probe_rc -ne 0 ]]; then
     echo "antigravity-preflight: probe exited $probe_rc — refusing (state unknown)" >&2
     emit_capture
     exit 5
 fi
-# (c) Positive proof: the exact token, matched on an ANSI-stripped copy.
-if ! sed -e 's/'$'\033''\[[0-9;?]*[a-zA-Z]//g' "$OUT" | grep -Fq "$PROBE_TOKEN"; then
+# (c) Positive proof: the exact token in the envelope's .response (exactly one
+# json value on stdout), matched on an ANSI-stripped copy.
+if ! jq -rs 'if length == 1 then (.[0].response // empty) else empty end' "$OUT" 2>/dev/null \
+        | sed -e 's/'$'\033''\[[0-9;?]*[a-zA-Z]//g' | grep -Fq "$PROBE_TOKEN"; then
     echo "antigravity-preflight: probe exited 0 but the reply does not contain the requested token ($PROBE_TOKEN) — no proof of inference, refusing" >&2
     emit_capture
     exit 5

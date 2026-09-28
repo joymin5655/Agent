@@ -50,3 +50,20 @@ prompt and emits findings text), so the worker runs default mode with
 `--dangerously-skip-permissions` FORBIDDEN, and — belt-and-suspenders, matching
 the grok lane — under an OS `sandbox-exec` deny-write/deny-cred-read profile so
 the unproven write path cannot matter. See `antigravity-worker.sh`.
+
+## Success contract (soft-deny)
+
+The headless docs (fetched 2026-09-28) say a tool call that cannot get approval
+is **soft-denied**: the run continues, exits `0`, and prints a stderr notice
+naming the tool. The `exit 1` rows above are the agy 1.1.14 measurement. So
+exit 0 is not success by itself:
+
+| worker exit | meaning | preflight exit |
+|---|---|---|
+| 0 | envelope `status == "SUCCESS"`, no soft-deny notice | 0 if `.response` holds the token |
+| 9 | exit 0 but a soft-deny notice on stderr | 8 — lane **absent** |
+| 10 | exit 0 but envelope unparseable or `status` not SUCCESS | 5 |
+
+The notice text is undocumented; the worker matches the 1.1.14 wording
+(`permission check failed` / `denied permission to`). It has not been
+re-measured on 1.2.x.

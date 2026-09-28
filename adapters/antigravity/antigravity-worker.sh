@@ -38,11 +38,21 @@
 # verbatim as agy's own separate --effort flag. Every model ID is validated
 # against a tight regex before use; every effort level against an allowlist.
 #
+# SUCCESS: agy's exit 0 alone proves nothing. Headless agy SOFT-DENIES a tool
+# call it cannot get approval for — the run continues, exits 0, and prints a
+# notice on stderr (docs/cli/headless). So a dispatch counts only when the
+# --output-format json envelope says status "SUCCESS" AND no soft-deny notice
+# was printed; the envelope and stderr are forwarded unchanged either way.
+# The notice's exact wording is undocumented; SOFT_DENY_RE matches the text
+# measured on agy 1.1.14 (probes/probe1-default.txt) — unverified on 1.2.x.
+#
 # usage: antigravity-worker [--tier mid|top] < prompt.md
 # env:   ANTIGRAVITY_TIERS_FILE, ANTIGRAVITY_WORKER_ALLOW_UNSANDBOXED=1,
 #        ANTIGRAVITY_WORKER_PRINT_TIMEOUT (agy --print-timeout, default 5m)
-# exit:  agy's own exit code; 2 usage/config; 6 mktemp failure;
-#        7 sandbox unavailable (fail closed); 8 unsafe $HOME for a scheme string
+# exit:  agy's own nonzero exit code; 2 usage/config; 6 mktemp failure;
+#        7 sandbox unavailable (fail closed); 8 unsafe $HOME for a scheme string;
+#        9 agy exited 0 but soft-denied a tool call; 10 agy exited 0 but the
+#        envelope is unparseable or its status is not SUCCESS
 set -euo pipefail
 
 self="${BASH_SOURCE[0]}"
@@ -167,16 +177,38 @@ else
     exit 7
 fi
 
+# agy's stdout/stderr land in CAP_DIR, OUTSIDE the sandbox's writable WORK_DIR
+# (agy's cwd), so a prompt-driven file write cannot forge the envelope we judge.
+CAP_DIR="$(mktemp -d)" || { rm -rf "$WORK_DIR"; echo "antigravity-worker: mktemp -d failed" >&2; exit 6; }
+
 # Run as a CHILD (not exec) with signal forwarding so the EXIT trap fires and
 # the prompt file — the untrusted diff — never outlives the dispatch.
 child=
-cleanup() { rm -rf "$WORK_DIR"; }
+cleanup() { rm -rf "$WORK_DIR" "$CAP_DIR"; }
 forward() { [[ -n "$child" ]] && kill -TERM "$child" 2>/dev/null || true; }
 trap cleanup EXIT
 trap forward TERM INT
 cd "$WORK_DIR"
-"${RUN[@]}" &
+"${RUN[@]}" > "$CAP_DIR/out" 2> "$CAP_DIR/err" &
 child=$!
 rc=0
 wait "$child" || rc=$?
-exit "$rc"
+cat "$CAP_DIR/err" >&2
+cat "$CAP_DIR/out"
+[[ $rc -eq 0 ]] || exit "$rc"
+
+SOFT_DENY_RE='permission check failed|denied permission to'
+err_text="$(<"$CAP_DIR/err")"
+shopt -s nocasematch
+if [[ "$err_text" =~ $SOFT_DENY_RE ]]; then
+    echo "antigravity-worker: agy exited 0 but soft-denied a tool call (notice above) — result is incomplete; not reporting success" >&2
+    exit 9
+fi
+shopt -u nocasematch
+# -s: the whole stdout must be exactly ONE json value — trailing text fails.
+status="$(jq -rs 'if length == 1 then (.[0].status // empty) else empty end' "$CAP_DIR/out" 2>/dev/null || true)"
+if [[ "$status" != "SUCCESS" ]]; then
+    echo "antigravity-worker: agy exited 0 but the json envelope status is '${status:-<unparseable>}', not SUCCESS — not reporting success" >&2
+    exit 10
+fi
+exit 0

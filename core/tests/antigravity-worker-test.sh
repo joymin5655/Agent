@@ -29,13 +29,24 @@ mkdir -p "$STUB_DIR"
 RECORD="$TMP/record"
 
 # Stub agy: records argv (one line, %q-quoted) and cwd. The prompt arrives as
-# the positional value of -p, so the argv line carries it.
+# the positional value of -p, so the argv line carries it. AGY_STUB_MODE picks
+# the --output-format json envelope / stderr / exit code the stub emits; the
+# soft-deny notice is the text measured on agy 1.1.14 (probe1-default.txt).
 cat > "$STUB_DIR/agy" <<STUB
 #!/usr/bin/env bash
 {
   printf 'argv:'; printf ' %q' "\$@"; printf '\n'
   printf 'cwd: %s\n' "\$PWD"
 } >> "$RECORD"
+case "\${AGY_STUB_MODE:-success}" in
+  success)  printf '{"conversation_id":"c1","status":"SUCCESS","response":"ok"}\n' ;;
+  softdeny) printf '{"conversation_id":"c1","status":"SUCCESS","response":"ok"}\n'
+            printf 'Error: permission check failed for command "touch PWNED": user denied permission to run command:\ntouch PWNED\n' >&2 ;;
+  error)    printf '{"conversation_id":"c1","status":"ERROR","error":"boom"}\n' ;;
+  waiting)  printf '{"conversation_id":"c1","status":"WAITING","response":""}\n' ;;
+  garbage)  printf 'not json at all\n' ;;
+  fail1)    printf '{"conversation_id":"c1","status":"ERROR","error":"run failure"}\n'; exit 1 ;;
+esac
 STUB
 chmod +x "$STUB_DIR/agy"
 
@@ -184,6 +195,24 @@ cat > "$TMP/bad-effort.json" <<'JSON'
 JSON
 printf 'x' | ANTIGRAVITY_TIERS_FILE="$TMP/bad-effort.json" bash "$WORKER" --tier top >/dev/null 2>&1
 check "invalid-effort-level-exits-2" 2 $?
+
+echo
+echo "=== (h) status envelope + soft-deny: exit 0 from agy is not success by itself ==="
+out="$(printf 'x' | AGY_STUB_MODE=success ANTIGRAVITY_TIERS_FILE="$TIERS" bash "$WORKER" --tier mid 2>/dev/null)"
+check "success-status-exits-0" 0 $?
+check "envelope-passed-through-on-stdout" "SUCCESS" "$(printf '%s' "$out" | jq -r '.status' 2>/dev/null)"
+err="$(printf 'x' | AGY_STUB_MODE=softdeny ANTIGRAVITY_TIERS_FILE="$TIERS" bash "$WORKER" --tier mid 2>&1 >/dev/null)"
+check "soft-deny-exits-9" 9 $?
+printf '%s' "$err" | grep -q 'user denied permission'; check "soft-deny-notice-forwarded-to-stderr" 0 $?
+printf '%s' "$err" | grep -qi 'soft-den'; check "soft-deny-named-in-worker-message" 0 $?
+printf 'x' | AGY_STUB_MODE=error ANTIGRAVITY_TIERS_FILE="$TIERS" bash "$WORKER" --tier mid >/dev/null 2>&1
+check "error-status-exits-10" 10 $?
+printf 'x' | AGY_STUB_MODE=waiting ANTIGRAVITY_TIERS_FILE="$TIERS" bash "$WORKER" --tier mid >/dev/null 2>&1
+check "waiting-status-exits-10" 10 $?
+printf 'x' | AGY_STUB_MODE=garbage ANTIGRAVITY_TIERS_FILE="$TIERS" bash "$WORKER" --tier mid >/dev/null 2>&1
+check "unparseable-envelope-exits-10" 10 $?
+printf 'x' | AGY_STUB_MODE=fail1 ANTIGRAVITY_TIERS_FILE="$TIERS" bash "$WORKER" --tier mid >/dev/null 2>&1
+check "agy-nonzero-exit-passed-through" 1 $?
 
 echo
 echo "=== (f) no stray grok-worker reference in the antigravity adapter ==="
