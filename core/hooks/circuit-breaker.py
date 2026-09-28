@@ -154,7 +154,7 @@ def _record_failure(signature: str, tool_use_id, now: float) -> list:
     return records
 
 
-def _maybe_fire(records: list) -> None:
+def _maybe_fire(records: list, hook_event_name: str) -> None:
     if len(records) < THRESHOLD:
         return
     signature = records[-1].get("sig", "")
@@ -175,7 +175,7 @@ def _maybe_fire(records: list) -> None:
 
     output = {
         "hookSpecificOutput": {
-            "hookEventName": "PostToolUse",
+            "hookEventName": hook_event_name,
             "additionalContext": msg,
         }
     }
@@ -205,7 +205,7 @@ def main() -> None:
         tool_use_id = data.get("tool_use_id")
         now = time.time()
         records = _record_failure(signature, tool_use_id, now)
-        _maybe_fire(records)
+        _maybe_fire(records, "PostToolUseFailure")
         return
 
     result = data.get("tool_result") or data.get("tool_response") or {}
@@ -234,7 +234,7 @@ def main() -> None:
     signature = extract_error_signature(result_text)
     tool_use_id = data.get("tool_use_id")
     records = _record_failure(signature, tool_use_id, now)
-    _maybe_fire(records)
+    _maybe_fire(records, "PostToolUse")
 
 
 if __name__ == "__main__":

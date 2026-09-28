@@ -1,0 +1,154 @@
+{
+  "description": "Agent harness \u2014 Codex native hooks (adapters/codex/hooks.json.template). setup.sh --codex merges these into ~/.codex/hooks.json; hooks/codex-hooks.json is the same wiring for the portable plugin. Review and trust them in Codex with /hooks.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"{{FRAMEWORK_ROOT}}/adapters/codex/adapter.sh\" agent-session-start.sh"
+          },
+          {
+            "type": "command",
+            "command": "\"{{FRAMEWORK_ROOT}}/adapters/codex/adapter.sh\" session-init.py"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"{{FRAMEWORK_ROOT}}/adapters/codex/adapter.sh\" agent-session-heartbeat.sh"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "^Bash$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"{{FRAMEWORK_ROOT}}/adapters/codex/adapter.sh\" pre-tool-guard.sh",
+            "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "\"{{FRAMEWORK_ROOT}}/adapters/codex/adapter.sh\" loop-write-guard.py",
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"{{FRAMEWORK_ROOT}}/adapters/codex/adapter.sh\" r4-mutex-check.sh",
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "^apply_patch$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"{{FRAMEWORK_ROOT}}/adapters/codex/adapter.sh\" check-hardcoding.py",
+            "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "\"{{FRAMEWORK_ROOT}}/adapters/codex/adapter.sh\" secret-content-scan.py",
+            "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "\"{{FRAMEWORK_ROOT}}/adapters/codex/adapter.sh\" r4-file-mutex-check.sh",
+            "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "\"{{FRAMEWORK_ROOT}}/adapters/codex/adapter.sh\" tdd-guard.py",
+            "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "\"{{FRAMEWORK_ROOT}}/adapters/codex/adapter.sh\" spec-gate.py",
+            "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "\"{{FRAMEWORK_ROOT}}/adapters/codex/adapter.sh\" loop-write-guard.py",
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "^mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"{{FRAMEWORK_ROOT}}/adapters/codex/adapter.sh\" secret-content-scan.py",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "^Bash$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"{{FRAMEWORK_ROOT}}/adapters/codex/adapter.sh\" circuit-breaker.py"
+          },
+          {
+            "type": "command",
+            "command": "\"{{FRAMEWORK_ROOT}}/adapters/codex/adapter.sh\" verify-observer.py"
+          }
+        ]
+      },
+      {
+        "matcher": "^apply_patch$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"{{FRAMEWORK_ROOT}}/adapters/codex/adapter.sh\" r4-file-mutex-register.sh"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"{{FRAMEWORK_ROOT}}/adapters/codex/adapter.sh\" session-quality-gate.py"
+          },
+          {
+            "type": "command",
+            "command": "\"{{FRAMEWORK_ROOT}}/adapters/codex/adapter.sh\" brain-capture.py"
+          },
+          {
+            "type": "command",
+            "command": "\"{{FRAMEWORK_ROOT}}/adapters/codex/adapter.sh\" session-close.sh"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"{{FRAMEWORK_ROOT}}/adapters/codex/adapter.sh\" session-close.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -91,13 +91,18 @@ grepq 'FAIL \[registry-parse\]'; check "malformed-line" $?
 mkreg 2026-13-99 2026-09-25 '[]' "$TMP/r.json"
 expect "bad-date-rc1" 1 env AGENT_CURRENCY_REGISTRY="$TMP/r.json" bash "$GATE"
 grepq 'unparseable date'; check "bad-date-line" $?
+mkreg 2026-10-20 2026-09-25 '[]' "$TMP/r.json"  # future date (typo) must not read as fresh
+expect "future-date-rc1" 1 env AGENT_CURRENCY_REGISTRY="$TMP/r.json" bash "$GATE"
+grepq 'FAIL \[rt-measured_on-future\]'; check "future-date-line" $?
 mkreg 2026-09-20 2026-09-25 '["x"]' "$TMP/r.json"
 sed -i.bak 's|adapters/x/\*.toml|adapters/none/*.toml|' "$TMP/r.json"
 expect "pin-files-missing-rc1" 1 env AGENT_CURRENCY_REGISTRY="$TMP/r.json" bash "$GATE"
 grepq 'FAIL \[rt-pin-files-missing\]'; check "pin-files-missing-line" $?
 
 echo "=== (i) liveness canary: the SHIPPED registry passes its own gate (non-strict) ==="
-unset AGENT_CURRENCY_REPO_ROOT
+# Real date, not the pinned fixture date: a registry stamped after the pin would
+# otherwise read as a future-date FAIL.
+unset AGENT_CURRENCY_REPO_ROOT AGENT_CURRENCY_TODAY
 expect "shipped-registry-passes" 0 bash "$GATE"
 grepq '=== Results: [0-9]+ ok'; check "shipped-registry-summary" $?
 # and it must actually scan the codex profile templates (regression: a glob typo
