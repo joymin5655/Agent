@@ -14,8 +14,9 @@ PreToolUse event, pipes through the core hooks, and **blocks** the call
 Architecturally identical to the Codex adapter — see that README for the
 rationale.
 
-The native Gemini extension and separate Antigravity plugin are specified in
-[`docs/cross-runtime-harness-design.md`](../../docs/cross-runtime-harness-design.md).
+The native Gemini extension is specified in
+[`docs/cross-runtime-harness-design.md`](../../docs/cross-runtime-harness-design.md); the
+Antigravity plugin has shipped, see [`adapters/antigravity/README.md`](../antigravity/README.md).
 
 ## Files
 

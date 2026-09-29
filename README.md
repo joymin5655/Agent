@@ -108,7 +108,8 @@ prompt wording.
   judge where low confidence and even judge crashes all resolve to REFUTED (fail-closed) —
   see the [verification diagram](#how-a-run-flows).
 - Cross-AI parity is machine-proved, not promised: `core/tests/adapter-parity.sh` feeds the
-  same events through all three adapters and asserts identical decisions. That proves
+  same events through the claude-code, codex and gemini adapters (and the antigravity one, after
+  normalizing its `ask`/`force_ask` vocabulary) and asserts identical decisions. That proves
   *decision* parity; *event coverage* still differs per runtime — see
   [Runtime coverage](#runtime-coverage).
 
@@ -253,7 +254,7 @@ bash ~/agent/setup.sh                    # no flag = all three AIs
 | `--hooks-only` | git-hooks only, no AI configs |
 | `--all` | Everything above |
 | `--grok` | **opt-in**, not part of `--all`/default — grok worker lane (advisory-only cross-vendor review) |
-| `--antigravity` | **opt-in**, not part of `--all`/default — antigravity (agy) worker lane (cross-vendor review) |
+| `--antigravity` | **opt-in**, not part of `--all`/default — antigravity (agy) worker lane (cross-vendor review) **and** the native-hook plugin installed into `~/.gemini/config/plugins/agent-harness` (guards agy's own tool calls; see `adapters/antigravity/README.md`) |
 | `--kiro` | **opt-in**, not part of `--all`/default — kiro gateway worker lanes (metered/paid) |
 
 Flags combine (`bash setup.sh --claude --project`). Idempotent — existing files are
@@ -519,7 +520,7 @@ gitleaks detect --no-git --source . --config gitleaks.toml
 # 2) domain-neutrality gate (also runs in CI)
 bash core/tests/sanitize-audit.sh
 
-# 3) cross-AI parity: same event → same decision across all 3 adapters
+# 3) cross-AI parity: same event → same decision across all 4 adapters (agy normalized)
 bash core/tests/adapter-parity.sh
 # → === Parity: 24 passed, 0 failed ===
 

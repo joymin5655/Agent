@@ -104,7 +104,8 @@ The current limitations are equally important:
 - the parity test proves translation through the same core hook, not native
   runtime registration, sandbox behavior, or complete tool coverage;
 - the repository has a Claude plugin manifest and a portable root
-  `plugin.json` for Codex, but no Antigravity package yet;
+  `plugin.json` for Codex, and an Antigravity plugin folder that
+  `setup.sh --antigravity` installs (W5; see section 8.4 for what it covers);
 - Gemini is disabled as an external worker on the default individual-user path.
 
 The target is to retain the core contract while replacing wrapper-only paths
@@ -408,6 +409,28 @@ The adapter must translate camelCase Antigravity events such as
 path, but documents only partial migration parity; the Agent plugin remains an
 explicit target, not an assumed automatic conversion
 ([Antigravity migration][antigravity-migration]).
+
+**Coverage as shipped (W5, agy 1.2.12, live probe 2026-09-29).** `setup.sh --antigravity`
+installs a plugin folder (`plugin.json` plus `hooks.json` pointing at
+`adapters/antigravity/adapter.sh`); it never touches `~/.gemini/config/hooks.json` or agy's
+`settings.json`. Enforced: `PreToolUse` on `run_command` (as `Bash`), `write_to_file` and
+`replace_file_content` and `multi_replace_file_content` (as `Write`/`Edit`), plus
+`send_command_input` (text typed into a live shell, as `Bash`), runs the same core guards as
+the Codex chain, plus `PostToolUse` observers (their output is discarded) and a `Stop` gate with
+a loop guard. A guard failure, a timeout or an unverified argument shape is a deny. A pass-through
+is `{"decision":"ask"}` because agy treats `{}` as a deny and a hook `allow` was not observed to
+grant more than `ask` (its semantics are unmeasured), so agy's own permission rules still apply
+on top. A core-hook `ask` is emitted as `force_ask`, because plain `ask` respects the user's
+`permissions.allow` rules and Always-Allow cache and could satisfy a guard that demanded a human;
+that comes from agy's bundled docs and no live probe combined a hook `ask` with an allow rule.
+Review-worker runs (`AGENT_ANTIGRAVITY_WORKER=1`) deny every matched tool call, and the worker
+also carries a workspace deny plugin. Not covered: no `SessionStart`, `UserPromptSubmit` or
+`SessionEnd` equivalent is wired; `view_file`, MCP and browser tools are not matched; the
+interactive `ask`/`force_ask` UX (and headless `force_ask`), hook denial under
+`--dangerously-skip-permissions`, and real-agy loading of the global plugin folder were not
+measured. Behavior is fixture-tested
+(`core/tests/antigravity-adapter-test.sh`, `antigravity-native-hooks-test.sh`,
+`adapter-parity.sh`); the live probe only covered a workspace plugin.
 
 ### 8.5 API and local-model backends
 
