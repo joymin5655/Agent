@@ -1,0 +1,35 @@
+{
+  "agent-harness": {
+    "PreToolUse": [
+      {
+        "matcher": "run_command|send_command_input|write_to_file|replace_file_content|multi_replace_file_content",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"{{FRAMEWORK_ROOT}}/adapters/antigravity/adapter.sh\" PreToolUse",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "run_command|write_to_file|replace_file_content|multi_replace_file_content",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"{{FRAMEWORK_ROOT}}/adapters/antigravity/adapter.sh\" PostToolUse",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "\"{{FRAMEWORK_ROOT}}/adapters/antigravity/adapter.sh\" Stop",
+        "timeout": 30
+      }
+    ]
+  }
+}
