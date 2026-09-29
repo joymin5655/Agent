@@ -8,24 +8,33 @@
 # `agy <flags> -p "<prompt read from stdin>"`, keeping the registry's uniform
 # "cmd + tier_args, prompt on stdin" contract.
 #
-# AUTH: agy authenticates from the OS keyring, seeded once interactively (this
-# machine's was already seeded — see adapters/antigravity/README.md). The worker
-# never logs in; a dead credential is the preflight's problem (fail closed).
+# AUTH: by default agy authenticates from the OS keyring, seeded once
+# interactively (this machine's was already seeded — see
+# adapters/antigravity/README.md). The worker never logs in; a dead credential is
+# the preflight's problem (fail closed).
+# OPT-IN API KEY: ANTIGRAVITY_AUTH=apikey reads a Gemini API key from the macOS
+# Keychain (service gemini-api-key — same pattern as the OpenRouter worker) and
+# exports GEMINI_API_KEY for agy ONLY through the environment: never argv, never
+# logged, never in an error message. agy also needs "modelProvider": "gemini" in
+# ~/.gemini/antigravity-cli/settings.json for the variable to take effect — the
+# worker warns when it is absent and never edits that file. Any other
+# ANTIGRAVITY_AUTH value keeps the keyring path and never calls `security`.
+# The worker also exports AGENT_ANTIGRAVITY_WORKER=1 so the harness hook adapter
+# can tell it is running under a review worker (deny-all tools).
 #
 # THREAT MODEL: the prompt carries an untrusted diff (an outside-contributor PR
 # is the lane's normal input), so a prompt can try to drive local action.
-# Measured posture (probes in .agent/plans/antigravity-lane/probes/):
-#   * default headless mode DENIES shell exec ("user denied permission to run
-#     command") and created NO file in any probe — it fails closed;
-#   * BUT the file-write tool was not observed to be explicitly denied (only the
-#     shell denial surfaced), so the write path is "no file produced", not
-#     "provably gated".
-# A code review needs neither write nor exec (it reads the diff from the prompt
-# and emits findings text), so this worker (a) FORBIDS
-# --dangerously-skip-permissions, and (b) — belt-and-suspenders, matching the
-# grok lane — runs under an OS sandbox-exec deny-write/deny-cred-read profile so
-# the unproven write path cannot matter. sandbox-exec is fail-closed: no
-# sandbox-exec => refuse (unless GROK-style opt-out).
+# 1.1.14 posture (historical, measured 2026-08-19): shell exec was denied by default
+# and no probe created a file. On 1.2.12 that fail-closed-by-default posture is NOT
+# assumed: an `echo` via run_command ran headless with no allow rule (README "Worker
+# threat model (drift from 1.1.14)"). The controls that hold are (a) the OS
+# sandbox-exec profile below (deny-write outside WORK_DIR and the agy state dir, with
+# the hook/plugin config paths carved back out; deny-read of credential stores;
+# network stays open), (b) a workspace deny plugin written into WORK_DIR before agy
+# starts — a static hook that denies every exec/write tool with no env or adapter
+# dependence — and (c) the ban on --dangerously-skip-permissions. A code review needs
+# neither write nor exec (it reads the diff from the prompt and emits findings text).
+# sandbox-exec is fail-closed: no sandbox-exec => refuse (unless the opt-out is set).
 #
 # Tier policy: model IDs are forbidden in core/infra/backends.json
 # (no-model-ids gate), so the model pin lives in a tiers file THIS adapter owns:
@@ -43,13 +52,17 @@
 # notice on stderr (docs/cli/headless). So a dispatch counts only when the
 # --output-format json envelope says status "SUCCESS" AND no soft-deny notice
 # was printed; the envelope and stderr are forwarded unchanged either way.
-# The notice's exact wording is undocumented; SOFT_DENY_RE matches the text
-# measured on agy 1.1.14 (probes/probe1-default.txt) — unverified on 1.2.x.
+# agy 1.2.12 (measured 2026-09-29) reports a soft-deny structurally — the
+# envelope gains a non-empty "denied_actions" array and the run ends at the first
+# denial — so that is the primary signal. The stderr notice (wording differs
+# between 1.1.14 and 1.2.12) is the fallback, matched by SOFT_DENY_RE.
 #
 # usage: antigravity-worker [--tier mid|top] < prompt.md
 # env:   ANTIGRAVITY_TIERS_FILE, ANTIGRAVITY_WORKER_ALLOW_UNSANDBOXED=1,
-#        ANTIGRAVITY_WORKER_PRINT_TIMEOUT (agy --print-timeout, default 5m)
-# exit:  agy's own nonzero exit code; 2 usage/config; 6 mktemp failure;
+#        ANTIGRAVITY_WORKER_PRINT_TIMEOUT (agy --print-timeout, default 5m),
+#        ANTIGRAVITY_AUTH=apikey (opt-in Keychain API key, see AUTH)
+# exit:  agy's own nonzero exit code (incl. the undocumented 3 = envelope status
+#        ERROR); 2 usage/config (incl. a missing Keychain item); 6 mktemp failure;
 #        7 sandbox unavailable (fail closed); 8 unsafe $HOME for a scheme string;
 #        9 agy exited 0 but soft-denied a tool call; 10 agy exited 0 but the
 #        envelope is unparseable or its status is not SUCCESS
@@ -139,6 +152,21 @@ fi
 
 PRINT_TIMEOUT="${ANTIGRAVITY_WORKER_PRINT_TIMEOUT:-5m}"
 
+if [[ "${ANTIGRAVITY_AUTH:-}" == "apikey" ]]; then
+    command -v security >/dev/null 2>&1 || { echo "antigravity-worker: ANTIGRAVITY_AUTH=apikey needs the macOS 'security' CLI to read Keychain service 'gemini-api-key' — not found on PATH" >&2; exit 2; }
+    GEMINI_KEY="$(security find-generic-password -a "${USER:-$(id -un)}" -s gemini-api-key -w 2>/dev/null)" || GEMINI_KEY=""
+    [[ -n "$GEMINI_KEY" ]] || {
+        echo "antigravity-worker: no Keychain entry 'gemini-api-key' — register: security add-generic-password -a \"\$USER\" -s gemini-api-key -w" >&2
+        exit 2
+    }
+    # Exported only after the workspace deny plugin is written (see below): with the key
+    # in agy's environment, a prompt-injected run_command could otherwise read it.
+    if ! jq -e '.modelProvider == "gemini"' "$HOME/.gemini/antigravity-cli/settings.json" >/dev/null 2>&1; then
+        echo "antigravity-worker: WARNING ANTIGRAVITY_AUTH=apikey but $HOME/.gemini/antigravity-cli/settings.json does not set \"modelProvider\": \"gemini\" — GEMINI_API_KEY has no effect until it does (this worker never edits that file)" >&2
+    fi
+fi
+export AGENT_ANTIGRAVITY_WORKER=1
+
 # $HOME is interpolated into the SBPL scheme string; a value containing scheme
 # metacharacters could widen the profile. Refuse rather than emit a profile
 # whose meaning we can't vouch for.
@@ -150,6 +178,55 @@ WORK_DIR="$(mktemp -d)" || { echo "antigravity-worker: mktemp -d failed" >&2; ex
 PROMPT_FILE="$WORK_DIR/prompt.md"   # inside WORK_DIR so cleanup takes it too
 cat > "$PROMPT_FILE"
 
+# Workspace deny plugin (agy loads .agents/plugins/<name>/ from its cwd — measured on
+# 1.2.12, w5-design M1). The hook is a static script: it denies every exec/write tool and
+# stops, needing neither AGENT_ANTIGRAVITY_WORKER to reach the hook nor the global plugin.
+# Fail closed: a worker that cannot write it refuses to start, and never gets the API key.
+DENY_DIR="$WORK_DIR/.agents/plugins/agent-worker-deny"
+write_deny_plugin() {
+    # The path lands inside a double-quoted shell word in hooks.json: allowlist, never escape.
+    [[ "$WORK_DIR" =~ ^[A-Za-z0-9._/+=@%-]+$ ]] || return 1
+    mkdir -p "$DENY_DIR" || return 1
+    cat > "$DENY_DIR/deny.sh" <<'DENYSH' || return 1
+#!/bin/sh
+# review worker: every exec/write tool call is denied; nothing may keep the run going.
+cat >/dev/null
+case "${1:-}" in
+    Stop) printf '%s\n' '{"decision":"stop"}' ;;
+    *)    printf '%s\n' '{"decision":"deny","reason":"review worker: tools are disabled"}' ;;
+esac
+DENYSH
+    chmod +x "$DENY_DIR/deny.sh" || return 1
+    cat > "$DENY_DIR/plugin.json" <<'PLUGINJSON' || return 1
+{
+  "name": "agent-worker-deny",
+  "description": "Antigravity review worker: denies every exec and write tool call."
+}
+PLUGINJSON
+    cat > "$DENY_DIR/hooks.json" <<HOOKSJSON || return 1
+{
+  "agent-worker-deny": {
+    "PreToolUse": [
+      {
+        "matcher": "run_command|send_command_input|write_to_file|replace_file_content|multi_replace_file_content",
+        "hooks": [{"type": "command", "command": "\"$DENY_DIR/deny.sh\" PreToolUse", "timeout": 10}]
+      }
+    ],
+    "Stop": [{"type": "command", "command": "\"$DENY_DIR/deny.sh\" Stop", "timeout": 10}]
+  }
+}
+HOOKSJSON
+}
+if ! write_deny_plugin; then
+    rm -rf "$WORK_DIR"
+    echo "antigravity-worker: could not write the workspace deny plugin — refusing to start (the worker relies on it to deny tool calls); no API key was exported" >&2
+    exit 2
+fi
+if [[ -n "${GEMINI_KEY:-}" ]]; then
+    export GEMINI_API_KEY="$GEMINI_KEY"
+    unset GEMINI_KEY
+fi
+
 # Flags BEFORE the positional prompt (measured: flags after -p are misparsed).
 # --dangerously-skip-permissions is NEVER present. --output-format json gives
 # call-worker the status/response envelope; --print-timeout caps a hung run.
@@ -160,12 +237,18 @@ CMD+=(--output-format json --print-timeout "$PRINT_TIMEOUT"
 
 if command -v sandbox-exec >/dev/null 2>&1; then
     # Deny writes outside this run's WORK_DIR and the agy state dir; deny reads
-    # of the obvious credential stores so a prompt-driven exfil finds nothing.
+    # of the obvious credential stores so a prompt-driven exfil finds nothing. The
+    # agy hook/plugin config (config/hooks.json, config/plugins, settings.json) is
+    # carved back out of the writable ~/.gemini: a planted hook there would run
+    # unsandboxed in the user's next interactive agy. antigravity-cli/settings.json
+    # stays writable because agy rewrites it itself (permissions.allow could still
+    # be widened by an injected write; unmeasured whether agy runs without it).
     # Network + process-exec stay open: agy needs the vendor API, and denying
     # process-exec blocks the CLI's own launch. Later matching SBPL rule wins.
     SBPROF='(version 1)(allow default)
 (deny file-write*)
 (allow file-write* (subpath "'"$WORK_DIR"'") (subpath "'"$HOME"'/.gemini") (subpath "'"$HOME"'/.antigravity") (subpath "/dev"))
+(deny file-write* (literal "'"$HOME"'/.gemini/config/hooks.json") (subpath "'"$HOME"'/.gemini/config/plugins") (literal "'"$HOME"'/.gemini/settings.json"))
 (deny file-read* (subpath "'"$HOME"'/.ssh") (subpath "'"$HOME"'/.aws") (subpath "'"$HOME"'/.config") (subpath "'"$HOME"'/.codex") (subpath "'"$HOME"'/.grok"))'
     RUN=(sandbox-exec -p "$SBPROF" "${CMD[@]}")
 elif [[ "${ANTIGRAVITY_WORKER_ALLOW_UNSANDBOXED:-0}" == "1" ]]; then
@@ -197,10 +280,14 @@ cat "$CAP_DIR/err" >&2
 cat "$CAP_DIR/out"
 [[ $rc -eq 0 ]] || exit "$rc"
 
-SOFT_DENY_RE='permission check failed|denied permission to'
+SOFT_DENY_RE='permission check failed|denied permission to|auto-denied|cannot prompt for'
 err_text="$(<"$CAP_DIR/err")"
+# -s + length==1 mirrors the status check below: only a single json value counts.
+denied_n="$(jq -rs 'if length == 1 then ((.[0].denied_actions // []) | length) else 0 end' "$CAP_DIR/out" 2>/dev/null || true)"
+denied=0
+[[ "$denied_n" =~ ^[0-9]+$ && "$denied_n" -gt 0 ]] && denied=1
 shopt -s nocasematch
-if [[ "$err_text" =~ $SOFT_DENY_RE ]]; then
+if [[ $denied -eq 1 || "$err_text" =~ $SOFT_DENY_RE ]]; then
     echo "antigravity-worker: agy exited 0 but soft-denied a tool call (notice above) — result is incomplete; not reporting success" >&2
     exit 9
 fi
