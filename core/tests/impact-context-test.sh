@@ -12,6 +12,9 @@
 #   (g) a hanging codegraph is cut off by IMPACT_CONTEXT_BUDGET_S, exit 0
 #   (h) a range starting with '-' is not parsed as a git option, exit 0
 #   (i) docs-only diff (no source files)           -> no output
+#   (j) explicit range, --head, and the staged-empty fallback all list dependents
+#   (k) linked worktree with no .codegraph/ of its own uses the main index
+#   (l) a deleted source file is still examined and marked
 #
 # Usage: bash core/tests/impact-context-test.sh
 set -u
@@ -29,6 +32,9 @@ check() {
 
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
+# Fixture repos must not inherit the caller's git config (gpgsign, hooksPath …):
+# a fixture commit that fails would make the "silent" cases pass vacuously.
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 
 # Stub codegraph. `node -f F` reports two dependents (one of them is a.ts, which
 # is IN the fixture diff, so it must be filtered out); `affected` prints one test
@@ -37,6 +43,8 @@ STUB="$TMP_ROOT/codegraph"
 cat > "$STUB" <<'SH'
 #!/usr/bin/env bash
 [[ -n "${STUB_SLEEP:-}" ]] && sleep "$STUB_SLEEP"
+# real codegraph prints this warning first when the index is another worktree's
+[[ -n "${STUB_WARN:-}" ]] && echo "⚠ CodeGraph results below come from a different git worktree"
 case "$1" in
   node)
     f=""; while [[ $# -gt 0 ]]; do [[ "$1" == "-f" ]] && f="$2"; shift; done
@@ -55,6 +63,7 @@ fixture_repo() {
     && mkdir -p src docs && echo base > src/a.ts && echo base > src/b.ts \
     && echo base > docs/x.md && git add -A && git commit -qm base \
     && echo change >> src/a.ts && echo change >> src/b.ts && git add -A )
+  [[ -n "$(cd "$d" && git diff --staged --name-only)" ]] || { echo "fixture setup failed: $d" >&2; exit 2; }
   [[ "${1:-}" == "index" ]] && mkdir -p "$d/.codegraph"
   echo "$d"
 }
@@ -104,14 +113,35 @@ el=$(( $(date +%s) - start ))
 
 echo "=== (h) range starting with '-' is not a git option ==="
 R=$(fixture_repo index)
-CODEGRAPH_BIN="$STUB" ic "$R" "--output=/tmp/should-not-exist-ic"
-[[ $RC -eq 0 && ! -e /tmp/should-not-exist-ic ]]; check "dash-range-not-an-option" $?
+CANARY="$TMP_ROOT/canary-out"
+CODEGRAPH_BIN="$STUB" ic "$R" "--output=$CANARY"
+[[ $RC -eq 0 && ! -e "$CANARY" ]]; check "dash-range-not-an-option" $?
 
 echo "=== (i) docs-only diff ==="
 R=$(fixture_repo index)
 (cd "$R" && git reset -q && echo more >> docs/x.md && git add docs/x.md)
 CODEGRAPH_BIN="$STUB" ic "$R"
 [[ $RC -eq 0 && -z "$OUT" ]]; check "docs-only-silent" $?
+
+echo "=== (j) explicit range, --head and staged-empty fallback ==="
+R=$(fixture_repo index); (cd "$R" && git commit -qm c2)
+for t in "HEAD~1..HEAD" "--head" ""; do
+  if [[ -n "$t" ]]; then CODEGRAPH_BIN="$STUB" ic "$R" "$t"; else CODEGRAPH_BIN="$STUB" ic "$R"; fi
+  printf '%s' "$OUT" | grep -q 'src/caller.ts'; check "dependents-listed: ${t:-staged-empty fallback}" $?
+done
+
+echo "=== (k) linked worktree uses the main checkout's index ==="
+R=$(fixture_repo index); (cd "$R" && git commit -qm c2)
+W="$TMP_ROOT/wt-$RANDOM"; (cd "$R" && git worktree add -q "$W" -b wt-test)
+(cd "$W" && echo again >> src/a.ts && git add src/a.ts)
+[[ ! -e "$W/.codegraph" ]]; check "worktree-has-no-own-index" $?
+CODEGRAPH_BIN="$STUB" STUB_WARN=1 ic "$W"
+printf '%s' "$OUT" | grep -q 'src/caller.ts'; check "worktree-falls-back-to-main-index (warning line first)" $?
+
+echo "=== (l) deleted source file is examined and marked ==="
+R=$(fixture_repo index); (cd "$R" && git commit -qm c2 && git rm -q src/b.ts)
+CODEGRAPH_BIN="$STUB" ic "$R"
+printf '%s' "$OUT" | grep -q 'src/b.ts` (deleted/renamed in this diff)'; check "deleted-file-marked" $?
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="

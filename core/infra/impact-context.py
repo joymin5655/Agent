@@ -61,7 +61,10 @@ def run(cmd, cwd, deadline):
 
 
 def changed_files(root, target, deadline):
-    base = ["git", "diff", "--name-only", "--diff-filter=d"]
+    """[(path, deleted?)]. Renames are split into delete + add (--no-renames) so
+    the old path's callers are still examined; quotePath=false keeps non-ASCII
+    paths readable."""
+    base = ["git", "-c", "core.quotePath=false", "diff", "--name-status", "--no-renames"]
     if target == "--staged":
         out = run(base + ["--staged"], root, deadline)
         if not out.strip():
@@ -70,7 +73,27 @@ def changed_files(root, target, deadline):
         out = run(base + ["HEAD~1..HEAD"], root, deadline)
     else:
         out = run(base + ["--end-of-options", target], root, deadline)
-    return [f for f in out.splitlines() if f.strip()]
+    files = []
+    for line in out.splitlines():
+        status, _, path = line.partition("\t")
+        if path.strip():
+            files.append((path.strip(), status.startswith("D")))
+    return files
+
+
+def index_root(root, deadline):
+    """Directory holding .codegraph/ for this checkout. .codegraph/ is gitignored,
+    so a linked worktree (.worktrees/<tool>-<topic>) has none of its own; fall
+    back to the main worktree's index. Paths are repo-relative in both, and the
+    main index may lag this branch, which is acceptable for advisory context."""
+    if os.path.isdir(os.path.join(root, ".codegraph")):
+        return root
+    common = run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                 root, deadline).strip()
+    main = os.path.dirname(common) if common else ""
+    if main and os.path.isdir(os.path.join(main, ".codegraph")):
+        return main
+    return ""
 
 
 def main(argv):
@@ -84,12 +107,14 @@ def main(argv):
     if not shutil.which(cg):
         return 0
     root = run(["git", "rev-parse", "--show-toplevel"], os.getcwd(), deadline).strip()
-    if not root or not os.path.isdir(os.path.join(root, ".codegraph")):
+    idx = index_root(root, deadline) if root else ""
+    if not idx:
         return 0
 
     changed = changed_files(root, target, deadline)
-    changed_set = set(changed)
-    sources = [f for f in changed if os.path.splitext(f)[1].lower() in SOURCE_EXT]
+    changed_set = {f for f, _ in changed}
+    deleted = {f for f, gone in changed if gone}
+    sources = [f for f, _ in changed if os.path.splitext(f)[1].lower() in SOURCE_EXT]
     if not sources:
         return 0
     skipped = max(0, len(sources) - max_files)
@@ -97,9 +122,11 @@ def main(argv):
 
     dependents = []  # (file, [outside dependents])
     for f in sources:
-        out = run([cg, "node", "-f", f, "--symbols-only", "-p", root], root, deadline)
-        first = out.splitlines()[0] if out else ""
-        m = USED_BY.search(first.replace("**", ""))
+        out = run([cg, "node", "-f", f, "--symbols-only", "-p", idx], root, deadline)
+        # Scan the header lines, not just line 1: codegraph prefixes a warning
+        # line when the index belongs to another worktree (see index_root).
+        m = next((USED_BY.search(ln.replace("**", "")) for ln in out.splitlines()[:5]
+                  if USED_BY.search(ln.replace("**", ""))), None)
         if not m:
             continue
         users = [u.strip() for u in m.group(2).split(",") if u.strip()]
@@ -107,7 +134,8 @@ def main(argv):
         if outside:
             dependents.append((f, outside))
 
-    tests_out = run([cg, "affected", "-q", "-p", root] + sources, root, deadline)
+    live = [f for f in sources if f not in deleted]
+    tests_out = run([cg, "affected", "-q", "-p", idx] + live, root, deadline) if live else ""
     tests = [t.strip() for t in tests_out.splitlines()
              if t.strip() and t.strip() not in changed_set]
 
@@ -121,7 +149,8 @@ def main(argv):
         for f, outside in dependents:
             shown = ", ".join(outside[:5])
             more = f" (+{len(outside) - 5})" if len(outside) > 5 else ""
-            lines.append(f"- `{f}` → used by {shown}{more}")
+            gone = " (deleted/renamed in this diff)" if f in deleted else ""
+            lines.append(f"- `{f}`{gone} → used by {shown}{more}")
         lines.append("")
     if tests:
         lines.append("Test files the change reaches (not edited in this diff):")
