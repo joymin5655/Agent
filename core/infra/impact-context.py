@@ -28,6 +28,7 @@ env:
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -38,6 +39,8 @@ SOURCE_EXT = {
     ".sh", ".vue", ".svelte",
 }
 USED_BY = re.compile(r"used by (\d+) files?: (.+)$")
+# A real path token: no spaces, not a warning glyph or an "… and N more" tail.
+PATHISH = re.compile(r"^[\w./@+-][^\s]*$")
 
 
 def env_int(name, default):
@@ -53,11 +56,22 @@ def run(cmd, cwd, deadline):
     if left <= 0.2:
         return ""
     try:
-        p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True,
-                           timeout=left, start_new_session=True, check=False)
-    except (OSError, subprocess.SubprocessError):
+        p = subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.PIPE,
+                             stderr=subprocess.DEVNULL, text=True, start_new_session=True)
+    except OSError:
         return ""
-    return p.stdout if p.returncode == 0 else ""
+    try:
+        out, _ = p.communicate(timeout=left)
+    except subprocess.TimeoutExpired:
+        # Kill the whole group: codegraph (or a test stub) may have children
+        # that would otherwise outlive this advisory script.
+        try:
+            os.killpg(p.pid, signal.SIGKILL)
+        except OSError:
+            pass
+        p.communicate()
+        return ""
+    return out if p.returncode == 0 else ""
 
 
 def changed_files(root, target, deadline):
@@ -65,10 +79,12 @@ def changed_files(root, target, deadline):
     the old path's callers are still examined; quotePath=false keeps non-ASCII
     paths readable."""
     base = ["git", "-c", "core.quotePath=false", "diff", "--name-status", "--no-renames"]
+    fallback = False
     if target == "--staged":
         out = run(base + ["--staged"], root, deadline)
         if not out.strip():
             out = run(base + ["HEAD~1..HEAD"], root, deadline)
+            fallback = True
     elif target == "--head":
         out = run(base + ["HEAD~1..HEAD"], root, deadline)
     else:
@@ -78,7 +94,7 @@ def changed_files(root, target, deadline):
         status, _, path = line.partition("\t")
         if path.strip():
             files.append((path.strip(), status.startswith("D")))
-    return files
+    return files, fallback
 
 
 def index_root(root, deadline):
@@ -111,7 +127,7 @@ def main(argv):
     if not idx:
         return 0
 
-    changed = changed_files(root, target, deadline)
+    changed, fallback = changed_files(root, target, deadline)
     changed_set = {f for f, _ in changed}
     deleted = {f for f, gone in changed if gone}
     sources = [f for f, _ in changed if os.path.splitext(f)[1].lower() in SOURCE_EXT]
@@ -125,30 +141,36 @@ def main(argv):
         out = run([cg, "node", "-f", f, "--symbols-only", "-p", idx], root, deadline)
         # Scan the header lines, not just line 1: codegraph prefixes a warning
         # line when the index belongs to another worktree (see index_root).
-        m = next((USED_BY.search(ln.replace("**", "")) for ln in out.splitlines()[:5]
-                  if USED_BY.search(ln.replace("**", ""))), None)
+        hits = (USED_BY.search(ln.replace("**", "")) for ln in out.splitlines()[:5])
+        m = next((h for h in hits if h), None)
         if not m:
             continue
-        users = [u.strip() for u in m.group(2).split(",") if u.strip()]
+        users = [u.strip() for u in m.group(2).split(",")
+                 if u.strip() and PATHISH.match(u.strip())]
         outside = [u for u in users if u not in changed_set]
+        # the header's N can exceed the names it lists; count the rest as "+more"
+        unlisted = max(0, int(m.group(1)) - len(users))
         if outside:
-            dependents.append((f, outside))
+            dependents.append((f, outside, unlisted))
 
     live = [f for f in sources if f not in deleted]
     tests_out = run([cg, "affected", "-q", "-p", idx] + live, root, deadline) if live else ""
     tests = [t.strip() for t in tests_out.splitlines()
-             if t.strip() and t.strip() not in changed_set]
+             if PATHISH.match(t.strip()) and t.strip() not in changed_set]
 
     if not dependents and not tests:
         return 0
 
     lines = ["## Impact context (codegraph)", ""]
+    if fallback:
+        lines += ["(nothing staged — showing HEAD~1..HEAD, the last commit)", ""]
     if dependents:
         lines.append("Files that depend on changed code but are NOT in this diff "
                      "(check these callers still hold):")
-        for f, outside in dependents:
+        for f, outside, unlisted in dependents:
             shown = ", ".join(outside[:5])
-            more = f" (+{len(outside) - 5})" if len(outside) > 5 else ""
+            extra = max(0, len(outside) - 5) + unlisted
+            more = f" (+{extra})" if extra else ""
             gone = " (deleted/renamed in this diff)" if f in deleted else ""
             lines.append(f"- `{f}`{gone} → used by {shown}{more}")
         lines.append("")

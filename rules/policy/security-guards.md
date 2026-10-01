@@ -109,22 +109,32 @@ may be extensionless) for the daemon class, and **fails CI** on any hit:
    routing rule like "do not ask for a phantom agent" is not matched).
 4. **background-daemon spawn** (hooks) — `nohup` / `setsid` / `disown` /
    `crontab -`.
-5. **fetch-and-execute** — `curl|wget … | sh`, `bash <(curl …)`, `eval "$(curl …)"`.
-   Always a hit in auto-fired hooks and in the code-wiring manifests
-   (`hooks/*.json`, `.mcp.json`). In prose, tolerated only when every URL host on
-   the line is in `core/tests/supply-chain-allowlist.txt`. This allows the vendor
-   installers that `/worker-setup` documents for the user to run by hand.
-6. **unpinned remote package** (hooks + manifests) — `npx -y <pkg>` without an
-   `@version`, in text form or in the MCP `{"command":"npx","args":["-y",…]}` form.
-   A dist-tag (`@latest`, `@next`) is not a pin. Every run would execute whatever
-   the registry serves that day.
+5. **fetch-and-execute** — a fetch (`curl`/`wget`) piped into, substituted into or
+   eval'd by an interpreter: `… | sh`, `| /bin/sh`, `| env bash`, `| python3`,
+   `bash <(curl …)`, `eval "$(curl …)"`, `bash -c "$(curl …)"`. Always a hit in
+   auto-fired hooks and in the code-wiring manifests (`hooks/*.json`, `.mcp.json`).
+   In prose, a segment (split on `;`, `&&`, `||`) is tolerated only when it names
+   a URL and every URL host in that segment is in
+   `core/tests/supply-chain-allowlist.txt`. This allows the vendor installers that
+   `/worker-setup` documents for the user to run by hand. Prose is also matched
+   on a whitespace-flattened copy, so a pipe wrapped across lines cannot evade.
+6. **unpinned remote runner** (hooks + manifests) — `npx`/`npm exec` with `--yes`
+   or `--package`, and `bunx`, `pnpm dlx`, `yarn dlx`, `uvx`, `pipx run`, whose
+   package is not pinned to an exact version. Text form and the MCP
+   `{"command":…,"args":[…]}` form are both checked. A range (`^2.1.0`, `~1`, `2`)
+   or a dist-tag (`@latest`, `@next`) is not a pin. Every run would execute
+   whatever the registry serves that day.
 7. **off-allowlist URL host** (hooks + manifests) — any http(s) host that is not in
-   the allowlist. This includes IP addresses and `localhost`. A URL with userinfo
-   (`https://allowed.com@evil.example`) never matches the allowlist. An auto-fired hook gains a network destination only through a
-   reviewed allowlist edit.
+   the allowlist. This includes IP literals (dotted, decimal, hex, IPv6),
+   `localhost` and single-label names; only known documentation placeholders
+   (`https://host/…`) are skipped. A URL with userinfo
+   (`https://allowed.com@evil.example`) never matches the allowlist. An auto-fired
+   hook gains a network destination only through a reviewed allowlist edit.
 
 Classes 5–7 adapt ECC v2.2's `pi/core` build checks (a URL host allowlist plus
-pipe-to-shell detection). `plugin.json` and `.claude-plugin/*.json` are metadata
+pipe-to-shell detection). They run in `core/tests/supply-chain-remote.py`, because
+URL authorities, interpreter forms and runner arguments need real parsing.
+`plugin.json` and `.claude-plugin/*.json` are metadata
 (homepage, repository, `$schema`) and wire no code, so they are out of scope.
 
 The three prose classes are matched **both line-by-line and against a

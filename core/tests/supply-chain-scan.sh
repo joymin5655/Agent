@@ -27,19 +27,16 @@
 #                                    is NOT matched)   [classes 1-3 = prose]
 #   4. background-daemon spawn    — nohup / setsid / disown / `crontab -`, scanned
 #                                    in the AUTO-FIRED hooks only (see scope note)
-#   5. fetch-and-execute          — `curl|wget … | sh`, `bash <(curl …)`,
-#                                    `eval "$(curl …)"`. Always a hit in auto-fired
-#                                    hooks and hook/MCP manifests; in prose only
-#                                    when a URL host on that line is not in
+#   5. fetch-and-execute          — a fetch piped/substituted/eval'd into an
+#                                    interpreter. Always a hit in hooks and
+#                                    hook/MCP manifests; in prose only tolerated
+#                                    from allowlisted hosts (vendor installers)
+#   6. unpinned remote runner     — npx/bunx/dlx/uvx/pipx package without an
+#                                    exact version (ranges and dist-tags fail)
+#   7. off-allowlist URL host     — any host in hooks/manifests not in
 #                                    core/tests/supply-chain-allowlist.txt
-#                                    (documented vendor installers are allowed)
-#   6. unpinned remote package    — `npx -y <pkg>` without an @version in hooks or
-#                                    manifests: every run executes whatever is
-#                                    latest on the registry
-#   7. off-allowlist URL host     — any http(s) host referenced by an auto-fired
-#                                    hook or a hook/MCP manifest that is not in
-#                                    the allowlist   [classes 5-7: ECC v2.2
-#                                    pi/core build checks, adapted]
+#   [classes 5-7: ECC v2.2 pi/core build checks, adapted; implemented in
+#    core/tests/supply-chain-remote.py — see rules/policy/security-guards.md]
 #
 # Prose classes 1-3 are matched both line-by-line AND against a whitespace-
 # flattened copy of each file, so an injection wrapped across soft line breaks
@@ -142,112 +139,24 @@ collect_manifests() {
   done
 }
 
-ALLOWLIST_FILE="$REPO_ROOT/core/tests/supply-chain-allowlist.txt"
-ALLOWED_HOSTS=()
-if [[ -f "$ALLOWLIST_FILE" ]]; then
-  while IFS= read -r h; do
-    h="${h%%#*}"; h="${h//[[:space:]]/}"
-    [[ -n "$h" ]] && ALLOWED_HOSTS+=("$h")
-  done < "$ALLOWLIST_FILE"
+# Classes 5-7 need real parsing (URL authorities, interpreter forms, runner
+# arguments, JSON manifests), so they live in one python3 helper. It reads
+# "<kind>\t<path>" lines: P = auto-loaded prose, C = auto-fired hook code,
+# M = code-wiring manifest. Allowlist: core/tests/supply-chain-allowlist.txt
+# (tests may point SUPPLY_CHAIN_ALLOWLIST at a fixture).
+REMOTE_HELPER="$REPO_ROOT/core/tests/supply-chain-remote.py"
+if [[ ! -f "$REMOTE_HELPER" ]]; then
+  HITS+="$REMOTE_HELPER: helper missing — classes 5-7 cannot run"$'\n'
+else
+  remote_out=$({ collect_prose | sed 's/^/P\t/'
+                 collect_hooks | sed 's/^/C\t/'
+                 collect_manifests | sed 's/^/M\t/'; } | python3 "$REMOTE_HELPER")
+  remote_rc=$?
+  if [[ $remote_rc -ne 0 ]]; then
+    HITS+="$REMOTE_HELPER: helper failed (exit $remote_rc) — classes 5-7 not verified"$'\n'
+  fi
+  [[ -n "$remote_out" ]] && HITS+="$remote_out"$'\n'
 fi
-host_allowed() {
-  local h
-  for h in ${ALLOWED_HOSTS[@]+"${ALLOWED_HOSTS[@]}"}; do
-    [[ "$1" == "$h" ]] && return 0
-  done
-  return 1
-}
-# url_hosts <text> — one lowercase host per line for every http(s) URL in text.
-# Parses the authority (up to / ? # or whitespace) and drops a :port. IP and
-# `localhost` hosts count as hosts. An authority carrying userinfo
-# (https://allowed.com@evil.example) is emitted whole, so it can never match the
-# allowlist. Other dotless names (doc placeholders such as https://host/OWNER)
-# are skipped.
-url_hosts() {
-  local a h
-  printf '%s\n' "$1" | grep -oiE 'https?://[^]/?#[:space:]"'"'"'`<>()]+' \
-    | sed -E 's#^[A-Za-z]+://##' | tr 'A-Z' 'a-z' \
-    | while IFS= read -r a; do
-        if [[ "$a" == *@* ]]; then printf '%s\n' "$a"; continue; fi
-        h="${a%%:*}"; h="${h%.}"
-        [[ "$h" == *.* || "$h" == localhost ]] && printf '%s\n' "$h"
-      done || true
-}
-# version_pinned <pkg> — true when <pkg> ends in @<version>. A dist-tag such as
-# @latest / @next is NOT a pin: it resolves to whatever the registry serves today.
-version_pinned() {
-  local bare="${1#@*/}"                     # drop an @scope/ prefix
-  [[ "$bare" == *@* ]] || return 1
-  [[ "${bare##*@}" =~ ^[~^=v]?[0-9] ]]
-}
-
-P_PIPE_EXEC='(curl|wget)[^|;&]*\|[[:space:]]*(sudo[[:space:]]+)?(ba|z|da)?sh([^A-Za-z0-9_]|$)|(ba|z)?sh[[:space:]]+<\([[:space:]]*(curl|wget)|(eval|source)[[:space:]]+"?(\$\(|<\()[[:space:]]*(curl|wget)'
-P_NPX_YES='npx[[:space:]]+(-y|--yes)[[:space:]]+[^[:space:]"'"'"']+'
-
-# class 5 (prose) — pipe-to-shell is tolerated only from an allowlisted host
-while IFS= read -r f; do
-  [[ -z "$f" ]] && continue
-  while IFS= read -r m; do
-    [[ -z "$m" ]] && continue
-    bad=1
-    hosts=$(url_hosts "$m")
-    if [[ -n "$hosts" ]]; then
-      bad=0
-      while IFS= read -r h; do host_allowed "$h" || bad=1; done <<< "$hosts"
-    fi
-    [[ $bad -eq 1 ]] && HITS+="$f:${m}"$'\n'
-  done < <(grep -nE "$P_PIPE_EXEC" "$f" 2>/dev/null || true)
-done < <(collect_prose)
-
-# classes 5-7 (auto-fired code) — hooks and manifests
-while IFS= read -r f; do
-  [[ -z "$f" ]] && continue
-  m=$(grep -nHE "$P_PIPE_EXEC" "$f" 2>/dev/null || true)
-  [[ -n "$m" ]] && HITS+="$m"$'\n'
-  while IFS= read -r m; do
-    [[ -z "$m" ]] && continue
-    pkg="${m##* }"; pkg="${pkg%%[\"\',]*}"
-    version_pinned "$pkg" || HITS+="$f: unpinned remote package: $m"$'\n'
-  done < <(grep -oE "$P_NPX_YES" "$f" 2>/dev/null || true)
-  while IFS= read -r h; do
-    [[ -z "$h" ]] && continue
-    host_allowed "$h" || HITS+="$f: off-allowlist URL host: $h"$'\n'
-  done < <(url_hosts "$(cat "$f" 2>/dev/null)" | sort -u)
-done < <({ collect_hooks; collect_manifests; })
-
-# class 6 (manifest array form) — MCP configs spell the command as JSON,
-# {"command":"npx","args":["-y","pkg",…]}, which the text pattern cannot see.
-while IFS= read -r f; do
-  [[ -z "$f" ]] && continue
-  while IFS= read -r pkg; do
-    [[ -z "$pkg" ]] && continue
-    HITS+="$f: unpinned remote package: npx -y $pkg"$'\n'
-  done < <(python3 - "$f" <<'PY' 2>/dev/null || true
-import json, re, sys
-def walk(o):
-    if isinstance(o, dict):
-        cmd, args = o.get("command"), o.get("args")
-        if isinstance(cmd, str) and cmd.rsplit("/", 1)[-1] == "npx" and isinstance(args, list):
-            a = [x for x in args if isinstance(x, str)]
-            if "-y" in a or "--yes" in a:
-                pkgs = [x for x in a if not x.startswith("-")]
-                if pkgs:
-                    bare = pkgs[0].split("/", 1)[1] if pkgs[0].startswith("@") and "/" in pkgs[0] else pkgs[0]
-                    ver = bare.rsplit("@", 1)[1] if "@" in bare else ""
-                    if not re.match(r"[~^=v]?[0-9]", ver):
-                        print(pkgs[0])
-        for v in o.values():
-            walk(v)
-    elif isinstance(o, list):
-        for v in o:
-            walk(v)
-try:
-    walk(json.load(open(sys.argv[1])))
-except Exception:
-    pass
-PY
-)
-done < <(collect_manifests)
 
 if [[ -n "${HITS//[$'\n']/}" ]]; then
   echo "FAIL — injection-style directive(s) in shipped harness files:"
