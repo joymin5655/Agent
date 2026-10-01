@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.12] - 2026-10-01
+
+### Added
+- **Supply-chain scan classes 5–7** (adapted from ECC v2.2 `pi/core`):
+  `core/tests/supply-chain-scan.sh` delegates to `core/tests/supply-chain-remote.py`.
+  Class 5 flags fetch-and-execute (`curl … | sh`, `bash <(curl …)`,
+  `eval "$(curl …)"`); class 6 flags unpinned remote runners (npx/npm exec with
+  `--yes`/`--package`, bunx, pnpm/yarn dlx, uvx, pipx run); class 7 flags URL
+  hosts in auto-fired hooks and `hooks/*.json` / `.mcp.json` that are not in
+  `core/tests/supply-chain-allowlist.txt`. Threat model documented in
+  `rules/policy/security-guards.md` (#138).
+- **Impact context** (idea from Graft's blast radius): `core/infra/impact-context.py`
+  lists dependents outside the diff and the test files the change reaches, from
+  the existing CodeGraph index. Fail-open (10 s budget, 60-line cap, exit 0).
+  `/council-review` adds it to the shared review core; `/wrap` shows it as an
+  advisory pre-flight step (#138).
+
 ## [0.5.11] - 2026-10-01
 
 ### Added
