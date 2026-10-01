@@ -109,6 +109,21 @@ may be extensionless) for the daemon class, and **fails CI** on any hit:
    routing rule like "do not ask for a phantom agent" is not matched).
 4. **background-daemon spawn** (hooks) — `nohup` / `setsid` / `disown` /
    `crontab -`.
+5. **fetch-and-execute** — `curl|wget … | sh`, `bash <(curl …)`, `eval "$(curl …)"`.
+   Always a hit in auto-fired hooks and in the code-wiring manifests
+   (`hooks/*.json`, `.mcp.json`). In prose, tolerated only when every URL host on
+   the line is in `core/tests/supply-chain-allowlist.txt`. This allows the vendor
+   installers that `/worker-setup` documents for the user to run by hand.
+6. **unpinned remote package** (hooks + manifests) — `npx -y <pkg>` without an
+   `@version`, in text form or in the MCP `{"command":"npx","args":["-y",…]}` form.
+   Every run would execute whatever is newest on the registry.
+7. **off-allowlist URL host** (hooks + manifests) — any http(s) host that is not in
+   the allowlist. An auto-fired hook gains a network destination only through a
+   reviewed allowlist edit.
+
+Classes 5–7 adapt ECC v2.2's `pi/core` build checks (a URL host allowlist plus
+pipe-to-shell detection). `plugin.json` and `.claude-plugin/*.json` are metadata
+(homepage, repository, `$schema`) and wire no code, so they are out of scope.
 
 The three prose classes are matched **both line-by-line and against a
 whitespace-flattened copy** of each file, so an injection wrapped across soft

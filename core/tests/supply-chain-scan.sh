@@ -27,6 +27,19 @@
 #                                    is NOT matched)   [classes 1-3 = prose]
 #   4. background-daemon spawn    — nohup / setsid / disown / `crontab -`, scanned
 #                                    in the AUTO-FIRED hooks only (see scope note)
+#   5. fetch-and-execute          — `curl|wget … | sh`, `bash <(curl …)`,
+#                                    `eval "$(curl …)"`. Always a hit in auto-fired
+#                                    hooks and hook/MCP manifests; in prose only
+#                                    when a URL host on that line is not in
+#                                    core/tests/supply-chain-allowlist.txt
+#                                    (documented vendor installers are allowed)
+#   6. unpinned remote package    — `npx -y <pkg>` without an @version in hooks or
+#                                    manifests: every run executes whatever is
+#                                    latest on the registry
+#   7. off-allowlist URL host     — any http(s) host referenced by an auto-fired
+#                                    hook or a hook/MCP manifest that is not in
+#                                    the allowlist   [classes 5-7: ECC v2.2
+#                                    pi/core build checks, adapted]
 #
 # Prose classes 1-3 are matched both line-by-line AND against a whitespace-
 # flattened copy of each file, so an injection wrapped across soft line breaks
@@ -117,6 +130,107 @@ while IFS= read -r f; do
   [[ -n "$m" ]] && HITS+="$m"$'\n'
 done < <(collect_hooks)
 
+# --- classes 5-7: remote-code supply chain -----------------------------------
+# Manifests that wire auto-fired code: plugin hook manifests and MCP server
+# configs. Scanned together with core/hooks for classes 5-7. plugin.json and
+# .claude-plugin/*.json are metadata only (homepage/repository/$schema URLs) and
+# wire no code, so they are out of scope.
+collect_manifests() {
+  local f
+  for f in "$TARGET"/hooks/*.json "$TARGET"/.mcp.json; do
+    [[ -f "$f" ]] && printf '%s\n' "$f"
+  done
+}
+
+ALLOWLIST_FILE="$REPO_ROOT/core/tests/supply-chain-allowlist.txt"
+ALLOWED_HOSTS=()
+if [[ -f "$ALLOWLIST_FILE" ]]; then
+  while IFS= read -r h; do
+    h="${h%%#*}"; h="${h//[[:space:]]/}"
+    [[ -n "$h" ]] && ALLOWED_HOSTS+=("$h")
+  done < "$ALLOWLIST_FILE"
+fi
+host_allowed() {
+  local h
+  for h in ${ALLOWED_HOSTS[@]+"${ALLOWED_HOSTS[@]}"}; do
+    [[ "$1" == "$h" ]] && return 0
+  done
+  return 1
+}
+# url_hosts <text> — one lowercase host per line for every http(s) URL in text.
+url_hosts() {
+  printf '%s\n' "$1" | grep -oiE 'https?://[A-Za-z0-9.-]+\.[A-Za-z]{2,}' \
+    | sed -E 's#^[A-Za-z]+://##' | tr 'A-Z' 'a-z' || true
+}
+
+P_PIPE_EXEC='(curl|wget)[^|;&]*\|[[:space:]]*(sudo[[:space:]]+)?(ba|z|da)?sh([^A-Za-z0-9_]|$)|(ba|z)?sh[[:space:]]+<\([[:space:]]*(curl|wget)|(eval|source)[[:space:]]+"?(\$\(|<\()[[:space:]]*(curl|wget)'
+P_NPX_YES='npx[[:space:]]+(-y|--yes)[[:space:]]+[^[:space:]"'"'"']+'
+
+# class 5 (prose) — pipe-to-shell is tolerated only from an allowlisted host
+while IFS= read -r f; do
+  [[ -z "$f" ]] && continue
+  while IFS= read -r m; do
+    [[ -z "$m" ]] && continue
+    bad=1
+    hosts=$(url_hosts "$m")
+    if [[ -n "$hosts" ]]; then
+      bad=0
+      while IFS= read -r h; do host_allowed "$h" || bad=1; done <<< "$hosts"
+    fi
+    [[ $bad -eq 1 ]] && HITS+="$f:${m}"$'\n'
+  done < <(grep -nE "$P_PIPE_EXEC" "$f" 2>/dev/null || true)
+done < <(collect_prose)
+
+# classes 5-7 (auto-fired code) — hooks and manifests
+while IFS= read -r f; do
+  [[ -z "$f" ]] && continue
+  m=$(grep -nHE "$P_PIPE_EXEC" "$f" 2>/dev/null || true)
+  [[ -n "$m" ]] && HITS+="$m"$'\n'
+  while IFS= read -r m; do
+    [[ -z "$m" ]] && continue
+    pkg="${m##* }"; pkg="${pkg%%[\"\',]*}"
+    bare="${pkg#@*/}"                       # drop an @scope/ prefix
+    [[ "$bare" == *@* ]] || HITS+="$f: unpinned remote package: $m"$'\n'
+  done < <(grep -oE "$P_NPX_YES" "$f" 2>/dev/null || true)
+  while IFS= read -r h; do
+    [[ -z "$h" ]] && continue
+    host_allowed "$h" || HITS+="$f: off-allowlist URL host: $h"$'\n'
+  done < <(url_hosts "$(cat "$f" 2>/dev/null)" | sort -u)
+done < <({ collect_hooks; collect_manifests; })
+
+# class 6 (manifest array form) — MCP configs spell the command as JSON,
+# {"command":"npx","args":["-y","pkg",…]}, which the text pattern cannot see.
+while IFS= read -r f; do
+  [[ -z "$f" ]] && continue
+  while IFS= read -r pkg; do
+    [[ -z "$pkg" ]] && continue
+    HITS+="$f: unpinned remote package: npx -y $pkg"$'\n'
+  done < <(python3 - "$f" <<'PY' 2>/dev/null || true
+import json, sys
+def walk(o):
+    if isinstance(o, dict):
+        cmd, args = o.get("command"), o.get("args")
+        if isinstance(cmd, str) and cmd.rsplit("/", 1)[-1] == "npx" and isinstance(args, list):
+            a = [x for x in args if isinstance(x, str)]
+            if "-y" in a or "--yes" in a:
+                pkgs = [x for x in a if not x.startswith("-")]
+                if pkgs:
+                    bare = pkgs[0].split("/", 1)[1] if pkgs[0].startswith("@") and "/" in pkgs[0] else pkgs[0]
+                    if "@" not in bare:
+                        print(pkgs[0])
+        for v in o.values():
+            walk(v)
+    elif isinstance(o, list):
+        for v in o:
+            walk(v)
+try:
+    walk(json.load(open(sys.argv[1])))
+except Exception:
+    pass
+PY
+)
+done < <(collect_manifests)
+
 if [[ -n "${HITS//[$'\n']/}" ]]; then
   echo "FAIL — injection-style directive(s) in shipped harness files:"
   while IFS= read -r line; do
@@ -127,7 +241,9 @@ if [[ -n "${HITS//[$'\n']/}" ]]; then
   echo "A shipped, auto-loaded file must not instruct an agent to bypass human"
   echo "confirmation, self-perpetuate (observer-loop), or daemonize. Remove the"
   echo "directive, or if it is a legitimate documented example, move it out of the"
-  echo "auto-loaded instruction scope. See rules/policy/security-guards.md."
+  echo "auto-loaded instruction scope. Remote code (classes 5-7): pin the version,"
+  echo "or add the host to core/tests/supply-chain-allowlist.txt with a reason."
+  echo "See rules/policy/security-guards.md."
   exit 1
 fi
 
