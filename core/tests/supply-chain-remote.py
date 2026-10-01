@@ -37,7 +37,7 @@ FETCH = r"(?:curl|wget)\b"
 INTERP = (r"(?:sudo\s+)?(?:env\s+)?(?:/\S*/)?"
           r"(?:(?:ba|z|da|k)?sh|python[0-9.]*|node|perl|ruby)\b")
 EXEC = re.compile("|".join([
-    FETCH + r"[^|;&\n]*\|\s*" + INTERP,                         # curl … | sh
+    FETCH + r"[^|\n]*\|\s*" + INTERP,                           # curl … 2>&1 | sh
     INTERP + r"\s+<\(\s*" + FETCH,                              # bash <(curl …)
     r"(?:eval|source|\.)\s+[\"']?(?:\$\(|<\()\s*" + FETCH,      # eval "$(curl …)"
     INTERP + r"\s+-c\s+[\"']?\$\(\s*" + FETCH,                  # bash -c "$(curl …)"
@@ -45,8 +45,12 @@ EXEC = re.compile("|".join([
 SEGMENT_SPLIT = re.compile(r";|&&|\|\|")
 URL = re.compile(r"https?://([^/?#\s\"'`<>()]+)", re.IGNORECASE)
 PLACEHOLDER_HOSTS = {"host", "hostname", "example", "domain", "server", "your-host"}
-EXACT_VERSION = re.compile(r"^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
-RUNNER = re.compile(r"\b(npx|bunx|uvx|pnpm\s+dlx|yarn\s+dlx|npm\s+exec|pipx\s+run)\s+([^\n\"'`;|&]*)", re.IGNORECASE)
+EXACT_VERSION = re.compile(r"^v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$")
+# PEP 440 exact pin: `==` with a version and no wildcard (1.2.3, 1.2.3.post1, 2.0rc1)
+PY_EXACT = re.compile(r"^[A-Za-z0-9_.\-\[\],]+==([0-9][0-9A-Za-z.+!-]*)$")
+RUNNER = re.compile(r"\b(npx|bunx|uvx|pnpm\s+dlx|yarn\s+dlx|npm\s+exec|pipx\s+run)\s+([^\n;|&]*)",
+                    re.IGNORECASE)
+QUOTE_TRIM = "\"'`,]}"
 VALUE_FLAGS = {"--package", "-p", "--from", "--spec", "--with", "--python"}
 
 
@@ -89,31 +93,36 @@ def prose_segment_bad(seg, allowed):
     return not hosts or any(h not in allowed for h in hosts)
 
 
-def runner_package(runner, rest):
-    """First package token after a runner (honoring --package/--from values)."""
-    toks = rest.split()
-    i = 0
+def runner_packages(runner, rest):
+    """Packages a runner will fetch: every --package/--from value if any are
+    given (a pinned first one must not hide an unpinned second), else the first
+    non-flag token. Shell/JSON quoting is stripped from tokens."""
+    toks = [t.strip(QUOTE_TRIM) for t in rest.split()]
+    toks = [t for t in toks if t]
+    named, i = [], 0
     while i < len(toks):
-        t = toks[i]
-        if t == "--":
-            i += 1
-            continue
-        if t.startswith("-"):
-            name, _, val = t.partition("=")
-            if name in VALUE_FLAGS:
-                return val if val else (toks[i + 1] if i + 1 < len(toks) else "")
-            i += 1
-            continue
-        return t
-    return ""
+        name, eq, val = toks[i].partition("=")
+        if name in VALUE_FLAGS:
+            if eq:
+                named.append(val)
+            elif i + 1 < len(toks):
+                named.append(toks[i + 1])
+                i += 1
+        i += 1
+    if named:
+        return named
+    for t in toks:
+        if t != "--" and not t.startswith("-"):
+            return [t]
+    return []
 
 
 def pinned(runner, pkg):
     runner = runner.split()[0].lower()
-    if not pkg:
-        return True                       # nothing to run (e.g. a flag-only probe)
     if runner in ("uvx", "pipx"):
-        m = re.match(r"^[A-Za-z0-9_.\-\[\],]+(?:==|@)(.+)$", pkg)
+        if PY_EXACT.match(pkg):
+            return True
+        m = re.match(r"^[A-Za-z0-9_.\-\[\],]+@(.+)$", pkg)
         return bool(m and EXACT_VERSION.match(m.group(1)))
     bare = pkg.split("/", 1)[1] if pkg.startswith("@") and "/" in pkg else pkg
     if "@" not in bare:
@@ -139,10 +148,27 @@ def runner_hits(text):
         runner, rest = m.group(1), m.group(2)
         if not fetches_silently(runner, rest):
             continue
-        pkg = runner_package(runner, rest)
-        if not pinned(runner, pkg):
-            hits.append(f"{runner} {pkg}".strip())
+        for pkg in runner_packages(runner, rest):
+            if not pinned(runner, pkg):
+                hits.append(f"{runner} {pkg}".strip())
     return hits
+
+
+def json_strings(obj):
+    if isinstance(obj, str):
+        yield obj
+    elif isinstance(obj, dict):
+        for k, v in obj.items():
+            yield k
+            yield from json_strings(v)
+    elif isinstance(obj, list):
+        for v in obj:
+            yield from json_strings(v)
+
+
+def join_continuations(text):
+    """Join shell line continuations so `curl URL \\⏎ | sh` is one line."""
+    return re.sub(r"\\\r?\n[ \t]*", " ", text)
 
 
 def json_commands(obj):
@@ -182,19 +208,31 @@ def scan(kind, path, allowed):
             if bad:
                 hits.append(f"{path} (wrapped): {bad[0].strip()[:160]}")
         return hits
-    for n, line in enumerate(lines, 1):           # C and M: class 5, no tolerance
-        if exec_segments(line):
-            hits.append(f"{path}:{n}:{line.strip()}")
-    flat_runners = set(runner_hits(text))
+    # C and M: class 5 with no tolerance. Manifests are also checked on their
+    # DECODED strings (a JSON-escaped URL or a {"command":"bash","args":["-c",…]}
+    # pair is invisible in raw text) and on each command line they assemble.
+    views = [join_continuations(text)]
+    commands = []
     if kind == "M":
         try:
-            for cmd in json_commands(json.loads(text)):
-                flat_runners.update(runner_hits(cmd))
+            data = json.loads(text)
+            views.append("\n".join(json_strings(data)))
+            commands = list(json_commands(data))
         except ValueError:
             pass
-    hits += [f"{path}: unpinned remote package: {r}" for r in sorted(flat_runners)]
+    seen = set()
+    for view in views + commands:
+        for line in view.splitlines():
+            if exec_segments(line) and line.strip() not in seen:
+                seen.add(line.strip())
+                hits.append(f"{path}: fetch-and-execute: {line.strip()[:160]}")
+    found_runners, found_hosts = set(), set()
+    for view in views + commands:
+        found_runners.update(runner_hits(view))
+        found_hosts.update(url_hosts(view))
+    hits += [f"{path}: unpinned remote package: {r}" for r in sorted(found_runners)]
     hits += [f"{path}: off-allowlist URL host: {h}"
-             for h in sorted(set(url_hosts(text))) if h not in allowed]
+             for h in sorted(found_hosts) if h not in allowed]
     return hits
 
 

@@ -16,7 +16,8 @@
 #   (k) linked worktree with no .codegraph/ of its own uses the main index
 #   (l) a deleted source file is still examined and marked
 #   (m) the staged-empty fallback is labelled in the output
-#   (n) a header count beyond the listed names is reported as "+more"
+#   (n) a header count beyond the listed names is reported as unnamed, even
+#       when every named dependent is inside the diff
 #   (o) on timeout the whole codegraph process group is killed
 #
 # Usage: bash core/tests/impact-context-test.sh
@@ -153,10 +154,14 @@ R=$(fixture_repo index); (cd "$R" && git commit -qm c2)
 CODEGRAPH_BIN="$STUB" ic "$R"
 printf '%s' "$OUT" | grep -q 'nothing staged — showing HEAD~1..HEAD'; check "fallback-labelled" $?
 
-echo "=== (n) header count beyond the listed names shows as +more ==="
+echo "=== (n) header count beyond the listed names is reported as unnamed ==="
 R=$(fixture_repo index)
 CODEGRAPH_BIN="$STUB" STUB_N=9 ic "$R"
-printf '%s' "$OUT" | grep -q 'used by src/caller.ts (+7)'; check "unlisted-dependents-counted" $?
+printf '%s' "$OUT" | grep -q 'used by src/caller.ts (+7 not named by codegraph)'; check "unlisted-dependents-reported-separately" $?
+# every named dependent is in the diff, but codegraph counts more: still reported
+R=$(fixture_repo index)
+CODEGRAPH_BIN="$STUB" STUB_N=4 STUB_USERS="src/a.ts" ic "$R"
+printf '%s' "$OUT" | grep -q '(none named) (+3 not named by codegraph)'; check "unlisted-only-not-dropped" $?
 
 echo "=== (o) timeout kills the codegraph process group ==="
 R=$(fixture_repo index)

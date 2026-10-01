@@ -148,9 +148,11 @@ def main(argv):
         users = [u.strip() for u in m.group(2).split(",")
                  if u.strip() and PATHISH.match(u.strip())]
         outside = [u for u in users if u not in changed_set]
-        # the header's N can exceed the names it lists; count the rest as "+more"
+        # The header's N can exceed the names it lists. Those unnamed ones may
+        # or may not be in the diff, so they are reported as unlisted, never
+        # folded into the outside count.
         unlisted = max(0, int(m.group(1)) - len(users))
-        if outside:
+        if outside or unlisted:
             dependents.append((f, outside, unlisted))
 
     live = [f for f in sources if f not in deleted]
@@ -168,9 +170,10 @@ def main(argv):
         lines.append("Files that depend on changed code but are NOT in this diff "
                      "(check these callers still hold):")
         for f, outside, unlisted in dependents:
-            shown = ", ".join(outside[:5])
-            extra = max(0, len(outside) - 5) + unlisted
-            more = f" (+{extra})" if extra else ""
+            shown = ", ".join(outside[:5]) or "(none named)"
+            more = f" (+{len(outside) - 5})" if len(outside) > 5 else ""
+            if unlisted:
+                more += f" (+{unlisted} not named by codegraph)"
             gone = " (deleted/renamed in this diff)" if f in deleted else ""
             lines.append(f"- `{f}`{gone} → used by {shown}{more}")
         lines.append("")

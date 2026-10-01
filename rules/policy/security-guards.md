@@ -137,6 +137,13 @@ URL authorities, interpreter forms and runner arguments need real parsing.
 `plugin.json` and `.claude-plugin/*.json` are metadata
 (homepage, repository, `$schema`) and wire no code, so they are out of scope.
 
+**Threat model.** Classes 5–7 are a tripwire for the ordinary shapes a careless
+or copy-pasted directive takes: line continuations, redirects, quoting, JSON
+escaping and repeated flags are handled. They are not a shell interpreter. A
+deliberately obfuscated payload (a URL assembled from variables, base64, `eval` of
+a computed string) can still pass. Human review of every diff that touches
+`core/hooks/`, `hooks/*.json` or `.mcp.json` remains the backstop.
+
 The three prose classes are matched **both line-by-line and against a
 whitespace-flattened copy** of each file, so an injection wrapped across soft
 line breaks (deliberately, or by an 80-column reflow) cannot evade a line-oriented
