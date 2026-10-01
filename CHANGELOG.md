@@ -40,6 +40,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `core/tests/version-parity.sh` now covers the root manifest.
 
 ### Changed
+- **`council-escalation-gate.py` escape 2 now requires a stated reason.** A
+  retry on an already-denied council-scale diff passes only when the
+  `code-reviewer` dispatch prompt carries `council-unavailable: <reason>`
+  (≥10 chars after whitespace collapse, not the pasted `<placeholder>`); the
+  reason is written to `security-violations.jsonl`. If the diff hash is
+  unavailable, a stated reason alone opens the escape. The deny
+  text used to advertise "re-issue this exact dispatch", and a model was
+  observed retrying reflexively without trying `/council-review` — a bare
+  identical retry is now denied again, and repeat denials no longer refresh
+  the ledger entry. Tests: 9 new cases in `council-escalation-gate-test.sh`
+  (32 pass).
 - **model-routing-observer records both session ids.** `session_id` now prefers the hook
   event's runtime session UUID (falls back to `AGENT_SESSION_ID`), and the env id is kept
   as `agent_session_id`, so concurrent sessions in one cwd stay distinguishable.

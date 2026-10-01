@@ -84,6 +84,10 @@ evt() {  # evt <tool_name> <subagent_type> [cwd]
   fi
 }
 
+evt_p() {  # evt_p <tool_name> <subagent_type> <prompt> (prompt: no quotes/backslashes)
+  printf '{"event":"PreToolUse","tool_name":"%s","tool_input":{"subagent_type":"%s","prompt":"%s"}}' "$1" "$2" "$3"
+}
+
 # run <json> -> OUT, RC (cwd = fixture repo, so repo_root() resolves there).
 # AGENT_COUNCIL_STATE_DIR pins escape-hatch state to the throwaway fixture
 # dir; CLAUDE_PROJECT_DIR/AGENT_PROJECT_DIR are explicitly unset so a value
@@ -188,31 +192,70 @@ git -C "$REPO" add secrets/prod.env   # diff B — different hash, still council
 expect_deny "c5-flag-diff-mismatch-denies" "$(evt Task code-reviewer)"
 
 echo
-echo "=== same-diff-hash single-deny: escape 2 ==="
+echo "=== same-diff-hash single-deny: escape 2 (requires stated reason) ==="
+REASON_PROMPT='review it. council-unavailable: no worker CLI installed on this host'
 reset_repo
 stage_large_diff
 run "$(evt Task code-reviewer)"
 first_deny_ok=0
 [[ "$RC" -eq 0 && "$OUT" == *"deny"* ]] && first_deny_ok=1
+# 2026-10-01: a bare identical retry is denied again (the old escape let it
+# through and models retried reflexively without trying council-review).
 run "$(evt Task code-reviewer)"
-# 2026-09-02 visibility upgrade: the escape no longer allows with EMPTY
-# stdout — it now also emits a PreToolUse additionalContext advisory
-# (model-routing-advisor.py's emission pattern), so OUT is non-empty here.
-if [[ "$first_deny_ok" -eq 1 && "$RC" -eq 0 && "$OUT" == *"additionalContext"* ]] \
-   && grep -q "loop-safety escape" "$WORK/stderr.log"; then
-  ok "d1-second-attempt-same-diff-allowed-with-advisory"
+if [[ "$first_deny_ok" -eq 1 && "$RC" -eq 0 && "$OUT" == *"permissionDecision"*"deny"* ]]; then
+  ok "d1-bare-retry-same-diff-denied-again"
 else
-  bad "d1-second-attempt-same-diff-allowed-with-advisory" "rc=$RC out='$OUT' stderr=$(cat "$WORK/stderr.log" 2>/dev/null)"
+  bad "d1-bare-retry-same-diff-denied-again" "first=$first_deny_ok rc=$RC out='$OUT'"
 fi
-if [[ "$OUT" != *"permissionDecision"* ]]; then
-  ok "d1b-escape-advisory-never-sets-permission-decision"
+if [[ "$OUT" == *"council-unavailable"* ]]; then
+  ok "d1a-deny-text-names-reason-marker"
 else
-  bad "d1b-escape-advisory-never-sets-permission-decision" "$OUT"
+  bad "d1a-deny-text-names-reason-marker" "$OUT"
+fi
+run "$(evt_p Task code-reviewer 'council-unavailable: short')"
+if [[ "$RC" -eq 0 && "$OUT" == *"permissionDecision"*"deny"* ]]; then
+  ok "d1b-too-short-reason-denied"
+else
+  bad "d1b-too-short-reason-denied" "rc=$RC out='$OUT'"
+fi
+run "$(evt_p Task code-reviewer 'council-unavailable: x            ')"
+if [[ "$RC" -eq 0 && "$OUT" == *"permissionDecision"*"deny"* ]]; then
+  ok "d1b2-whitespace-padded-reason-denied"
+else
+  bad "d1b2-whitespace-padded-reason-denied" "rc=$RC out='$OUT'"
+fi
+run "$(evt_p Task code-reviewer 'council-unavailable: <concrete reason>')"
+if [[ "$RC" -eq 0 && "$OUT" == *"permissionDecision"*"deny"* ]]; then
+  ok "d1b3-pasted-placeholder-denied"
+else
+  bad "d1b3-pasted-placeholder-denied" "rc=$RC out='$OUT'"
+fi
+run "$(evt_p Task code-reviewer "$REASON_PROMPT")"
+# The escape emits a PreToolUse additionalContext advisory, never a decision.
+if [[ "$RC" -eq 0 && "$OUT" == *"additionalContext"* && "$OUT" != *"permissionDecision"* ]] \
+   && grep -q "loop-safety escape" "$WORK/stderr.log" \
+   && grep -q "no worker CLI installed" "$WORK/stderr.log"; then
+  ok "d1c-retry-with-reason-allowed-with-advisory"
+else
+  bad "d1c-retry-with-reason-allowed-with-advisory" "rc=$RC out='$OUT' stderr=$(cat "$WORK/stderr.log" 2>/dev/null)"
 fi
 if [[ "$OUT" == *"council-review"* ]]; then
-  ok "d1c-escape-advisory-recommends-council-review"
+  ok "d1d-escape-advisory-recommends-council-review"
 else
-  bad "d1c-escape-advisory-recommends-council-review" "$OUT"
+  bad "d1d-escape-advisory-recommends-council-review" "$OUT"
+fi
+if grep -q "stated reason: no worker CLI installed" "$REPO/.agent/logs/security-violations.jsonl" 2>/dev/null; then
+  ok "d1e-stated-reason-written-to-audit-sink"
+else
+  bad "d1e-stated-reason-written-to-audit-sink" "$(tail -n 2 "$REPO/.agent/logs/security-violations.jsonl" 2>/dev/null)"
+fi
+reset_repo
+stage_large_diff
+run "$(evt_p Task code-reviewer "$REASON_PROMPT")"
+if [[ "$RC" -eq 0 && "$OUT" == *"permissionDecision"*"deny"* ]]; then
+  ok "d1f-reason-on-first-dispatch-still-denied"
+else
+  bad "d1f-reason-on-first-dispatch-still-denied" "rc=$RC out='$OUT'"
 fi
 
 echo "=== a genuinely different diff after a deny is denied again (hash changed) ==="
