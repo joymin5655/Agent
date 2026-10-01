@@ -158,9 +158,27 @@ host_allowed() {
   return 1
 }
 # url_hosts <text> — one lowercase host per line for every http(s) URL in text.
+# Parses the authority (up to / ? # or whitespace) and drops a :port. IP and
+# `localhost` hosts count as hosts. An authority carrying userinfo
+# (https://allowed.com@evil.example) is emitted whole, so it can never match the
+# allowlist. Other dotless names (doc placeholders such as https://host/OWNER)
+# are skipped.
 url_hosts() {
-  printf '%s\n' "$1" | grep -oiE 'https?://[A-Za-z0-9.-]+\.[A-Za-z]{2,}' \
-    | sed -E 's#^[A-Za-z]+://##' | tr 'A-Z' 'a-z' || true
+  local a h
+  printf '%s\n' "$1" | grep -oiE 'https?://[^]/?#[:space:]"'"'"'`<>()]+' \
+    | sed -E 's#^[A-Za-z]+://##' | tr 'A-Z' 'a-z' \
+    | while IFS= read -r a; do
+        if [[ "$a" == *@* ]]; then printf '%s\n' "$a"; continue; fi
+        h="${a%%:*}"; h="${h%.}"
+        [[ "$h" == *.* || "$h" == localhost ]] && printf '%s\n' "$h"
+      done || true
+}
+# version_pinned <pkg> — true when <pkg> ends in @<version>. A dist-tag such as
+# @latest / @next is NOT a pin: it resolves to whatever the registry serves today.
+version_pinned() {
+  local bare="${1#@*/}"                     # drop an @scope/ prefix
+  [[ "$bare" == *@* ]] || return 1
+  [[ "${bare##*@}" =~ ^[~^=v]?[0-9] ]]
 }
 
 P_PIPE_EXEC='(curl|wget)[^|;&]*\|[[:space:]]*(sudo[[:space:]]+)?(ba|z|da)?sh([^A-Za-z0-9_]|$)|(ba|z)?sh[[:space:]]+<\([[:space:]]*(curl|wget)|(eval|source)[[:space:]]+"?(\$\(|<\()[[:space:]]*(curl|wget)'
@@ -189,8 +207,7 @@ while IFS= read -r f; do
   while IFS= read -r m; do
     [[ -z "$m" ]] && continue
     pkg="${m##* }"; pkg="${pkg%%[\"\',]*}"
-    bare="${pkg#@*/}"                       # drop an @scope/ prefix
-    [[ "$bare" == *@* ]] || HITS+="$f: unpinned remote package: $m"$'\n'
+    version_pinned "$pkg" || HITS+="$f: unpinned remote package: $m"$'\n'
   done < <(grep -oE "$P_NPX_YES" "$f" 2>/dev/null || true)
   while IFS= read -r h; do
     [[ -z "$h" ]] && continue
@@ -206,7 +223,7 @@ while IFS= read -r f; do
     [[ -z "$pkg" ]] && continue
     HITS+="$f: unpinned remote package: npx -y $pkg"$'\n'
   done < <(python3 - "$f" <<'PY' 2>/dev/null || true
-import json, sys
+import json, re, sys
 def walk(o):
     if isinstance(o, dict):
         cmd, args = o.get("command"), o.get("args")
@@ -216,7 +233,8 @@ def walk(o):
                 pkgs = [x for x in a if not x.startswith("-")]
                 if pkgs:
                     bare = pkgs[0].split("/", 1)[1] if pkgs[0].startswith("@") and "/" in pkgs[0] else pkgs[0]
-                    if "@" not in bare:
+                    ver = bare.rsplit("@", 1)[1] if "@" in bare else ""
+                    if not re.match(r"[~^=v]?[0-9]", ver):
                         print(pkgs[0])
         for v in o.values():
             walk(v)

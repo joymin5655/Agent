@@ -116,9 +116,11 @@ may be extensionless) for the daemon class, and **fails CI** on any hit:
    installers that `/worker-setup` documents for the user to run by hand.
 6. **unpinned remote package** (hooks + manifests) — `npx -y <pkg>` without an
    `@version`, in text form or in the MCP `{"command":"npx","args":["-y",…]}` form.
-   Every run would execute whatever is newest on the registry.
+   A dist-tag (`@latest`, `@next`) is not a pin. Every run would execute whatever
+   the registry serves that day.
 7. **off-allowlist URL host** (hooks + manifests) — any http(s) host that is not in
-   the allowlist. An auto-fired hook gains a network destination only through a
+   the allowlist. This includes IP addresses and `localhost`. A URL with userinfo
+   (`https://allowed.com@evil.example`) never matches the allowlist. An auto-fired hook gains a network destination only through a
    reviewed allowlist edit.
 
 Classes 5–7 adapt ECC v2.2's `pi/core` build checks (a URL host allowlist plus
