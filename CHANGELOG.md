@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.11] - 2026-10-01
+
 ### Added
 - **Codex native hook path (W4-1)**: `adapters/codex/adapter.py`'s native mode
   (`run_native`) translates Codex's native `PreToolUse` stdin (Claude-shaped:
