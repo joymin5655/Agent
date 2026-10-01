@@ -66,6 +66,14 @@ explicit `<range>` is passed through. Abort with a one-liner if the diff is
 empty. Build ONE shared core, identical for every external lane:
 
 - the diff, plus 3-5 lines of stated intent (from the commit message / user);
+- the **impact context**, if any. Run
+  `python3 "${CLAUDE_PLUGIN_ROOT:-$PWD}/core/infra/impact-context.py" <same target>`
+  and paste its block verbatim; empty output means omit it. It names files that
+  depend on the changed code but are not in the diff, plus the tests the change
+  reaches. Ask each lane to check whether those outside callers still hold,
+  because a reviewer who sees only the diff cannot see a caller it breaks.
+  Findings about an outside caller must still quote a line from the diff
+  (step 4's filter is unchanged);
 - the output contract — findings only, each with:
   `file:line` · **verbatim quote of the offending line(s)** · severity
   (Blocker/Major/Minor/Note) · category · one-sentence rationale;

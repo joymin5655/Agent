@@ -1,0 +1,17 @@
+# supply-chain-allowlist.txt — URL hosts the supply-chain scan accepts (one per
+# line, exact host match, `#` comments). Read by core/tests/supply-chain-scan.sh.
+#
+# Two uses:
+#   - pipe-to-shell installers DOCUMENTED in auto-loaded prose (class 5): the
+#     user runs these by hand after /worker-setup's cost briefing, so only the
+#     vendors' official installer hosts are acceptable.
+#   - any URL host referenced by an auto-fired hook or hook/MCP manifest
+#     (class 7). Currently none — adding one here is a reviewed decision.
+#
+# Adding a host is a supply-chain change: say why in the commit message.
+
+# worker-lane CLI installers (skills/worker-setup/SKILL.md)
+chatgpt.com
+x.ai
+antigravity.google
+cli.kiro.dev

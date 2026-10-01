@@ -27,6 +27,16 @@
 #                                    is NOT matched)   [classes 1-3 = prose]
 #   4. background-daemon spawn    — nohup / setsid / disown / `crontab -`, scanned
 #                                    in the AUTO-FIRED hooks only (see scope note)
+#   5. fetch-and-execute          — a fetch piped/substituted/eval'd into an
+#                                    interpreter. Always a hit in hooks and
+#                                    hook/MCP manifests; in prose only tolerated
+#                                    from allowlisted hosts (vendor installers)
+#   6. unpinned remote runner     — npx/bunx/dlx/uvx/pipx package without an
+#                                    exact version (ranges and dist-tags fail)
+#   7. off-allowlist URL host     — any host in hooks/manifests not in
+#                                    core/tests/supply-chain-allowlist.txt
+#   [classes 5-7: ECC v2.2 pi/core build checks, adapted; implemented in
+#    core/tests/supply-chain-remote.py — see rules/policy/security-guards.md]
 #
 # Prose classes 1-3 are matched both line-by-line AND against a whitespace-
 # flattened copy of each file, so an injection wrapped across soft line breaks
@@ -117,6 +127,37 @@ while IFS= read -r f; do
   [[ -n "$m" ]] && HITS+="$m"$'\n'
 done < <(collect_hooks)
 
+# --- classes 5-7: remote-code supply chain -----------------------------------
+# Manifests that wire auto-fired code: plugin hook manifests and MCP server
+# configs. Scanned together with core/hooks for classes 5-7. plugin.json and
+# .claude-plugin/*.json are metadata only (homepage/repository/$schema URLs) and
+# wire no code, so they are out of scope.
+collect_manifests() {
+  local f
+  for f in "$TARGET"/hooks/*.json "$TARGET"/.mcp.json; do
+    [[ -f "$f" ]] && printf '%s\n' "$f"
+  done
+}
+
+# Classes 5-7 need real parsing (URL authorities, interpreter forms, runner
+# arguments, JSON manifests), so they live in one python3 helper. It reads
+# "<kind>\t<path>" lines: P = auto-loaded prose, C = auto-fired hook code,
+# M = code-wiring manifest. Allowlist: core/tests/supply-chain-allowlist.txt
+# (tests may point SUPPLY_CHAIN_ALLOWLIST at a fixture).
+REMOTE_HELPER="$REPO_ROOT/core/tests/supply-chain-remote.py"
+if [[ ! -f "$REMOTE_HELPER" ]]; then
+  HITS+="$REMOTE_HELPER: helper missing — classes 5-7 cannot run"$'\n'
+else
+  remote_out=$({ collect_prose | sed 's/^/P\t/'
+                 collect_hooks | sed 's/^/C\t/'
+                 collect_manifests | sed 's/^/M\t/'; } | python3 "$REMOTE_HELPER")
+  remote_rc=$?
+  if [[ $remote_rc -ne 0 ]]; then
+    HITS+="$REMOTE_HELPER: helper failed (exit $remote_rc) — classes 5-7 not verified"$'\n'
+  fi
+  [[ -n "$remote_out" ]] && HITS+="$remote_out"$'\n'
+fi
+
 if [[ -n "${HITS//[$'\n']/}" ]]; then
   echo "FAIL — injection-style directive(s) in shipped harness files:"
   while IFS= read -r line; do
@@ -127,7 +168,9 @@ if [[ -n "${HITS//[$'\n']/}" ]]; then
   echo "A shipped, auto-loaded file must not instruct an agent to bypass human"
   echo "confirmation, self-perpetuate (observer-loop), or daemonize. Remove the"
   echo "directive, or if it is a legitimate documented example, move it out of the"
-  echo "auto-loaded instruction scope. See rules/policy/security-guards.md."
+  echo "auto-loaded instruction scope. Remote code (classes 5-7): pin the version,"
+  echo "or add the host to core/tests/supply-chain-allowlist.txt with a reason."
+  echo "See rules/policy/security-guards.md."
   exit 1
 fi
 
