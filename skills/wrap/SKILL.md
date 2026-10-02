@@ -96,6 +96,18 @@ d. **Review-tier check** — run the review-cadence script, resolved from the
      non-risk code lines) → proceed, printing one line noting the tier-0
      skip so it stays visible rather than silent, e.g. `review-tier: tier 0
      — skip (self-check only)`.
+e. **Impact context** (advisory, never a gate). When the repo has a
+   CodeGraph index, list the code outside this diff that depends on it and
+   the test files the change reaches:
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT:-$PWD}/core/infra/impact-context.py" --staged
+   ```
+   Empty output means there was nothing to report: no `.codegraph/`, no
+   codegraph installed, or no outside dependents. That is not a failure. When
+   the output lists test files, show them and suggest running them before the
+   commit if this session has not already run them. When it lists outside
+   dependents, pass them to any reviewer dispatched in step d as callers to
+   check. The script caps itself at 10s and 60 lines and always exits 0.
 
 ### 2. Commit
 

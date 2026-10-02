@@ -8,37 +8,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- **Codex native hook path (W4-1)**: `adapters/codex/adapter.py`'s native mode
-  (`run_native`) translates Codex's native `PreToolUse` stdin (Claude-shaped:
-  `hook_event_name`, `tool_name`, `tool_input`, `tool_use_id`, `session_id`,
-  `cwd`, `transcript_path`) into canonical events, splitting `apply_patch`'s
-  patch text (carried in `tool_input.command`, same field as Bash) into one
-  `Write`/`Edit` event per file with absolute paths, and aggregating
-  deny > ask > advisory > allow across files. A canonical `ask` and any hook
-  failure (non-zero exit other than `2`, a timeout, invalid JSON, or a zero-op
-  patch) become a fail-closed `deny` JSON; non-`PreToolUse` events stay
-  fail-open by design. `adapters/codex/hooks.json.template` (merged into
-  `~/.codex/hooks.json` by the new `adapters/codex/merge-hooks.py`, which
-  replaces only Agent-owned entries and leaves other tools' hooks alone) wires
-  SessionStart/UserPromptSubmit/PreToolUse/PostToolUse/Stop/SessionEnd.
-  Hardened after a security review: one 25s check budget per hook across all
-  files of a patch, a 100-file cap, indented patch markers denied as ambiguous,
-  `normpath` on patch paths, `Move to` destinations checked with the source
-  file's content (regular files only), a deny for a missing guard, missing
-  `python3`, or an unknown decision verb, and every per-file event run on
-  `PostToolUse` (council review).
-  `core/tests/codex-native-hooks-test.sh` (41 checks) and a new
-  `adapter-parity.sh` native section cover it; one live `codex exec` session
-  (codex-cli 0.157.0, 2026-09-27) confirmed the Bash and `apply_patch` denials
-  end-to-end.
-- **Portable plugin manifest + marketplace (W4-2)**: root `plugin.json`
-  (`agent-plugins.org` 1.0.0, `extensions.com.openai.hooks` →
-  `hooks/codex-hooks.json`) and `.agents/plugins/marketplace.json`, so
-  `codex plugin marketplace add joymin5655/Agent` + `codex plugin add
-  agent-harness@agent` installs the same hooks and skills — install verified
-  with the codex CLI (skills appear in `codex debug prompt-input`) on 2026-09-27.
-  `core/tests/version-parity.sh` now covers the root manifest.
-
 - **Antigravity native hook adapter (W5-3)**: `adapters/antigravity/adapter.sh` and
   `adapter.py` translate agy 1.2.12's `PreToolUse`/`PostToolUse`/`Stop` hook JSON (event
   name from argv, since agy's stdin carries none) into canonical events and run the same
@@ -86,6 +55,98 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `sandbox-exec` enforcement check).
 
 ### Changed
+- **Antigravity docs and registry brought current with agy 1.2.12 (W5-5)**:
+  `adapters/antigravity/README.md` now records the 2026-09-29 probe (soft-deny in
+  `denied_actions` plus a `jetski ... auto-denied` stderr notice, exit 3 on status ERROR),
+  the Gemini CLI individual end date 2026-06-18, the API-key opt-in, the native-hook plugin,
+  and the worker threat-model drift (headless 1.2.12 ran `echo` with no allow rule).
+  `docs/runtime-registry.json` antigravity: `cli_version_measured` 1.2.12, `measured_on`
+  2026-09-29, `hook_events_wired` PreToolUse/PostToolUse/Stop. `docs/hook-protocol.md` gained
+  section 13 and the `antigravity` ai value; `docs/cross-runtime-harness-design.md` states
+  what the plugin enforces and what it does not.
+
+### Fixed
+- **Antigravity lane counted a soft-denied run as success (W5-1).** Headless agy
+  soft-denies a tool call it cannot get approval for: the run continues and exits 0
+  with a stderr notice. `antigravity-worker.sh` now exits 9 on that notice and 10 when
+  the `--output-format json` envelope is unparseable or its `status` is not
+  `SUCCESS`. It captures agy's output outside the sandbox's writable dir, so a
+  prompt-driven write cannot forge the envelope. `antigravity-preflight.sh` reports a
+  soft-deny as exit 8 (lane absent), reads the probe token from `.response` only, and
+  treats `authentication required` as an auth failure. New
+  `core/tests/antigravity-preflight-test.sh`.
+- **Antigravity soft-deny detection missed agy 1.2.12 (W5-1b).** 1.2.12 reports a
+  soft-deny as a non-empty `denied_actions` array in the json envelope plus a stderr
+  notice with new wording, which the 1.1.14 pattern did not match, so
+  `antigravity-worker.sh` returned exit 0 for a run that was denied. It now exits 9 on a
+  non-empty `denied_actions` (single-value stdout only) or a stderr match on
+  `permission check failed|denied permission to|auto-denied|cannot prompt for`; an empty
+  `denied_actions` is not a soft-deny, and agy's own nonzero exit codes (including the
+  undocumented 3) pass through unchanged.
+
+## [0.5.12] - 2026-10-01
+
+### Added
+- **Supply-chain scan classes 5–7** (adapted from ECC v2.2 `pi/core`):
+  `core/tests/supply-chain-scan.sh` delegates to `core/tests/supply-chain-remote.py`.
+  Class 5 flags fetch-and-execute (`curl … | sh`, `bash <(curl …)`,
+  `eval "$(curl …)"`); class 6 flags unpinned remote runners (npx/npm exec with
+  `--yes`/`--package`, bunx, pnpm/yarn dlx, uvx, pipx run); class 7 flags URL
+  hosts in auto-fired hooks and `hooks/*.json` / `.mcp.json` that are not in
+  `core/tests/supply-chain-allowlist.txt`. Threat model documented in
+  `rules/policy/security-guards.md` (#138).
+- **Impact context** (idea from Graft's blast radius): `core/infra/impact-context.py`
+  lists dependents outside the diff and the test files the change reaches, from
+  the existing CodeGraph index. Fail-open (10 s budget, 60-line cap, exit 0).
+  `/council-review` adds it to the shared review core; `/wrap` shows it as an
+  advisory pre-flight step (#138).
+
+## [0.5.11] - 2026-10-01
+
+### Added
+- **Codex native hook path (W4-1)**: `adapters/codex/adapter.py`'s native mode
+  (`run_native`) translates Codex's native `PreToolUse` stdin (Claude-shaped:
+  `hook_event_name`, `tool_name`, `tool_input`, `tool_use_id`, `session_id`,
+  `cwd`, `transcript_path`) into canonical events, splitting `apply_patch`'s
+  patch text (carried in `tool_input.command`, same field as Bash) into one
+  `Write`/`Edit` event per file with absolute paths, and aggregating
+  deny > ask > advisory > allow across files. A canonical `ask` and any hook
+  failure (non-zero exit other than `2`, a timeout, invalid JSON, or a zero-op
+  patch) become a fail-closed `deny` JSON; non-`PreToolUse` events stay
+  fail-open by design. `adapters/codex/hooks.json.template` (merged into
+  `~/.codex/hooks.json` by the new `adapters/codex/merge-hooks.py`, which
+  replaces only Agent-owned entries and leaves other tools' hooks alone) wires
+  SessionStart/UserPromptSubmit/PreToolUse/PostToolUse/Stop/SessionEnd.
+  Hardened after a security review: one 25s check budget per hook across all
+  files of a patch, a 100-file cap, indented patch markers denied as ambiguous,
+  `normpath` on patch paths, `Move to` destinations checked with the source
+  file's content (regular files only), a deny for a missing guard, missing
+  `python3`, or an unknown decision verb, and every per-file event run on
+  `PostToolUse` (council review).
+  `core/tests/codex-native-hooks-test.sh` (41 checks) and a new
+  `adapter-parity.sh` native section cover it; one live `codex exec` session
+  (codex-cli 0.157.0, 2026-09-27) confirmed the Bash and `apply_patch` denials
+  end-to-end.
+- **Portable plugin manifest + marketplace (W4-2)**: root `plugin.json`
+  (`agent-plugins.org` 1.0.0, `extensions.com.openai.hooks` →
+  `hooks/codex-hooks.json`) and `.agents/plugins/marketplace.json`, so
+  `codex plugin marketplace add joymin5655/Agent` + `codex plugin add
+  agent-harness@agent` installs the same hooks and skills — install verified
+  with the codex CLI (skills appear in `codex debug prompt-input`) on 2026-09-27.
+  `core/tests/version-parity.sh` now covers the root manifest.
+
+### Changed
+- **`council-escalation-gate.py` escape 2 now requires a stated reason.** A
+  retry on an already-denied council-scale diff passes only when the
+  `code-reviewer` dispatch prompt carries `council-unavailable: <reason>`
+  (≥10 chars after whitespace collapse, not the pasted `<placeholder>`); the
+  reason is written to `security-violations.jsonl`. If the diff hash is
+  unavailable, a stated reason alone opens the escape. The deny
+  text used to advertise "re-issue this exact dispatch", and a model was
+  observed retrying reflexively without trying `/council-review` — a bare
+  identical retry is now denied again, and repeat denials no longer refresh
+  the ledger entry. Tests: 9 new cases in `council-escalation-gate-test.sh`
+  (32 pass).
 - **model-routing-observer records both session ids.** `session_id` now prefers the hook
   event's runtime session UUID (falls back to `AGENT_SESSION_ID`), and the env id is kept
   as `agent_session_id`, so concurrent sessions in one cwd stay distinguishable.
@@ -128,15 +189,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **CI**: added `plugin-validate` job running `claude plugin validate --strict .`
   (best-effort CLI install; explicit `::notice::` skip if the CLI never lands —
   never a silent pass, and not a required check).
-- **Antigravity docs and registry brought current with agy 1.2.12 (W5-5)**:
-  `adapters/antigravity/README.md` now records the 2026-09-29 probe (soft-deny in
-  `denied_actions` plus a `jetski ... auto-denied` stderr notice, exit 3 on status ERROR),
-  the Gemini CLI individual end date 2026-06-18, the API-key opt-in, the native-hook plugin,
-  and the worker threat-model drift (headless 1.2.12 ran `echo` with no allow rule).
-  `docs/runtime-registry.json` antigravity: `cli_version_measured` 1.2.12, `measured_on`
-  2026-09-29, `hook_events_wired` PreToolUse/PostToolUse/Stop. `docs/hook-protocol.md` gained
-  section 13 and the `antigravity` ai value; `docs/cross-runtime-harness-design.md` states
-  what the plugin enforces and what it does not.
 
 ### Deprecated
 - **`codex-shell-wrap.sh` moved to `legacy/codex-shell-wrap/`** (W4-3). It
@@ -165,23 +217,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     reaches the PyYAML pip step instead of returning early. It still exits 1.
   - `session-tier-observer.py` stamps `origin` on its session-start record, which the W1
     log-origin tag had missed.
-- **Antigravity lane counted a soft-denied run as success (W5-1).** Headless agy
-  soft-denies a tool call it cannot get approval for: the run continues and exits 0
-  with a stderr notice. `antigravity-worker.sh` now exits 9 on that notice and 10 when
-  the `--output-format json` envelope is unparseable or its `status` is not
-  `SUCCESS`. It captures agy's output outside the sandbox's writable dir, so a
-  prompt-driven write cannot forge the envelope. `antigravity-preflight.sh` reports a
-  soft-deny as exit 8 (lane absent), reads the probe token from `.response` only, and
-  treats `authentication required` as an auth failure. New
-  `core/tests/antigravity-preflight-test.sh`.
-- **Antigravity soft-deny detection missed agy 1.2.12 (W5-1b).** 1.2.12 reports a
-  soft-deny as a non-empty `denied_actions` array in the json envelope plus a stderr
-  notice with new wording, which the 1.1.14 pattern did not match, so
-  `antigravity-worker.sh` returned exit 0 for a run that was denied. It now exits 9 on a
-  non-empty `denied_actions` (single-value stdout only) or a stderr match on
-  `permission check failed|denied permission to|auto-denied|cannot prompt for`; an empty
-  `denied_actions` is not a soft-deny, and agy's own nonzero exit codes (including the
-  undocumented 3) pass through unchanged.
 
 ## [0.5.10] - 2026-09-02
 

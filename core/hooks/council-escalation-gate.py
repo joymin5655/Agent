@@ -36,11 +36,17 @@ concurrent projects don't collide. Two escape hatches live there:
      stale, forged, or diff-mismatched flag no longer bypasses anything. The
      skill clears the flag again at the end of its run (step 6) so it cannot
      silently un-gate a later, unrelated diff for the rest of its TTL.
-  2. Same-diff-hash single-deny — a diff already denied once is allowed
-     through on a retry within AGENT_COUNCIL_DENY_TTL_S (default 3600s;
-     stderr warning, not a permission decision), so a caller that cannot
-     actually run council-review (no worker CLI, offline, user declines the
-     cost prompt) is not stuck in a permanent deny loop on the same diff.
+  2. Same-diff-hash single-deny + stated reason — a diff already denied once
+     is allowed through on a retry within AGENT_COUNCIL_DENY_TTL_S (default
+     3600s; stderr warning, not a permission decision) ONLY when the retry's
+     dispatch prompt carries `council-unavailable: <reason>` (reason >= 10
+     chars), so a caller that cannot actually run council-review (no worker
+     CLI, offline, user declines the cost prompt) is not stuck in a permanent
+     deny loop on the same diff. 2026-10-01: a bare identical retry no longer
+     passes — the deny text used to advertise "re-issue this exact dispatch",
+     and models retried reflexively without ever trying council-review
+     (observed in an OMV_auto session). The stated reason is written to the
+     audit sink so every bypass is attributable.
      Ledger entries carry a timestamp and expire — an un-timestamped entry
      would otherwise be a forever-valid bypass token for that diff hash.
      2026-09-02 visibility upgrade: alongside the stderr line, this escape
@@ -86,6 +92,7 @@ Registered in docs/gate-registry.md (GATE council-escalation).
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -99,13 +106,34 @@ ACTIVE_TTL_S = int(os.environ.get("AGENT_COUNCIL_ACTIVE_TTL_S", "300") or 300)
 DENY_TTL_S = int(os.environ.get("AGENT_COUNCIL_DENY_TTL_S", "3600") or 3600)
 DENY_LOG_CAP = 50
 
+# Escape-2 reason marker: `council-unavailable: <reason>` anywhere in the
+# dispatch prompt, reason at least 10 characters after stripping, and not the
+# deny text's own `<placeholder>` pasted back verbatim.
+ESCAPE_REASON_RE = re.compile(r"council-unavailable:[ \t]*(\S[^\n]{9,})", re.IGNORECASE)
+ESCAPE_REASON_MIN = 10
+ESCAPE_REASON_MAX = 300
+
+
+def escape_reason(tool_input):
+    prompt = tool_input.get("prompt")
+    if not isinstance(prompt, str):
+        return None
+    m = ESCAPE_REASON_RE.search(prompt)
+    if not m:
+        return None
+    reason = " ".join(m.group(1).split())  # collapse padding / control whitespace
+    if len(reason) < ESCAPE_REASON_MIN or reason.startswith("<"):
+        return None
+    return reason[:ESCAPE_REASON_MAX]
+
 DENY_REASON = (
     "council-escalation: this diff is council-scale (line/file threshold or a "
     "risk-area path) — a plain solo code-reviewer dispatch is blocked. Run "
-    "`/council-review --staged` for a multi-vendor review instead, or "
-    "re-issue this exact dispatch once more (the same-diff single-deny "
-    "escape lets an identical retry through, once, with a warning) if "
-    "council-review genuinely cannot run right now."
+    "`/council-review --staged` for a multi-vendor review instead. Only if "
+    "council-review genuinely cannot run right now (e.g. no worker CLI, "
+    "offline, user declined its cost), re-issue the dispatch with a line "
+    "`council-unavailable: <concrete reason>` in its prompt — the reason is "
+    "logged. A plain identical retry is denied again."
 )
 
 # Escape-2 visibility upgrade (2026-09-02): the same-diff-hash single-deny
@@ -115,9 +143,10 @@ DENY_REASON = (
 # visibility.
 ESCAPE_ADVISORY = (
     "council-escalation: this code-reviewer dispatch was let through WITHOUT "
-    "a council review, via the one-time same-diff-hash escape (this exact "
-    "diff was already denied once). Recommend running `/council-review "
-    "--staged` before treating this diff as reviewed."
+    "a council review, via the stated-reason escape (this exact diff was "
+    "already denied once and the dispatch declared council-unavailable). "
+    "Recommend running `/council-review --staged` before treating this diff "
+    "as reviewed."
 )
 
 
@@ -414,21 +443,27 @@ def main():
     h = current_hash()
 
     # Escape 2: this exact diff was already denied once (within
-    # AGENT_COUNCIL_DENY_TTL_S) — let the retry through rather than deny
-    # forever (loop-safety valve).
-    if h and already_denied(root, h):
+    # AGENT_COUNCIL_DENY_TTL_S) AND the retry states why council-review cannot
+    # run — let it through rather than deny forever (loop-safety valve). A
+    # bare identical retry falls through to deny again.
+    reason = escape_reason(tool_input)
+    denied_before = bool(h) and already_denied(root, h)
+    # h falsy = diff hash unavailable; no ledger can exist, so a stated reason
+    # alone opens the escape (otherwise the deny text's promise is a dead end).
+    if reason and (denied_before or not h):
         print(
             "[council-escalation-gate] this council-scale diff was already "
             "denied once — allowing the solo code-reviewer dispatch through "
-            "this time (loop-safety escape; run /council-review --staged "
-            "when you can).",
+            "this time (loop-safety escape, stated reason: "
+            f"{reason}; run /council-review --staged when you can).",
             file=sys.stderr,
         )
-        log_event(root, "allow", "same-diff-hash escape (already denied once)")
+        log_event(root, "allow", f"same-diff-hash escape with stated reason: {reason}")
         emit_escape_advisory()
         return
 
-    record_denied(root, h)
+    if not denied_before:
+        record_denied(root, h)  # repeat denials keep the original entry/TTL
     log_event(root, "deny", "council-scale diff — plain code-reviewer dispatch denied")
     emit_deny()
 

@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "agent-harness",
-  "version": "0.5.10",
+  "version": "0.5.12",
   "description": "Portable AI agent harness — curated review/build/test agents, secret-hardening + worktree + plan-gate hooks, and spec/supervise/wrap/verify-completion skills. Install once, use in every project. AI-agnostic core (Claude Code / Codex / Gemini).",
   "author": {
     "name": "joymin",
