@@ -234,7 +234,7 @@ bash ~/agent/setup.sh                    # 플래그 없음 = 3개 AI 전부
 | `--hooks-only` | git-hooks만, AI 설정 없음 |
 | `--all` | 위 전부 |
 | `--grok` | **옵트인**, `--all`/기본에 미포함 — grok 워커 레인(자문 전용 크로스벤더 리뷰) |
-| `--antigravity` | **옵트인**, `--all`/기본에 미포함 — antigravity(agy) 워커 레인(크로스벤더 리뷰) |
+| `--antigravity` | **옵트인**, `--all`/기본에 미포함 — antigravity(agy) 워커 레인(크로스벤더 리뷰) **및** `~/.gemini/config/plugins/agent-harness`에 설치되는 네이티브 훅 플러그인(agy 자체 도구 호출 가드; `adapters/antigravity/README.md` 참고) |
 | `--kiro` | **옵트인**, `--all`/기본에 미포함 — kiro 게이트웨이 워커 레인(과금형) |
 
 플래그는 조합 가능합니다(`bash setup.sh --claude --project`). 멱등 — 기존 파일은

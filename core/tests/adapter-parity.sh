@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # adapter-parity.sh — cross-AI parity gate.
 #
-# The "same core hook, same decision under all 3 AIs" promise (README §Cross-AI
+# The "same core hook, same decision under all AIs" promise (README §Cross-AI
 # parity; docs/ai-adapters.md §Cross-AI parity guarantee) is only real if it is
-# tested. For each logically-identical event this feeds all three adapters —
+# tested. For each logically-identical event this feeds the adapters —
 # claude-code (native = canonical JSON on stdin), codex and gemini (native =
-# --tool/--command/--file flags, translated to canonical) — through the SAME core
-# hook and asserts, per scenario:
-#   (a) parity  — the three adapters return the SAME normalized decision
+# --tool/--command/--file flags, translated to canonical), and antigravity (agy
+# camelCase stdin; its own section below, decisions normalized) — through the SAME
+# core hook and asserts, per scenario:
+#   (a) parity  — the adapters return the SAME normalized decision
 #                 (allow/ask/deny). A drift where one adapter alone diverges fails.
 #   (b) decision — that agreed decision matches the expected one (correctness).
 #   (c) strict  — the FULL decision JSON (incl. reason) is byte-identical across
@@ -200,6 +201,84 @@ native_case "native-mcp-deny" secret-content-scan.py deny \
     "$(nc mcp__supabase__execute_sql "$(jin "$NATIVE_SECRET" query)")" \
     "$(nx mcp__supabase__execute_sql "$(jin "$NATIVE_SECRET" query)")"
 unset AGENT_REPRODUCE_TEST
+
+# agy_case <label> <hook> <expected> <tool> <command> <file> <content>
+# Antigravity (agy) native hooks: the adapter receives agy's OWN camelCase stdin
+# (toolCall{name,args}, no event name — the event is argv) and runs the whole core-hook
+# chain, answering agy's {"decision": ...}. The logically-identical event through the
+# other adapters must reach the same decision after normalizing the two vocabularies:
+# agy deny == deny; agy ask (its pass-through — `{}` is a DENY on agy and `allow` is never
+# emitted) and agy force_ask (a core-hook `ask` that must reach a human) == the others'
+# allow/ask/advisory.
+pnorm() { case "$1" in deny) echo deny ;; MALFORMED) echo MALFORMED ;; *) echo pass ;; esac; }
+agy_norm() {
+    python3 -c '
+import sys, json
+try:
+    d = json.loads(sys.stdin.read()).get("decision")
+except Exception:
+    d = None
+print({"deny": "deny", "ask": "pass", "force_ask": "pass"}.get(d, "MALFORMED"))'
+}
+agy_case() {
+    local label="$1" hook="$2" expected="$3" tool="$4" cmd="$5" file="$6" content="$7"
+    local cjson agy_in flags=(--tool "$tool")
+    cjson=$(_T="$tool" _C="$cmd" _F="$file" _CT="$content" python3 -c '
+import json, os
+ti = {}
+if os.environ.get("_C"):  ti["command"]   = os.environ["_C"]
+if os.environ.get("_F"):  ti["file_path"] = os.environ["_F"]
+if os.environ.get("_CT"): ti["content"]   = os.environ["_CT"]
+print(json.dumps({"event": "PreToolUse", "tool_name": os.environ["_T"], "tool_input": ti}))')
+    [[ -n "$cmd" ]]     && flags+=(--command "$cmd")
+    [[ -n "$file" ]]    && flags+=(--file "$file")
+    [[ -n "$content" ]] && flags+=(--content "$content")
+    agy_in=$(_T="$tool" _C="$cmd" _F="$file" _CT="$content" _W="$_AGY_WS" python3 -c '
+import json, os
+if os.environ["_T"] == "Bash":
+    call = {"name": "run_command", "args": {"CommandLine": os.environ["_C"], "Cwd": os.environ["_W"],
+                                             "WaitMsBeforeAsync": 500, "toolAction": "Run", "toolSummary": "s"}}
+else:
+    call = {"name": "write_to_file", "args": {"TargetFile": os.environ["_F"], "CodeContent": os.environ["_CT"],
+                                               "Overwrite": True, "Description": "d", "toolAction": "Write", "toolSummary": "s"}}
+print(json.dumps({"toolCall": call, "stepIdx": 1, "conversationId": "parity-1",
+                  "workspacePaths": [os.environ["_W"]], "transcriptPath": os.environ["_W"] + "/transcript_full.jsonl",
+                  "artifactDirectoryPath": os.environ["_W"], "modelName": "parity"}))')
+    local c_dec co_dec g_dec a_dec a_raw want
+    c_dec=$(pnorm "$(printf '%s' "$cjson" | bash "$CLAUDE_ADAPTER" "$hook" 2>/dev/null | norm)")
+    co_dec=$(pnorm "$(bash "$CODEX_ADAPTER" "$hook" "${flags[@]}" 2>/dev/null | norm)")
+    g_dec=$(pnorm "$(bash "$GEMINI_ADAPTER" "$hook" "${flags[@]}" 2>/dev/null | norm)")
+    a_raw=$(printf '%s' "$agy_in" | (cd "$_AGY_WS" && HOME="$_AGY_SCRATCH/home" AGENT_STATE_DIR="$_AGY_SCRATCH/state" \
+        bash "$AGY_ADAPTER" PreToolUse 2>/dev/null))
+    a_dec=$(printf '%s' "$a_raw" | agy_norm)
+    want=$(pnorm "$expected")
+    printf '  %-26s claude=%-5s codex=%-5s gemini=%-5s agy=%-5s (want %s)\n' "$label" "$c_dec" "$co_dec" "$g_dec" "$a_dec" "$want"
+    if [[ "$a_dec" == "$c_dec" && "$a_dec" == "$co_dec" && "$a_dec" == "$g_dec" && "$a_dec" != "MALFORMED" && "$a_dec" == "$want" ]]; then
+        _ok "agy:$label"
+    else
+        _no "agy:$label — agy=$a_dec vs claude=$c_dec codex=$co_dec gemini=$g_dec want=$want :: ${a_raw:0:160}"
+    fi
+}
+
+echo "--- antigravity native stdin (agy camelCase, event via argv) vs the other adapters ---"
+AGY_ADAPTER="$REPO_ROOT/adapters/antigravity/adapter.sh"
+_AGY_SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/parity-agy.XXXXXX")" || { echo "FATAL: mktemp failed"; exit 1; }
+_AGY_WS="$_AGY_SCRATCH/ws"; mkdir -p "$_AGY_WS" "$_AGY_SCRATCH/home"
+export AGENT_HARDCODING_SINK="$_AGY_SCRATCH/hardcoding.jsonl"
+export AGENT_REPRODUCE_TEST=1
+agy_case "deny-secrets-bash"     pre-tool-guard.sh deny  Bash "cat secrets/foo.env"           "" ""
+agy_case "allow-harmless-bash"   pre-tool-guard.sh allow Bash "ls -la"                        "" ""
+agy_case "ask-no-verify-bash"    pre-tool-guard.sh ask   Bash "git commit --no-verify -m x"   "" ""
+agy_case "deny-destructive-bash" pre-tool-guard.sh deny  Bash "rm -rf /"                      "" ""
+agy_case "allow-quoted-bash"     pre-tool-guard.sh allow Bash "echo it's fine"                "" ""
+agy_case "deny-quoted-secrets"   pre-tool-guard.sh deny  Bash "cat secrets/a.env # it's mine" "" ""
+export AGENT_HARDCODING_MODE=block
+agy_case "deny-hardcoded-content" check-hardcoding.py deny Write "" "app.js" "$HC_FIXTURE"
+unset AGENT_HARDCODING_MODE
+agy_case "advisory-hardcoded-default" check-hardcoding.py advisory Write "" "app.js" "$HC_FIXTURE"
+agy_case "allow-quoted-content"   check-hardcoding.py allow Write "" "app.js" "const s = \"it's 100% fine\""
+unset AGENT_HARDCODING_SINK AGENT_REPRODUCE_TEST
+rm -rf "$_AGY_SCRATCH"
 
 echo
 echo "=== Parity: $PASS passed, $FAIL failed ==="

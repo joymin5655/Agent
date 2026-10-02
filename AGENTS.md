@@ -52,7 +52,8 @@ After any core hook change, run:
 bash core/tests/adapter-parity.sh
 ```
 
-All 3 adapters must return the same decision for the same input event.
+All 4 adapters (claude-code, codex, gemini, antigravity after normalization) must return the same
+decision for the same input event.
 
 ### 4. Test discipline (TDD)
 
@@ -141,7 +142,7 @@ distill/promotion workflow: [`skills/brain-ingest/SKILL.md`](skills/brain-ingest
 # Linting / type-check (Python hooks)
 python3 -m ruff check core/
 
-# Cross-AI parity (same event → same decision across all 3 adapters)
+# Cross-AI parity (same event → same decision across all 4 adapters)
 bash core/tests/adapter-parity.sh
 
 # Sanitize audit

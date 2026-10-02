@@ -1,0 +1,4 @@
+{
+  "name": "agent-harness",
+  "description": "Agent harness native hooks for the Antigravity CLI (installed by setup.sh --antigravity)."
+}

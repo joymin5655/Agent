@@ -240,6 +240,9 @@ def verify_sink_path(root: str) -> str:
 
 # Tools whose calls mark a file as edited BY THIS SESSION.
 _EDIT_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit")
+# Antigravity (agy) transcript_full.jsonl lines are {step_index, tool_calls:[{name,args}]};
+# these are its file-mutating tools, each carrying the path in args.TargetFile.
+_AGY_EDIT_TOOLS = ("write_to_file", "replace_file_content", "multi_replace_file_content")
 
 
 def _realpath(path: str) -> str:
@@ -302,15 +305,24 @@ def session_edited_files(transcript_path: str) -> "set[str] | None":
                 # tests on the raw line; a name match is confirmed structurally
                 # below, so a stray occurrence in prose costs one parse, not a
                 # false attribution.
-                if '"tool_use"' not in line:
+                if '"tool_use"' not in line and '"tool_calls"' not in line:
                     continue
-                if not any(f'"{name}"' in line for name in _EDIT_TOOLS):
+                if not any(f'"{name}"' in line for name in _EDIT_TOOLS + _AGY_EDIT_TOOLS):
                     continue
                 try:
                     entry = json.loads(line)
                 except ValueError:
                     continue
                 if not isinstance(entry, dict):
+                    continue
+                calls = entry.get("tool_calls")
+                if isinstance(calls, list):
+                    for call in calls:
+                        args = call.get("args") if isinstance(call, dict) else None
+                        target = args.get("TargetFile") if isinstance(args, dict) else None
+                        if (isinstance(call, dict) and call.get("name") in _AGY_EDIT_TOOLS
+                                and isinstance(target, str) and target):
+                            edited.add(_realpath(target))
                     continue
                 message = entry.get("message")
                 if not isinstance(message, dict):

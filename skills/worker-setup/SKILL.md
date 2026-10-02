@@ -141,7 +141,12 @@ bash "$HR/setup.sh" --codex        # or --antigravity / --grok / --kiro
 ```
 
 This lands the symlinks in `~/bin`, seeds the tiers/profile templates, and
-runs `setup.sh`'s own post-install doctor pass.
+runs `setup.sh`'s own post-install doctor pass. `--antigravity` also installs the native-hook
+plugin into `~/.gemini/config/plugins/agent-harness` (guards the user's own interactive agy
+sessions, not only the worker). Check it with
+`python3 adapters/antigravity/install-plugin.py --root "$PWD" --check`, remove it with `--uninstall`;
+global-folder loading by a real agy was not measured (`adapters/antigravity/README.md`, "Native
+hooks (plugin)").
 
 **Verify — with an explicit heads-up before each real call.** Before running
 any of the following, tell the user this is a real round-trip probe (billable

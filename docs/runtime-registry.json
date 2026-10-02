@@ -49,23 +49,23 @@
     "antigravity": {
       "kind": "first-party",
       "vendor": "google",
-      "cli_version_measured": "1.2.7",
-      "measured_on": "2026-09-26",
+      "cli_version_measured": "1.2.12",
+      "measured_on": "2026-09-29",
       "docs": [
         {"url": "https://antigravity.google/docs/hooks/", "checked_on": "2026-09-26"},
         {"url": "https://antigravity.google/docs/cli/headless/", "checked_on": "2026-09-26"},
         {"url": "https://antigravity.google/docs/cli/install/", "checked_on": "2026-09-26"},
         {"url": "https://antigravity.google/docs/permissions/", "checked_on": "2026-09-26"}
       ],
-      "hook_events_wired": [],
+      "hook_events_wired": ["PreToolUse", "PostToolUse", "Stop"],
       "hook_events_available": ["PreToolUse", "PostToolUse", "PreInvocation", "PostInvocation", "Stop"],
       "instruction_files": ["GEMINI.md", "AGENTS.md"],
       "skills_dirs": [".agents/skills", "~/.gemini/antigravity-cli/skills"],
-      "plugin_manifest": "hooks.json inside plugin (~/.gemini/config/plugins)",
+      "plugin_manifest": "plugin.json + hooks.json in a plugin folder (~/.gemini/config/plugins/agent-harness), installed by adapters/antigravity/install-plugin.py",
       "pin_files": ["adapters/antigravity/antigravity-tiers.json.template"],
       "retired_model_patterns": ["gemini-2\\.", "gemini-3\\.0", "gemini-3-flash(?![a-z0-9-])"],
       "models_measured": ["gemini-3.8-flash-{high,medium,low}", "gemini-3.7-flash-*", "gemini-3.6-flash-*", "gemini-3.1-pro-{high,low}", "claude-sonnet-4-6", "claude-opus-4-6-thinking", "gpt-oss-120b-medium"],
-      "notes": "Headless shell denial is a SOFT deny (exit 0 + stderr) — preflights must read JSON status, not exit code. --effort low|medium|high|max exists (1.2.x). agy also serves Claude models: the council lane must stay pinned to gemini-* for vendor independence. Gemini CLI individual access ended 2026-06-18."
+      "notes": "W5 native hooks via a plugin folder: PreToolUse/PostToolUse/Stop go through adapters/antigravity/adapter.sh (no SessionStart/UserPromptSubmit/SessionEnd equivalent is wired; view_file and MCP tools are not matched). agy 1.2.12 (probe 2026-09-29): a PreToolUse stdout of {} is a DENY, so pass-through is {\"decision\":\"ask\"}. Headless soft-deny (exit 0) now also fills the envelope denied_actions array and prints a jetski auto-denied stderr notice; status ERROR exits 3. Preflights must read the JSON status, not the exit code. --effort low|medium|high|max exists. agy also serves Claude models: the council lane must stay pinned to gemini-* for vendor independence. Gemini CLI individual access ended 2026-06-18."
     },
     "gemini-cli": {
       "kind": "first-party",

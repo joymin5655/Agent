@@ -48,11 +48,12 @@ evaluation source, not either one.
 | Claude Code | native plugin hooks | Tier A for configured tools |
 | Codex | native hooks (fixtures + live `codex exec` e2e, 2026-09-27) | Tier A for Bash, `apply_patch`, MCP |
 | Gemini CLI | exclusive shell wrapper | Tier B shell; Tier C uncovered writes |
-| Antigravity | none | planned |
+| Antigravity | native hooks via a plugin folder (agy 1.2.12; fixtures + workspace-plugin probe, global folder unmeasured) | Tier A for configured tools; see `adapters/antigravity/README.md` |
 
 The current parity test feeds logically identical synthetic events through the
-three shipped adapters and compares their core decision JSON. It does not launch
-each vendor runtime or prove that every native tool is intercepted.
+four shipped adapters (Antigravity's vocabulary is compared after normalization) and
+compares their core decisions. It does not launch each vendor runtime or prove that
+every native tool is intercepted.
 
 ## Canonical adapter contract
 
@@ -215,7 +216,9 @@ native target.
 
 ## Antigravity
 
-Antigravity is a new adapter target, not a rename of Gemini CLI.
+Antigravity is a separate adapter, not a rename of Gemini CLI. The shipped adapter
+(`adapters/antigravity/adapter.sh`, installed as a plugin folder by
+`setup.sh --antigravity`) is documented in `adapters/antigravity/README.md`.
 
 The native package uses:
 
@@ -226,8 +229,9 @@ The native package uses:
 - `mcp_config.json`.
 
 Its documented `PreToolUse` contract uses camelCase input and supports
-`allow`, `deny`, `ask`, and `force_ask`. The adapter must translate
-`toolCall.name` and `toolCall.args` to the canonical tool event.
+`allow`, `deny`, `ask`, and `force_ask`. The adapter translates
+`toolCall.name` and `toolCall.args` to the canonical tool event, and emits `deny`, `ask`
+(pass-through) and `force_ask` (a core-hook `ask`); it never emits `allow`.
 
 Antigravity has no exact documented equivalent for every portable lifecycle
 event. Missing events stay explicit in the capability registry instead of being

@@ -33,7 +33,7 @@ Every hook reads this on `stdin`:
 
 ```json
 {
-  "ai": "claude-code | codex | gemini",
+  "ai": "claude-code | codex | gemini | antigravity",
   "session_id": "<unique session id>",
   "event": "PreToolUse | PostToolUse | SessionStart | Stop | UserPromptSubmit",
   "tool_name": "<tool identifier, e.g. Bash, Write, Edit, mcp__supabase__execute_sql>",
@@ -95,7 +95,7 @@ Independent of stdout JSON, exit codes follow this convention:
 | Exit code | Meaning |
 |---|---|
 | `0` | Hook ran successfully (decision in stdout, or empty for pass-through) |
-| `1` | Hook errored — behavior now differs by adapter. The Claude adapter and the Gemini shell wrap still **fail open**: Claude silently passes when a named core hook is missing or crashes, and the Gemini wrap discards a crashed hook's output (`2>/dev/null \|\| true`) and falls through to executing the command. The **Codex native adapter fails closed on `PreToolUse`** (XRH-02, delivered): any hook exit other than `0`, a timeout, or unparseable output becomes an explicit `deny` JSON on stdout (exit `0` — Codex would continue the tool call on any non-zero exit other than `2`); so does a core hook that is missing or not executable in the checkout, or a missing `python3` (static deny from `adapter.sh`); non-`PreToolUse` events stay fail-open (warned on stderr) |
+| `1` | Hook errored — behavior now differs by adapter. The Claude adapter and the Gemini shell wrap still **fail open**: Claude silently passes when a named core hook is missing or crashes, and the Gemini wrap discards a crashed hook's output (`2>/dev/null \|\| true`) and falls through to executing the command. The **Codex native adapter fails closed on `PreToolUse`** (XRH-02, delivered): any hook exit other than `0`, a timeout, or unparseable output becomes an explicit `deny` JSON on stdout (exit `0` — Codex would continue the tool call on any non-zero exit other than `2`); so does a core hook that is missing or not executable in the checkout, or a missing `python3` (static deny from `adapter.sh`); non-`PreToolUse` events stay fail-open (warned on stderr). The **Antigravity adapter** (W5) fails closed on `PreToolUse` the same way (any failure becomes an explicit `deny`; it exits `0`), and its `PostToolUse` and `Stop` failures are warned on stderr only |
 | `2` | Hook explicit DENY — runtime should block (Claude Code shorthand; equivalent to JSON `deny`) |
 | `15` | Project risk area trip — secret leak detected (auto-ship convention) |
 | `12-16` | Risk-area-specific abort codes — configurable in `hook-config.yml` |
@@ -320,3 +320,24 @@ is not an array and does not apply to lifecycle events. Decisions in this pass:
    `context-mode-guard.sh`, and the rest fire on every `Bash`/`Write|Edit`/`*` call
    in their group and make their own internal decision — adding an `if` there would
    duplicate logic the hook already owns without narrowing anything real.
+
+---
+
+## 13. Antigravity adapter (W5)
+
+`adapters/antigravity/adapter.sh <PreToolUse|PostToolUse|Stop>` is the native adapter for the
+Antigravity CLI (`agy`). Unlike the other adapters it takes the **event name from argv**,
+because agy's hook stdin carries none, and it runs the whole core-hook chain for that event
+itself (agy's combine order for several hooks on one event is undocumented). Canonical
+events it emits: `ai: "antigravity"`, `session_id` = agy `conversationId`, `cwd` from
+`run_command`'s `Cwd` or `workspacePaths[0]` (never the hook's own cwd, which is the plugin
+folder), and `transcript_path` from `transcriptPath`. Tool mapping: `run_command` to `Bash`,
+`write_to_file` to `Write`, `replace_file_content` and each `multi_replace_file_content` chunk
+to `Edit`.
+
+The output wire format is agy's, not the canonical one: `{"decision":"deny"|"ask","reason":...}`
+on `PreToolUse` (plus `"force_ask"` for a core-hook `ask`, which agy documents as ignoring
+`permissions.allow` rules and the Always-Allow cache), where a pass-through is
+`{"decision":"ask"}` (agy treats `{}` as a deny; a hook `allow` was not observed to grant more
+than `ask`, so it is never emitted), `{}` on `PostToolUse`, and `{"decision":"continue"|"stop"}` on `Stop`.
+Details, chains and limits: `adapters/antigravity/README.md` ("Native hooks (plugin)").

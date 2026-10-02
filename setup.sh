@@ -8,7 +8,7 @@
 #   bash setup.sh --gemini         # gemini only
 #   bash setup.sh --grok           # grok worker lane only (opt-in — advisory lane,
 #                                   # deliberately NOT part of the default/--all set)
-#   bash setup.sh --antigravity    # antigravity (agy) worker lane only (opt-in)
+#   bash setup.sh --antigravity    # antigravity (agy) worker lane + native-hook plugin (opt-in)
 #   bash setup.sh --kiro           # kiro gateway lanes only (opt-in — metered/paid,
 #                                   # deliberately NOT part of the default/--all set)
 #   bash setup.sh --openrouter     # openrouter free-tier worker lane only (opt-in —
@@ -294,13 +294,17 @@ install_grok() {
 }
 
 # ---------------------------------------------------------------------------
-# Antigravity (agy) CLI — worker lane only (adapters/antigravity/README.md).
-# Successor to the retired gemini CLI review lane; auth lives in the OS keyring.
+# Antigravity (agy) CLI — worker lane + native-hook plugin folder
+# (adapters/antigravity/README.md). Successor to the retired gemini CLI review
+# lane; default auth lives in the OS keyring, API-key auth is opt-in guidance.
 # ---------------------------------------------------------------------------
 install_antigravity() {
-    echo "=== Antigravity CLI (worker lane) ==="
+    echo "=== Antigravity CLI (worker lane + native-hook plugin) ==="
     chmod +x "$FRAMEWORK_ROOT/adapters/antigravity/antigravity-worker.sh" \
-             "$FRAMEWORK_ROOT/adapters/antigravity/antigravity-preflight.sh"
+             "$FRAMEWORK_ROOT/adapters/antigravity/antigravity-preflight.sh" \
+             "$FRAMEWORK_ROOT/adapters/antigravity/adapter.sh" \
+             "$FRAMEWORK_ROOT/adapters/antigravity/adapter.py" \
+             "$FRAMEWORK_ROOT/adapters/antigravity/install-plugin.py"
     ensure_home_bin
     ln -sf "$FRAMEWORK_ROOT/adapters/antigravity/antigravity-worker.sh" "$HOME/bin/antigravity-worker"
     ln -sf "$FRAMEWORK_ROOT/adapters/antigravity/antigravity-preflight.sh" "$HOME/bin/antigravity-preflight"
@@ -319,7 +323,26 @@ install_antigravity() {
             echo "  installed: ~/.agent/antigravity-tiers.json"
         fi
     fi
+    # Native hooks: a plugin folder (plugin.json + hooks.json with the absolute
+    # adapter path). ~/.gemini/config/hooks.json and settings.json are never
+    # touched — other tools register there and agy rewrites settings.json itself.
+    python3 "$FRAMEWORK_ROOT/adapters/antigravity/install-plugin.py" --root "$FRAMEWORK_ROOT" \
+        || echo "  WARN: antigravity native-hook plugin not installed (see the error above); the rest of the antigravity setup continues"
+    echo "  NOTE: restart any running agy session so it loads the plugin's hooks"
     command -v agy >/dev/null 2>&1 || echo "  NOTE: agy CLI not found on PATH yet — install it, then verify with 'agy models' (adapters/antigravity/README.md)"
+    # Guidance only — nothing below is applied by this script.
+    cat <<'GUIDE'
+  Optional, NOT applied by setup (you apply these yourself):
+    API-key auth instead of the keyring login (worker lane only):
+      security add-generic-password -a "$USER" -s gemini-api-key -w      # prompts for the key; never put it in argv
+      export ANTIGRAVITY_AUTH=apikey                                       # antigravity-worker then reads the key from the Keychain
+      and set "modelProvider": "gemini" in ~/.gemini/antigravity-cli/settings.json (the env var alone has no effect)
+    Suggested permissions.deny rules for ~/.gemini/antigravity-cli/settings.json (agy documents the prefix form
+    command(<prefix>) and command(regex:...); glob '*' support is unmeasured, so no '*' is used; setup does not
+    edit that file):
+      command(rm -rf)   command(sudo)   command(git push --force)   command(git clean -fd)
+      command(regex:^git push .*--force)   # for a match in the middle of the command line
+GUIDE
 }
 
 # ---------------------------------------------------------------------------
@@ -976,6 +999,26 @@ PY
             add_row PASS "codex native hooks — ${cx_state#OK } entries in ${cx_hooks/#$HOME/~} with a PreToolUse trust record (re-trust after hook changes)"
         fi
     fi
+
+    # 15c. antigravity native hooks (W5) — the plugin folder agy loads hooks
+    #      from. State comes from install-plugin.py --check (one definition of
+    #      "ours", shared with the installer): NONE / BROKEN <why> / OK <n>.
+    #      NONE is only a WARN when agy is on PATH (an installed agy runs
+    #      unguarded); the lane is opt-in, so no agy = nothing to check.
+    local ag_dir ag_state
+    ag_dir="${AGENT_ANTIGRAVITY_PLUGIN_DIR:-$HOME/.gemini/config/plugins/agent-harness}"
+    ag_state="$(python3 "$FRAMEWORK_ROOT/adapters/antigravity/install-plugin.py" --check 2>/dev/null || echo "BROKEN check could not run")"
+    case "$ag_state" in
+        OK*)     add_row PASS "antigravity native hooks — ${ag_state#OK } hook entries in ${ag_dir/#$HOME/~} point at an executable adapter" ;;
+        BROKEN*) add_row FAIL "antigravity native hooks — plugin in ${ag_dir/#$HOME/~} is broken: $(sanitize_display "${ag_state#BROKEN }") (re-run setup.sh --antigravity)" ;;
+        *)
+            if command -v agy >/dev/null 2>&1; then
+                add_row WARN "antigravity native hooks — not installed in ${ag_dir/#$HOME/~}: agy tool calls are unguarded; run setup.sh --antigravity"
+            else
+                add_row PASS "antigravity native hooks — not installed (opt-in lane; agy not on PATH, check skipped)"
+            fi
+            ;;
+    esac
 
     # 16. gemini wiring — same declared-vs-actual family for the gemini
     #     settings (previously doctor had NO gemini checks at all). Same

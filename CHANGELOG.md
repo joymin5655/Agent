@@ -7,6 +7,83 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Antigravity native hook adapter (W5-3)**: `adapters/antigravity/adapter.sh` and
+  `adapter.py` translate agy 1.2.12's `PreToolUse`/`PostToolUse`/`Stop` hook JSON (event
+  name from argv, since agy's stdin carries none) into canonical events and run the same
+  core-hook chains as the Codex template (`run_command` as `Bash`, `write_to_file` as
+  `Write`, `replace_file_content` and each `multi_replace_file_content` chunk as `Edit`,
+  capped at 100). agy treats a PreToolUse `{}` as a deny and a hook `allow` was not observed to
+  grant more than `ask` (unmeasured, so never emitted); a pass-through is `{"decision":"ask"}`,
+  a core-hook `ask` becomes `force_ask` (plain `ask` defers to the user's allow rules), a core
+  deny is a deny, and any hook failure, timeout,
+  bad JSON, exhausted 25s budget or unverified argument shape is a fail-closed deny.
+  `PostToolUse` always answers `{}`. `Stop` turns a core `block` into one
+  `{"decision":"continue"}` guarded by a marker under
+  `${AGENT_STATE_DIR:-$HOME/.agent/state}/antigravity-stop/<conversationId>` (6h TTL).
+  With `AGENT_ANTIGRAVITY_WORKER=1` every matched tool call is denied without running a
+  hook. `GEMINI_API_KEY`/`GOOGLE_API_KEY` are scrubbed from the hooks' environment.
+  Review fixes: `send_command_input` (text typed into a live shell) is now matched and
+  guarded as `Bash`; the Stop chain keeps a reserved time slice for `brain-capture.py` and
+  `session-close.sh` and reports a gate that overran; a malformed `AGENT_ANTIGRAVITY_BUDGET_S`
+  falls back to 25 instead of crashing the hook; `session-quality-gate.py` reads agy's
+  `tool_calls` transcript shape. `core/tests/antigravity-adapter-test.sh` (113 checks,
+  includes a drift check against the Codex template) and a new `adapter-parity.sh`
+  antigravity section cover it.
+- **Antigravity plugin install (W5-4)**: `adapters/antigravity/install-plugin.py`,
+  `plugin.json` and `hooks.json.template`. `setup.sh --antigravity` installs a plugin folder
+  (`${AGENT_ANTIGRAVITY_PLUGIN_DIR:-~/.gemini/config/plugins/agent-harness}`) whose
+  `hooks.json` points at the absolute adapter path. It writes atomically and idempotently,
+  refuses a foreign plugin folder or a framework root containing shell metacharacters,
+  offers `--uninstall`, `--check` and `--dry-run`, and never reads or writes
+  `~/.gemini/config/hooks.json` or agy's `settings.json`. Setup also prints (never applies)
+  API-key and `permissions.deny` guidance. `setup.sh --doctor` gained an "antigravity native
+  hooks" check (`core/tests/antigravity-native-hooks-test.sh`, 86 checks). A marker file keeps
+  a folder ours after an uninstall that left a user file behind, so reinstall and
+  `setup.sh --antigravity` no longer refuse it, and the setup step warns instead of aborting.
+  The `permissions.deny` guidance uses agy's documented prefix form, not `*` globs.
+- **Antigravity worker API-key opt-in (W5-2)**: `ANTIGRAVITY_AUTH=apikey` makes
+  `antigravity-worker.sh` read a Gemini API key from the Keychain (service `gemini-api-key`)
+  and export `GEMINI_API_KEY` into agy's environment only, never argv or logs. A missing item
+  or `security` binary exits 2; a missing `"modelProvider": "gemini"` in agy's settings is a
+  stderr warning, and the worker never edits that file. The keyring stays the default. The
+  worker also exports `AGENT_ANTIGRAVITY_WORKER=1` for every dispatch. Review fixes: the worker
+  writes a static workspace deny plugin (`.agents/plugins/agent-worker-deny/`) before agy
+  starts, exports the API key only after that succeeds and exits 2 otherwise, and its sandbox
+  profile denies writes to `~/.gemini/config/hooks.json`, `config/plugins/` and
+  `settings.json` (`core/tests/antigravity-worker-test.sh`, 95 checks, includes a real
+  `sandbox-exec` enforcement check).
+
+### Changed
+- **Antigravity docs and registry brought current with agy 1.2.12 (W5-5)**:
+  `adapters/antigravity/README.md` now records the 2026-09-29 probe (soft-deny in
+  `denied_actions` plus a `jetski ... auto-denied` stderr notice, exit 3 on status ERROR),
+  the Gemini CLI individual end date 2026-06-18, the API-key opt-in, the native-hook plugin,
+  and the worker threat-model drift (headless 1.2.12 ran `echo` with no allow rule).
+  `docs/runtime-registry.json` antigravity: `cli_version_measured` 1.2.12, `measured_on`
+  2026-09-29, `hook_events_wired` PreToolUse/PostToolUse/Stop. `docs/hook-protocol.md` gained
+  section 13 and the `antigravity` ai value; `docs/cross-runtime-harness-design.md` states
+  what the plugin enforces and what it does not.
+
+### Fixed
+- **Antigravity lane counted a soft-denied run as success (W5-1).** Headless agy
+  soft-denies a tool call it cannot get approval for: the run continues and exits 0
+  with a stderr notice. `antigravity-worker.sh` now exits 9 on that notice and 10 when
+  the `--output-format json` envelope is unparseable or its `status` is not
+  `SUCCESS`. It captures agy's output outside the sandbox's writable dir, so a
+  prompt-driven write cannot forge the envelope. `antigravity-preflight.sh` reports a
+  soft-deny as exit 8 (lane absent), reads the probe token from `.response` only, and
+  treats `authentication required` as an auth failure. New
+  `core/tests/antigravity-preflight-test.sh`.
+- **Antigravity soft-deny detection missed agy 1.2.12 (W5-1b).** 1.2.12 reports a
+  soft-deny as a non-empty `denied_actions` array in the json envelope plus a stderr
+  notice with new wording, which the 1.1.14 pattern did not match, so
+  `antigravity-worker.sh` returned exit 0 for a run that was denied. It now exits 9 on a
+  non-empty `denied_actions` (single-value stdout only) or a stderr match on
+  `permission check failed|denied permission to|auto-denied|cannot prompt for`; an empty
+  `denied_actions` is not a soft-deny, and agy's own nonzero exit codes (including the
+  undocumented 3) pass through unchanged.
+
 ## [0.5.12] - 2026-10-01
 
 ### Added
