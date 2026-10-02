@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.13] - 2026-10-02
+
 ### Added
 - **Antigravity native hook adapter (W5-3)**: `adapters/antigravity/adapter.sh` and
   `adapter.py` translate agy 1.2.12's `PreToolUse`/`PostToolUse`/`Stop` hook JSON (event
