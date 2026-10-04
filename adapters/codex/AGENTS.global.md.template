@@ -1,22 +1,7 @@
-# AGENTS.md — global Codex CLI instructions
+# Codex runtime guidance
 
-[Codex CLI](https://github.com/openai/codex) reads this file for EVERY
-session, in every repository, in addition to whatever project-local
-`AGENTS.md` that repository ships. Keep this one portable — nothing here
-should assume a specific project, stack, or directory layout. A project's own
-`AGENTS.md` (if present) is more specific and wins on conflict.
-
-## Evidence contract
-
-- A claim about the codebase carries a citation — `file:line`, or the
-  verbatim output of a command actually run. Don't state something as fact
-  because it sounds right; if it wasn't read or run, say **"unverified"** and
-  say what would confirm it.
-- "Done" means there is evidence — a file that was written, a test that was
-  run and passed, an assertion that was checked — not a description of intent.
-- Uncertainty stated plainly beats a confident wrong answer. "I don't know,
-  and here is what's missing" is a better response than a guess dressed up as
-  certainty.
+Common operating policy is installed as a managed block by `setup.sh`.
+Project-specific AGENTS.md instructions remain scoped to their project.
 
 ## Tier discipline
 
@@ -29,50 +14,14 @@ should assume a specific project, stack, or directory layout. A project's own
   profile before reaching for a higher tier — tier-up is the last resort, not
   the first move.
 
-## Review before done
+## Harness coverage
 
-- Re-read the actual diff before declaring a task complete — do not report
-  completion from memory of what was intended.
-- Paste real evidence: test output, build output, the command that was run
-  and its result. A completion claim with no attached evidence is not
-  trustworthy, including to the person who wrote it five minutes ago.
-
-## Git discipline
-
-- Never run `git commit --no-verify` (or any other hook-skipping flag)
-  unless the user has explicitly typed that flag themselves in this
-  conversation. If a hook fails, fix the underlying cause — don't route
-  around it.
-
-## Risk paths
-
-- Secrets/credential files, authentication code, payment/billing
-  integration, and deploy or migration configuration are risk areas
-  regardless of project. Before editing in one of these, surface what's
-  about to change and ask — don't infer consent from a broader, unrelated
-  request.
-
-## Style
-
-- No filler prose. Skip "Sure!", "I'll do that now," and similar — go
-  straight to the action or the answer.
-
-## If this repo carries agent-harness
-
-Everything below only applies when the current repository has the
-agent-harness framework installed (a `core/hooks/` directory, a
-`hook-config.yml`, or a project `AGENTS.md` that references it — check before
-assuming):
-
-- The shell wrapper (`codex-shell-wrap.sh`) enforces the risk-path and
-  secrets rules above at the tool-call layer; a blocked call exits 100 and
-  explains which pattern matched.
-- Multi-session coordination: register with
-  `bash core/infra/codex-session.sh <task-slug>` on entry to a worktree, one
-  worktree per concurrent task.
-- A shared cross-AI knowledge store may be available via the `brain` MCP
-  server — query before re-deriving (`brain_search`, `brain_get`,
-  `brain_neighbors`), and only ever WRITE through `brain_capture`'s raw
-  quarantine, never directly into the curated store.
-- Follow the project's own `AGENTS.md` and `rules/` for anything more
-  specific — this file is the portable floor, not the ceiling.
+- The compatibility shell wrapper enforces gates only when it is explicitly invoked.
+  A symlink on PATH or the presence of this repository does not connect Codex tools to it.
+  Native file writes are not intercepted by that wrapper. Verify the current host's
+  hooks and approval configuration before asserting coverage.
+- For an existing agent session, use the repository's session coordinator to register
+  a worktree. `core/infra/codex-session.sh` launches a NEW interactive Codex session;
+  do not run it merely to register the current one.
+- Follow the project's AGENTS.md and rules when working in the harness itself.
+  Confirm the brain MCP is registered before attempting its read/capture tools.

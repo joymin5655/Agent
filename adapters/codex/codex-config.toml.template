@@ -2,21 +2,15 @@
 # Copy to ~/.codex/config.toml (or merge into existing).
 # Replace {{FRAMEWORK_ROOT}} with the absolute path to your Agent/ checkout.
 
-# Profile: route Codex's shell tool through the framework's gate hooks.
-# Requires codex-shell-wrap.sh on PATH (see adapters/codex/README.md).
-[tools.shell]
-command = "{{FRAMEWORK_ROOT}}/adapters/codex/codex-shell-wrap.sh"
+# Native Codex sandbox configuration. Instruction files do not enforce gates.
+sandbox_mode = "workspace-write"
 
-# Project context file (Codex reads AGENTS.md per-project; see template).
-# Codex also reads ~/.codex/AGENTS.md as a global instruction file.
-project_doc = "AGENTS.md"
+[sandbox_workspace_write]
+network_access = false
 
-# Sandbox — Codex's permission model. Recommended for use alongside this
-# framework: trust prompts so the wrapper can BLOCK actions before they hit
-# the sandbox.
-[sandbox]
-mode = "workspace-write"
-allow_network = false
+# The shell wrapper is an explicit compatibility tool, not an automatically wired
+# Codex shell replacement. Do not use obsolete [tools.shell] or [sandbox] tables.
+# See adapters/codex/README.md for coverage limitations.
 
 # Skills directory (optional — set if using ~/.codex/skills layout).
 
