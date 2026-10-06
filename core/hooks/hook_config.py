@@ -178,7 +178,7 @@ def _read_yaml(path):
     """Parse a YAML file into a dict, or {} on any problem. Never raises."""
     try:
         import yaml  # optional dependency — absent => skip yml entirely
-    except ImportError:
+    except Exception:  # absent or broken install; JSON config still applies
         _warn_pyyaml_missing()
         return {}
     try:
@@ -333,6 +333,33 @@ def load_risk_area_secret_paths(repo_root: str) -> list:
         return tokens
     except Exception:
         return []
+
+
+def risk_areas_unparseable(repo_root: str) -> bool:
+    """True when `.agent/hook-config.yml` mentions `risk_areas` but PyYAML is
+    unavailable (P1-9). `load_risk_area_secret_paths` then sees no tokens, so the
+    Bash guard must fail CLOSED instead of silently allowing every path. A raw
+    substring check (no parser) keeps projects that declare nothing unaffected.
+    An unreadable yml under a missing parser counts as declared. Only a module
+    exposing `safe_load` counts as PyYAML: a stray `yaml.py`/`yaml/` or a broken
+    install is treated as absent. Never raises.
+    """
+    try:
+        import yaml
+        if callable(getattr(yaml, "safe_load", None)):
+            return False
+    except Exception:
+        pass
+    try:
+        if not repo_root or not isinstance(repo_root, str):
+            return False
+        yml_path = os.path.join(repo_root, ".agent", "hook-config.yml")
+        if not os.path.isfile(yml_path):
+            return False
+        with open(yml_path, "r", encoding="utf-8", errors="replace") as f:
+            return "risk_areas" in f.read()
+    except Exception:
+        return True
 
 
 # Bounds for session.completion_tests (P3-1). A project cannot make the Stop

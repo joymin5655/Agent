@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **risk-area guard fails closed without PyYAML (P1-9)**: when `.agent/hook-config.yml`
+  declares `risk_areas` but PyYAML is not importable, `pre-tool-guard.sh` guard 11b no
+  longer sees zero tokens and allows everything. It now denies any command the token match
+  could deny for some path (the same verb match without the path clause), so fail-closed is
+  a strict superset of the normal path and JSON-declared paths stay enforced. It over-blocks
+  on purpose until PyYAML is installed. New `hook_config.risk_areas_unparseable()` counts
+  only a module exposing `safe_load` as PyYAML; the guard's Python drops the working
+  directory from `sys.path`, so a stray `yaml.py` cannot stand in for it. Projects without a
+  `risk_areas` declaration are unaffected. `risk-area-wiring-test.sh` section (e) adds 16
+  checks (shim `yaml` modules, security-review bypass forms).
+
 ## [0.5.13] - 2026-10-02
 
 ### Added
