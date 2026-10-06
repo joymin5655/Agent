@@ -5,7 +5,7 @@
 | 작성일 | 2026-07-11 |
 | 기준 버전 | v0.2.6 |
 | 성격 | **감사 + 판정 문서** — 코드를 바꾸지 않는다. 발굴 작업은 LE-* 백로그(`harness-improvement-plan.md` §4.12)로 추적 |
-| 기준 | [`concepts/loop-engineering.md`](concepts/loop-engineering.md)의 15항목 설계 체크리스트 (출처: Addy Osmani *Loop Engineering* + cobusgreyling/loop-engineering, 2026-07 접근) |
+| 기준 | [`concepts/loop-engineering.md`](../concepts/loop-engineering.md)의 15항목 설계 체크리스트 (출처: Addy Osmani *Loop Engineering* + cobusgreyling/loop-engineering, 2026-07 접근) |
 
 ---
 

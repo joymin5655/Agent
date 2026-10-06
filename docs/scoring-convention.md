@@ -114,4 +114,4 @@ Step 2d (`--verify-blocking`) for the call site.
 - `skills/verify-completion/SKILL.md` — the independent-context judge that wraps
   it and adds the semantic pass.
 - `core/infra/supervisor-goal-audit.sh` — the 25-point goal scorer.
-- `docs/harness-improvement-plan.md` — P3-5 (this), H-3, P2-2.
+- `docs/internal/harness-improvement-plan.md` — P3-5 (this), H-3, P2-2.

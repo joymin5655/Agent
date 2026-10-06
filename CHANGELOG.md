@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Positioned as a personal harness published for reference (D-1)**: README.md and
+  README.ko.md open with a status note naming the parts tuned to one developer's setup
+  (worker lanes, model-routing tiers, MCP matchers in the secret-scan hook). The backlog and
+  the two dated audits moved to `docs/internal/` with an index; every reference, including
+  `core/tests/doc-reality.sh`, `grade.sh` and `loop-run.sh`, points to the new paths.
+
 ### Fixed
 - **risk-area guard fails closed without PyYAML (P1-9)**: when `.agent/hook-config.yml`
   declares `risk_areas` but PyYAML is not importable, `pre-tool-guard.sh` guard 11b no

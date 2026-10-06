@@ -8,7 +8,7 @@ tools: Bash, Read, Write, Edit, Grep, Glob
 # /harness-loop
 
 > **HUMAN-ONLY-EDITED.** This file is the §5 "program.md analog"
-> (`docs/harness-improvement-plan.md` §5.1): it states the loop's own rules.
+> (`docs/internal/harness-improvement-plan.md` §5.1): it states the loop's own rules.
 > The loop agent reads it every iteration but must never edit
 > `skills/harness-loop/SKILL.md` itself — TARGET below is fixed to the
 > reviewer-prompt pair precisely so a candidate cannot rewrite the regulation
@@ -18,7 +18,7 @@ tools: Bash, Read, Write, Edit, Grep, Glob
 ## Mission
 
 Apply the autonomous-improvement-loop procedure (§5,
-`docs/harness-improvement-plan.md`) to this harness's own reviewer prompts.
+`docs/internal/harness-improvement-plan.md`) to this harness's own reviewer prompts.
 Default TARGET (the only files a loop iteration may edit): `agents/code-reviewer.md`
 and `agents/security-reviewer.md`. A hook-surface mission (editing
 `core/hooks/`) is allowed only when the target hook already has its own

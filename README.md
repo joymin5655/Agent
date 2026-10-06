@@ -8,6 +8,15 @@
 
 **English** | [한국어](README.ko.md)
 
+> **Status: a personal harness, published as a reference.** This is the setup one
+> developer runs every day, kept public so others can read it, borrow from it, or fork it.
+> Parts of it are tuned to that setup: the worker lanes (grok, kiro, openrouter), the
+> model-routing tiers, and the MCP servers the secret-scan hook matches. It has not been
+> field-tested on other developers' setups (CI only runs a scratch-home install smoke), and
+> enforcement is strongest on Claude Code (see
+> [cross-runtime design](docs/cross-runtime-harness-design.md)). Internal working notes
+> (backlog and audits, in Korean) are in [`docs/internal/`](docs/internal/README.md).
+
 <p align="center">
   <img src="assets/readme/hero.svg" alt="The harness pipeline: /spec, the spec-gate.py machine gate, /supervise, the goal-audit gate, /verify-completion, the gitleaks and risk gates, then /wrap — a pulse travels the pipeline and each gate lights green as it passes." width="1200" />
 </p>
@@ -577,7 +586,7 @@ see [`docs/specializing-agents.md`](docs/specializing-agents.md).
 - [`docs/scoring-convention.md`](docs/scoring-convention.md) — the shared verifier verdict schema
 - [`docs/benchmark/results.md`](docs/benchmark/results.md) — reviewer self-benchmark
 - [`docs/benchmark/landscape.md`](docs/benchmark/landscape.md) — survey vs popular harnesses + gap→backlog map
-- [`docs/harness-improvement-plan.md`](docs/harness-improvement-plan.md) — audit + improvement roadmap *(Korean)*
+- [`docs/internal/harness-improvement-plan.md`](docs/internal/harness-improvement-plan.md) — audit + improvement roadmap *(Korean)*
 - Migrating from the pre-2026-05 mirror? The v0 mirror left the shipped tree in 0.2.9 (its retired agent providers were a ghost-specialist trap). It lives on the `archive/v0-mirror` tag: `git show archive/v0-mirror:legacy/v0-mirror-2026-05-12/ARCHIVE-NOTE.md`.
 
 ## How this repo is built

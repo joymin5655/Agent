@@ -16,7 +16,7 @@ Sources (accessed 2026-07):
   `docs/build-with-claude/prompt-engineering`)
 - Anthropic, *How the agent loop works* (Agent SDK docs) — loop-side
   implications are audited separately in
-  [`../loop-engineering-audit-2026-07.md`](../loop-engineering-audit-2026-07.md) §4.
+  [`../internal/loop-engineering-audit-2026-07.md`](../internal/loop-engineering-audit-2026-07.md) §4.
 
 Status: **advisory**. The supervise skill cites this doc when shaping dispatch
 prompts; no machine gate enforces it yet (candidate manager-audit lane — see

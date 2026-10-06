@@ -55,13 +55,13 @@ gate() { OUT="$(bash "$GATE" "$1" 2>&1)"; RC=$?; }
 
 # helper: write a fixture plan doc declaring a P-row count
 plan_prows() { # $1=dir $2=declared-number  (creates 2 real P-rows)
-  mkdir -p "$1/docs"
+  mkdir -p "$1/docs/internal"
   {
     printf '%s\n' '# plan'
     printf '%s\n' '| P0-1 | task | why | done | S |'
     printf '%s\n' '| P1-1 | task | why | done | S |'
-    printf '%s\n' "count: \`grep -cE '^\\| P[0-3]-[0-9]+' docs/harness-improvement-plan.md\` = **$2**."
-  } > "$1/docs/harness-improvement-plan.md"
+    printf '%s\n' "count: \`grep -cE '^\\| P[0-3]-[0-9]+' docs/internal/harness-improvement-plan.md\` = **$2**."
+  } > "$1/docs/internal/harness-improvement-plan.md"
 }
 
 echo "=== (a) phantom path ref in a current-state doc -> detected + named ==="
@@ -122,9 +122,9 @@ printf '%s' "$OUT" | grep -qi 'backlog count'; check "backlog-mismatch-named-in-
 
 echo
 echo "=== (f) artifact-count mismatch (declares 5 skills, live = 2) -> detected ==="
-T=$(fresh_tree); mkdir -p "$T/docs" "$T/skills/one" "$T/skills/two"
+T=$(fresh_tree); mkdir -p "$T/docs/internal" "$T/skills/one" "$T/skills/two"
 : > "$T/skills/one/SKILL.md"; : > "$T/skills/two/SKILL.md"
-printf '%s\n' '# plan' 'skills: `ls skills/*/SKILL.md | wc -l` = **5** (stale).' > "$T/docs/harness-improvement-plan.md"
+printf '%s\n' '# plan' 'skills: `ls skills/*/SKILL.md | wc -l` = **5** (stale).' > "$T/docs/internal/harness-improvement-plan.md"
 gate "$T"; [[ $RC -eq 1 ]]; check "artifact-mismatch-detected" $?
 printf '%s' "$OUT" | grep -qi 'artifact count'; check "artifact-mismatch-named-in-hit" $?
 
@@ -187,9 +187,9 @@ gate "$T"; [[ $RC -eq 0 ]]; check "backlog-match-pass" $?
 
 echo
 echo "=== (j) artifact-count MATCH (declares 2 agents, live = 2) -> PASS ==="
-T=$(fresh_tree); mkdir -p "$T/docs" "$T/agents"
+T=$(fresh_tree); mkdir -p "$T/docs/internal" "$T/agents"
 : > "$T/agents/x.md"; : > "$T/agents/y.md"
-printf '%s\n' '# plan' 'agents: `ls agents/*.md | wc -l` = **2**.' > "$T/docs/harness-improvement-plan.md"
+printf '%s\n' '# plan' 'agents: `ls agents/*.md | wc -l` = **2**.' > "$T/docs/internal/harness-improvement-plan.md"
 gate "$T"; [[ $RC -eq 0 ]]; check "artifact-match-pass" $?
 
 echo

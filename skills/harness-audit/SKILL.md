@@ -136,7 +136,7 @@ security scan), write:
 - **Fix** — the concrete corrective step (edit which doc / ship which file / restore
   which exec bit), matching the guidance the gate itself prints.
 - **Backlog follow-up** — whether this warrants a new row in
-  `docs/harness-improvement-plan.md` (a recurring or structural failure does; a
+  `docs/internal/harness-improvement-plan.md` (a recurring or structural failure does; a
   one-off local fix does not). Suggest the row; do not add it here.
 
 A SKIP is not a PASS: an absent `gitleaks` is a coverage gap to flag (install it or
