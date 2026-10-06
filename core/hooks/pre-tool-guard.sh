@@ -232,9 +232,20 @@ _PROJ_ROOT="${AGENT_PROJECT_DIR:-${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-to
 if [[ -n "$_PROJ_ROOT" && -n "$_HOOK_DIR" ]]; then
   _EXTRA_SECRET_ALT=$(_HD="$_HOOK_DIR" _PR="$_PROJ_ROOT" python3 - <<'PY' 2>/dev/null || true
 import os, sys
+# `python3 -` puts the working directory first on sys.path; drop it so a stray
+# yaml.py / yaml/ in the repo cannot stand in for PyYAML.
+try:
+    _cwd = os.getcwd()
+except OSError:  # deleted working directory
+    _cwd = ""
+sys.path[:] = [p for p in sys.path if p not in ("", ".", _cwd)]
 sys.path.insert(0, os.environ.get("_HD", ""))
 try:
     import hook_config
+    if hook_config.risk_areas_unparseable(os.environ.get("_PR", "")):
+        # '!' can never appear in a safe token, so this sentinel is unambiguous.
+        print("!UNPARSEABLE")
+        sys.exit(0)
     toks = hook_config.load_risk_area_secret_paths(os.environ.get("_PR", ""))
 except Exception:
     toks = []
@@ -243,8 +254,24 @@ except Exception:
 print("|".join(t.replace(".", "[.]") for t in toks))
 PY
 )
+  _SECRET_READ_VERBS='cat|tac|nl|head|tail|less|more|awk|sed|grep|egrep|fgrep|rg|ag|bat|hexdump|xxd|od|strings|dd|fold|rev|tee|cp|mv|ln|md5sum|shasum|sha256sum|sha512sum|diff|cmp|gunzip|bunzip2|bzip2|bzcat|xz|xzcat|unxz|lzma|lz4cat|tar|unzip|7z|zip|gpg|openssl|age|rsync|scp|curl|wget|source|\.'
+  # P1-9: risk_areas declared but PyYAML absent -> the declared paths are unknown,
+  # so deny anything the token match below could deny for SOME path: the same
+  # unanchored verb match minus the path clause. That keeps fail-closed a strict
+  # superset of the token path (incl. JSON-declared paths) and over-blocks
+  # deliberately until PyYAML is installed.
+  if [[ "$_EXTRA_SECRET_ALT" == "!UNPARSEABLE" ]]; then
+    if echo "$COMMAND" | grep -qiE "($_SECRET_READ_VERBS)\s+"; then
+      log_violation secrets "risk_areas declared but unparseable (PyYAML missing)"
+      emit_deny "Read/copy/upload command blocked: project secret paths cannot be checked (Risk Area #2: secrets).
+WHY: .agent/hook-config.yml declares risk_areas, but PyYAML is not installed, so the declared secret paths are unknown and the guard fails closed.
+FIX: install PyYAML (bash setup.sh --bootstrap asks first; or python3 -m pip install --user pyyaml), then retry."
+      exit 0
+    fi
+    _EXTRA_SECRET_ALT=""
+  fi
   if [[ -n "$_EXTRA_SECRET_ALT" ]]; then
-    if echo "$COMMAND" | grep -qiE "(cat|tac|nl|head|tail|less|more|awk|sed|grep|egrep|fgrep|rg|ag|bat|hexdump|xxd|od|strings|dd|fold|rev|tee|cp|mv|ln|md5sum|shasum|sha256sum|sha512sum|diff|cmp|gunzip|bunzip2|bzip2|bzcat|xz|xzcat|unxz|lzma|lz4cat|tar|unzip|7z|zip|gpg|openssl|age|rsync|scp|curl|wget|source|\.)\s+.*($_EXTRA_SECRET_ALT)"; then
+    if echo "$COMMAND" | grep -qiE "($_SECRET_READ_VERBS)\s+.*($_EXTRA_SECRET_ALT)"; then
       log_violation secrets "project secrets path access blocked"
       emit_deny "Access to a project-declared secret path blocked (Risk Area #2: secrets).
 WHY: hook-config.yml risk_areas.secrets.paths marks this path as secret; reading/copying/uploading it exposes credentials.

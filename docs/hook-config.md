@@ -10,7 +10,10 @@ file at its repo root:
 - `.agent/hook-config.json` (stdlib JSON — no extra dependency)
 
 If both files exist, their lists are concatenated. The plugin core carries no
-hard dependency on PyYAML; the `.yml` form is simply skipped if PyYAML is absent.
+hard dependency on PyYAML; the `.yml` form is skipped if PyYAML is absent. One
+exception: if that `.yml` declares `risk_areas`, the Bash guard fails closed and
+denies read/copy/upload commands, plus any command containing one of those verbs as a
+substring (e.g. `git add .`), until PyYAML is installed (P1-9).
 
 ## Schema
 

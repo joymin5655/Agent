@@ -92,6 +92,14 @@ confirm() {
     [[ "$ans" =~ ^[Yy] ]]
 }
 
+# PyYAML usable = importable without the working directory on sys.path (a stray
+# yaml.py must not pass for it) and exposing safe_load — the same test the
+# pre-tool-guard 11b loader applies (P1-9).
+pyyaml_usable() {
+    python3 -c 'import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
+import yaml; assert callable(yaml.safe_load)' >/dev/null 2>&1
+}
+
 # Render src -> dst with {{FRAMEWORK_ROOT}} substituted. Idempotent: a dst
 # byte-identical to the fresh render is reported up-to-date with no prompt, so
 # re-running setup is a no-op update pass; only a dst that actually differs
@@ -598,15 +606,16 @@ doctor() {
     fi
 
     # 4b. PyYAML — hook_config.py needs it to parse hook-config.yml (project
-    #     path protection). Absent PyYAML fails OPEN (protection silently
-    #     inactive), not closed, so this is WARN not FAIL (real incident,
+    #     path protection). Absent PyYAML skips the .yml settings; a declared
+    #     risk_areas instead fails CLOSED (P1-9: the Bash guard denies the whole
+    #     read/copy/upload family), so this is WARN not FAIL (real incident,
     #     2026-09-26: a Mac python3 without PyYAML skipped the config and
-    #     4 test batteries failed downstream). WARN text says INACTIVE
-    #     explicitly so this row cannot be misread as merely cosmetic.
-    if python3 -c 'import yaml' >/dev/null 2>&1; then
+    #     4 test batteries failed downstream). The WARN text names both effects
+    #     so this row cannot be misread as merely cosmetic.
+    if pyyaml_usable; then
         add_row PASS "PyYAML — importable (hook-config.yml path protection active)"
     else
-        add_row WARN "PyYAML missing — hook-config.yml path protection inactive (python3 -m pip install --user pyyaml)"
+        add_row WARN "PyYAML missing — hook-config.yml settings inactive; declared risk_areas block read/copy commands (python3 -m pip install --user pyyaml)"
     fi
 
     # 5. core/hooks/*.sh + *.py executable. hook_config.py is a library module
@@ -1582,7 +1591,7 @@ bootstrap() {
     # follows, so a host with no supported OS package manager can still get
     # PyYAML guidance instead of bailing out before reaching it.
     local pyyaml_missing=0
-    python3 -c 'import yaml' >/dev/null 2>&1 || pyyaml_missing=1
+    pyyaml_usable || pyyaml_missing=1
 
     if [[ ${#missing[@]} -eq 0 && $pyyaml_missing -eq 0 ]]; then
         echo "All bootstrap-managed dependencies already present: ${deps[*]} pyyaml"

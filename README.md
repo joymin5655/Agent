@@ -185,9 +185,11 @@ Required:
 - `git` 2.30+
 - `bash` 5.0+ (macOS ships 3.2 — `brew install bash`)
 - `python3` 3.9+ (several hooks are Python scripts)
-- `PyYAML` — without it, `hook_config.py` silently skips `hook-config.yml` and
-  project-declared secret-path protection is **inactive** (fails open, not
-  closed). Install: `python3 -m pip install --user pyyaml`.
+- `PyYAML` — without it, `hook_config.py` skips `hook-config.yml`. If that file
+  declares `risk_areas`, the Bash guard **fails closed**: read/copy/upload commands
+  are denied until PyYAML is installed, and so is any command containing one of those
+  verbs as a substring (e.g. `git add .` matches `dd`). Other `.yml` settings are still
+  skipped. Install: `python3 -m pip install --user pyyaml`.
 - At least one AI CLI: [Claude Code](https://claude.com/claude-code), Codex CLI, or Gemini CLI
 
 Optional:

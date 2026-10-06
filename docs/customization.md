@@ -22,7 +22,8 @@ never remove or weaken a built-in, never flip `deny` to `allow`.
 
 ### Where it lives
 
-- File: `.agent/hook-config.yml` (requires PyYAML; skipped entirely if absent)
+- File: `.agent/hook-config.yml` (requires PyYAML; skipped if absent, except that
+  a declared `risk_areas` makes the Bash guard fail closed)
   or `.agent/hook-config.json`, at the resolved repo root. Both are read if
   both exist; their lists are concatenated.
 - `templates/hook-config.yml.template` (the file `setup.sh --project` scaffolds
