@@ -120,6 +120,46 @@ else
   no "claude-native-nonstop-noop" "rc=$RC delta=$((`raw_count` - BEFORE))"
 fi
 
+# Claude fires Stop at the end of EVERY turn, not once per session. The same
+# session re-reporting the same WIP state must not pile up identical breadcrumbs.
+stop_s1() {
+  printf '%s' "{\"ai\":\"codex\",\"session_id\":\"s-1\",\"event\":\"Stop\",\"cwd\":\"$DIRTY\"}" \
+    | python3 "$HOOK" >/dev/null 2>&1
+}
+
+echo "=== (i) same session, same WIP state again → deduped, no new capture ==="
+BEFORE=$(raw_count); stop_s1; RC=$?
+if [[ "$RC" -eq 0 && "$((`raw_count` - BEFORE))" -eq 0 ]]; then ok "same-state-deduped"; else no "same-state-deduped" "rc=$RC delta=$((`raw_count` - BEFORE))"; fi
+
+echo "=== (j) same files keep growing (diffstat changes, porcelain same) → deduped ==="
+echo "more wip" >> "$DIRTY/a.txt"
+BEFORE=$(raw_count); stop_s1; RC=$?
+if [[ "$RC" -eq 0 && "$((`raw_count` - BEFORE))" -eq 0 ]]; then ok "growing-diff-deduped"; else no "growing-diff-deduped" "rc=$RC delta=$((`raw_count` - BEFORE))"; fi
+
+echo "=== (k) WIP file set changes (new untracked file) → new capture ==="
+echo "new" > "$DIRTY/b.txt"
+BEFORE=$(raw_count); stop_s1
+if [[ "$((`raw_count` - BEFORE))" -eq 1 ]]; then ok "changed-state-captures"; else no "changed-state-captures" "delta=$((`raw_count` - BEFORE))"; fi
+
+echo "=== (l) different session, same tree → its own capture ==="
+BEFORE=$(raw_count)
+printf '%s' "{\"ai\":\"codex\",\"session_id\":\"s-9\",\"event\":\"Stop\",\"cwd\":\"$DIRTY\"}" \
+  | python3 "$HOOK" >/dev/null 2>&1
+if [[ "$((`raw_count` - BEFORE))" -eq 1 ]]; then ok "other-session-captures"; else no "other-session-captures" "delta=$((`raw_count` - BEFORE))"; fi
+
+echo "=== (m) state reverts to an earlier one (A→B→A) → captures again ==="
+rm "$DIRTY/b.txt"   # back to the (i)/(j) state; only the newest capture is compared
+BEFORE=$(raw_count); stop_s1
+if [[ "$((`raw_count` - BEFORE))" -eq 1 ]]; then ok "reverted-state-captures"; else no "reverted-state-captures" "delta=$((`raw_count` - BEFORE))"; fi
+
+echo "=== (n) no session id → never deduped (sessions can't be told apart) ==="
+BEFORE=$(raw_count)
+for _ in 1 2; do
+  printf '%s' "{\"ai\":\"codex\",\"event\":\"Stop\",\"cwd\":\"$DIRTY\"}" \
+    | python3 "$HOOK" >/dev/null 2>&1
+done
+if [[ "$((`raw_count` - BEFORE))" -eq 2 ]]; then ok "no-session-not-deduped"; else no "no-session-not-deduped" "delta=$((`raw_count` - BEFORE))"; fi
+
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]

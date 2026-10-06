@@ -22,6 +22,9 @@ clean tree (already committed, or a read-only/research session) is a no-op, so
 raw/ never fills with empty markers — intentional insights belong in an explicit
 MCP brain_capture call, not here.
 
+Claude fires Stop at the end of every turn, not once per session, so a repeat of
+the same session's last-captured working-tree status is skipped as well.
+
 Hook protocol: reads stdin (canonical JSON, optional), writes ZERO bytes to
 stdout (pass-through observation), exits 0. Fail-open: every error is swallowed —
 a capture must never block, delay, or fail a session's end.
@@ -43,6 +46,7 @@ except Exception:  # pragma: no cover - import failure must not break the sessio
 
 _AI_ALIAS = {"claude-code": "claude"}
 _GIT_TIMEOUT = 5
+_DEDUPE_SCAN = 50  # newest same-slug captures checked for this session
 
 
 def _git(cwd: str, *args: str) -> str:
@@ -94,6 +98,27 @@ def _resolve_ai(data: dict) -> str:
     return _AI_ALIAS.get(ai, ai)
 
 
+def _already_captured(ai: str, session: str, slug: str, porcelain: str) -> bool:
+    """True if this session's latest capture for `slug` already holds the same
+    working-tree status. Keyed on porcelain, not diffstat: line counts grow every
+    turn while the WIP file set stays the same. Any error → False (capture anyway)."""
+    if not session:  # no id → "same session" is unknowable
+        return False
+    try:
+        d = store.raw_dir() / store.slugify(ai, "unknown")
+        block = "```\n" + porcelain.rstrip() + "\n```"
+        pattern = f"????????-??????-??????-{store.slugify(slug)}.md"  # write_raw stamp
+        for path in sorted(d.glob(pattern), reverse=True)[:_DEDUPE_SCAN]:
+            prov = store.parse_note(path)[0].get("provenance")
+            if not prov:  # unreadable (e.g. oversize) → can't tell which is newest
+                return False
+            if prov.get("session") == session:
+                return block in path.read_text(encoding="utf-8")
+    except Exception:
+        return False
+    return False
+
+
 def main() -> int:
     if store is None:
         return 0
@@ -117,6 +142,9 @@ def main() -> int:
 
     root = _git(cwd, "rev-parse", "--show-toplevel").strip()
     project = Path(root).name if root else Path(cwd).name
+    slug = f"session-{project}"
+    if _already_captured(ai, session, slug, porcelain):
+        return 0
 
     lines = [f"Session `{session}` ({ai}) on **{project}** — uncommitted WIP at session end.", ""]
     if diffstat.strip():
@@ -128,7 +156,7 @@ def main() -> int:
 
     try:
         store.write_raw(
-            ai=ai, session=session, slug=f"session-{project}",
+            ai=ai, session=session, slug=slug,
             body=body, source=f"session-capture:{event}",
             title=f"{ai} session on {project}", generated_by="brain-capture",
         )
