@@ -7,8 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.15] - 2026-10-07
+
 ### Added
-- **codex model resolver**: `core/infra/codex-models.py` (`check` / `apply` / `upgrade-for`)
+- **codex model resolver** (#146): `core/infra/codex-models.py` (`check` / `apply` / `upgrade-for`)
   compares the `deep`/`quick` profile pins with codex's own model catalog, probes candidates
   before rewriting only the `model` line (with a dated backup), and reads the per-tier
   family from `~/.agent/codex-tiers.json` (`adapters/codex/codex-tiers.json.template`,
