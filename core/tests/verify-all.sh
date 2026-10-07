@@ -134,6 +134,10 @@ fi
 # --- run every check, report each, tally ---
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
+# checks that run call-worker.sh must not append to the real ~/.agent logs; a caller-set
+# seam wins so a test can still point them elsewhere
+export AGENT_LOGS_DIR="${AGENT_LOGS_DIR:-$WORK/agent-logs}"
+export AGENT_WORKERS_DIR="${AGENT_WORKERS_DIR:-$WORK/agent-workers}"
 OUTFILE="$WORK/check.out"
 
 passed=0
