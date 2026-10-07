@@ -114,7 +114,7 @@ relative to what it reviews** — several low-correlation review perspectives
 well below the reviewed work, supporting mid-tier review lanes; and
 **harnesses need per-model re-tuning** — one frontier model had to be dropped
 mid-experiment because it took emphasis markers literally and spiraled
-(tracked as a backlog note in `docs/harness-improvement-plan.md`).
+(tracked as a backlog note in `docs/internal/harness-improvement-plan.md`).
 
 ---
 
@@ -151,4 +151,4 @@ Related: `docs/benchmark/landscape.md` found per-work-class model tiering to be
 an open niche field-wide — this doc is the economic argument for keeping that
 investment. Backlog: M-6/M-7 shipped with this doc, M-8 (telemetry for
 spawn-reuse ratios and per-wave delegated volume) tracked in
-`docs/harness-improvement-plan.md` § 4.10.
+`docs/internal/harness-improvement-plan.md` § 4.10.

@@ -396,8 +396,8 @@ mapping was checked, not new mappings):
   light tier, deep=high-effort top tier, PR #88) match the current GPT-5.6
   lineup; a newer above-top variant (client-side since 2026-07) is a **watch
   item** for the deep profile — per effort-before-tier-up, no promotion
-  without benchmark evidence (backlog MC series, `harness-improvement-plan.md`
-  §4.13). Intro/promotional pricing on the current mid tier is noted as a
+  without benchmark evidence (backlog MC series,
+  `internal/harness-improvement-plan.md` §4.13). Intro/promotional pricing on the current mid tier is noted as a
   cost tailwind but changes no mapping (no price constants in-repo).
 
 - **2026-08-25** — free-lane wiring + launcher set landed (spec:

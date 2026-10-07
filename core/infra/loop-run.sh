@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # loop-run.sh — P2-1 + P2-4 + O-2 (impl): the autonomous-loop mechanical runner.
 #
-# §5 (docs/harness-improvement-plan.md) describes a loop that iterates: pick an
+# §5 (docs/internal/harness-improvement-plan.md) describes a loop that iterates: pick an
 # idea, edit ONE target, commit, grade, keep-or-discard, repeat until a cap /
 # timeout / circuit-breaker stops it. This script is the SOLE place that
 # enforcement lives — skills/loop and skills/harness-loop are thin callers that

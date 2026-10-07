@@ -8,6 +8,13 @@
 
 [English](README.md) | **한국어**
 
+> **상태: 개인 하네스를 참고용으로 공개한 레포입니다.** 개발자 한 명이 매일 쓰는 구성을
+> 그대로 공개해, 다른 사람이 읽고 일부를 가져가거나 포크할 수 있게 했습니다. 일부는 그
+> 구성에 맞춰져 있습니다. 워커 레인(grok, kiro, openrouter), 모델 라우팅 티어, 시크릿 스캔
+> 훅이 매칭하는 MCP 서버가 그렇습니다. 다른 개발자 환경에서 실사용 검증은 아직 없고(CI는 빈
+> HOME 설치 스모크만 실행), 강제력은 Claude Code에서 가장 강합니다([크로스 런타임 설계](docs/cross-runtime-harness-design.md)).
+> 내부 작업 문서(백로그, 감사)는 [`docs/internal/`](docs/internal/README.md)에 있습니다.
+
 <p align="center">
   <img src="assets/readme/hero.svg" alt="하네스 파이프라인: /spec → spec-gate.py 기계 게이트 → /supervise → goal-audit 게이트 → /verify-completion → gitleaks·리스크 게이트 → /wrap — 펄스가 지나갈 때마다 게이트가 초록으로 점등" width="1200" />
 </p>
@@ -545,7 +552,7 @@ risk_areas:
 - [`docs/scoring-convention.md`](docs/scoring-convention.md) — 공용 검증 판정 스키마
 - [`docs/benchmark/results.md`](docs/benchmark/results.md) — 리뷰어 셀프 벤치마크
 - [`docs/benchmark/landscape.md`](docs/benchmark/landscape.md) — 대중적 하네스 대비 서베이 + 갭→백로그 맵
-- [`docs/harness-improvement-plan.md`](docs/harness-improvement-plan.md) — 감사 + 개선 로드맵 *(한국어)*
+- [`docs/internal/harness-improvement-plan.md`](docs/internal/harness-improvement-plan.md) — 감사 + 개선 로드맵 *(한국어)*
 - 2026-05 이전 미러에서 마이그레이션하나요? v0 미러는 배포 트리를 0.2.9에 남겨뒀습니다(은퇴한 에이전트 프로바이더가 유령 전문가 함정이었음). `archive/v0-mirror` 태그에 보존: `git show archive/v0-mirror:legacy/v0-mirror-2026-05-12/ARCHIVE-NOTE.md`.
 
 ## 이 레포는 어떻게 만들어지나

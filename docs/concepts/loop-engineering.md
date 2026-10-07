@@ -19,7 +19,7 @@ Sources (accessed 2026-07):
 - Cobus Greyling, *loop-engineering* reference repo — https://github.com/cobusgreyling/loop-engineering
   (readiness levels, failure-mode catalog, anti-patterns, design checklist)
 
-Harness-specific audit against this doc's checklist: [`../loop-engineering-audit-2026-07.md`](../loop-engineering-audit-2026-07.md).
+Harness-specific audit against this doc's checklist: [`../internal/loop-engineering-audit-2026-07.md`](../internal/loop-engineering-audit-2026-07.md).
 
 ---
 
@@ -118,5 +118,5 @@ notify-every-run · auto-merge with no allowlist.
 - Per-project trust tiers (personal vs collaborative) map directly to the L0→L3
   ladder — see `docs/customization.md` § Trust tiers.
 - The dated gap analysis lives in
-  [`../loop-engineering-audit-2026-07.md`](../loop-engineering-audit-2026-07.md);
-  open gaps are tracked as LE-* items in `docs/harness-improvement-plan.md`.
+  [`../internal/loop-engineering-audit-2026-07.md`](../internal/loop-engineering-audit-2026-07.md);
+  open gaps are tracked as LE-* items in `docs/internal/harness-improvement-plan.md`.

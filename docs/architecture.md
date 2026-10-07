@@ -149,7 +149,7 @@ flag exists, and `plan-scope-allow.py` reads the same flag to auto-allow `Write`
 permission prompts for plan-approved work. Both `spec-gate.py` and `tdd-guard.py` default to `dryrun`
 (`AGENT_SPEC_GATE_MODE` / `AGENT_TDD_GUARD_MODE`), which logs would-block verdicts as
 advisory only; each returns a real deny only when explicitly set to `block` — see
-`docs/harness-improvement-plan.md` P1-4/P1-8.
+`docs/internal/harness-improvement-plan.md` P1-4/P1-8.
 
 **What's honestly NOT model-invariant: generated content.** The plan a model writes, the
 code it produces, the prose in a commit message — these vary by model and prompt. The

@@ -208,7 +208,7 @@
 
 ### 4.8 T/E 시리즈 — 자유도/강제 캘리브레이션 감사 발굴 항목 (2026-07-07 추가)
 
-출처: `docs/freedom-enforcement-calibration-2026-07.md` (3축 감사: 레포 인벤토리 + 선행 감사·벤치마크 증류 + 2026 외부 하네스 엔지니어링 동향). 판정 요지: 현 강제 지형은 외부 컨센서스와 정합 — 잔여 리스크는 "기록만 하고 강제 안 함" 3곳(P1-8 잔여 / P3-2 / T-2가 각각 폐쇄)이며, 게이트 강도 조정은 게이트별 발화 데이터(T-2) 없이 하지 않는다. 기각 결정(전역 TDD block 승격, deny 티어 확대, 프롬프트 강제 문구 추가)은 캘리브레이션 문서 §3 참조.
+출처: `docs/internal/freedom-enforcement-calibration-2026-07.md` (3축 감사: 레포 인벤토리 + 선행 감사·벤치마크 증류 + 2026 외부 하네스 엔지니어링 동향). 판정 요지: 현 강제 지형은 외부 컨센서스와 정합 — 잔여 리스크는 "기록만 하고 강제 안 함" 3곳(P1-8 잔여 / P3-2 / T-2가 각각 폐쇄)이며, 게이트 강도 조정은 게이트별 발화 데이터(T-2) 없이 하지 않는다. 기각 결정(전역 TDD block 승격, deny 티어 확대, 프롬프트 강제 문구 추가)은 캘리브레이션 문서 §3 참조.
 
 | ID | 작업 | 근거 | 완료 조건 (기계 검증) | 규모 |
 |---|---|---|---|---|
@@ -260,7 +260,7 @@
 
 ### 4.12 LE 시리즈 — Loop Engineering 감사 발굴 항목 (2026-07-11 추가)
 
-출처: 2026-07-11 loop-engineering 감사(`docs/loop-engineering-audit-2026-07.md` — 기준: `docs/concepts/loop-engineering.md` 15항목 체크리스트, 외부 원천 Osmani 에세이 + cobusgreyling repo). 판정 요지 — 척추(maker/checker·bounded iteration·durable state·런 로그)는 정합, 최대 갭은 신뢰의 단위(세션-전역 env-var → per-project trust tier로 착수). 동반 PR에서 구현하는 것은 trust-tier 1건뿐이고 나머지는 등재만.
+출처: 2026-07-11 loop-engineering 감사(`docs/internal/loop-engineering-audit-2026-07.md` — 기준: `docs/concepts/loop-engineering.md` 15항목 체크리스트, 외부 원천 Osmani 에세이 + cobusgreyling repo). 판정 요지 — 척추(maker/checker·bounded iteration·durable state·런 로그)는 정합, 최대 갭은 신뢰의 단위(세션-전역 env-var → per-project trust tier로 착수). 동반 PR에서 구현하는 것은 trust-tier 1건뿐이고 나머지는 등재만.
 
 | ID | 작업 | 근거 | 완료 조건 (기계 검증) | 규모 |
 |---|---|---|---|---|
@@ -282,7 +282,7 @@
 
 | ID | 작업 | 근거 | 완료 조건 (기계 검증) | 규모 |
 |---|---|---|---|---|
-| GT-1 ✅ 2026-07-27 | **check-hardcoding 트림** — deny→기본 dryrun(`AGENT_HARDCODING_MODE=off/dryrun/block`), sink 계측 신설, 거짓 탈출구(hook-config 주장 미배선) 정직화(T-4 예정 명시) | 30일 대조에서 유일한 "deny+무계측+거짓 탈출구" 게이트 — 캘리브레이션 §3c의 계측-후-재판정 집행(`docs/freedom-enforcement-calibration-2026-07.md` §3e) | ✅ 3모드 env + `hardcoding.jsonl` sink(schema 2.0.0, reproduce_test 오염 차단) + `check-hardcoding-test.sh` 21체크(3모드·기본값 dryrun 계약·sink 스키마·teaching 태그) + gate-registry 행 갱신 | S |
+| GT-1 ✅ 2026-07-27 | **check-hardcoding 트림** — deny→기본 dryrun(`AGENT_HARDCODING_MODE=off/dryrun/block`), sink 계측 신설, 거짓 탈출구(hook-config 주장 미배선) 정직화(T-4 예정 명시) | 30일 대조에서 유일한 "deny+무계측+거짓 탈출구" 게이트 — 캘리브레이션 §3c의 계측-후-재판정 집행(`docs/internal/freedom-enforcement-calibration-2026-07.md` §3e) | ✅ 3모드 env + `hardcoding.jsonl` sink(schema 2.0.0, reproduce_test 오염 차단) + `check-hardcoding-test.sh` 21체크(3모드·기본값 dryrun 계약·sink 스키마·teaching 태그) + gate-registry 행 갱신 | S |
 | GT-2 ✅ 2026-07-27 | **telemetry-digest 이중계산 수정** — 같은 sink+같은 guard값 공유 게이트(secrets-bash/secrets-content)를 레코드 `hook` 필드로 분리 집계(레거시 무-hook 레코드는 guard 폴백 유지) | 둘 다 fired=2179로 표기되던 실측(실제 1353/826) — FATIGUE 판정 입력 오염 | ✅ `count_sink` hook 인자 + telemetry-digest-test (l)절 3체크(자기 몫+레거시=3/2, union 4 금지) — 37체크 green | S |
 | GT-3 ✅ 2026-07-27 | **supervisor ask 레지스트리 등록** — ask 계열 레코드에 guard/hook/reproduce_test 스탬프 + `supervisor-ask` 행 신설. **모드 무변경**(측정 먼저) | 30일 440레코드/ask 11건이 레지스트리 밖에서 발화(심사 사각) — T-2 원칙 위반 상태 해소 | ✅ gate-registry 17행 파싱 + 실로그 digest에서 supervisor-ask 행 산출(구 레코드는 guard 부재로 등록 시점부터 카운트 — 행 assumption에 명기) | S |
 | GT-4 ✅ 2026-07-27 | **session-quality-gate 분리 강등** — 주관 스타일 검사=advisory 기본(`AGENT_QUALITY_STYLE_BLOCK=1` opt-in), block 결정은 completion_tests(P3-1) 단독 소유 | 스타일 위반 로그 0건 생성 실측 + 주관/객관이 한 block에 동승 — P3-1 강제층은 무손상 유지 | ✅ quality-gate-completion-test (l)(m)(n)절 6체크(스타일-only 무block+sink 기록·opt-in 복원·completion 단독 block) — 28체크 green | S |
@@ -306,6 +306,15 @@
 | X-4 | **리뷰 레인 완주 계약** — 디스패치한 리뷰어가 **리포트를 내지 않고 idle로 끝나는** 실패를 호출자가 구조적으로 감지하지 못한다. 지금은 사람이 "결과가 안 왔네"를 알아채고 회수해야 하고, 알아채지 못하면 산출물 부재가 `raised: 0`으로, 다시 clean으로 오독된다. 레포가 이미 아는 false-clean 함정의 **다른 경로**다 — 알려진 것은 세션 한도 사망이고, 이건 한도와 무관한 무응답 종료. 필요한 것은 완주 계약: 리뷰 산출물이 없으면 그 레인은 통과가 아니라 **FAILED(미검증)** 이며, 그 사실이 자동으로 드러나야 한다 | **2026-07-30 이 PR에서 4/4 재현** — 보안 레인 4회 디스패치 전부 리포트 미전달(무응답 idle 2회, 명시적 세션 한도 사망 1회, ENOSPC 스폰 실패 1회). 같은 배치의 코드 레인은 정상 완주해 CONFIRMED 3건을 냈으므로 프롬프트 결함이 아니라 계약 부재 | 완주 계약 문서 + 산출물 부재 → FAILED 판정 + `skills/verify-completion` "dead reviewer" 규칙에 무응답 종료 케이스 추가 + 픽스처 | S–M |
 
 ---
+
+### 4.15 D 시리즈 — 배포 포지셔닝 (2026-10-07 추가)
+
+2026-10-07 분석: 공개 레포 위생(sanitize·PII 감사, MIT, CI, 마켓플레이스)은 갖췄으나 제품 형태는 개인 구성에 맞춰져 있다(`.claude-plugin/marketplace.json`의 설명이 "personal agent harness", 훅 매처 `hooks/hooks.json:70`이 특정 MCP 서버 목록, 워커 레인·모델 티어가 개인 구독 기준, ⭐2·포크 0). 사용자 결정: **개인 하네스 + 공개 레퍼런스로 정직하게 포지셔닝**(D-1)을 먼저 하고, 배포 제품화(D-2)는 외부 수요가 확인될 때까지 보류.
+
+| ID | 작업 | 근거 | 완료 기준 | 규모 |
+|---|---|---|---|---|
+| D-1 ✅ 2026-10-07 | **레퍼런스 포지셔닝** — README(영/한) 첫머리에 "개인 하네스, 참고·포크용" 상태 문구 + 개인 구성에 묶인 부분 명시, 내부 작업 문서 3종(본 문서·자유도 감사·루프 감사)을 `docs/internal/`로 이동하고 참조 일괄 갱신 | 2026-10-07 배포 적합성 분석 | README 상태 문구 + `docs/internal/README.md` 인덱스 + doc-reality·verify-all green | S |
+| D-2 (보류) | **코어/확장 분리 배포** — 코어(가드 훅·어댑터·`/wrap`·`/spec`·`/verify-completion`)와 개인 확장(워커 레인·모델 라우팅·persona-review·brain)을 별도 플러그인으로 분리, secret-scan MCP 매처를 `hook-config`로 설정 가능하게, 깨끗한 다른 머신에서 설치 시험 | D-1과 같은 분석. 착수 조건: 외부 사용자 이슈·포크 등 실수요 신호 | 코어 플러그인 단독 설치로 가드 동작 + 확장 미설치 시 참조 0 + 클린 머신 설치 기록 | L |
 
 ## 5. Part 3 — `/harness-loop` 자율 개선 루프 설계 (단일 권고안)
 
@@ -374,7 +383,7 @@ P0-1 ~ P0-11 (최초 7건 반나절 + 훅 감사 배치 4건 2026-07-04)  → v0
 1. **산출물 카운트(SSOT — `doc-reality.sh`의 (C) 체크가 라이브 대조):** `ls core/hooks/*.py core/hooks/*.sh | wc -l` = **31**(`core/hooks`의 .py+.sh 파일; `hook_config.py`·`trust_tier.py` 공용 모듈, `agent-inventory.py` 리컨사일러, `brain-capture.py` 세션 캡처 훅, `verify-observer.py` 검증-관측 훅, `session-tier-observer.py` 세션-티어 옵저버, `loop-write-guard.py` 루프 쓰기가드, `council-escalation-gate.py` council 자동 승격 게이트, `top-edit-advisor.py` TOP 메인루프 누적-경고 훅 포함), `ls core/tests/*.sh | wc -l` = **91**(런타임 통화성의 `runtime-currency.sh`·`runtime-currency-test.sh`·`log-origin-test.sh`, Claude 확장 이벤트의 `claude-extended-events-test.sh`, W-12의 `bootstrap-test.sh`, kiro 레인의 `kiro-preflight-test.sh`, `session-tier-observer-test.sh`, B4의 `grade.sh`·`grade-test.sh`·`loop-ledger-test.sh`·`loop-write-guard-test.sh`, B4 후속의 `gitleaks-allowlist-test.sh`, B5의 `loop-run-test.sh`·`loop-skill-test.sh`, 크로스벤더 워커 레인의 `gemini-preflight-test.sh`·`grok-worker-test.sh`·`antigravity-worker-test.sh`·`antigravity-preflight-test.sh`, P1 grounded-completion-gate의 `completion-gate-test.sh`, council 자동 승격의 `council-threshold-test.sh`·`council-escalation-gate-test.sh`, worker-lane 온보딩의 `council-dispatch-path-test.sh`·`worker-setup-skill-test.sh` , free-lane의 `openrouter-worker-test.sh`, `top-edit-advisor-test.sh`, 리뷰 티어링의 `review-tier-test.sh`, W4 Codex 네이티브 훅의 `codex-native-hooks-test.sh`, W5 Antigravity 네이티브 훅의 `antigravity-adapter-test.sh`·`antigravity-native-hooks-test.sh`, blast-radius 리뷰 컨텍스트의 `impact-context-test.sh` 포함 — `grade.sh`는 루프 도구지만 `core/tests/`에 상주해 카운트됨), `ls agents/*.md | wc -l` = **3**, `ls skills/*/SKILL.md | wc -l` = **13**(brain-ingest·council-review·harness-audit·harness-help·harness-loop·loop·manager-audit·persona-review·spec·supervise·verify-completion·worker-setup·wrap — B5에서 `harness-loop`·`loop`, 크로스벤더 리뷰에서 `council-review`, worker-lane 온보딩에서 `worker-setup` 추가). §3.3 표의 훅·테스트 수치는 2026-07-04 스냅샷이며, 이후 증가분은 이 줄이 정본이다.
 2. `bash core/tests/sanitize-audit.sh` — **PASS가 정상.** (P0-7 완료 이후로는 클린 워킹 트리에서 항상 PASS — 과거의 "FAIL이 정상" 예외는 P0-7 해소로 소멸)
 3. `gitleaks detect --no-git --source docs/ --config gitleaks.toml`.
-4. 백로그 항목 수 검증(2026-07-07 캘리브레이션 배치 갱신, 실측): `grep -cE '^\| P[0-3]-[0-9]+' docs/harness-improvement-plan.md` = **34** (P0 11 + P1 13 + P2 5 + P3 5), 각 행에 완료 조건 존재. H/W 시리즈: `grep -cE '^\| [HW]-[0-9]+' docs/harness-improvement-plan.md` = **18** (H 4 + W 14, W-12 부트스트랩 레인·W-13 L2 원장·W-14 wayfinder 노트 포함). T/E 시리즈: `grep -cE '^\| [TE]-[0-9]+' docs/harness-improvement-plan.md` = **5** (T 4 + E 1 — §4.8). O/L/I 시리즈: `grep -cE '^\| [OLI]-[0-9]+' docs/harness-improvement-plan.md` = **6** (O 2 + L 2 + I 2 — §4.9). M 시리즈: `grep -cE '^\| M-[0-9]+' docs/harness-improvement-plan.md` = **9** (M-1~M-7 ✅ + M-8·M-9 — §4.10). A/G 시리즈: `grep -cE '^\| [AG]-[0-9]+' docs/harness-improvement-plan.md` = **4** (A 2 + G 2; 완료 조건 대신 근거·상태 기재 — §4.6 참고). F 시리즈: `grep -cE '^\| F-[0-9]+' docs/harness-improvement-plan.md` = **2** (F-1·F-2 — §4.11). X 시리즈: `grep -cE '^\| X-[0-9]+' docs/harness-improvement-plan.md` = **4** (X-1~X-4 — §4.14).
+4. 백로그 항목 수 검증(2026-07-07 캘리브레이션 배치 갱신, 실측): `grep -cE '^\| P[0-3]-[0-9]+' docs/internal/harness-improvement-plan.md` = **34** (P0 11 + P1 13 + P2 5 + P3 5), 각 행에 완료 조건 존재. H/W 시리즈: `grep -cE '^\| [HW]-[0-9]+' docs/internal/harness-improvement-plan.md` = **18** (H 4 + W 14, W-12 부트스트랩 레인·W-13 L2 원장·W-14 wayfinder 노트 포함). T/E 시리즈: `grep -cE '^\| [TE]-[0-9]+' docs/internal/harness-improvement-plan.md` = **5** (T 4 + E 1 — §4.8). O/L/I 시리즈: `grep -cE '^\| [OLI]-[0-9]+' docs/internal/harness-improvement-plan.md` = **6** (O 2 + L 2 + I 2 — §4.9). M 시리즈: `grep -cE '^\| M-[0-9]+' docs/internal/harness-improvement-plan.md` = **9** (M-1~M-7 ✅ + M-8·M-9 — §4.10). A/G 시리즈: `grep -cE '^\| [AG]-[0-9]+' docs/internal/harness-improvement-plan.md` = **4** (A 2 + G 2; 완료 조건 대신 근거·상태 기재 — §4.6 참고). F 시리즈: `grep -cE '^\| F-[0-9]+' docs/internal/harness-improvement-plan.md` = **2** (F-1·F-2 — §4.11). X 시리즈: `grep -cE '^\| X-[0-9]+' docs/internal/harness-improvement-plan.md` = **4** (X-1~X-4 — §4.14).
 5. 스코어카드(§3.1·§3.2)의 격차 행 ↔ 백로그 ID 상호 링크 고아 0건 (모든 "부분/미비" 행에 P* 링크 존재). `docs/benchmark/landscape.md`의 Gap→backlog 매핑표 ID도 본 문서에 전부 실존해야 함(고아 0).
 6. AGENTS.md 규약 준수 — 도메인 중립 언어, 커밋 메시지 `docs(plan): add harness improvement plan`.
 

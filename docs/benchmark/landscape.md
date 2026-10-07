@@ -141,7 +141,7 @@ Consistent thinness:
   operations, secrets access, and design-constant hardcoding — and the
   calibration rule bars adding new `deny` tiers: everything else escalates at
   most to `ask`, and hooks fail open
-  (`docs/freedom-enforcement-calibration-2026-07.md` records the calibration
+  (`docs/internal/freedom-enforcement-calibration-2026-07.md` records the calibration
   and its external grounding).
 - **Curated surface.** 3 shipped agents (`agents/master-registry.json`,
   trimmed from 5 on usage evidence, +1 persona orchestrator in 0.5.5) and
@@ -197,7 +197,7 @@ Most of the gaps this survey originally named have since shipped — see the
 
 ## Gap → backlog map
 
-| Survey gap | ID | Status | Done-condition (from `docs/harness-improvement-plan.md`) |
+| Survey gap | ID | Status | Done-condition (from `docs/internal/harness-improvement-plan.md`) |
 |---|---|---|---|
 | Eval suite | E-1 | **shipped** (`evals/` — datasets, judges, CI regression gate) | `evals/` exists; ≥10 labeled cases; CI Pass^3 report; regression fails CI |
 | Delegation contracts / fan-out / single-writer | O-1 | **shipped** (`skills/supervise/templates/delegation-contract.md` + registry-drift CI guard) | template file + SKILL.md references 4 rules + CI guards reviewer read-only toolsets |
@@ -265,7 +265,7 @@ as buckets 1–2 above.
 Two gaps surfaced with **no existing backlog ID** — per the orphan-zero rule
 they are not placed in the table above; they are proposed here as text for
 the supervisor to ratify and insert at merge, not edited into
-`docs/harness-improvement-plan.md` by this wave:
+`docs/internal/harness-improvement-plan.md` by this wave:
 
 **Proposed new backlog rows**
 
@@ -291,7 +291,7 @@ the supervisor to ratify and insert at merge, not edited into
   completeness since it is the single largest gap this survey's peer set
   addresses and this repo does not: dotclaude ships one-command evidence-based
   install, citypaul's entire personal layer is one `git clone` away on a new
-  machine. No ID exists yet in `docs/harness-improvement-plan.md` — this
+  machine. No ID exists yet in `docs/internal/harness-improvement-plan.md` — this
   wave does not mint one; the parallel wave's own landing is the natural
   place to register it.
 
@@ -300,7 +300,7 @@ the supervisor to ratify and insert at merge, not edited into
 Star counts and competitor feature claims are a **2026-07-08 snapshot**
 (spot re-checks 2026-07-14 / 2026-07-16). The **self-row and gap statuses
 were last verified 2026-07-28** against the repo itself (`ls agents/ skills/`,
-CI job list, backlog ✅ marks in `docs/harness-improvement-plan.md`) — re-run
+CI job list, backlog ✅ marks in `docs/internal/harness-improvement-plan.md`) — re-run
 that comparison whenever the version bumps. Re-verify star counts with:
 
 ```bash

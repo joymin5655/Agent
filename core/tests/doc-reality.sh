@@ -19,7 +19,7 @@
 #
 # ── (A) scope & exclusions (calibrated to ZERO hits on a clean HEAD) ─────────────────
 # Doc set: EVERY tracked *.md under the tree, EXCEPT four by-design exclusions —
-#   * docs/harness-improvement-plan.md — FORWARD-LOOKING backlog: references not-yet-built
+#   * docs/internal/harness-improvement-plan.md — FORWARD-LOOKING backlog: references not-yet-built
 #     deliverables (verify-all.sh, grade.sh, skills/harness-loop/SKILL.md) on purpose. Its
 #     numeric claims are gated instead by (B)/(C), which read specific declaration lines.
 #   * CHANGELOG.md — BACKWARD-LOOKING history: legitimately names removed/renamed artifacts
@@ -70,7 +70,7 @@ set -u
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 TARGET="${1:-$REPO_ROOT}"
 
-PLAN_REL="docs/harness-improvement-plan.md"
+PLAN_REL="docs/internal/harness-improvement-plan.md"
 PLAN="$TARGET/$PLAN_REL"
 
 # (A) known in-repo top-level segments — a path ref must start with one of these.
@@ -231,7 +231,7 @@ if [[ -n "${HITS//[$'\n']/}" ]]; then
   echo "A shipped doc must not name an in-repo file that does not exist, nor declare a"
   echo "count that disagrees with the live repo. Fix the doc (or ship the file). An"
   echo "illustrative EXAMPLE path (a file to be created) belongs in a fenced block or a"
-  echo "<placeholder>. See docs/harness-improvement-plan.md §7 (self-verification)."
+  echo "<placeholder>. See docs/internal/harness-improvement-plan.md §7 (self-verification)."
   exit 1
 fi
 

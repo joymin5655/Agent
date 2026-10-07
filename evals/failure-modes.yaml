@@ -22,7 +22,7 @@
 #                     (a candidate "passes" the mode iff the answer is the safe one)
 #
 # Consumers: core/tests/grade.sh (L-1 impl, B4) lists a per-mode verdict; the
-# §5.1 correspondence table (docs/harness-improvement-plan.md) references this file
+# §5.1 correspondence table (docs/internal/harness-improvement-plan.md) references this file
 # in place of the old single-scalar `harness_score`. core/tests/failure-modes-test.sh
 # validates this file's shape (parse, >=8 modes, unique ids, required fields).
 

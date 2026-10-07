@@ -279,5 +279,5 @@ Each line is one case with a `kind`:
   floor, or any case now graded wrong, drops the score below the bar and fails
   CI — so a change that quietly weakens a grader cannot land green.
 
-See `docs/harness-improvement-plan.md` (E-1) for the roadmap and
+See `docs/internal/harness-improvement-plan.md` (E-1) for the roadmap and
 `docs/scoring-convention.md` for the shared verdict schema.

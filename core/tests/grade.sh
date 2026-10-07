@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # grade.sh — P2-2 + L-1 (impl): the autonomous improvement-loop grader.
 #
-# The loop (§5, docs/harness-improvement-plan.md) grades a candidate harness change
+# The loop (§5, docs/internal/harness-improvement-plan.md) grades a candidate harness change
 # by REPLAYING the repo's own regression batteries, grouped by NAMED FAILURE MODE.
 # This is the L-1 amendment to the original single-scalar `harness_score`: instead of
 # one opaque number, the grader emits a per-mode verdict checklist over
