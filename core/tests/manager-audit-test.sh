@@ -108,6 +108,8 @@ cat > "$LOGS/routing.jsonl" <<'EOF'
 {"gate":"model-routing-observer","subagent_type":"mixed-worker","model":"opus","verdict":"override","prompt_chars":20,"total_tokens":50,"session_id":"s1","ts":"2026-07-17T01:26:00Z"}
 {"gate":"model-routing-observer","subagent_type":"mixed-worker","model":"opus","verdict":"override","prompt_chars":20,"total_tokens":50,"session_id":"s1","ts":"2026-07-17T01:27:00Z"}
 {"gate":"model-routing-observer","subagent_type":"Explore","model":"sonnet","verdict":"override","prompt_chars":30,"total_tokens":60,"session_id":"s1","ts":"2026-07-17T01:28:00Z"}
+{"gate":"model-routing-observer","event":"SubagentStart","agent_type":"lifecycle-only-agent","agent_id":"a1","verdict":"inherit_top","effort":null,"tier":"unknown","session_id":"s1","agent_session_id":"s1","origin":"x","source":"subagent_event","ts":"2026-07-17T01:29:00Z"}
+{"gate":"model-routing-observer","event":"SubagentStop","agent_type":"","agent_id":"a2","verdict":"inherit_top","effort":null,"tier":"unknown","session_id":"s1","agent_session_id":"s1","origin":"x","source":"subagent_event","last_assistant_message_len":10,"ts":"2026-07-17T01:30:00Z"}
 {"gate":"model-routing-observer","subagent_type":"Explore","model":"sonnet","verdict":"override","prompt_chars":30,"total_tokens":60,"session_id":"s1","ts":"2026-07-17T01:29:00Z"}
 EOF
 
@@ -190,6 +192,11 @@ else bad "w2-session-filter" "$(jq -c '.findings[] | select(.check=="top-inherit
 if jq -e '.findings[] | select(.check=="top-inherit-leak") | .evidence | contains("dual-id-worker")' <<< "$OUT" >/dev/null 2>&1; then
     ok "w2b-session-filter-matches-agent-session-id"
 else bad "w2b-agent-session-id" "$(jq -c '.findings[] | select(.check=="top-inherit-leak")' <<< "$OUT")"; fi
+# lifecycle rows (SubagentStart/Stop, no subagent_type) are not dispatches: s1 has exactly 2 real leaks
+# (Explore + dual-id-worker); counting the 2 lifecycle rows too gave "4 dispatch(es) ...: , Explore, ..."
+if jq -e '.findings[] | select(.check=="top-inherit-leak") | .evidence | startswith("2 dispatch(es)") and (contains(": , ") | not)' <<< "$OUT" >/dev/null 2>&1; then
+    ok "w2d-subagent-lifecycle-rows-not-leaks"
+else bad "w2d-lifecycle" "$(jq -c '.findings[] | select(.check=="top-inherit-leak")' <<< "$OUT")"; fi
 run good --session uuid-9
 if jq -e '.findings[] | select(.check=="top-inherit-leak") | .evidence | contains("dual-id-worker") and (contains("Explore") | not)' <<< "$OUT" >/dev/null 2>&1; then
     ok "w2c-session-filter-matches-runtime-uuid"

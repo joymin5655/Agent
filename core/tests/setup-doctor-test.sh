@@ -1244,5 +1244,37 @@ check "home-bin-doctor-row-warn-when-off-path" $?
 rm -rf "$IK_HOME2"
 
 echo
+echo "=== (r3) doctor antigravity tiers-file row — WARN only when canonical and legacy both exist and differ ==="
+AT_HOME="$(safe_mktemp_d)" || { echo "FAIL: mktemp -d failed (antigravity tiers fixture)"; exit 1; }
+track_fixture "$AT_HOME"
+mkdir -p "$AT_HOME/.agent" "$AT_HOME/.gemini/antigravity-cli"
+printf '{"model":"gemini-3.8-flash-medium"}\n' > "$AT_HOME/.agent/antigravity-tiers.json"
+OUT_AT0="$(HOME="$AT_HOME" bash "$SETUP" --doctor 2>&1)"
+at_rc=0; [[ "$OUT_AT0" != *"antigravity tiers file"* ]] || at_rc=1
+check "antigravity-tiers-no-row-when-only-canonical" "$at_rc"
+cp "$AT_HOME/.agent/antigravity-tiers.json" "$AT_HOME/.gemini/antigravity-cli/agent-tiers.json"
+OUT_AT1="$(HOME="$AT_HOME" bash "$SETUP" --doctor 2>&1)"
+at_rc=0; [[ "$OUT_AT1" != *"antigravity tiers file"* ]] || at_rc=1
+check "antigravity-tiers-no-row-when-both-identical" "$at_rc"
+printf '{"model":"gemini-3.1-pro-low"}\n' > "$AT_HOME/.gemini/antigravity-cli/agent-tiers.json"
+OUT_AT2="$(HOME="$AT_HOME" bash "$SETUP" --doctor 2>&1)"
+at_rc=0; [[ "$OUT_AT2" == *"[WARN"*"antigravity tiers file"*"differs from the canonical"* ]] || at_rc=1
+check "antigravity-tiers-warn-when-both-differ" "$at_rc"
+at_rc=0; [[ -f "$AT_HOME/.gemini/antigravity-cli/agent-tiers.json" && -f "$AT_HOME/.agent/antigravity-tiers.json" ]] || at_rc=1
+check "antigravity-tiers-doctor-deletes-nothing" "$at_rc"
+# unreadable legacy copy (cmp exit 2) must say "unreadable", not "differs" (skipped as root: chmod 000 does not bind)
+if [[ "$(id -u)" -ne 0 ]]; then
+  cp "$AT_HOME/.agent/antigravity-tiers.json" "$AT_HOME/.gemini/antigravity-cli/agent-tiers.json"
+  chmod 000 "$AT_HOME/.gemini/antigravity-cli/agent-tiers.json"
+  OUT_AT3="$(HOME="$AT_HOME" bash "$SETUP" --doctor 2>&1)"
+  chmod 644 "$AT_HOME/.gemini/antigravity-cli/agent-tiers.json"
+  at_rc=0; [[ "$OUT_AT3" == *"[WARN"*"antigravity tiers file"*"unreadable"* && "$OUT_AT3" != *"differs from the canonical"* ]] || at_rc=1
+  check "antigravity-tiers-warn-unreadable-not-differs" "$at_rc"
+else
+  echo "  skip [antigravity-tiers-warn-unreadable-not-differs] running as root"
+fi
+rm -rf "$AT_HOME"
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]

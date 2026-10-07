@@ -195,6 +195,11 @@ if [[ -f "$ROUTING_LOG" ]]; then
         def mult($t): {LOW: 0.15, MID: 1, TOP: 3.5}[$t] // 1;
         [ .[]
           | select(.gate == "model-routing-observer")
+          # SubagentStart/Stop lifecycle rows (source "subagent_event") carry
+          # agent_type, not subagent_type/model, and their verdict is only
+          # "agent_type is not a registry id" — not a dispatch with a measured
+          # model. Counting them produced "N× null at TOP" top-inherit-leaks.
+          | select((.source // "") != "subagent_event")
           | select($session == "" or .session_id == $session or .agent_session_id == $session)
           | select($since == "" or ((.ts // "") >= $since))
           | .resolved_model = (if .model != "" then .model
