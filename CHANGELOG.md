@@ -38,8 +38,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `review-override.jsonl` (case-insensitive; redirect incl. `>|`, a write verb naming a ledger
   or `.agent/workers`, sed -i, python open for write), and `secret-content-scan.py` denies
   Write/Edit of those files when they sit under the workers/logs dirs (`AGENT_WORKERS_DIR`/
-  `AGENT_LOGS_DIR`, else `~/.agent/...`; realpath, case-insensitive), so a project's own
-  `reviews.jsonl` stays editable. Reads are allowed. Bash guards are speed bumps, not boundaries.
+  `AGENT_LOGS_DIR` and the default `~/.agent/workers`, `~/.agent/logs`; realpath,
+  case-insensitive), so a project's own `reviews.jsonl` stays editable. Reads are allowed. Bash guards are speed bumps, not boundaries.
 - **git hook**: `core/git-hooks/pre-merge-commit` runs the review-completeness check for
   auto-merge commits, which skip pre-commit.
 - **plan-scope-allow**: the auth class is a never-allow screen (kept out of spec-gate and

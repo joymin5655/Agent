@@ -154,7 +154,7 @@ fi
 # python/perl/node -e, and scripts written then run evade it).
 _CMD_RO=$(printf '%s' "$SCAN_CMD" | tr -d "\\\\\"'")
 _RO_NAMES='(AGENT_REVIEW_OVERRIDE|AGENT_WORKERS_DIR|AGENT_LOGS_DIR|GITHEAD_[0-9a-fA-F]+)'
-_RO_LEAD='(^|[;&|({`]|\b(ba|z|da|k)?sh([[:space:]]+-[A-Za-z]+)*[[:space:]]+-[A-Za-z]*c[A-Za-z]*[[:space:]]+|\beval[[:space:]]+)[[:space:]]*((then|do|else|elif|if|while|until|time|exec|command|builtin|nohup|sudo|!)[[:space:]]+)*'
+_RO_LEAD='(^|[;&|({`]|(^|[[:space:];&|(])(ba|z|da|k)?sh([[:space:]]+-[A-Za-z]+)*[[:space:]]+-[A-Za-z]*c[A-Za-z]*[[:space:]]+|(^|[[:space:]])eval[[:space:]]+)[[:space:]]*((then|do|else|elif|if|while|until|time|!)[[:space:]]+)*'
 if echo "$_CMD_RO" | grep -qE "(^|[^A-Za-z0-9_])${_RO_NAMES}[:+]?=" \
    || echo "$_CMD_RO" | grep -qE "${_RO_LEAD}(export|declare|typeset|local|readonly|read|mapfile|readarray|printf[[:space:]]+-v)[[:space:]]+[^;&|]*${_RO_NAMES}" \
    || { echo "$_CMD_RO" | grep -qE "${_RO_LEAD}set[[:space:]]+(-[A-Za-z]*a|-o[[:space:]]+allexport)" \

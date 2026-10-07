@@ -39,7 +39,8 @@ run_case "logs-dir-override-deny"        deny  Edit  "$WORK/home/.agent/logs/rev
 run_case "multiedit-workers-deny"        deny  MultiEdit "$W/reviews.jsonl"
 run_case "custom-workers-env-deny"       deny  Write "$WORK/custom/k/reviews.jsonl" AGENT_WORKERS_DIR="$WORK/custom"
 run_case "custom-logs-env-deny"          deny  Write "$WORK/vlogs/review-override.jsonl" AGENT_LOGS_DIR="$WORK/vlogs"
-run_case "default-workers-allowed-when-env-moves-it" allow Write "$W/reviews.jsonl" AGENT_WORKERS_DIR="$WORK/custom"
+run_case "default-workers-still-denied-when-env-moves-it" deny Write "$W/reviews.jsonl" AGENT_WORKERS_DIR="$WORK/custom"
+run_case "default-logs-still-denied-when-env-moves-it" deny Write "$WORK/home/.agent/logs/review-override.jsonl" AGENT_LOGS_DIR="$WORK/vlogs"
 ln -s "$W" "$WORK/proj/link"
 run_case "symlink-into-workers-deny"     deny  Write "$WORK/proj/link/reviews.jsonl"
 

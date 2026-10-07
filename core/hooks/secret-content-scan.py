@@ -346,14 +346,17 @@ LEDGER_WRITE_TOOLS = {"Write", "Edit", "MultiEdit"}
 
 def _ledger_roots() -> list[str]:
     """Where the commit gate reads its evidence: the workers dir (reviews.jsonl) and the
-    logs dir (review-override.jsonl), honouring the same env overrides review-evidence.py
-    does. realpath + lowercase so a symlink or an APFS case variant cannot slip past."""
+    logs dir (review-override.jsonl). The union of the env overrides review-evidence.py
+    honours AND the real defaults, so setting an env var can never un-protect the real
+    ledgers. realpath + lowercase so a symlink or an APFS case variant cannot slip past."""
     home = os.path.expanduser("~")
     roots = [
-        os.environ.get("AGENT_WORKERS_DIR") or os.path.join(home, ".agent", "workers"),
-        os.environ.get("AGENT_LOGS_DIR") or os.path.join(home, ".agent", "logs"),
+        os.path.join(home, ".agent", "workers"),
+        os.path.join(home, ".agent", "logs"),
+        os.environ.get("AGENT_WORKERS_DIR"),
+        os.environ.get("AGENT_LOGS_DIR"),
     ]
-    return [os.path.realpath(os.path.expanduser(r)).lower() for r in roots]
+    return [os.path.realpath(os.path.expanduser(r)).lower() for r in roots if r]
 
 
 def is_ledger_path(file_path) -> bool:
