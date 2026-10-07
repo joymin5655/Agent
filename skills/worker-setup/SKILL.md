@@ -43,10 +43,19 @@ has never seen. For every backend, report one row:
 | tiers | keys of `.backends[$lane].tier_args` |
 | roles served | reverse-lookup: which `.roles[*].backend` (or `.fallback`) names this lane |
 
+Also run once, read-only: `python3 "$HR/core/infra/runtime-profile.py" detect --json`.
+It reports `{installed, authenticated, plan}` for claude, codex and antigravity from
+local CLIs/files only (no network, no agy call). Show the plans next to the lane rows
+(claude `max`, codex `plus`, ...). The google plan is `unknown` by design — Antigravity
+exposes no local plan field — so say that rather than guessing; `authenticated: unknown`
+means "not verifiable locally", not "logged out". A `plus` plan is a normal reviewer
+seat. `runtime-profile.py save` records the main/reviewer vendors for later runs.
+
 Also check once, separately: is `$HOME/bin` on `PATH` (workers/preflights
 resolve from there — `setup.sh`'s `ensure_home_bin`/doctor row).
 
-This step makes zero network calls and zero CLI invocations beyond
+This step makes no network calls of its own and runs only the local status
+subcommands `claude auth status` and `codex login status` (never `agy`) beyond
 `command -v` — it is safe to run unconditionally, including before the user
 has decided anything.
 

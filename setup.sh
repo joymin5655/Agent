@@ -1545,6 +1545,26 @@ PY
         fi
     fi
 
+    # Runtime profile (informational): set by `runtime-profile.py save` / the setup prompt.
+    # Only allow-listed vendor names are rendered, so a crafted file cannot forge rows.
+    local profile_file="${AGENT_PROFILE_FILE:-$HOME/.agent/profile.json}" profile_msg=""
+    if [[ -f "$profile_file" ]] && command -v python3 >/dev/null 2>&1; then
+        profile_msg="$(python3 -c '
+import json, sys
+ok = {"anthropic", "openai", "google"}
+d = json.load(open(sys.argv[1]))
+m, r = d["main_vendor"], d["reviewers"]
+assert m in ok and isinstance(r, list) and all(x in ok for x in r)
+print("main=%s reviewers=%s" % (m, ",".join(r) or "-"))' "$profile_file" 2>/dev/null)" || profile_msg=""
+    fi
+    if [[ -n "$profile_msg" ]]; then
+        add_row PASS "runtime profile — $profile_msg"
+    elif [[ -f "$profile_file" ]]; then
+        add_row WARN "runtime profile — unreadable or invalid; re-run: python3 $FRAMEWORK_ROOT/core/infra/runtime-profile.py save"
+    else
+        add_row WARN "runtime profile — not recorded; run: python3 $FRAMEWORK_ROOT/core/infra/runtime-profile.py save"
+    fi
+
     echo "=== Environment diagnosis (--doctor) ==="
     local row status msg
     for row in "${rows[@]}"; do
@@ -1555,6 +1575,33 @@ PY
     echo
     echo "doctor: $pass pass, $warn warn, $fail fail"
     [[ $fail -eq 0 ]]
+}
+
+# Runtime profile (main vendor + reviewer vendors): interactive-only, so scripted installs
+# (CI, </dev/null, piped output) never prompt or hang. Skipped without python3.
+offer_runtime_profile() {
+    local rp="$FRAMEWORK_ROOT/core/infra/runtime-profile.py"
+    [[ "${AGENT_SETUP_NO_PROFILE:-0}" == "1" || "${AGENT_SETUP_NO_DOCTOR:-0}" == "1" ]] && return 0
+    command -v python3 >/dev/null 2>&1 || return 0
+    if [[ ! -t 0 || ! -t 1 ]]; then
+        echo "Tip: run 'python3 $rp save' to record your main/reviewer vendors."
+        return 0
+    fi
+    local rec main answer
+    rec="$(python3 "$rp" recommend --json 2>/dev/null)" || return 0
+    main="$(printf '%s' "$rec" | python3 -c 'import json,sys; print(json.load(sys.stdin)["main_vendor"])' 2>/dev/null)" || return 0
+    local pf="${AGENT_PROFILE_FILE:-$HOME/.agent/profile.json}" saved=""
+    # a previously saved choice wins over the fresh recommendation
+    if [[ -f "$pf" ]]; then
+        saved="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["main_vendor"])' "$pf" 2>/dev/null)" || saved=""
+        case "$saved" in anthropic|openai|google) main="$saved" ;; esac
+    fi
+    echo
+    echo "=== Runtime profile ==="
+    python3 "$rp" detect 2>/dev/null || true
+    read -r -p "Main vendor [$main] (anthropic/openai/google): " answer || answer=""
+    answer="${answer:-$main}"
+    python3 "$rp" save --main "$answer" || echo "Profile not saved (valid: anthropic, openai, google)." >&2
 }
 
 # ---------------------------------------------------------------------------
@@ -1808,6 +1855,7 @@ else
     echo "=== Setup finished, but post-install validation FAILED (see doctor output above) ===" >&2
     exit 1
 fi
+offer_runtime_profile
 echo "Next steps:"
 echo "  - Verify hooks work: bash $FRAMEWORK_ROOT/core/tests/sanitize-audit.sh"
 echo "  - Test adapters: bash $FRAMEWORK_ROOT/core/tests/adapter-parity.sh"
