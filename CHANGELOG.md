@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **antigravity-worker**: quota / HTTP 429 / `RESOURCE_EXHAUSTED` / rate-limit errors now exit 75,
+  so `call-worker.sh` captures the lane as `rate-limited` instead of `failed`.
+- **setup --doctor**: WARN when the canonical `~/.agent/antigravity-tiers.json` and the legacy
+  `~/.gemini/antigravity-cli/agent-tiers.json` both exist and differ.
+- **supervisor-goal-audit**: the check extractor captures `grep -c PATTERN FILE` whole (quoted
+  patterns included) and stops at the end of the command; new `supervisor-goal-audit-test.sh`.
+- **manager-audit**: SubagentStart/Stop lifecycle rows no longer count as `top-inherit-leak`
+  dispatches (they carry `agent_type`, never `subagent_type`, producing "N dispatch(es) ...: , ").
+
 ## [0.5.16] - 2026-10-07
 
 Cross-vendor realign campaign (#148–#152). Behavior change: a commit that stages
