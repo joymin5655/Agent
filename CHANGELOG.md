@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.14] - 2026-10-07
+
 ### Changed
 - **Positioned as a personal harness published for reference (D-1)**: README.md and
   README.ko.md open with a status note naming the parts tuned to one developer's setup
@@ -15,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `core/tests/doc-reality.sh`, `grade.sh` and `loop-run.sh`, points to the new paths.
 
 ### Fixed
+- **brain-capture skips repeat WIP captures (#142)**: Claude fires Stop every turn, so a
+  session with a dirty tree left a near-identical raw breadcrumb per turn. A capture is
+  skipped when this session's newest one already holds the same porcelain; empty session
+  ids are never deduped.
 - **risk-area guard fails closed without PyYAML (P1-9)**: when `.agent/hook-config.yml`
   declares `risk_areas` but PyYAML is not importable, `pre-tool-guard.sh` guard 11b no
   longer sees zero tokens and allows everything. It now denies any command the token match
