@@ -132,14 +132,30 @@ External lanes in the background (each capture path lands on stdout):
 CW="${CLAUDE_PLUGIN_ROOT:-$PWD}/core/infra/call-worker.sh"
 [[ -f "$CW" ]] || echo "council-review: call-worker.sh not found at $CW — harness root unresolved; external lanes are absent this run" >&2
 
+# Bind every capture to this diff: sha256 over the staged blobs of risk-path files
+# (empty when none). Pass it per call so the reviews.jsonl index row carries it.
+# Only for --staged. For --head / <range> leave DK empty: the key describes the
+# staged index, so a key for another diff would bind evidence to the wrong content.
+DK=""
+DIFF_SEL="${DIFF_SEL:---staged}"   # the selector this run reviews: --staged (default), --head or <range>
+if [[ "$DIFF_SEL" == "--staged" ]]; then
+  DK="$(python3 "${CLAUDE_PLUGIN_ROOT:-$PWD}/core/infra/review-evidence.py" key --staged)" \
+    || { echo "council-review: diff key failed — dispatch without one" >&2; DK=""; }
+fi
+
 # per-lane prompts from step 1: lens preamble + shared core (grok: core only)
-AGENT_WORKER_YES=1 bash "$CW" second-opinion-review < "$PROMPT_CODEX"  > "$CAP_DIR/codex.path" 2> "$CAP_DIR/codex.err" &
-AGENT_WORKER_YES=1 bash "$CW" third-opinion-review  < "$PROMPT_GEMINI" > "$CAP_DIR/gemini.path" 2> "$CAP_DIR/gemini.err" &
+AGENT_WORKER_YES=1 AGENT_REVIEW_DIFF_KEY="$DK" bash "$CW" second-opinion-review < "$PROMPT_CODEX"  > "$CAP_DIR/codex.path" 2> "$CAP_DIR/codex.err" &
+AGENT_WORKER_YES=1 AGENT_REVIEW_DIFF_KEY="$DK" bash "$CW" third-opinion-review  < "$PROMPT_GEMINI" > "$CAP_DIR/gemini.path" 2> "$CAP_DIR/gemini.err" &
 # --with-grok only:
-AGENT_WORKER_YES=1 bash "$CW" advisor-third         < "$PROMPT_CORE"   > "$CAP_DIR/grok.path" 2> "$CAP_DIR/grok.err" &
+AGENT_WORKER_YES=1 AGENT_REVIEW_DIFF_KEY="$DK" bash "$CW" advisor-third         < "$PROMPT_CORE"   > "$CAP_DIR/grok.path" 2> "$CAP_DIR/grok.err" &
 # --with-free only:
-AGENT_WORKER_YES=1 bash "$CW" advisor-free          < "$PROMPT_CORE"   > "$CAP_DIR/free.path" 2> "$CAP_DIR/free.err" &
+AGENT_WORKER_YES=1 AGENT_REVIEW_DIFF_KEY="$DK" bash "$CW" advisor-free          < "$PROMPT_CORE"   > "$CAP_DIR/free.path" 2> "$CAP_DIR/free.err" &
 ```
+
+Captures and their index live outside the plugin cache, per project:
+`~/.agent/workers/<project-key>/<ts>-<role>.md` plus one `reviews.jsonl` row per
+capture (`diff_key` = `$DK`); override the directory with `AGENT_WORKERS_DIR`.
+Lane telemetry goes to `~/.agent/logs/council-lanes.jsonl`.
 
 The `[[ -f "$CW" ]]` line is a diagnostic, not a short-circuit: if the path is
 missing the dispatches below still run and each exits 127, which the

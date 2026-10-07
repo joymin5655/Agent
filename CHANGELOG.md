@@ -12,6 +12,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an honest enforcement status; `docs/internal/harness-improvement-plan.md` gains the V series
   (V-1..V-6, §4.16) as the backlog for mechanical enforcement; codex entry in
   `docs/runtime-registry.json` refreshed (CLI 0.160.0, docs URLs re-checked 2026-10-07).
+- **Review evidence moved out of the plugin cache** (cross-vendor realign W2):
+  `call-worker.sh` captures to `~/.agent/workers/<project-key>/` (project key = the
+  council gate's sha256-of-root key, derived from the caller's project, not the script
+  location; `AGENT_WORKERS_DIR` still overrides). Each capture appends a `reviews.jsonl`
+  row (`diff_key` from `AGENT_REVIEW_DIFF_KEY`) and a `~/.agent/logs/council-lanes.jsonl`
+  lane row; both are best-effort and never alter exit code or stdout.
+
+### Added
+- `core/infra/review-evidence.py` (`project-key`, `key --staged`) and
+  `council-threshold.sh --list-risk-files`, so the risk-path pattern list keeps one owner.
+  `/council-review` binds each dispatch to the staged risk-file blobs via `AGENT_REVIEW_DIFF_KEY`.
 
 ## [0.5.15] - 2026-10-07
 

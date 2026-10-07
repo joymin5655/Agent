@@ -288,7 +288,14 @@ shared blind spot doesn't survive review.
   own flags demonstrably do not block writes — measurements in
   `adapters/grok/README.md`.
 - **Dispatcher: `core/infra/call-worker.sh <role> < prompt.md`** — captures
-  the reply to `.agent/workers/<ts>-<role>.md` and prints the path. External
+  the reply to `~/.agent/workers/<project-key>/<ts>-<role>.md` (key = sha256 of the
+  caller's project root, first 12 hex; override with `AGENT_WORKERS_DIR`), appends
+  an index row to `reviews.jsonl` beside it and a lane row to
+  `~/.agent/logs/council-lanes.jsonl`, and prints the path. `reviews.jsonl` rows are written for EVERY terminal status
+  (complete, failed, timeout, rate-limited, unavailable), so a consumer must filter
+  `status == "complete"`; `diff_key` is the staged risk-file key from
+  `review-evidence.py key --staged` (null when unset). Review and commit must run in
+  the same worktree: a linked worktree is its own project, with its own key. External
   calls cost money: without `AGENT_WORKER_YES=1` it refuses (exit 3). The
   gate is env-only by design — a headless caller cannot answer an interactive
   confirm; the session that owns the user relationship asks first, then sets

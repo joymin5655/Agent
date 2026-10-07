@@ -213,7 +213,7 @@ result. Rules that keep it inside the standing invariants:
   subagent in an isolated worktree; lane B is the `implementer` role via
   `core/infra/call-worker.sh` run from a dedicated `.worktrees/race-<slug>/`
   checkout (which also scopes its workspace-write sandbox). Each lane's
-  deliverable is a patch file under `.agent/workers/`, produced with
+  deliverable is a patch file under `~/.agent/workers/<project-key>/`, produced with
   `git diff`, plus a lane report (`skills/supervise/templates/lane-report.md`).
 - **The supervisor is the only tree writer** (one-writer rule preserved): it
   runs the wave's acceptance command against each patch, compares, applies
