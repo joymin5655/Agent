@@ -46,7 +46,9 @@ concurrent projects don't collide. Two escape hatches live there:
      passes — the deny text used to advertise "re-issue this exact dispatch",
      and models retried reflexively without ever trying council-review
      (observed in an OMV_auto session). The stated reason is written to the
-     audit sink so every bypass is attributable.
+     audit sink so every bypass is attributable. 2026-10-07: the reason is
+     refused when the diff touches a risk-area path — there the only escape
+     is the user's logged AGENT_REVIEW_OVERRIDE at commit time.
      Ledger entries carry a timestamp and expire — an un-timestamped entry
      would otherwise be a forever-valid bypass token for that diff hash.
      2026-09-02 visibility upgrade: alongside the stderr line, this escape
@@ -141,6 +143,15 @@ DENY_REASON = (
 # makes the same fact visible via additionalContext (model-routing-advisor.py's
 # emission pattern) — it does not change the allow decision below, only its
 # visibility.
+RISK_DENY_REASON = (
+    "council-escalation: this diff touches a risk-area path (risk={risk}) — the "
+    "`council-unavailable:` escape does not apply. A risk-area diff needs an "
+    "external-vendor review (`/council-review --staged`); the commit gate "
+    "(core/git-hooks/pre-commit) enforces it. If every external lane is down, "
+    "only the user may override at commit time with AGENT_REVIEW_OVERRIDE; an "
+    "agent must not set it."
+)
+
 ESCAPE_ADVISORY = (
     "council-escalation: this code-reviewer dispatch was let through WITHOUT "
     "a council review, via the stated-reason escape (this exact diff was "
@@ -229,7 +240,9 @@ def council_active(root, hash_fn):
 
 
 def threshold_escalates(root):
-    """Run council-threshold.sh --staged in root. True iff it exits 10.
+    """Run council-threshold.sh --staged in root. (escalates, risk) where
+    escalates is True iff it exits 10 and risk is the output's risk= field
+    ("none" when absent).
     Fail-open on any exception (including the 15s timeout), but write one
     stderr line and one audit record first (F7) — the diffs most likely to
     time out are exactly the council-scale ones this gate exists for, and a
@@ -249,8 +262,9 @@ def threshold_escalates(root):
             file=sys.stderr,
         )
         log_event(root, "error", f"threshold script error: {type(exc).__name__}")
-        return False
-    return proc.returncode == 10
+        return False, "none"
+    m = re.search(r"\brisk=(\S+)", proc.stdout or "")
+    return proc.returncode == 10, (m.group(1) if m else "none")
 
 
 def diff_hash(root):
@@ -344,12 +358,12 @@ def log_event(root, decision, reason):
         pass
 
 
-def emit_deny():
+def emit_deny(reason=DENY_REASON):
     out = {
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
             "permissionDecision": "deny",
-            "permissionDecisionReason": DENY_REASON,
+            "permissionDecisionReason": reason,
         }
     }
     sys.stdout.write(json.dumps(out))
@@ -437,7 +451,8 @@ def main():
         log_event(root, "allow", "council-active flag escape")
         return
 
-    if not threshold_escalates(root):
+    escalates, risk = threshold_escalates(root)
+    if not escalates:
         return
 
     h = current_hash()
@@ -450,6 +465,10 @@ def main():
     denied_before = bool(h) and already_denied(root, h)
     # h falsy = diff hash unavailable; no ledger can exist, so a stated reason
     # alone opens the escape (otherwise the deny text's promise is a dead end).
+    if reason and risk != "none":
+        log_event(root, "deny", f"risk-area diff ({risk}) — council-unavailable escape refused")
+        emit_deny(RISK_DENY_REASON.format(risk=risk))
+        return
     if reason and (denied_before or not h):
         print(
             "[council-escalation-gate] this council-scale diff was already "

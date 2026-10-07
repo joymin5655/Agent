@@ -6,15 +6,28 @@
   key --staged              sha256 over mode+blob of the STAGED risk-path files only (empty
                             line when none; exit 2 on any git failure, never a key); risk
                             paths are classified by `council-threshold.sh --classify`
+  check --staged            commit gate: exit 0 when no risk file is staged, or an
+                            external-vendor (not anthropic, not an advisor-* role)
+                            `complete` review row in
+                            reviews.jsonl is bound to this exact key, or the user set
+                            AGENT_REVIEW_OVERRIDE (>=10 chars; logged). Exit 1 otherwise.
+                            The override is user-only by policy; agents must not set it.
+  summary CAPTURE...        lane-status line for the council report; first line warns
+                            "single-vendor review" when no external lane completed
 """
 from __future__ import annotations
 
+import getpass
 import hashlib
+import json
 import os
 import subprocess
 import sys
+from datetime import datetime, timezone
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+# realpath, not abspath: consumer hooks reach this file as <link>/../infra/..., and a
+# lexical ".." collapse would point THRESHOLD outside the framework copy.
+HERE = os.path.dirname(os.path.realpath(__file__))
 THRESHOLD = os.path.join(HERE, "council-threshold.sh")
 
 
@@ -105,6 +118,148 @@ def diff_key_staged() -> str:
     return hashlib.sha256("\n".join(lines).encode(errors="surrogateescape")).hexdigest()
 
 
+OVERRIDE_MIN = 10
+OVERRIDE_MAX = 300
+SINGLE_VENDOR = "single-vendor review — not a council (no external lane returned)"
+
+
+def workers_dir() -> str:
+    return os.environ.get("AGENT_WORKERS_DIR") or os.path.join(
+        os.path.expanduser("~"), ".agent", "workers", project_key())
+
+
+def has_external_complete(key: str) -> bool:
+    try:
+        with open(os.path.join(workers_dir(), "reviews.jsonl"), encoding="utf-8",
+                  errors="replace") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return False
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if (isinstance(row, dict) and row.get("diff_key") == key
+                and row.get("status") == "complete"
+                and not str(row.get("role") or "").startswith("advisor")
+                and row.get("vendor") not in (None, "", "anthropic")):
+            return True
+    return False
+
+
+def log_override(key: str | None, reason: str) -> None:
+    logs = os.environ.get("AGENT_LOGS_DIR") or os.path.join(
+        os.path.expanduser("~"), ".agent", "logs")
+    try:
+        user = getpass.getuser()
+    except (KeyError, OSError, ImportError):
+        user = "unknown"
+    row = {"ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+           "project_key": project_key(), "diff_key": key, "reason": reason[:OVERRIDE_MAX],
+           "user": user}
+    os.makedirs(logs, exist_ok=True)
+    with open(os.path.join(logs, "review-override.jsonl"), "a", encoding="utf-8") as f:
+        f.write(json.dumps(row) + "\n")
+
+
+def try_override(key: str | None) -> bool:
+    """User-only escape: a logged reason of >= OVERRIDE_MIN chars. It also covers a key
+    that cannot be computed, so a broken git state never leaves --no-verify as the
+    only way out."""
+    reason = (os.environ.get("AGENT_REVIEW_OVERRIDE") or "").strip()
+    if len(reason) < OVERRIDE_MIN:
+        return False
+    try:
+        log_override(key, reason)
+    except OSError as exc:
+        print(f"review-evidence: override log write failed ({exc})", file=sys.stderr)
+        return False
+    print("review-evidence: AGENT_REVIEW_OVERRIDE accepted — override recorded in "
+          "review-override.jsonl", file=sys.stderr)
+    return True
+
+
+def check_staged() -> int:
+    try:
+        key = diff_key_staged()
+    except (EvidenceError, OSError, IndexError, UnicodeDecodeError) as exc:
+        if try_override(None):
+            return 0
+        print(f"review-evidence: cannot compute the staged review key ({exc}) — "
+              "failing closed (AGENT_REVIEW_OVERRIDE still applies)", file=sys.stderr)
+        return 1
+    if not key:
+        return 0
+    if has_external_complete(key):
+        return 0
+    if try_override(key):
+        return 0
+    top = git_toplevel(os.getcwd()) or os.getcwd()
+    try:
+        entries = staged_entries(top)
+        files = sorted(classify_risk(top, list(entries)))
+    except EvidenceError:
+        files = []
+    print("review-evidence: risk-area files are staged and no external-vendor review "
+          "(status complete) is bound to this staged content:", file=sys.stderr)
+    for path in files:
+        print(f"  - {path}", file=sys.stderr)
+    print("  Run `/council-review --staged` (re-run it after editing any risk file), or, "
+          "only when every external lane is down and the user agrees:\n"
+          '    AGENT_REVIEW_OVERRIDE="<reason, >=10 chars>" git commit ...\n'
+          "  The override is user-only; agents must not set it. It is logged.",
+          file=sys.stderr)
+    return 1
+
+
+def read_frontmatter(path: str) -> dict[str, str]:
+    fm: dict[str, str] = {}
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            if f.readline().strip() != "---":
+                return fm
+            for line in f:
+                if line.strip() == "---":
+                    break
+                k, sep, v = line.partition(":")
+                if sep:
+                    fm[k.strip()] = v.strip()
+    except OSError:
+        pass
+    return fm
+
+
+def backend_vendors() -> dict[str, str]:
+    path = os.environ.get("AGENT_BACKENDS_FILE") or os.path.join(HERE, "backends.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            backends = json.load(f).get("backends", {})
+        return {n: b.get("vendor") or "" for n, b in backends.items() if isinstance(b, dict)}
+    except (OSError, ValueError, AttributeError):
+        return {}
+
+
+def summary(captures: list[str]) -> int:
+    vendors = backend_vendors()
+    parts: list[str] = []
+    external_complete = 0
+    for cap in captures:
+        fm = read_frontmatter(cap)
+        backend = fm.get("backend", "?")
+        status = fm.get("status", "unknown")
+        vendor = vendors.get(backend) or ("anthropic" if backend == "claude" else "")
+        good = status == "complete"
+        advisory = fm.get("role", "").startswith("advisor")
+        if good and vendor and vendor != "anthropic" and not advisory:
+            external_complete += 1
+        parts.append(f"{backend} {'✓' if good else '✗'} ({status})")
+    if not external_complete:
+        print(SINGLE_VENDOR)
+    print("Lane status: " + " | ".join(parts))
+    return 0
+
+
 def main(argv: list[str]) -> int:
     if argv[:1] == ["project-key"]:
         root = argv[2] if argv[1:2] == ["--root"] and len(argv) > 2 else None
@@ -117,6 +272,10 @@ def main(argv: list[str]) -> int:
             print(f"review-evidence: {exc}", file=sys.stderr)
             return 2
         return 0
+    if argv == ["check", "--staged"]:
+        return check_staged()
+    if argv[:1] == ["summary"]:
+        return summary(argv[1:])
     print(__doc__, file=sys.stderr)
     return 2
 

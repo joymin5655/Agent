@@ -116,7 +116,7 @@ a separate prompt.
 
 **Approval declined**: skip every external lane (no `call-worker.sh` calls at
 all) and proceed with the Claude `code-reviewer` lane alone — this is the same
-"single-vendor review" degrade the false-council guard (step 5) reports for,
+"single-vendor review" degrade the single-vendor warning (step 5) reports for,
 so the report's first line must say so rather than borrow the council's
 authority. This lane's own `code-reviewer` dispatch still needs the step 0.5
 flag — the gate does not know approval was declined, only that the
@@ -162,7 +162,7 @@ missing the dispatches below still run and each exits 127, which the
 degradation table already maps to "lane absent" — the echo just names the
 unresolved root instead of leaving a bare shell error. A missing `$CW`
 therefore means every external lane is reported absent this run (step 5's
-false-council guard applies) — never substitute a different resolution.
+single-vendor warning applies) — never substitute a different resolution.
 
 Simultaneously dispatch the `code-reviewer` agent (Agent tool) on the same
 diff — its frontmatter model pin stands; do not override. Then wait per lane
@@ -206,9 +206,22 @@ council too).
 
 ### 5. Report
 
+The report header is produced mechanically, never composed by hand. Pass the capture
+path of every lane that ran (each `call-worker.sh` stdout line):
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT:-$PWD}/core/infra/review-evidence.py" summary <capture paths>
+```
+
+Paste its output verbatim at the top of the report. When no external-vendor lane
+returned `complete`, its first line is `single-vendor review — not a council (no
+external lane returned)` — keep it; the Claude lane always runs but must not borrow
+the council's authority. Absent lanes (no capture) are appended by hand as
+`<lane> ✗ absent (<reason>)`.
+
 ```
 ## Council review — <target>
-Lane status: claude ✓ | codex ✓ | gemini ✗ absent (<reason>) | grok ✓ advisory | free ✓ advisory
+<review-evidence.py summary output: [single-vendor warning,] Lane status: ...>
 Citation drops: codex 1, gemini 0
 
 ### High-signal (≥2 vendors)  ...
@@ -218,9 +231,10 @@ Citation drops: codex 1, gemini 0
 ### Advisory (free)           ...
 ```
 
-**False-council guard**: if EVERY external lane is absent, the first line of
-the report must say this was a single-vendor review, not a council — the
-Claude lane always runs, but it must not borrow the council's authority.
+The commit gate (`core/git-hooks/pre-commit`) blocks risk-area commits that have no
+external `complete` review bound to the staged content. The user-only escape
+`AGENT_REVIEW_OVERRIDE="<reason>"` exists for the case where every external lane is
+down; an agent must never set it itself.
 
 ### 6. Clear the council-active flag
 

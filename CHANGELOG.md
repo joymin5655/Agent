@@ -20,6 +20,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lane row; both are best-effort and never alter exit code or stdout.
 
 ### Added
+- **Risk-path review enforcement** (cross-vendor realign W3): `review-evidence.py check --staged`
+  blocks a commit of risk-area files unless `reviews.jsonl` holds a `complete` row from a
+  non-anthropic vendor bound to the exact staged content (editing a risk file after review
+  invalidates it). `core/git-hooks/pre-commit` runs it as step 3. `AGENT_REVIEW_OVERRIDE`
+  (>=10 chars) is the user-only escape when every external lane is down; it is logged to
+  `~/.agent/logs/review-override.jsonl`, and agents must not set it. The gate's
+  `council-unavailable:` escape is now refused for risk-area diffs. `review-evidence.py
+  summary` renders the council report's lane-status header (single-vendor warning
+  included); `/council-review` step 5 uses it verbatim.
 - `core/infra/review-evidence.py` (`project-key`, `key --staged`) and
   `council-threshold.sh --list-risk-files`, so the risk-path pattern list keeps one owner.
   `/council-review` binds each dispatch to the staged risk-file blobs via `AGENT_REVIEW_DIFF_KEY`.

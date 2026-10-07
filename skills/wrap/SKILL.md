@@ -82,10 +82,14 @@ d. **Review-tier check** — run the review-cadence script, resolved from the
      path) AND no council/degrade review happened this session for this diff
      (no row in `<workers dir>/reviews.jsonl` with `diff_key` equal to
      `review-evidence.py key --staged`, `status == "complete"` and a vendor other
-     than anthropic — a later `review-evidence.py check` automates this; no
+     than anthropic — `review-evidence.py check --staged` automates this, and
+     `core/git-hooks/pre-commit` enforces it for risk-area paths; no
      single-vendor degrade note) → recommend `/council-review --staged` and confirm with the user
-     before committing solo. This is advisory, not a gate abort — the user
-     can proceed anyway; it exists so a council-scale diff doesn't slip into
+     before committing solo. For a size-only tier 2 this is advisory, not a
+     gate abort — the user can proceed anyway. For risk-area paths the
+     pre-commit hook blocks the commit: run `/council-review --staged`, and
+     never set `AGENT_REVIEW_OVERRIDE` yourself (user-only). The check exists
+     so a council-scale diff doesn't slip into
      a commit on the strength of a Claude-only review that
      `council-escalation-gate.py` never got a chance to catch (e.g. edits
      made without a Task/Agent dispatch).
