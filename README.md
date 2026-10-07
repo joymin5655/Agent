@@ -249,7 +249,7 @@ Then:
 4. *(Optional)* In a repo that already runs another hook-heavy plugin, disable agent-harness there via `/plugin` — agents stay namespaced as `agent-harness:*`, so there's no collision either way.
 5. *(Optional)* Want the cross-vendor worker lanes (codex/antigravity/grok/kiro second opinions)? Run `/agent-harness:worker-setup` for a guided install → auth → verify walkthrough with an upfront cost briefing.
 
-The plugin bundles: **3 agents**, **13 skills**, the hook set, and the
+The plugin bundles: **3 agents**, **14 skills**, the hook set, and the
 `/agent-harness:project-init` command.
 See the
 [plugin installation lifecycle](docs/claude-plugin-install-lifecycle.md) for
@@ -452,6 +452,7 @@ Model is cost-tiered per work class ([`docs/model-routing.md`](docs/model-routin
 | `harness-audit` | Read-only health check of the harness itself (one `verify-all.sh` dry-run, interpreted) |
 | `manager-audit` | Meta-audit of a `/supervise` run — restatement quality, model-routing waste, relative token spend, role compliance; findings become patch proposals for user approval |
 | `persona-review` | Seat a panel of distribution-grounded user personas in front of UX/copy and report how ordinary users react |
+| `reorg-sync` | After a tree move, sweep orphaned absolute-path references (shebangs, worktree gitfiles, crontab, doc anchors, memory keys); dry-run report first, `--apply` after confirmation |
 | `harness-help` | Router — which skill fits the situation, and the main flow through them |
 
 | Hooks — 22 wired via `hooks/hooks.json` → `core/hooks/` (26 scripts incl. shared modules) | Event |
@@ -480,7 +481,7 @@ Agent/
 ├── CHANGELOG.md
 │
 ├── agents/             # 3 agent definitions + master-registry.json
-├── skills/             # 13 skills (spec · supervise · verify-completion · wrap · brain-ingest · harness-audit · manager-audit · persona-review · harness-help · loop · harness-loop · council-review · worker-setup)
+├── skills/             # 14 skills (spec · supervise · verify-completion · wrap · brain-ingest · harness-audit · manager-audit · persona-review · harness-help · loop · harness-loop · council-review · worker-setup · reorg-sync)
 ├── commands/           # 1 namespaced project-init command
 ├── hooks/              # plugin hook wiring (hooks.json)
 │
