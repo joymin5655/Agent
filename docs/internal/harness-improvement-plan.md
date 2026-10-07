@@ -5,7 +5,7 @@
 | 작성일 | 2026-07-04 |
 | 기준 버전 | v0.2.0 |
 | 대상 버전 | v0.2.1 (P0 위생) → v0.3.0 (P1 구조) → v0.3.x (P2 루프) |
-| 성격 | **계획 문서** — 이 문서 자체는 코드를 바꾸지 않는다. 모든 변경은 백로그 ID(P0-*/P1-*/P2-*/H-*/W-*/A-*/G-*)로 추적한다 |
+| 성격 | **계획 문서** — 이 문서 자체는 코드를 바꾸지 않는다. 모든 변경은 백로그 ID(P0-*/P1-*/P2-*/H-*/W-*/A-*/G-*/V-*)로 추적한다 |
 
 ---
 
@@ -278,7 +278,7 @@
 
 출처: 2026-07-27 로드맵 감사(3축: 게이트 텔레메트리 30일 × `docs/gate-registry.md` 대조 · 백로그 미착수 잔량 스캔 · 모델 지형 공식문서 재검증). 목표 진술(사용자): 창의성을 억누르는 과잉 가드는 근거 기반으로 트림하고, 저비용-고성능 워크플로우와 내외부 플러그인 유기 결합을 키우고, 초보자도 설치 후 쓰다 보면 하네스가 사용자에게 맞춰지는 **제안형 적응**(자동 변경 금지 — 제안→원클릭 승인, PROPOSALS.md 패턴)으로 성장시키고, 모델 세팅 최신성을 상시 검증한다. 기존 시리즈와의 관계: 신규 발명 최소 — 미착수 잔량(P2·LE·T-4·H-4·W-10·O-2)을 5축으로 재편성하고, 순수 신규는 GT(집행 완료)·AP(제안형 적응)·MC(모델 최신성)만.
 
-**5축**: ① 가드 캘리브레이션(자유도) — GT ✅·T-4·LE-4(제안형 재정의) ② 저비용 고성능 — P2 재계획·LE-3·LE-8·M-6/M-7 회수 ③ 초보자 온보딩+제안형 적응 — AP 시리즈·H-4 ④ 내외부 플러그인 유기 결합 — W-10·doctor 공존 체크·brain MCP ⑤ 모델 최신성 — MC 시리즈. **Wave**: W1=GT(✅ 이 PR) → W2=T-4+AP-1/AP-2 (개인화 MVP) → W3=P2 재개(B4 잔여 KNOWN OPEN 해소 선행)+LE-3 → W4=H-4+AP-4+W-10 → 상시=MC. **하지 않는 것(재확인)**: 안전 deny 2계열·verify-bypass ask 완화(발화량은 방어 실적), 런타임 모델 스위칭, 승인 없는 자동 설정 변경, deny 티어 확대.
+**5축**: ① 가드 캘리브레이션(자유도) — GT ✅·T-4·LE-4(제안형 재정의) ② 저비용 고성능 — P2 재계획·LE-3·LE-8·M-6/M-7 회수 ③ 초보자 온보딩+제안형 적응 — AP 시리즈·H-4 ④ 내외부 플러그인 유기 결합 — W-10·doctor 공존 체크·brain MCP ⑤ 모델 최신성 — MC 시리즈. ⑥ 교차 벤더 다양성 — V 시리즈(§4.16, 2026-10-07 추가). **Wave**: W1=GT(✅ 이 PR) → W2=T-4+AP-1/AP-2 (개인화 MVP) → W3=P2 재개(B4 잔여 KNOWN OPEN 해소 선행)+LE-3 → W4=H-4+AP-4+W-10 → 상시=MC. **하지 않는 것(재확인)**: 안전 deny 2계열·verify-bypass ask 완화(발화량은 방어 실적), 런타임 모델 스위칭, 승인 없는 자동 설정 변경, deny 티어 확대.
 
 | ID | 작업 | 근거 | 완료 조건 (기계 검증) | 규모 |
 |---|---|---|---|---|
@@ -315,6 +315,23 @@
 |---|---|---|---|---|
 | D-1 ✅ 2026-10-07 | **레퍼런스 포지셔닝** — README(영/한) 첫머리에 "개인 하네스, 참고·포크용" 상태 문구 + 개인 구성에 묶인 부분 명시, 내부 작업 문서 3종(본 문서·자유도 감사·루프 감사)을 `docs/internal/`로 이동하고 참조 일괄 갱신 | 2026-10-07 배포 적합성 분석 | README 상태 문구 + `docs/internal/README.md` 인덱스 + doc-reality·verify-all green | S |
 | D-2 (보류) | **코어/확장 분리 배포** — 코어(가드 훅·어댑터·`/wrap`·`/spec`·`/verify-completion`)와 개인 확장(워커 레인·모델 라우팅·persona-review·brain)을 별도 플러그인으로 분리, secret-scan MCP 매처를 `hook-config`로 설정 가능하게, 깨끗한 다른 머신에서 설치 시험 | D-1과 같은 분석. 착수 조건: 외부 사용자 이슈·포크 등 실수요 신호 | 코어 플러그인 단독 설치로 가드 동작 + 확장 미설치 시 참조 0 + 클린 머신 설치 기록 | L |
+
+### 4.16 V 시리즈 — 교차 벤더 다양성 (2026-10-07)
+
+목적 선언: 세션당 메인 AI 하나 + 다른 벤더가 독립 리뷰어로 붙는 교차 벤더 리뷰 다양성이
+이 하네스의 핵심이다. 현재는 `/council-review`가 요청 시 동작하지만 위험 경로에서 외부 벤더
+리뷰를 기계적으로 강제하지 못한다. X-4(리뷰 레인 완주 계약, §4.14)가 "리뷰 산출물 부재 =
+FAILED" 판정을 맡고, V 시리즈는 그 위에서 "외부 벤더 리뷰 존재" 판정을 얹는다. W6(메인 인지형
+리뷰어 선택 / 대칭 council)은 V-1~V-6 이후로 보류한다.
+
+| ID | 작업 | 근거 | 완료 조건 (기계 검증) | 규모 |
+|---|---|---|---|---|
+| V-1 | **캡처 이전** — 워커 출력 캡처 위치를 프로젝트 트리 밖 `~/.agent/workers/<project-key>`로 이전 | `core/infra/call-worker.sh:56-58`이 REPO_ROOT를 스크립트 위치로 잡아, 플러그인으로 실행하면 캡처가 플러그인 캐시(`<cache>/<ver>/.agent/workers`)에 쌓임 — 버전 업데이트 시 고아화, `/wrap`의 캡처 확인과도 어긋남 | call-worker 픽스처: `AGENT_WORKERS_DIR` 미설정 시 캡처가 `~/.agent/workers/<key>/`에 생기고 스크립트 위치·프로젝트 트리에는 0건 | S |
+| V-2 | **리뷰 인덱스** — 캡처마다 `reviews.jsonl`에 `{role, vendor, status, diff_key}` 1행; `diff_key` = 위험 경로 파일 staged 내용 해시(`review-evidence.py key`) | `core/hooks/council-escalation-gate.py`는 council-scale 여부만 보고 "어떤 diff를 누가 리뷰했는지"를 남기지 않음 — 캡처를 읽는 코드가 0개 | 위험 파일 수정 시 diff_key 변화·비위험 파일만 수정 시 불변 픽스처 + 캡처 1건당 인덱스 1행 | S–M |
+| V-3 | **pre-commit 리뷰 완결성 판정** — 위험 경로 diff에 외부 벤더 리뷰 ≥1(V-2 조회), 예외는 `AGENT_REVIEW_OVERRIDE` 사유와 함께 기록 | `core/hooks/council-escalation-gate.py`가 plain code-reviewer 디스패치만 막고 커밋 시점 완결성은 검사하지 않음 | 위험 경로 diff + 외부 리뷰 없음 = 차단, 있음 = 통과, override = 사유 기록 3케이스 픽스처 | M |
+| V-4 | **위험 경로 탈출구 제거** — 위험 경로에서 `council-unavailable` 탈출구 삭제, single-vendor 라벨을 스크립트로 자동 부착 | `core/hooks/council-escalation-gate.py`의 escape 밸브가 미리뷰 통과를 허용하고 라벨은 수동 | 위험 경로에서 escape 불가 + 비위험 경로 single-vendor 라벨 자동 부착 픽스처 | S–M |
+| V-5 | **런타임·구독 감지** — `runtime-profile.py`가 설치된 CLI·구독 상태를 감지하고 설치 시 메인 AI 선택에 반영 | `docs/runtime-registry.json`은 런타임 사양만 담고 사용자 환경의 실제 가용 벤더는 모름 | 감지 결과 JSON 픽스처(벤더 0/1/2개 설치 시나리오) + `setup.sh`가 선택을 기록 | M |
+| V-6 | **관측성** — `telemetry-digest --review` 신설 + manager-audit `review-completeness` 레인 | `core/infra/telemetry-digest.sh`는 게이트 발화율만 보고 위험 경로 리뷰 충족률은 못 봄 | digest가 위험 경로 커밋 대비 외부 리뷰 충족률 출력 + manager-audit 신규 레인 RED/GREEN 픽스처 | M |
 
 ## 5. Part 3 — `/harness-loop` 자율 개선 루프 설계 (단일 권고안)
 
@@ -383,7 +400,7 @@ P0-1 ~ P0-11 (최초 7건 반나절 + 훅 감사 배치 4건 2026-07-04)  → v0
 1. **산출물 카운트(SSOT — `doc-reality.sh`의 (C) 체크가 라이브 대조):** `ls core/hooks/*.py core/hooks/*.sh | wc -l` = **31**(`core/hooks`의 .py+.sh 파일; `hook_config.py`·`trust_tier.py` 공용 모듈, `agent-inventory.py` 리컨사일러, `brain-capture.py` 세션 캡처 훅, `verify-observer.py` 검증-관측 훅, `session-tier-observer.py` 세션-티어 옵저버, `loop-write-guard.py` 루프 쓰기가드, `council-escalation-gate.py` council 자동 승격 게이트, `top-edit-advisor.py` TOP 메인루프 누적-경고 훅 포함), `ls core/tests/*.sh | wc -l` = **92**(런타임 통화성의 `runtime-currency.sh`·`runtime-currency-test.sh`·`log-origin-test.sh`, Claude 확장 이벤트의 `claude-extended-events-test.sh`, W-12의 `bootstrap-test.sh`, kiro 레인의 `kiro-preflight-test.sh`, `session-tier-observer-test.sh`, B4의 `grade.sh`·`grade-test.sh`·`loop-ledger-test.sh`·`loop-write-guard-test.sh`, B4 후속의 `gitleaks-allowlist-test.sh`, B5의 `loop-run-test.sh`·`loop-skill-test.sh`, 크로스벤더 워커 레인의 `gemini-preflight-test.sh`·`grok-worker-test.sh`·`antigravity-worker-test.sh`·`antigravity-preflight-test.sh`, P1 grounded-completion-gate의 `completion-gate-test.sh`, council 자동 승격의 `council-threshold-test.sh`·`council-escalation-gate-test.sh`, worker-lane 온보딩의 `council-dispatch-path-test.sh`·`worker-setup-skill-test.sh` , free-lane의 `openrouter-worker-test.sh`, `top-edit-advisor-test.sh`, 리뷰 티어링의 `review-tier-test.sh`, W4 Codex 네이티브 훅의 `codex-native-hooks-test.sh`, W5 Antigravity 네이티브 훅의 `antigravity-adapter-test.sh`·`antigravity-native-hooks-test.sh`, blast-radius 리뷰 컨텍스트의 `impact-context-test.sh` 포함 — `grade.sh`는 루프 도구지만 `core/tests/`에 상주해 카운트됨), `ls agents/*.md | wc -l` = **3**, `ls skills/*/SKILL.md | wc -l` = **13**(brain-ingest·council-review·harness-audit·harness-help·harness-loop·loop·manager-audit·persona-review·spec·supervise·verify-completion·worker-setup·wrap — B5에서 `harness-loop`·`loop`, 크로스벤더 리뷰에서 `council-review`, worker-lane 온보딩에서 `worker-setup` 추가). §3.3 표의 훅·테스트 수치는 2026-07-04 스냅샷이며, 이후 증가분은 이 줄이 정본이다.
 2. `bash core/tests/sanitize-audit.sh` — **PASS가 정상.** (P0-7 완료 이후로는 클린 워킹 트리에서 항상 PASS — 과거의 "FAIL이 정상" 예외는 P0-7 해소로 소멸)
 3. `gitleaks detect --no-git --source docs/ --config gitleaks.toml`.
-4. 백로그 항목 수 검증(2026-07-07 캘리브레이션 배치 갱신, 실측): `grep -cE '^\| P[0-3]-[0-9]+' docs/internal/harness-improvement-plan.md` = **34** (P0 11 + P1 13 + P2 5 + P3 5), 각 행에 완료 조건 존재. H/W 시리즈: `grep -cE '^\| [HW]-[0-9]+' docs/internal/harness-improvement-plan.md` = **18** (H 4 + W 14, W-12 부트스트랩 레인·W-13 L2 원장·W-14 wayfinder 노트 포함). T/E 시리즈: `grep -cE '^\| [TE]-[0-9]+' docs/internal/harness-improvement-plan.md` = **5** (T 4 + E 1 — §4.8). O/L/I 시리즈: `grep -cE '^\| [OLI]-[0-9]+' docs/internal/harness-improvement-plan.md` = **6** (O 2 + L 2 + I 2 — §4.9). M 시리즈: `grep -cE '^\| M-[0-9]+' docs/internal/harness-improvement-plan.md` = **9** (M-1~M-7 ✅ + M-8·M-9 — §4.10). A/G 시리즈: `grep -cE '^\| [AG]-[0-9]+' docs/internal/harness-improvement-plan.md` = **4** (A 2 + G 2; 완료 조건 대신 근거·상태 기재 — §4.6 참고). F 시리즈: `grep -cE '^\| F-[0-9]+' docs/internal/harness-improvement-plan.md` = **2** (F-1·F-2 — §4.11). X 시리즈: `grep -cE '^\| X-[0-9]+' docs/internal/harness-improvement-plan.md` = **4** (X-1~X-4 — §4.14).
+4. 백로그 항목 수 검증(2026-07-07 캘리브레이션 배치 갱신, 실측): `grep -cE '^\| P[0-3]-[0-9]+' docs/internal/harness-improvement-plan.md` = **34** (P0 11 + P1 13 + P2 5 + P3 5), 각 행에 완료 조건 존재. H/W 시리즈: `grep -cE '^\| [HW]-[0-9]+' docs/internal/harness-improvement-plan.md` = **18** (H 4 + W 14, W-12 부트스트랩 레인·W-13 L2 원장·W-14 wayfinder 노트 포함). T/E 시리즈: `grep -cE '^\| [TE]-[0-9]+' docs/internal/harness-improvement-plan.md` = **5** (T 4 + E 1 — §4.8). O/L/I 시리즈: `grep -cE '^\| [OLI]-[0-9]+' docs/internal/harness-improvement-plan.md` = **6** (O 2 + L 2 + I 2 — §4.9). M 시리즈: `grep -cE '^\| M-[0-9]+' docs/internal/harness-improvement-plan.md` = **9** (M-1~M-7 ✅ + M-8·M-9 — §4.10). A/G 시리즈: `grep -cE '^\| [AG]-[0-9]+' docs/internal/harness-improvement-plan.md` = **4** (A 2 + G 2; 완료 조건 대신 근거·상태 기재 — §4.6 참고). F 시리즈: `grep -cE '^\| F-[0-9]+' docs/internal/harness-improvement-plan.md` = **2** (F-1·F-2 — §4.11). X 시리즈: `grep -cE '^\| X-[0-9]+' docs/internal/harness-improvement-plan.md` = **4** (X-1~X-4 — §4.14). V 시리즈: `grep -cE '^\| V-[0-9]+' docs/internal/harness-improvement-plan.md` = **6** (V-1~V-6 — §4.16).
 5. 스코어카드(§3.1·§3.2)의 격차 행 ↔ 백로그 ID 상호 링크 고아 0건 (모든 "부분/미비" 행에 P* 링크 존재). `docs/benchmark/landscape.md`의 Gap→backlog 매핑표 ID도 본 문서에 전부 실존해야 함(고아 0).
 6. AGENTS.md 규약 준수 — 도메인 중립 언어, 커밋 메시지 `docs(plan): add harness improvement plan`.
 

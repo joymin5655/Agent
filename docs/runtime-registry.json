@@ -26,15 +26,15 @@
     "codex": {
       "kind": "first-party",
       "vendor": "openai",
-      "cli_version_measured": "0.157.0",
-      "measured_on": "2026-09-27",
+      "cli_version_measured": "0.160.0",
+      "measured_on": "2026-10-07",
       "docs": [
-        {"url": "https://learn.chatgpt.com/docs/hooks", "checked_on": "2026-09-27"},
-        {"url": "https://learn.chatgpt.com/docs/config-file/config-reference", "checked_on": "2026-09-27"},
-        {"url": "https://learn.chatgpt.com/docs/agent-configuration/agents-md", "checked_on": "2026-09-27"},
-        {"url": "https://learn.chatgpt.com/docs/models", "checked_on": "2026-09-27"},
-        {"url": "https://developers.openai.com/plugins/build/plugins", "checked_on": "2026-09-27"},
-        {"url": "https://learn.chatgpt.com/docs/build-skills", "checked_on": "2026-09-27"}
+        {"url": "https://learn.chatgpt.com/docs/hooks", "checked_on": "2026-10-07"},
+        {"url": "https://learn.chatgpt.com/docs/config-file/config-reference", "checked_on": "2026-10-07"},
+        {"url": "https://learn.chatgpt.com/docs/agent-configuration/agents-md", "checked_on": "2026-10-07"},
+        {"url": "https://learn.chatgpt.com/docs/models", "checked_on": "2026-10-07"},
+        {"url": "https://developers.openai.com/plugins/build/plugins", "checked_on": "2026-10-07"},
+        {"url": "https://learn.chatgpt.com/docs/build-skills", "checked_on": "2026-10-07"}
       ],
       "hook_events_wired": ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SessionEnd"],
       "hook_events_available": ["SessionStart", "SessionEnd", "PreToolUse", "PermissionRequest", "PostToolUse", "PreCompact", "PostCompact", "UserPromptSubmit", "SubagentStart", "SubagentStop", "Stop", "Interrupt"],

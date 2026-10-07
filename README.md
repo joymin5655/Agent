@@ -30,6 +30,12 @@ their covered tool routes, and
 a spec gate that catches plan-skipping — in observation mode by default, one
 env var to block. Plus a CI that verifies the harness itself.
 
+**The core purpose: cross-vendor review diversity.** One main AI drives each session;
+other vendors' CLIs (Codex, Gemini and so on) act as independent reviewers, so one
+model family never signs off on its own work. Honest status: `/council-review` runs this
+today on request, while mechanical enforcement for risk-area paths is still in progress
+(backlog V series in [`docs/internal/`](docs/internal/README.md)).
+
 **One governance layer, three agent CLIs.** Install once:
 
 ```
