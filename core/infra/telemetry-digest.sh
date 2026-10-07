@@ -54,6 +54,37 @@
 #     AGENT_MODEL_ROUTING_SINK, AGENT_REGISTRY_PATH, AGENT_TIER_ALIASES (same
 #     names manager-audit.sh uses — one routing log, one set of seams).
 #
+#   bash core/infra/telemetry-digest.sh --review [--window <days>] [--json]
+#     Review-completeness mode (V-6): how often is a review Claude-only? Observer, exit 0.
+#     Metrics (a source missing or empty in-window prints "no data"; JSON gives
+#     null + "measured": false — unmeasured is never reported as 0%):
+#       solo ratio  over ~/.agent/workers/<project-key>/reviews.jsonl rows with a
+#                   non-null diff_key, group by (project dir, diff_key); a group is
+#                   "solo" when it has no external-complete row. ratio = solo/groups.
+#                   External complete = status=="complete", vendor not null/""/
+#                   "anthropic", role not starting "advisor" (the rule of
+#                   review-evidence.py has_external_complete; parity-tested).
+#       lanes       per role from council-lanes.jsonl: complete/total, status
+#                   breakdown, mean duration_s (complete rows, and all rows).
+#       overrides   review-override.jsonl count + per project_key; reason/user are
+#                   never printed.
+#       context     Claude code-reviewer dispatches beside the external-complete
+#                   lane-row count. One record kind is counted per dispatch: the
+#                   PreToolUse gate row of model-routing.jsonl (`subagent_type`
+#                   containing "code-reviewer", no `event`, source != "post_tool_use");
+#                   the PostToolUse and SubagentStart/Stop rows of the same dispatch
+#                   are not counted. The two counts have no shared session id, so no
+#                   ratio is computed. A routing log with only test-origin rows is
+#                   "no data", not 0.
+#       main tier   tier/model distribution of session-tier.jsonl (session start rows).
+#     Rows outside --window are dropped BEFORE grouping, so the solo rule is the
+#     window-scoped variant of has_external_complete (an external review older than
+#     the window no longer rescues a diff_key). Rows with an unparseable ts are kept.
+#     The W1-5 origin filter below also applies here (routing/session-tier rows).
+#     An analysis crash prints a loud skip (JSON "error" key), never a traceback.
+#     Env seams: AGENT_WORKERS_ROOT (default ~/.agent/workers), AGENT_LOGS_DIR
+#     (default ~/.agent/logs), AGENT_MODEL_ROUTING_SINK, AGENT_SESSION_TIER_SINK.
+#
 # Rule candidates (heuristics derived ONLY from already-logged actions — never
 # re-reads the registry or re-derives ghost status):
 #   - NO-ACCEPT     a specialist was asked (ask-intent + ask-security) >= 3
@@ -91,6 +122,8 @@ STALE_DAYS=90
 MODEL_MODE=0
 ROUTING_LOG_PATH=""
 MODEL_REGISTRY_PATH=""
+REVIEW_MODE=0
+WORKERS_ROOT="${AGENT_WORKERS_ROOT:-$HOME/.agent/workers}"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -100,6 +133,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --model)
             MODEL_MODE=1
+            shift
+            ;;
+        --review)
+            REVIEW_MODE=1
             shift
             ;;
         --routing-log)
@@ -138,6 +175,7 @@ while [[ $# -gt 0 ]]; do
             echo "usage: telemetry-digest.sh [path] [--window <days>] [--json]" >&2
             echo "       telemetry-digest.sh --gates [--registry <md>] [--logs-dir <d>] [--window <days>] [--fatigue <N>] [--stale-days <N>] [--json]" >&2
             echo "       telemetry-digest.sh --model [--routing-log <path>] [--model-registry <path>] [--json]" >&2
+            echo "       telemetry-digest.sh --review [--window <days>] [--json]" >&2
             exit 0
             ;;
         *)
@@ -620,6 +658,237 @@ except Exception as exc:
     else:
         print("model-digest: SKIP (0 records — analysis error)")
 PY
+    exit 0
+fi
+
+if [[ "$REVIEW_MODE" -eq 1 ]]; then
+    [[ -z "$ROUTING_LOG_PATH" ]] && ROUTING_LOG_PATH="${AGENT_MODEL_ROUTING_SINK:-$REPO_ROOT/.agent/logs/model-routing.jsonl}"
+    review_out=$(python3 - "$WORKERS_ROOT" "${AGENT_LOGS_DIR:-$HOME/.agent/logs}" "$ROUTING_LOG_PATH" \
+        "${AGENT_SESSION_TIER_SINK:-$REPO_ROOT/.agent/logs/session-tier.jsonl}" \
+        "$WINDOW_DAYS" "$JSON_MODE" 2>/dev/null <<'PY'
+import sys, os, json, datetime, collections
+
+workers_root, logs_dir, routing_log, tier_log = sys.argv[1:5]
+try:
+    window_days = int(sys.argv[5])
+except Exception:
+    window_days = 30
+json_mode = sys.argv[6] == "1"
+cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=window_days)
+malformed = 0
+
+
+def parse_ts(value):
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        dt = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except Exception:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=datetime.timezone.utc)
+    return dt
+
+
+def rows(path):
+    """In-window JSON-object rows of one JSONL file, or None when it is absent.
+    A row with no parseable ts is kept (legacy), same as the --gates counter."""
+    global malformed
+    out = []
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except Exception:
+                    malformed += 1
+                    continue
+                if not isinstance(rec, dict):
+                    malformed += 1
+                    continue
+                ts = parse_ts(rec.get("ts"))
+                if ts is not None and ts < cutoff:
+                    continue
+                out.append(rec)
+    except OSError:
+        return None
+    return out
+
+
+def real_origin(rec):
+    return rec.get("origin") in (None, "session")
+
+
+def is_external_complete(row):
+    # mirrors core/infra/review-evidence.py has_external_complete (parity-tested)
+    return (row.get("status") == "complete"
+            and not str(row.get("role") or "").startswith("advisor")
+            and row.get("vendor") not in (None, "", "anthropic"))
+
+
+def measured_or_none(rs):
+    return rs is not None and len(rs) > 0
+
+
+def label(value):
+    return str(value)[:64]
+
+
+# --- primary: solo ratio by (project dir, diff_key) --------------------------
+groups = collections.OrderedDict()
+try:
+    projects = sorted(os.listdir(workers_root))
+except OSError:
+    projects = []
+any_rows = False
+for proj in projects:
+    pdir = os.path.join(workers_root, proj)
+    if not os.path.isdir(pdir):
+        continue
+    rs = rows(os.path.join(pdir, "reviews.jsonl")) or []
+    for r in rs:
+        key = r.get("diff_key")
+        if not isinstance(key, str) or not key:
+            continue
+        any_rows = True
+        groups.setdefault((proj, key), False)
+        if is_external_complete(r):
+            groups[(proj, key)] = True
+solo = {"measured": any_rows, "groups": None, "solo_groups": None,
+        "solo_ratio": None, "solo_pct": None}
+if any_rows:
+    n_groups = len(groups)
+    n_solo = sum(1 for v in groups.values() if not v)
+    solo.update(groups=n_groups, solo_groups=n_solo,
+                solo_ratio=round(n_solo / n_groups, 4), solo_pct=round(100 * n_solo / n_groups, 1))
+
+# --- per-lane success + duration (council-lanes.jsonl) -----------------------
+lane_rows = rows(os.path.join(logs_dir, "council-lanes.jsonl"))
+by_role = collections.OrderedDict()
+lanes_measured = measured_or_none(lane_rows)
+external_lanes = None
+if lanes_measured:
+    external_lanes = 0
+    acc = collections.OrderedDict()
+    for r in lane_rows:
+        role = label(r.get("role") or "unknown")
+        a = acc.setdefault(role, {"total": 0, "complete": 0, "statuses": collections.Counter(),
+                                  "dur_all": [], "dur_ok": []})
+        status = label(r.get("status") or "unknown")
+        a["total"] += 1
+        a["statuses"][status] += 1
+        dur = r.get("duration_s")
+        is_num = isinstance(dur, (int, float)) and not isinstance(dur, bool)
+        if is_num and (dur != dur or dur in (float("inf"), float("-inf"))):
+            is_num = False
+        if status == "complete":
+            a["complete"] += 1
+            if is_num:
+                a["dur_ok"].append(dur)
+        if is_num:
+            a["dur_all"].append(dur)
+        if is_external_complete(r):
+            external_lanes += 1
+    for role, a in acc.items():
+        mean = lambda xs: round(sum(xs) / len(xs), 2) if xs else None
+        by_role[role] = {
+            "total": a["total"], "complete": a["complete"],
+            "success_rate": round(a["complete"] / a["total"], 4),
+            "statuses": dict(a["statuses"]),
+            "mean_duration_complete_s": mean(a["dur_ok"]),
+            "mean_duration_all_s": mean(a["dur_all"]),
+        }
+lanes = {"measured": lanes_measured, "by_role": by_role}
+
+# --- overrides: counts only, never reason/user -------------------------------
+ov_rows = rows(os.path.join(logs_dir, "review-override.jsonl"))
+ov_measured = measured_or_none(ov_rows)
+ov_by = collections.Counter(label(r.get("project_key") or "unknown") for r in (ov_rows or []))
+overrides = {"measured": ov_measured, "total": len(ov_rows) if ov_measured else None,
+             "by_project": dict(ov_by) if ov_measured else {}}
+
+# --- secondary context: Claude reviewer dispatches vs external lanes ---------
+rt_rows = rows(routing_log)
+rev = None
+# one record kind per dispatch: the PreToolUse gate row (subagent_type, no `event`,
+# source != "post_tool_use"). PostToolUse rows (source post_tool_use) and
+# SubagentStart/Stop rows (agent_type, `event`) describe the same dispatch again.
+rt_real = [r for r in (rt_rows or []) if real_origin(r)]
+if rt_real:
+    rev = sum(1 for r in rt_real
+              if "event" not in r and r.get("source") != "post_tool_use"
+              and "code-reviewer" in str(r.get("subagent_type") or ""))
+context = {"measured": rev is not None and external_lanes is not None,
+           "claude_code_reviewer_dispatches": rev, "external_complete_lanes": external_lanes,
+           "caveat": "counts are not joinable (no shared session id); do not read as a ratio"}
+
+# --- main model/tier distribution (session-tier.jsonl) -----------------------
+st_rows = [r for r in (rows(tier_log) or []) if real_origin(r) and "tier" in r]
+by_tier = collections.Counter(label(r.get("tier") or "unknown") for r in st_rows)
+by_model = collections.Counter(label(r.get("model") or "unknown") for r in st_rows)
+session_tier = {"measured": bool(st_rows), "total": len(st_rows) if st_rows else None,
+                "by_tier": dict(by_tier), "by_model": dict(by_model)}
+
+report = {"mode": "review", "window_days": window_days, "solo": solo, "context": context,
+          "lanes": lanes, "overrides": overrides, "session_tier": session_tier,
+          "skipped_malformed": malformed}
+
+if json_mode:
+    print(json.dumps(report, indent=2))
+    sys.exit(0)
+
+def fmt_mean(v):
+    return "-" if v is None else v
+
+
+print("review-digest (window: {}d)".format(window_days))
+if solo["measured"]:
+    print("solo ratio (diff_keys with no external-vendor complete review): {}/{} = {}%".format(
+        solo["solo_groups"], solo["groups"], solo["solo_pct"]))
+else:
+    print("solo ratio: no data (no reviews.jsonl rows with a diff_key under {})".format(workers_root))
+if context["measured"]:
+    print("context: {} Claude code-reviewer dispatch(es) vs {} external-complete lane row(s) "
+          "(no shared session id - not a ratio)".format(rev, external_lanes))
+else:
+    print("context: no data (needs both the routing log and council-lanes.jsonl; "
+          "no shared session id - not a ratio)")
+if lanes_measured:
+    print("lanes:")
+    for role, a in by_role.items():
+        st = ", ".join("{}={}".format(k, v) for k, v in sorted(a["statuses"].items()))
+        print("  {:<14} success {}/{} ({}%)  mean s: complete={} all={}  [{}]".format(
+            role, a["complete"], a["total"], round(100 * a["success_rate"], 1),
+            fmt_mean(a["mean_duration_complete_s"]), fmt_mean(a["mean_duration_all_s"]), st))
+else:
+    print("lanes: no data")
+if ov_measured:
+    per = ", ".join("{}={}".format(k, v) for k, v in sorted(ov_by.items()))
+    print("overrides: {} ({})".format(overrides["total"], per))
+else:
+    print("overrides: no data")
+if session_tier["measured"]:
+    print("main tier: " + ", ".join("{}={}".format(k, v) for k, v in sorted(by_tier.items()))
+          + "  model: " + ", ".join("{}={}".format(k, v) for k, v in sorted(by_model.items())))
+else:
+    print("main tier: no data")
+if malformed:
+    print("skipped {} malformed line(s)".format(malformed))
+PY
+    ) || {
+        # same discipline as --model: an analysis crash is a loud skip, never a clean pass
+        echo "review-digest: internal error — treating as unmeasured, not a clean pass" >&2
+        if [[ "$JSON_MODE" -eq 1 ]]; then
+            printf '{"mode": "review", "error": "internal error", "solo": {"measured": false}, "overrides": {"measured": false}}\n'
+        else
+            echo "review-digest: SKIP (analysis error)"
+        fi
+        exit 0
+    }
+    printf '%s\n' "$review_out"
     exit 0
 fi
 

@@ -710,7 +710,7 @@ env -u HOME PATH="$ARGV_DIR:/usr/bin:/bin" AGENT_BACKENDS_FILE="$REG2" \
     || bad "HOME unset" "gate rc=$rc usage rc=$rc_u"
 
 # separate warnings: only the failing sink is named
-errw="$(cd "$E_REPO" && env -u AGENT_WORKERS_DIR PATH="$ARGV_DIR:/usr/bin:/bin" HOME="$E_HOME" \
+errw="$(cd "$E_REPO" && env -u AGENT_WORKERS_DIR -u AGENT_LOGS_DIR PATH="$ARGV_DIR:/usr/bin:/bin" HOME="$E_HOME" \
     AGENT_BACKENDS_FILE="$REG2" AGENT_WORKER_YES=1 bash "$DISPATCHER" lowfan <<< p 2>&1 >/dev/null)"
 if grep -q "review index append failed" <<< "$errw" && grep -q "lane log append failed" <<< "$errw"; then
     ok "evidence — index and lane-log failures warn separately on stderr"

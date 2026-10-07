@@ -290,6 +290,86 @@ grun-slug() {
 grun-slug
 if [[ "$RC" -ne 0 || -z "$OUT" ]]; then ok "g8-slug-with-global-rejected"; else bad "g8-slug-with-global" "rc=$RC accepted both"; fi
 
+
+echo
+echo "=== lane: review-completeness (--global only; V-6) ==="
+NOW_TS="$(python3 -c 'import datetime; print(datetime.datetime.now(datetime.timezone.utc).isoformat())')"
+RVW="$WORK/rv"
+mkrv() { # mkrv <name> <solo-keys> <external-keys>  -> $RVW/<name>/{workers,logs}
+    local d="$RVW/$1" i
+    rm -rf "$d"; mkdir -p "$d/workers/p1" "$d/logs"
+    : > "$d/workers/p1/reviews.jsonl"
+    for ((i = 0; i < $2; i++)); do
+        printf '{"ts":"%s","role":"code-reviewer","vendor":"anthropic","status":"complete","diff_key":"s%s"}\n' "$NOW_TS" "$i" >> "$d/workers/p1/reviews.jsonl"
+    done
+    for ((i = 0; i < $3; i++)); do
+        printf '{"ts":"%s","role":"codex","vendor":"openai","status":"complete","diff_key":"e%s"}\n' "$NOW_TS" "$i" >> "$d/workers/p1/reviews.jsonl"
+    done
+}
+rrun() { # rrun <name> [extra env KEY=VAL...] -> OUT, RC
+    local name="$1"; shift
+    OUT="$(env \
+        AGENT_MODEL_ROUTING_SINK="$LOGS/routing.jsonl" \
+        AGENT_GOAL_AUDIT_LOG="$LOGS/goal-audit.jsonl" \
+        AGENT_PLANS_DIR="$PLANS" AGENT_PLAN_ARTIFACTS_DIR="$ARTS" \
+        AGENT_GOAL_DB="$WORK/absent.db" AGENT_REGISTRY_PATH="$REG" \
+        AGENT_WORKERS_ROOT="$RVW/$name/workers" AGENT_LOGS_DIR="$RVW/$name/logs" \
+        "$@" bash "$SCRIPT" --global --json 2>/dev/null)"
+    RC=$?
+}
+
+mkdir -p "$RVW/none/workers" "$RVW/none/logs"
+rrun none
+if has_finding review-completeness review-unmeasured INFO; then ok "r1-no-data-INFO-unmeasured"; else bad "r1" "$(jq -c '[.findings[]|select(.lane=="review-completeness")]' <<< "$OUT")"; fi
+if ! has_finding review-completeness lane-clean PASS; then ok "r2-no-data-never-PASS"; else bad "r2" "unmeasured reported clean"; fi
+
+mkrv solo 2 1          # 2 of 3 diff_keys solo = 66.7% > default 50
+rrun solo
+if has_finding review-completeness solo-ratio-high WARN; then ok "r3-solo-over-default-WARN"; else bad "r3" "$(jq -c '[.findings[]|select(.lane=="review-completeness")]' <<< "$OUT")"; fi
+if jq -e '.findings[] | select(.check=="solo-ratio-high") | .evidence | contains("2/3")' <<< "$OUT" >/dev/null 2>&1; then
+    ok "r3b-evidence-has-counts"; else bad "r3b" "$(jq -c '.findings[]|select(.check=="solo-ratio-high")' <<< "$OUT")"; fi
+if ! has_finding review-completeness review-unmeasured INFO && ! has_finding review-completeness lane-clean PASS; then
+    ok "r3c-measured-and-not-clean"; else bad "r3c" "$OUT"; fi
+rrun solo AGENT_REVIEW_SOLO_MAX=80
+if ! has_finding review-completeness solo-ratio-high WARN && has_finding review-completeness lane-clean PASS; then
+    ok "r4-threshold-override-clears-WARN"; else bad "r4" "$(jq -c '[.findings[]|select(.lane=="review-completeness")]' <<< "$OUT")"; fi
+rrun solo AGENT_REVIEW_SOLO_MAX=60
+if has_finding review-completeness solo-ratio-high WARN; then ok "r4b-threshold-60-still-WARN"; else bad "r4b" "$OUT"; fi
+
+mkrv clean 0 3
+rrun clean
+if has_finding review-completeness lane-clean PASS && [[ "$RC" -eq 0 ]]; then ok "r5-clean-measured-PASS"; else bad "r5" "$(jq -c '[.findings[]|select(.lane=="review-completeness")]' <<< "$OUT")"; fi
+
+mkrv ovr 0 3
+printf '{"ts":"%s","project_key":"p1","diff_key":null,"reason":"SECRETREASONTEXT","user":"SECRETUSER"}\n' "$NOW_TS" > "$RVW/ovr/logs/review-override.jsonl"
+rrun ovr
+if has_finding review-completeness override-used WARN; then ok "r6-override-used-WARN"; else bad "r6" "$(jq -c '[.findings[]|select(.lane=="review-completeness")]' <<< "$OUT")"; fi
+if [[ "$OUT" != *SECRETREASONTEXT* && "$OUT" != *SECRETUSER* ]]; then ok "r7-override-reason-not-leaked"; else bad "r7" "reason/user leaked"; fi
+if ! has_finding review-completeness lane-clean PASS; then ok "r8-override-blocks-clean"; else bad "r8" "$OUT"; fi
+
+# boundary: unrounded comparison against the limit
+mkrv eq 1 1           # exactly 50% -> no WARN
+rrun eq
+if ! has_finding review-completeness solo-ratio-high WARN && has_finding review-completeness lane-clean PASS; then
+    ok "r10-exactly-at-limit-no-WARN"; else bad "r10" "$(jq -c '[.findings[]|select(.lane=="review-completeness")]' <<< "$OUT")"; fi
+mkrv over 1001 1000   # 1001/2001 = 50.02% (rounds to 50.0) -> WARN
+rrun over
+if has_finding review-completeness solo-ratio-high WARN; then ok "r11-1001-of-2001-WARN"; else bad "r11" "$(jq -c '[.findings[]|select(.lane=="review-completeness")]' <<< "$OUT")"; fi
+rrun solo AGENT_REVIEW_SOLO_MAX=abc
+if has_finding review-completeness solo-ratio-high WARN; then ok "r12-non-numeric-max-falls-back-to-50"; else bad "r12" "$OUT"; fi
+
+# digest failure is reported as such, not as "no rows"
+mkdir -p "$WORK/fakeinfra"; cp "$SCRIPT" "$WORK/fakeinfra/manager-audit.sh"
+printf '#!/usr/bin/env bash\necho garbage\nexit 3\n' > "$WORK/fakeinfra/telemetry-digest.sh"
+OUT="$(env AGENT_MODEL_ROUTING_SINK="$LOGS/routing.jsonl" AGENT_REGISTRY_PATH="$REG" bash "$WORK/fakeinfra/manager-audit.sh" --global --json 2>/dev/null)"
+if jq -e '.findings[] | select(.check=="review-unmeasured") | .evidence | contains("digest failed (exit 3")' <<< "$OUT" >/dev/null 2>&1 \
+    && ! has_finding review-completeness lane-clean PASS; then
+    ok "r13-digest-failure-evidence"; else bad "r13" "$(jq -c '[.findings[]|select(.lane=="review-completeness")]' <<< "$OUT")"; fi
+
+# slug mode must not run the new lane
+run good --session s1
+if ! jq -e '[.findings[] | select(.lane=="review-completeness")] | length > 0' <<< "$OUT" >/dev/null 2>&1; then
+    ok "r9-slug-mode-skips-review-lane"; else bad "r9" "review lane ran in slug mode"; fi
 echo
 echo "=== human output mode ==="
 HOUT="$(env \

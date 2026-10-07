@@ -11,6 +11,11 @@
 #
 # Usage: bash core/tests/council-dispatch-path-test.sh
 set -u
+# keep call-worker.sh evidence/lane rows out of the real ~/.agent logs
+ISO_TMP="$(mktemp -d)"
+trap 'rm -rf "$ISO_TMP"' EXIT
+export AGENT_LOGS_DIR="$ISO_TMP/agent-logs"
+export AGENT_WORKERS_DIR="${AGENT_WORKERS_DIR:-$ISO_TMP/agent-workers}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SKILL="$REPO_ROOT/skills/council-review/SKILL.md"

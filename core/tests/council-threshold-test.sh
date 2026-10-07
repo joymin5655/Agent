@@ -26,6 +26,9 @@ bad() { FAIL=$((FAIL + 1)); echo "  FAIL  $1 — $2"; }
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
+# keep call-worker.sh evidence/lane rows out of the real ~/.agent logs
+export AGENT_LOGS_DIR="$WORK/agent-logs"
+export AGENT_WORKERS_DIR="${AGENT_WORKERS_DIR:-$WORK/agent-workers}"
 REPO="$WORK/repo"
 mkdir -p "$REPO"
 

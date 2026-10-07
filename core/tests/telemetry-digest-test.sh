@@ -429,5 +429,167 @@ check "model-origin-session-and-legacy-counted" $?
 check "model-origin-test-excluded" $?
 
 echo
+echo "=== (s) --review mode: V-6 review-completeness observability ==="
+RV="$TMP_DIR/review"
+mkdir -p "$RV/workers/projA" "$RV/workers/projB" "$RV/logs" "$RV/empty"
+RV_NOW="$NOW_TS"
+RV_OLD="$OLD_TS"
+{
+  # K1: no external complete (anthropic complete, openai failed, advisor xai complete)
+  printf '{"ts":"%s","role":"code-reviewer","backend":"claude","vendor":"anthropic","status":"complete","diff_key":"k1"}\n' "$RV_NOW"
+  printf '{"ts":"%s","role":"codex","backend":"codex","vendor":"openai","status":"failed","diff_key":"k1"}\n' "$RV_NOW"
+  printf '{"ts":"%s","role":"advisor-grok","backend":"grok","vendor":"xai","status":"complete","diff_key":"k1"}\n' "$RV_NOW"
+  # K2: exactly one external complete
+  printf '{"ts":"%s","role":"codex","backend":"codex","vendor":"openai","status":"complete","diff_key":"k2"}\n' "$RV_NOW"
+  # null diff_key must be ignored
+  printf '{"ts":"%s","role":"codex","backend":"codex","vendor":"openai","status":"complete","diff_key":null}\n' "$RV_NOW"
+  printf 'not json at all\n'
+} > "$RV/workers/projA/reviews.jsonl"
+{
+  # K3: two external completes
+  printf '{"ts":"%s","role":"codex","backend":"codex","vendor":"openai","status":"complete","diff_key":"k3"}\n' "$RV_NOW"
+  printf '{"ts":"%s","role":"gemini","backend":"agy","vendor":"google","status":"complete","diff_key":"k3"}\n' "$RV_NOW"
+  # old solo group: outside the window, must not count
+  printf '{"ts":"%s","role":"code-reviewer","backend":"claude","vendor":"anthropic","status":"complete","diff_key":"k4"}\n' "$RV_OLD"
+} > "$RV/workers/projB/reviews.jsonl"
+{
+  printf '{"ts":"%s","project_key":"pa","role":"codex","vendor":"openai","rc":0,"duration_s":10,"status":"complete"}\n' "$RV_NOW"
+  printf '{"ts":"%s","project_key":"pa","role":"codex","vendor":"openai","rc":0,"duration_s":20,"status":"complete"}\n' "$RV_NOW"
+  printf '{"ts":"%s","project_key":"pa","role":"codex","vendor":"openai","rc":1,"duration_s":30,"status":"failed"}\n' "$RV_NOW"
+  printf '{"ts":"%s","project_key":"pa","role":"codex","vendor":"openai","rc":1,"duration_s":5,"status":"rate-limited"}\n' "$RV_NOW"
+  printf '{"ts":"%s","project_key":"pb","role":"gemini","vendor":"google","rc":0,"duration_s":4,"status":"complete"}\n' "$RV_NOW"
+  printf '{"ts":"%s","project_key":"pb","role":"gemini","vendor":"google","rc":1,"duration_s":6,"status":"timeout"}\n' "$RV_NOW"
+  printf '{"ts":"%s","project_key":"pb","role":"advisor-grok","vendor":"xai","rc":0,"duration_s":9,"status":"complete"}\n' "$RV_NOW"
+  printf '{"ts":"%s","project_key":"pb","role":"gemini","vendor":"google","rc":0,"duration_s":999,"status":"complete"}\n' "$RV_OLD"
+  printf '{broken\n'
+} > "$RV/logs/council-lanes.jsonl"
+{
+  printf '{"ts":"%s","project_key":"pa","diff_key":"k1","reason":"SECRETREASONTEXT","user":"SECRETUSER"}\n' "$RV_NOW"
+  printf '{"ts":"%s","project_key":"pa","diff_key":null,"reason":"SECRETREASONTEXT","user":"SECRETUSER"}\n' "$RV_NOW"
+  printf '{"ts":"%s","project_key":"pb","diff_key":"k9","reason":"SECRETREASONTEXT","user":"SECRETUSER"}\n' "$RV_NOW"
+  printf '{"ts":"%s","project_key":"pb","diff_key":"k8","reason":"SECRETREASONTEXT","user":"SECRETUSER"}\n' "$RV_OLD"
+} > "$RV/logs/review-override.jsonl"
+{
+  # one real dispatch writes all three record kinds; only the PreToolUse row counts
+  printf '{"ts":"%s","gate":"model-routing-observer","subagent_type":"agent-harness:code-reviewer","verdict":"pinned_specialist","session_id":"s"}\n' "$RV_NOW"
+  printf '{"ts":"%s","gate":"model-routing-observer","subagent_type":"agent-harness:code-reviewer","source":"post_tool_use","origin":"session"}\n' "$RV_NOW"
+  printf '{"ts":"%s","gate":"model-routing-observer","event":"SubagentStart","agent_type":"agent-harness:code-reviewer","source":"subagent_event"}\n' "$RV_NOW"
+  printf '{"ts":"%s","gate":"model-routing-observer","event":"SubagentStop","agent_type":"agent-harness:code-reviewer","source":"subagent_event"}\n' "$RV_NOW"
+  # a second dispatch, legacy-origin-less row
+  printf '{"ts":"%s","subagent_type":"code-reviewer"}\n' "$RV_NOW"
+  printf '{"ts":"%s","subagent_type":"code-reviewer","origin":"test"}\n' "$RV_NOW"
+  printf '{"ts":"%s","subagent_type":"Explore","origin":"session"}\n' "$RV_NOW"
+} > "$RV/routing.jsonl"
+{
+  printf '{"ts":"%s","model":"claude-opus-5-5","source":"stdin","tier":"TOP","family":"opus","origin":"session"}\n' "$RV_NOW"
+  printf '{"ts":"%s","model":"claude-opus-5-5","source":"stdin","tier":"TOP","family":"opus"}\n' "$RV_NOW"
+  printf '{"ts":"%s","model":"claude-sonnet-5-5","source":"stdin","tier":"MID","family":"sonnet","origin":"session"}\n' "$RV_NOW"
+  printf '{"ts":"%s","model":"claude-haiku-4-5","tier":"LOW","origin":"test"}\n' "$RV_NOW"
+  printf '{"ts":"%s","event":"PostModelSwitch","from_model":"a","to_model":"b","tier_from":"MID","tier_to":"TOP"}\n' "$RV_NOW"
+} > "$RV/session-tier.jsonl"
+
+rv() { # rv <workers-root> <logs-dir> [extra args]
+  local wr="$1" ld="$2"; shift 2
+  AGENT_WORKERS_ROOT="$wr" AGENT_LOGS_DIR="$ld" AGENT_MODEL_ROUTING_SINK="$RV/routing.jsonl" \
+    AGENT_SESSION_TIER_SINK="$RV/session-tier.jsonl" bash "$SCRIPT" --review "$@" 2>&1
+}
+rvj() { # rvj <json> <python-expr over d> -> exit 0 when truthy
+  printf '%s' "$1" | python3 -c "import json,sys; d=json.load(sys.stdin); sys.exit(0 if ($2) else 1)"
+}
+
+RV_JSON="$(rv "$RV/workers" "$RV/logs" --json)"
+rvj "$RV_JSON" "d['mode']=='review' and d['solo']['groups']==3 and d['solo']['solo_groups']==1"
+check "review-solo-groups-exact" $?
+rvj "$RV_JSON" "round(d['solo']['solo_ratio'],4)==round(1/3,4) and d['solo']['measured'] is True"
+check "review-solo-ratio-one-third" $?
+rvj "$RV_JSON" "d['lanes']['by_role']['codex']['total']==4 and d['lanes']['by_role']['codex']['complete']==2 and d['lanes']['by_role']['codex']['success_rate']==0.5"
+check "review-lane-success-rate-codex" $?
+rvj "$RV_JSON" "d['lanes']['by_role']['codex']['statuses']=={'complete':2,'failed':1,'rate-limited':1}"
+check "review-lane-status-breakdown" $?
+rvj "$RV_JSON" "d['lanes']['by_role']['codex']['mean_duration_complete_s']==15 and d['lanes']['by_role']['codex']['mean_duration_all_s']==16.25"
+check "review-lane-mean-duration-exact" $?
+rvj "$RV_JSON" "d['lanes']['by_role']['gemini']['total']==2 and d['lanes']['by_role']['gemini']['statuses'].get('timeout')==1"
+check "review-lane-window-excludes-old" $?
+rvj "$RV_JSON" "d['overrides']['total']==3 and d['overrides']['by_project']=={'pa':2,'pb':1}"
+check "review-override-counts-exact" $?
+if [[ "$RV_JSON" != *SECRETREASONTEXT* && "$RV_JSON" != *SECRETUSER* ]]; then rc=0; else rc=1; fi
+check "review-override-reason-user-not-printed-json" $rc
+RV_HUMAN="$(rv "$RV/workers" "$RV/logs")"
+if [[ "$RV_HUMAN" != *SECRETREASONTEXT* && "$RV_HUMAN" != *SECRETUSER* && "$RV_HUMAN" == *"solo"* ]]; then rc=0; else rc=1; fi
+check "review-override-reason-user-not-printed-human" $rc
+rvj "$RV_JSON" "d['context']['claude_code_reviewer_dispatches']==2 and d['context']['external_complete_lanes']==3"
+check "review-context-counts-side-by-side" $?
+if [[ "$RV_HUMAN" == *"no shared session id"* ]]; then rc=0; else rc=1; fi
+check "review-context-caveat-printed" $rc
+rvj "$RV_JSON" "d['session_tier']['total']==3 and d['session_tier']['by_tier']=={'TOP':2,'MID':1}"
+check "review-session-tier-distribution" $?
+rvj "$RV_JSON" "d['skipped_malformed']==2"
+check "review-malformed-lines-skipped-and-counted" $?
+
+printf '{"ts":"%s","subagent_type":"code-reviewer","origin":"test"}\n' "$RV_NOW" > "$RV/routing-test-only.jsonl"
+RV_TESTONLY="$(AGENT_WORKERS_ROOT="$RV/workers" AGENT_LOGS_DIR="$RV/logs" AGENT_MODEL_ROUTING_SINK="$RV/routing-test-only.jsonl" \
+  AGENT_SESSION_TIER_SINK="$RV/session-tier.jsonl" bash "$SCRIPT" --review --json 2>&1)"
+rvj "$RV_TESTONLY" "d['context']['claude_code_reviewer_dispatches'] is None and d['context']['measured'] is False"
+check "review-context-test-only-routing-is-no-data-not-zero" $?
+printf '{"ts":"%s","role":"x","vendor":"openai","duration_s":NaN,"status":"complete"}\n' "$RV_NOW" > "$RV/nan-logs-lanes.jsonl"
+mkdir -p "$RV/nanlogs"; cp "$RV/nan-logs-lanes.jsonl" "$RV/nanlogs/council-lanes.jsonl"
+RV_NAN="$(rv "$RV/workers" "$RV/nanlogs" --json)"
+rvj "$RV_NAN" "d['lanes']['by_role']['x']['mean_duration_all_s'] is None"
+check "review-nan-duration-ignored" $?
+RV_NAN_H="$(rv "$RV/workers" "$RV/nanlogs")"
+if [[ "$RV_NAN_H" != *None* && "$RV_NAN_H" == *"all=-"* ]]; then rc=0; else rc=1; fi
+check "review-human-missing-mean-is-dash" $rc
+
+RV_NODATA="$(rv "$RV/empty" "$RV/empty" --json)"
+rvj "$RV_NODATA" "d['solo']['measured'] is False and d['solo']['solo_ratio'] is None"
+check "review-missing-reviews-measured-false" $?
+rvj "$RV_NODATA" "d['lanes']['measured'] is False and d['overrides']['measured'] is False"
+check "review-missing-logs-measured-false" $?
+RV_NODATA_H="$(rv "$RV/empty" "$RV/empty")"
+if [[ "$RV_NODATA_H" == *"no data"* && "$RV_NODATA_H" != *"0.0%"* && "$RV_NODATA_H" != *" 0%"* ]]; then rc=0; else rc=1; fi
+check "review-no-data-text-not-zero-percent" $rc
+rv "$RV/empty" "$RV/empty" >/dev/null; check "review-exit-0-without-data" $?
+
+RV_W="$(rv "$RV/workers" "$RV/logs" --window 60 --json)"
+rvj "$RV_W" "d['solo']['groups']==4 and d['solo']['solo_groups']==2"
+check "review-window-widened-includes-old" $?
+
+# parity: the external-complete rule must match review-evidence.py has_external_complete
+mkdir -p "$RV/parity"
+python3 - "$REPO_ROOT" "$RV/parity" <<'PY'
+import importlib.util, json, os, subprocess, sys
+repo, work = sys.argv[1], sys.argv[2]
+spec = importlib.util.spec_from_file_location("re_mod", os.path.join(repo, "core/infra/review-evidence.py"))
+mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+rows = []
+for status in ("complete", "failed"):
+    for vendor in (None, "", "anthropic", "openai", "xai"):
+        for role in ("codex", "advisor-grok"):
+            rows.append({"status": status, "vendor": vendor, "role": role})
+bad = 0
+for i, r in enumerate(rows):
+    r = dict(r, diff_key=f"p{i}", ts="2999-01-01T00:00:00+00:00")
+    d = os.path.join(work, f"w{i}"); os.makedirs(d)
+    open(os.path.join(d, "reviews.jsonl"), "w").write(json.dumps(r) + "\n")
+    os.environ["AGENT_WORKERS_DIR"] = d
+    want = mod.has_external_complete(r["diff_key"])
+    root = os.path.join(work, f"root{i}")
+    os.makedirs(os.path.join(root, "proj"))
+    open(os.path.join(root, "proj", "reviews.jsonl"), "w").write(json.dumps(r) + "\n")
+    env = dict(os.environ, AGENT_WORKERS_ROOT=root, AGENT_LOGS_DIR=work)
+    out = subprocess.run(["bash", os.path.join(repo, "core/infra/telemetry-digest.sh"), "--review", "--json"],
+                         env=env, capture_output=True, text=True).stdout
+    solo = json.loads(out)["solo"]["solo_groups"]
+    if (solo == 0) != want:
+        bad += 1
+        print("parity mismatch", r, want, solo)
+sys.exit(1 if bad else 0)
+PY
+check "review-external-complete-parity-with-review-evidence" $?
+
+# existing modes unchanged by the new flag handling
+bash "$SCRIPT" "$SAMPLE" --json >/dev/null 2>&1; check "review-default-mode-still-runs" $?
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]

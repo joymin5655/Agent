@@ -35,8 +35,9 @@ surfaces this today, so null is the honest default, not a bug.
 
 Output: one stderr advisory line when a tier is detected (stdout stays empty —
 SessionStart stdout injects session context, and an observer must not add
-decision surface), plus a JSONL audit-trail record (no consumer yet —
-/manager-audit wiring is future work; it does not read this sink today).
+decision surface), plus a JSONL audit-trail record, consumed by
+`telemetry-digest.sh --review` (main model/tier distribution; /manager-audit itself
+does not read this sink).
 
 Pure observer: never blocks, always exits 0, all exceptions swallowed.
 

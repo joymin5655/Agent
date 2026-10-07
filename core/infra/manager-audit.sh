@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # manager-audit.sh — meta-audit over a /supervise run: is the supervisor doing its job?
 #
-# Four lanes, each reading artifacts the run already produced (zero runtime
+# Four slug lanes, each reading artifacts the run already produced (zero runtime
 # overhead — this script only ever runs after the fact):
 #
 #   restatement-quality — .agent/plans/<slug>/RESTATEMENT.md exists, all six
@@ -17,6 +17,13 @@
 #   role-compliance     — one audit verdict per plan wave, never-auto-retry
 #                         honored, RECORD.md written, goal-mode DB consistent,
 #                         review lane dispatched after code waves
+#
+# Plus a fifth lane, --global only:
+#   review-completeness — how often a review was Claude-only (V-6): WARN
+#                         solo-ratio-high when solo diffs exceed AGENT_REVIEW_SOLO_MAX
+#                         percent (default 50), WARN override-used, INFO
+#                         review-unmeasured when there is no data (never PASS).
+#                         Data: telemetry-digest.sh --review --window 30 --json
 #
 # Usage: bash core/infra/manager-audit.sh <plan-slug> [--json] [--session <id>] [--since <ISO-ts>]
 #    or: bash core/infra/manager-audit.sh --global [--json]
@@ -34,7 +41,9 @@
 #
 # Seams (test injection): AGENT_MODEL_ROUTING_SINK, AGENT_GOAL_AUDIT_LOG,
 # AGENT_PLANS_DIR, AGENT_PLAN_ARTIFACTS_DIR, AGENT_GOAL_DB, AGENT_REGISTRY_PATH,
-# AGENT_TIER_ALIASES ("model-prefix=TIER,..." extras for other vendors' names).
+# AGENT_TIER_ALIASES ("model-prefix=TIER,..." extras for other vendors' names),
+# AGENT_REVIEW_SOLO_MAX (percent), plus the telemetry-digest --review seams
+# (AGENT_WORKERS_ROOT, AGENT_LOGS_DIR).
 set -uo pipefail
 
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
@@ -256,6 +265,44 @@ if [[ "$(jq 'length' <<< "$RECORDS")" -gt 0 ]]; then
     fi
 fi
 lane_pass_if_clean token-spend
+
+# ---------- lane: review-completeness ---------- (--global only: reads the
+# cross-project review index, not a run). The math lives in telemetry-digest.sh
+# --review (single source of truth); unmeasured is INFO, never PASS.
+if [[ "$GLOBAL" == true ]]; then
+    SOLO_MAX="${AGENT_REVIEW_SOLO_MAX:-50}"
+    [[ "$SOLO_MAX" =~ ^[0-9]+(\.[0-9]+)?$ ]] || SOLO_MAX=50
+    DIGEST=$(bash "$(dirname "${BASH_SOURCE[0]}")/telemetry-digest.sh" --review --window 30 --json 2>/dev/null)
+    digest_rc=$?
+    DIGEST_FAIL=""
+    if ! jq -e '.mode == "review" and (has("error") | not)' <<< "$DIGEST" >/dev/null 2>&1; then
+        DIGEST_FAIL="digest failed (exit $digest_rc / invalid JSON)"
+        DIGEST='{"solo":{"measured":false},"overrides":{"measured":false}}'
+    fi
+    if [[ "$(jq '.solo.measured' <<< "$DIGEST")" == true ]]; then
+        solo_n=$(jq '.solo.solo_groups' <<< "$DIGEST")
+        groups_n=$(jq '.solo.groups' <<< "$DIGEST")
+        solo_pct=$(jq '.solo.solo_pct' <<< "$DIGEST")
+        # compare unrounded: solo/groups*100 > max
+        if jq -en --argjson s "$solo_n" --argjson g "$groups_n" --argjson m "$SOLO_MAX" \
+            '$s * 100 > $m * $g' >/dev/null; then
+            add review-completeness solo-ratio-high WARN \
+                "$solo_n/$groups_n reviewed diffs (${solo_pct}%) had no external-vendor complete review in 30d (limit ${SOLO_MAX}%)" \
+                "run /council-review before committing; check /worker-setup if external lanes keep failing"
+        fi
+    else
+        add review-completeness review-unmeasured INFO \
+            "${DIGEST_FAIL:-no reviews.jsonl rows with a diff_key in 30d — the Claude-only review ratio is unmeasured, not clean}" \
+            "run reviews through call-worker.sh / council-review so evidence is logged"
+    fi
+    ov_n=$(jq '.overrides.total // 0' <<< "$DIGEST")
+    if [[ "$ov_n" -gt 0 ]]; then
+        add review-completeness override-used WARN \
+            "$ov_n review override(s) logged in 30d" \
+            "overrides mean every external lane was down; see review-override.jsonl (counts only here)"
+    fi
+    [[ "$(jq '.solo.measured' <<< "$DIGEST")" == true ]] && lane_pass_if_clean review-completeness
+fi
 
 # ---------- lane: role-compliance ---------- (slug-scoped: skipped in --global)
 if [[ "$GLOBAL" != true ]]; then

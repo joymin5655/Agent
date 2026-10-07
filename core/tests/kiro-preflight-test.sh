@@ -50,6 +50,9 @@ safe_mktemp_d() {
 
 WORK="$(safe_mktemp_d)" || { echo "FAIL: mktemp -d failed"; exit 1; }
 trap 'rm -rf "$WORK"' EXIT INT TERM
+# keep call-worker.sh evidence/lane rows out of the real ~/.agent logs
+export AGENT_LOGS_DIR="$WORK/agent-logs"
+export AGENT_WORKERS_DIR="${AGENT_WORKERS_DIR:-$WORK/agent-workers}"
 STUB="$WORK/bin"
 ARGV="$WORK/argv"
 ERR="$WORK/stderr"

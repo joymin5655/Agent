@@ -20,6 +20,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lane row; both are best-effort and never alter exit code or stdout.
 
 ### Added
+- **Review observability** (cross-vendor realign W5, V-6): `telemetry-digest.sh --review
+  [--window N] [--json]` reports the solo ratio (diff_keys with no external-vendor complete
+  review, grouped per project from `~/.agent/workers/*/reviews.jsonl`), per-lane success
+  rate and mean duration from `council-lanes.jsonl`, the review-override count (counts only,
+  never the reason), Claude code-reviewer dispatches beside external lane rows, and the
+  `session-tier.jsonl` model/tier distribution. A missing or empty source prints "no data"
+  (JSON `measured: false`), never 0%. `manager-audit.sh --global` gains a
+  `review-completeness` lane: WARN `solo-ratio-high` (`AGENT_REVIEW_SOLO_MAX`, default 50),
+  WARN `override-used`, INFO `review-unmeasured`. Observers only; they never block.
+  New seam: `AGENT_WORKERS_ROOT`.
 - **Runtime profile** (cross-vendor realign W4): `core/infra/runtime-profile.py`
   (`detect` / `recommend` / `save`) reports `{installed, authenticated, plan}` per runtime from
   local CLIs and files only, recommends a main vendor plus reviewer vendors, and saves

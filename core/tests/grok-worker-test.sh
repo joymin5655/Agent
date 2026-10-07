@@ -24,6 +24,9 @@ check() {
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT INT TERM
+# keep call-worker.sh evidence/lane rows out of the real ~/.agent logs
+export AGENT_LOGS_DIR="$TMP/agent-logs"
+export AGENT_WORKERS_DIR="${AGENT_WORKERS_DIR:-$TMP/agent-workers}"
 STUB_DIR="$TMP/bin"
 mkdir -p "$STUB_DIR"
 RECORD="$TMP/record"

@@ -1,6 +1,6 @@
 ---
 name: manager-audit
-description: Meta-audit of a /supervise run — did the supervisor do its job? Runs the four-lane machine layer (core/infra/manager-audit.sh) over the run's logs, interprets the semantic halves, and turns actionable findings into concrete patch proposals in PROPOSALS.md for one-click user approval. Read-only analysis; NEVER applies a proposal itself and NEVER installs runtime model-switching (rejected, docs/model-routing.md). NOT a code review (that is code-reviewer's lane) and NOT the per-wave audit (that is supervisor-goal-audit.sh inside the loop).
+description: Meta-audit of a /supervise run — did the supervisor do its job? Runs the machine layer (core/infra/manager-audit.sh: four run lanes, plus a fifth review-completeness lane under --global) over the run's logs, interprets the semantic halves, and turns actionable findings into concrete patch proposals in PROPOSALS.md for one-click user approval. Read-only analysis; NEVER applies a proposal itself and NEVER installs runtime model-switching (rejected, docs/model-routing.md). NOT a code review (that is code-reviewer's lane) and NOT the per-wave audit (that is supervisor-goal-audit.sh inside the loop).
 when_to_use: After a /supervise run completes (Step 5 offers it), or on demand — "manager audit <slug>", "/manager-audit <slug>", "is the supervisor doing its job", "where did the tokens go", "check the model routing".
 tools: Bash, Read, Grep, Glob, Write
 ---
@@ -10,7 +10,8 @@ tools: Bash, Read, Grep, Glob, Write
 ## Goal
 
 One interpreted verdict over a supervise run, answering four questions the
-supervisor cannot be trusted to answer about itself:
+supervisor cannot be trusted to answer about itself (a fifth lane covers review
+completeness and runs only in the slug-less `--global` sweep):
 
 1. **Did it restate the ask?** — lane `restatement-quality`: the intake
    restatement exists, all six sections are filled, success criteria are
@@ -25,6 +26,15 @@ supervisor cannot be trusted to answer about itself:
 4. **Did it follow its own loop?** — lane `role-compliance`: every wave
    audited, never-auto-retry honored, RECORD.md written, review lane
    dispatched after code waves.
+
+A fifth lane runs only with `--global` (no slug):
+`review-completeness` — how often a review was Claude-only (V-6). It reads
+`core/infra/telemetry-digest.sh --review --window 30 --json`: WARN
+`solo-ratio-high` when the share of reviewed diffs with no external-vendor
+complete review exceeds `AGENT_REVIEW_SOLO_MAX` percent (default 50), WARN
+`override-used` when any review override was logged (count only, the reason is
+never shown), INFO `review-unmeasured` when no data exists — unmeasured is never
+reported as clean.
 
 The machine layer *detects*; this skill *interprets and proposes*. The split
 mirrors harness-audit: deleting this skill weakens no gate.
