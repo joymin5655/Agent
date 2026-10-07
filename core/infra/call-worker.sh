@@ -48,14 +48,27 @@
 #        never forwarded — it would collide with the codes below)
 #        2 usage/config | 3 not approved | 124 timeout | 127 no backend CLI
 #        (disabled/preflight-failed backends terminate 127 too — "unavailable")
-# env seams (tests): AGENT_BACKENDS_FILE, AGENT_WORKERS_DIR, AGENT_WORKER_YES,
-#                    AGENT_WORKER_TIMEOUT_S, AGENT_WORKER_KILL_GRACE_S,
-#                    AGENT_WORKER_PREFLIGHT_TIMEOUT_S
+# captures: $AGENT_WORKERS_DIR, else ~/.agent/workers/<project-key>/ — the key comes
+#        from the CALLER's project (AGENT_PROJECT_DIR / CLAUDE_PROJECT_DIR / git
+#        toplevel of $PWD), never this script's own location, so a plugin-cache
+#        install does not bury evidence in the cache. Each capture also appends a
+#        row to <workers dir>/reviews.jsonl (diff_key = $AGENT_REVIEW_DIFF_KEY) and
+#        to ${AGENT_LOGS_DIR:-~/.agent/logs}/council-lanes.jsonl; both are
+#        best-effort and never change this script's exit code or stdout.
+# env seams (tests): AGENT_BACKENDS_FILE, AGENT_WORKERS_DIR, AGENT_LOGS_DIR,
+#                    AGENT_WORKER_YES, AGENT_WORKER_TIMEOUT_S,
+#                    AGENT_WORKER_KILL_GRACE_S, AGENT_WORKER_PREFLIGHT_TIMEOUT_S
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BACKENDS_FILE="${AGENT_BACKENDS_FILE:-$REPO_ROOT/core/infra/backends.json}"
-WORKERS_DIR="${AGENT_WORKERS_DIR:-$REPO_ROOT/.agent/workers}"
+PROJECT_KEY="$(python3 "$REPO_ROOT/core/infra/review-evidence.py" project-key 2>/dev/null || true)"
+PROJECT_KEY="${PROJECT_KEY:-unkeyed}"
+# HOME can be unset in a stripped env; resolve it from the account database rather
+# than aborting under `set -u` before the usage/cost-gate exits get to run.
+HOME_DIR="${HOME:-$(cd ~ 2>/dev/null && pwd || true)}"
+WORKERS_DIR="${AGENT_WORKERS_DIR:-$HOME_DIR/.agent/workers/$PROJECT_KEY}"
+LOGS_DIR="${AGENT_LOGS_DIR:-$HOME_DIR/.agent/logs}"
 
 ROLE="${1:-}"
 if [[ -z "$ROLE" ]]; then
@@ -97,6 +110,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 cat > "$PROMPT_TMP"
+START_S=$SECONDS
 
 # run_backend <name> — 0 ok, 124 timeout, 125 unavailable (disabled/preflight,
 # reason in $UNAVAILABLE_REASON), 127 CLI missing, else CLI's exit.
@@ -262,6 +276,33 @@ if [[ $rc -ne 0 && -n "$FALLBACK" ]]; then
     run_backend "$FALLBACK" || rc=$?
 fi
 
+# log_evidence <status> <capture-path> — best-effort index + lane-log rows. JSON is
+# built by jq from --arg values (never string-concatenated); any failure here is
+# swallowed so evidence bookkeeping cannot change the dispatcher's contract.
+log_evidence() {
+    local status="$1" capture="$2" ts vendor
+    ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    vendor="$(jq -r --arg b "$BACKEND_USED" '.backends[$b].vendor // empty' "$BACKENDS_FILE" 2>/dev/null || true)"
+    jq -cn --arg ts "$ts" --arg role "$ROLE" --arg backend "$BACKEND_USED" \
+        --arg vendor "$vendor" --arg status "$status" \
+        --arg dk "${AGENT_REVIEW_DIFF_KEY:-}" --arg capture "$capture" \
+        '{ts:$ts, role:$role, backend:$backend, vendor:($vendor|if .=="" then null else . end),
+          status:$status, diff_key:($dk|if .=="" then null else . end), capture:$capture}' \
+        >> "$WORKERS_DIR/reviews.jsonl" 2>/dev/null \
+        || echo "call-worker: review index append failed ($WORKERS_DIR/reviews.jsonl)" >&2
+    { mkdir -p "$LOGS_DIR" \
+        && jq -cn --arg ts "$ts" --arg pk "$PROJECT_KEY" --arg role "$ROLE" \
+            --arg vendor "$vendor" --argjson rc "$rc" \
+            --argjson dur "$((SECONDS - START_S))" \
+            --argjson pb "$(wc -c < "$PROMPT_TMP" | tr -d ' ')" \
+            --arg status "$status" --arg retry "$RETRY_REASON" \
+            '{ts:$ts, project_key:$pk, role:$role, vendor:($vendor|if .=="" then null else . end),
+              rc:$rc, duration_s:$dur, prompt_bytes:$pb, status:$status,
+              retry_reason:($retry|if .=="" then null else . end)}' \
+            >> "$LOGS_DIR/council-lanes.jsonl"; } 2>/dev/null \
+        || echo "call-worker: lane log append failed ($LOGS_DIR/council-lanes.jsonl)" >&2
+}
+
 # write_capture <status> — durable evidence for every terminal path where a
 # backend was (or should have been) engaged; path printed on stdout. status is
 # the mechanical truth layer: a lane's own success claim never overrides it.
@@ -282,6 +323,7 @@ write_capture() {
         cat "$OUT_TMP"
     } > "$OUT_FILE"
     echo "$OUT_FILE"
+    log_evidence "$1" "$OUT_FILE" || true
 }
 
 if [[ $rc -eq 127 || $rc -eq 125 ]]; then

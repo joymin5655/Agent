@@ -16,7 +16,8 @@
 # the patterns are kept in lockstep by hand rather than imported (this is a
 # bash consumer; spec-gate's are Python).
 #
-# usage: council-threshold.sh [--staged|--head|<range>]
+# usage: council-threshold.sh [--list-risk-files] [--staged|--head|<range>]
+#        council-threshold.sh --classify < nul-separated-paths
 #   --staged (default): git diff --staged; if that is empty, falls back to
 #             HEAD~1..HEAD (so a just-committed change is still judged —
 #             the working tree is not left with nothing to say).
@@ -24,6 +25,12 @@
 #   <range>:  passed through verbatim to `git diff <range>` (terminated with
 #             --end-of-options so a range that starts with '-' can never be
 #             consumed as a git option — F6, option injection)
+#
+#   --list-risk-files: instead of the summary, print the changed paths that match a
+#             risk-area pattern (or a project secret token), NUL-terminated, using
+#             the same matching as the summary
+#   --classify: read NUL-separated paths on stdin, print the risk ones NUL-terminated
+#             (no git call; the pattern owner for review-evidence.py)
 #
 # stdout: ALWAYS one line — "lines=<N> files=<M> risk=<comma-list|none>"
 # exit:   0  = not council-scale
@@ -73,23 +80,37 @@ FILES_THRESHOLD="${AGENT_COUNCIL_FILES:-10}"
 # and the line counts are always the file's full add/delete, honestly. The
 # only side effect is a pure rename now counts as 2 files instead of 1 —
 # strictly more conservative, which is the safe direction for a gate.
+# -z on every numstat: without it git C-quotes non-ASCII/special paths
+# ("billing/\303\251.py"), so a risk path could be missed or mis-listed. Records
+# are "added<TAB>deleted<TAB>path<NUL>" (no rename triples under --no-renames) and
+# live in a file because a bash variable cannot hold NUL.
+LIST_RISK=0
+CLASSIFY=0
+case "${1:-}" in
+  --list-risk-files) LIST_RISK=1; shift ;;
+  --classify) CLASSIFY=1; shift ;;
+esac
+NUMSTAT_F="$(mktemp)"
+trap 'rm -f "$NUMSTAT_F"' EXIT
 ARG="${1:---staged}"
+[[ "$CLASSIFY" -eq 1 ]] && ARG="--none"
 case "$ARG" in
+  --none) : ;;
   --staged)
-    NUMSTAT="$(git -c core.fsmonitor= diff --no-ext-diff --no-textconv --no-renames --staged --numstat 2>/dev/null)"
-    if [[ -z "$NUMSTAT" ]]; then
-      NUMSTAT="$(git -c core.fsmonitor= diff --no-ext-diff --no-textconv --no-renames HEAD~1..HEAD --numstat 2>/dev/null)"
+    git -c core.fsmonitor= diff --no-ext-diff --no-textconv --no-renames --staged --numstat -z > "$NUMSTAT_F" 2>/dev/null
+    if [[ ! -s "$NUMSTAT_F" ]]; then
+      git -c core.fsmonitor= diff --no-ext-diff --no-textconv --no-renames HEAD~1..HEAD --numstat -z > "$NUMSTAT_F" 2>/dev/null
     fi
     ;;
   --head)
-    NUMSTAT="$(git -c core.fsmonitor= diff --no-ext-diff --no-textconv --no-renames HEAD~1..HEAD --numstat 2>/dev/null)"
+    git -c core.fsmonitor= diff --no-ext-diff --no-textconv --no-renames HEAD~1..HEAD --numstat -z > "$NUMSTAT_F" 2>/dev/null
     ;;
   *)
     # --end-of-options (F6): ARG is a caller-supplied revision/range that
     # must never be interpreted as a git option — without this, a range
     # starting with '-' (e.g. "--output=FILE") is consumed as an option and
     # can overwrite an arbitrary file.
-    NUMSTAT="$(git -c core.fsmonitor= diff --no-ext-diff --no-textconv --no-renames --numstat --end-of-options "$ARG" 2>/dev/null)"
+    git -c core.fsmonitor= diff --no-ext-diff --no-textconv --no-renames --numstat -z --end-of-options "$ARG" > "$NUMSTAT_F" 2>/dev/null
     ;;
 esac
 
@@ -143,22 +164,48 @@ add_risk() {
   esac
 }
 
-while IFS=$'\t' read -r add del path; do
+# classify_path <path> — sets is_risk=1 and records the area(s) when a risk
+# pattern or project secret token matches.
+classify_path() {
+  local path="$1" area tok
+  is_risk=0
+  area="$(risk_area_for "$path")"
+  if [[ -n "$area" ]]; then add_risk "$area"; is_risk=1; fi
+
+  if [[ -n "$PROJECT_SECRET_TOKENS" ]]; then
+    while IFS= read -r tok; do
+      [[ -z "$tok" ]] && continue
+      if [[ "$path" == *"$tok"* ]]; then add_risk "secret"; is_risk=1; fi
+    done <<< "$PROJECT_SECRET_TOKENS"
+  fi
+}
+
+# --classify: NUL-separated paths on stdin -> the risk ones, NUL-separated.
+# review-evidence.py feeds it the raw staged paths, so the pattern list keeps
+# this single owner and there is no HEAD~1 fallback to leak in.
+if [[ "$CLASSIFY" -eq 1 ]]; then
+  while IFS= read -r -d '' path; do
+    classify_path "$path"
+    [[ "$is_risk" -eq 1 ]] && printf '%s\0' "$path"
+  done
+  exit 0
+fi
+
+while IFS= read -r -d '' rec; do
+  add="${rec%%$'\t'*}"
+  rest="${rec#*$'\t'}"
+  del="${rest%%$'\t'*}"
+  path="${rest#*$'\t'}"
   [[ -z "$path" ]] && continue
   FILES=$((FILES + 1))
   [[ "$add" =~ ^[0-9]+$ ]] && LINES=$((LINES + add))
   [[ "$del" =~ ^[0-9]+$ ]] && LINES=$((LINES + del))
 
-  area="$(risk_area_for "$path")"
-  [[ -n "$area" ]] && add_risk "$area"
+  classify_path "$path"
+  [[ "$LIST_RISK" -eq 1 && "$is_risk" -eq 1 ]] && printf '%s\0' "$path"
+done < "$NUMSTAT_F"
 
-  if [[ -n "$PROJECT_SECRET_TOKENS" ]]; then
-    while IFS= read -r tok; do
-      [[ -z "$tok" ]] && continue
-      [[ "$path" == *"$tok"* ]] && add_risk "secret"
-    done <<< "$PROJECT_SECRET_TOKENS"
-  fi
-done <<< "$NUMSTAT"
+[[ "$LIST_RISK" -eq 1 ]] && exit 0
 
 ESCALATE=0
 [[ "$LINES" -ge "$LINES_THRESHOLD" ]] && ESCALATE=1

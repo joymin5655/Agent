@@ -137,7 +137,7 @@ additional evidence input to this pass. Ask the user for cost approval, then:
 
 ```bash
 AGENT_WORKER_YES=1 bash "${CLAUDE_PLUGIN_ROOT:-$PWD}/core/infra/call-worker.sh" second-opinion-verify \
-    < <claim + diff/artifacts>          # prints .agent/workers/<ts>-…md
+    < <claim + diff/artifacts>          # prints ~/.agent/workers/<project-key>/<ts>-…md
 ```
 
 Hand the captured file to the semantic verifier alongside the claim and diff.

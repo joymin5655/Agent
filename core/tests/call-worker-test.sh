@@ -627,6 +627,97 @@ else
     bad "self-heal non-codex" "rc=$rc calls=$(wc -l < "$HEAL_LOG")"
 fi
 
+# --- 12. evidence relocation: per-project capture dir + review index + lane log ---
+#
+# With AGENT_WORKERS_DIR unset the capture must land under
+# $HOME/.agent/workers/<project-key>/ (key from the CALLER's cwd, not the script's
+# location, so a plugin-cache install does not bury captures in the cache), next to
+# a reviews.jsonl index row and one council-lanes.jsonl row. Log failures are
+# best-effort: rc and stdout must not change.
+
+EVID_PY="$REPO_ROOT/core/infra/review-evidence.py"
+E_HOME="$WORK/ehome"
+E_REPO="$WORK/erepo"
+mkdir -p "$E_HOME" "$E_REPO"
+git -C "$E_REPO" init -q
+E_KEY="$(cd "$E_REPO" && env -u AGENT_PROJECT_DIR -u CLAUDE_PROJECT_DIR python3 "$EVID_PY" project-key 2>/dev/null)"
+SCRIPT_WORKERS="$REPO_ROOT/.agent/workers"
+before_script="$(ls -A "$SCRIPT_WORKERS" 2>/dev/null | wc -l | tr -d ' ')"
+
+run_evid() {  # run_evid [extra-env...]
+    (cd "$E_REPO" && env -u AGENT_WORKERS_DIR -u AGENT_PROJECT_DIR -u CLAUDE_PROJECT_DIR \
+        -u AGENT_LOGS_DIR -u AGENT_REVIEW_DIFF_KEY \
+        PATH="$ARGV_DIR:/usr/bin:/bin" HOME="$E_HOME" \
+        AGENT_BACKENDS_FILE="$REG2" AGENT_WORKER_YES=1 "$@" \
+        bash "$DISPATCHER" lowfan <<< "sample prompt" 2>/dev/null)
+}
+
+out="$(run_evid AGENT_REVIEW_DIFF_KEY=abc123)"; rc=$?
+want_dir="$E_HOME/.agent/workers/$E_KEY"
+if [[ $rc -eq 0 && -n "$E_KEY" && "$out" == "$want_dir/"*.md && -f "$out" ]]; then
+    ok "evidence — capture lands under HOME/.agent/workers/<project-key>/"
+else
+    bad "evidence capture location" "rc=$rc key=$E_KEY out=$out"
+fi
+after_script="$(ls -A "$SCRIPT_WORKERS" 2>/dev/null | wc -l | tr -d ' ')"
+[[ "$before_script" == "$after_script" ]] \
+    && ok "evidence — nothing written under the script's own .agent/workers" \
+    || bad "evidence script-dir leak" "before=$before_script after=$after_script"
+
+IDX="$want_dir/reviews.jsonl"
+if [[ -f "$IDX" && "$(wc -l < "$IDX" | tr -d ' ')" == "1" ]] \
+   && jq -e --arg c "$out" '.diff_key=="abc123" and .role=="lowfan" and .backend=="codex"
+        and .vendor=="openai" and .status=="complete" and .capture==$c and (.ts|length>0)' "$IDX" >/dev/null; then
+    ok "evidence — reviews.jsonl: 1 row, diff_key from env, fields correct"
+else
+    bad "evidence reviews.jsonl" "$(cat "$IDX" 2>/dev/null)"
+fi
+
+sleep 1
+run_evid >/dev/null
+if [[ "$(wc -l < "$IDX" | tr -d ' ')" == "2" ]] && [[ "$(tail -n 1 "$IDX" | jq -c '.diff_key')" == "null" ]]; then
+    ok "evidence — second capture adds one row, diff_key null when env unset"
+else
+    bad "evidence null diff_key" "$(cat "$IDX" 2>/dev/null)"
+fi
+
+LANES="$E_HOME/.agent/logs/council-lanes.jsonl"
+if [[ -f "$LANES" && "$(wc -l < "$LANES" | tr -d ' ')" == "2" ]] \
+   && head -n 1 "$LANES" | jq -e --arg k "$E_KEY" '.project_key==$k and .role=="lowfan"
+        and .vendor=="openai" and .rc==0 and .status=="complete"
+        and (.duration_s|type=="number") and (.prompt_bytes|type=="number") and .prompt_bytes>0
+        and (.ts|length>0) and has("retry_reason")' >/dev/null; then
+    ok "evidence — council-lanes.jsonl row has the lane fields"
+else
+    bad "evidence council-lanes.jsonl" "$(cat "$LANES" 2>/dev/null)"
+fi
+
+# unwritable index + log paths (a directory squats on each file name)
+rm -f "$IDX" "$LANES"; mkdir -p "$IDX" "$LANES"
+out2="$(run_evid)"; rc2=$?
+if [[ $rc2 -eq 0 && "$out2" == "$want_dir/"*.md && -f "$out2" && "$(printf '%s\n' "$out2" | wc -l | tr -d ' ')" == "1" ]]; then
+    ok "evidence — log-write failure leaves rc 0 and the one-line stdout contract"
+else
+    bad "evidence best-effort logs" "rc=$rc2 out=$out2"
+fi
+
+# HOME unset must not abort before the usage / cost-gate exits
+env -u HOME PATH="$ARGV_DIR:/usr/bin:/bin" AGENT_BACKENDS_FILE="$REG2" \
+    bash "$DISPATCHER" lowfan <<< "p" >/dev/null 2>&1; rc=$?
+env -u HOME PATH="$ARGV_DIR:/usr/bin:/bin" AGENT_BACKENDS_FILE="$REG2" \
+    bash "$DISPATCHER" <<< "p" >/dev/null 2>&1; rc_u=$?
+[[ $rc -eq 3 && $rc_u -eq 2 ]] && ok "evidence — HOME unset still reaches cost-gate (3) and usage (2) exits" \
+    || bad "HOME unset" "gate rc=$rc usage rc=$rc_u"
+
+# separate warnings: only the failing sink is named
+errw="$(cd "$E_REPO" && env -u AGENT_WORKERS_DIR PATH="$ARGV_DIR:/usr/bin:/bin" HOME="$E_HOME" \
+    AGENT_BACKENDS_FILE="$REG2" AGENT_WORKER_YES=1 bash "$DISPATCHER" lowfan <<< p 2>&1 >/dev/null)"
+if grep -q "review index append failed" <<< "$errw" && grep -q "lane log append failed" <<< "$errw"; then
+    ok "evidence — index and lane-log failures warn separately on stderr"
+else
+    bad "evidence separate warnings" "$errw"
+fi
+
 # --- tally ---------------------------------------------------------------
 
 echo

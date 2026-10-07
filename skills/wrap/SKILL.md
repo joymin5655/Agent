@@ -80,15 +80,17 @@ d. **Review-tier check** — run the review-cadence script, resolved from the
    replaces what used to be a direct `council-threshold.sh` invocation here.
    - **tier 2** (exit 10, council-scale — line/file threshold or a risk-area
      path) AND no council/degrade review happened this session for this diff
-     (no `.agent/workers/*-review.md` capture, no single-vendor degrade
-     note) → recommend `/council-review --staged` and confirm with the user
+     (no row in `<workers dir>/reviews.jsonl` with `diff_key` equal to
+     `review-evidence.py key --staged`, `status == "complete"` and a vendor other
+     than anthropic — a later `review-evidence.py check` automates this; no
+     single-vendor degrade note) → recommend `/council-review --staged` and confirm with the user
      before committing solo. This is advisory, not a gate abort — the user
      can proceed anyway; it exists so a council-scale diff doesn't slip into
      a commit on the strength of a Claude-only review that
      `council-escalation-gate.py` never got a chance to catch (e.g. edits
      made without a Task/Agent dispatch).
    - **tier 1** (exit 5, the common case) → if no review artifact exists for
-     this diff (the same `.agent/workers/*-review.md` / degrade-note check
+     this diff (the same `reviews.jsonl` diff_key / degrade-note check
      above), add a non-blocking advisory line recommending one
      `code-reviewer` pass before committing. Advisory, not a gate abort —
      same convention as the tier-2 line: the user can proceed anyway.
