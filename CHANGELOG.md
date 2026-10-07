@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **docs**: README (en/ko) now declares the core purpose, cross-vendor review diversity, with
+  an honest enforcement status; `docs/internal/harness-improvement-plan.md` gains the V series
+  (V-1..V-6, §4.16) as the backlog for mechanical enforcement; codex entry in
+  `docs/runtime-registry.json` refreshed (CLI 0.160.0, docs URLs re-checked 2026-10-07).
+
 ## [0.5.15] - 2026-10-07
 
 ### Added
