@@ -5,7 +5,8 @@
 # "council-scale" (exit 10) when changed-line total >= AGENT_COUNCIL_LINES
 # (default 200) OR changed-file count >= AGENT_COUNCIL_FILES (default 10) OR
 # any changed path matches a risk-area pattern (spec-gate.py:72
-# GUARD_PATTERNS mirror). Otherwise exit 0. stdout is always exactly one
+# GUARD_PATTERNS mirror, plus the auth class, which exists only here —
+# spec-gate and plan-scope-allow do not have it). Otherwise exit 0. stdout is always exactly one
 # summary line: "lines=<N> files=<M> risk=<comma-list|none>".
 #
 # Fixture: one throwaway git repo, reset to a clean baseline commit between
@@ -323,6 +324,37 @@ if [[ ! -e "$CANARY" && "$OUT" == "lines=0 files=0 risk=none" ]]; then
 else
   bad "option injection" "canary_exists=$([[ -e "$CANARY" ]] && echo yes || echo no) rc=$RC out='$OUT'"
 fi
+
+echo
+echo "=== auth risk class (--classify) ==="
+classify() { printf '%s\0' "$@" | (cd "$REPO" && bash "$SCRIPT" --classify | tr '\0' '|'); }
+for p in src/auth/session.py lib/OAuth/token.go app/authz/policy.rs src/authn/a.ts web/login.tsx \
+         api/auth_middleware.js pkg/user-auth.py src/auth.py oauth_client.py authorize.py \
+         authorization_service.ts user_login.py authmiddleware.go auth0.ts src/auth.c src/auth.cpp \
+         src/login.vue UserAuth.ts auth-service/handler.go authlib/x.py src/auth/schema.sql \
+         svc/Authentication/x.ts 'app/(auth)/login/page.tsx' 'src/[auth]/x.ts' src/user_auth/x.py \
+         src/UserAuth/x.ts policy/auth.rego 'app/(auth)/layout.tsx'; do
+  [[ "$(classify "$p")" == "$p|" ]] && ok "auth risk: $p" || bad "auth risk: $p" "got=[$(classify "$p")]"
+done
+for p in author.py authors.go authority.ts authorities.py authored.java co-author.py \
+         authorship_utils.py docs/author.md AUTHORS authors.txt src/oauthlib_vendor_notes.md \
+         README_auth.md tests/fixtures/auth_sample.json src/login.md notes/auth.txt auth/README.md \
+         svc/Authentication/x.md src/co-author/x.py src/authorities/x.py src/authorship/y.ts \
+         policy/README.rego.md; do
+  [[ -z "$(classify "$p")" ]] && ok "not auth risk: $p" || bad "not auth risk: $p" "got=[$(classify "$p")]"
+done
+# non-UTF-8 byte in the path under a UTF-8 locale must not blind the classifier (LC_ALL=C)
+bad_utf8="$(printf 'src/auth/\377.py')"
+[[ "$(printf '%s\0' "$bad_utf8" | (cd "$REPO" && env -u LC_ALL LANG=en_US.UTF-8 bash "$SCRIPT" --classify | LC_ALL=C tr '\0' '|'))" == "$bad_utf8|" ]] \
+  && ok "auth classify survives a non-UTF-8 byte under a UTF-8 locale" || bad "non-UTF-8 path" "not classified"
+# NUL roundtrip with a space and non-ASCII char in an auth path
+[[ "$(classify "src/auth/my file é.py" docs/author.md)" == "src/auth/my file é.py|" ]] \
+  && ok "auth classify NUL roundtrip (space + non-ASCII)" || bad "auth NUL roundtrip" "got=[$(classify "src/auth/my file é.py" docs/author.md)]"
+reset_repo
+mkdir -p "$REPO/src/auth"; echo x > "$REPO/src/auth/session.py"; git -C "$REPO" add -A
+run -- --staged
+[[ "$RC" -eq 10 && "$OUT" == "lines=1 files=1 risk=auth" ]] && ok "staged auth file -> council-scale, risk=auth" || bad "staged auth summary" "rc=$RC out='$OUT'"
+reset_repo
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="

@@ -139,6 +139,16 @@ expect "d4-secrets-silent"         on present Write "$WORK/secrets/k.json"      
 expect "d5-function-silent"        on present Write "$WORK/functions/pay/index.ts"  silent
 expect "d6-billing-silent"         on present Write "$WORK/billing/a.ts"            silent
 expect "d7-uppercase-evasion"      on present Write "$WORK/SECRETS/k.json"          silent
+expect "d8-auth-dir-silent"        on present Write "$WORK/src/auth/session.py"     silent
+expect "d9-auth-file-silent"       on present Write "$WORK/src/login.tsx"           silent
+expect "d10-camel-auth-silent"     on present Write "$WORK/src/UserAuth.ts"         silent
+expect "d11-author-doc-allows"     on present Write "$WORK/docs/author.md"          allow
+expect "d12-author-code-allows"    on present Write "$WORK/src/author.py"           allow
+expect "d13-auth-readme-allows"    on present Write "$WORK/src/auth/README.md"      allow
+expect "d14-next-route-group-silent" on present Write "$WORK/app/(auth)/page.tsx"   silent
+expect "d15-prefixed-auth-dir-silent" on present Write "$WORK/src/user_auth/x.py"    silent
+expect "d16-rego-policy-silent"     on present Write "$WORK/policy/auth.rego"        silent
+expect "d17-co-author-dir-allows"   on present Write "$WORK/src/co-author/x.py"      allow
 
 echo
 echo "=== self-tamper surfaces (incl. session-env injection files) ==="

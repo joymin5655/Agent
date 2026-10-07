@@ -340,6 +340,36 @@ def extract_chunks(tool_name: str, tool_input: dict) -> list[str]:
     return chunks
 
 
+LEDGER_FILES = {"reviews.jsonl", "review-override.jsonl"}
+LEDGER_WRITE_TOOLS = {"Write", "Edit", "MultiEdit"}
+
+
+def _ledger_roots() -> list[str]:
+    """Where the commit gate reads its evidence: the workers dir (reviews.jsonl) and the
+    logs dir (review-override.jsonl). The union of the env overrides review-evidence.py
+    honours AND the real defaults, so setting an env var can never un-protect the real
+    ledgers. realpath + lowercase so a symlink or an APFS case variant cannot slip past."""
+    home = os.path.expanduser("~")
+    roots = [
+        os.path.join(home, ".agent", "workers"),
+        os.path.join(home, ".agent", "logs"),
+        os.environ.get("AGENT_WORKERS_DIR"),
+        os.environ.get("AGENT_LOGS_DIR"),
+    ]
+    return [os.path.realpath(os.path.expanduser(r)).lower() for r in roots if r]
+
+
+def is_ledger_path(file_path) -> bool:
+    """A ledger file name INSIDE the workers/logs dirs. A project's own reviews.jsonl
+    (a common dataset name) elsewhere is not a ledger."""
+    if not isinstance(file_path, str) or not file_path:
+        return False
+    if os.path.basename(file_path).lower() not in LEDGER_FILES:
+        return False
+    real = os.path.realpath(os.path.expanduser(file_path)).lower()
+    return any(real == r or real.startswith(r + os.sep) for r in _ledger_roots())
+
+
 def main() -> None:
     raw = sys.stdin.read().strip()
     if not raw:
@@ -353,6 +383,20 @@ def main() -> None:
     tool_name = data.get("tool_name", "")
     tool_input = data.get("tool_input", {})
     file_path = tool_input.get("file_path", "")
+
+    # Evidence ledgers are written only by call-worker.sh / review-evidence.py; a
+    # Write/Edit that authors one would forge the review the commit gate trusts.
+    if tool_name in LEDGER_WRITE_TOOLS and is_ledger_path(file_path):
+        reason = f"evidence ledger write blocked: {os.path.basename(file_path)}"
+        log_violation(reason)
+        emit_deny(
+            f"{reason}\n"
+            "WHY: evidence-ledger guard — reviews.jsonl / review-override.jsonl are the proof "
+            "the commit gate trusts and are written only by call-worker.sh and "
+            "review-evidence.py; an agent-written row would forge a review.\n"
+            "FIX: run /council-review so call-worker.sh appends the row; do not edit the ledger."
+        )
+        sys.exit(0)
 
     # File-based path uses EXEMPT whitelist. MCP / WebFetch paths always scan.
     if file_path and is_exempt(file_path):

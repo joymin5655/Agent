@@ -158,5 +158,90 @@ run_case "grep-config-redirect-allow"    'grep rules .eslintrc.json > /dev/null'
 run_case "edit-tsconfig-allow"       'sed -i "s/strict/loose/" tsconfig.json' allow
 
 echo
+echo "=== review-override: agent may not SET AGENT_REVIEW_OVERRIDE (user-only escape) -> deny ==="
+run_case "override-prefix-assign-deny"  'AGENT_REVIEW_OVERRIDE="all lanes are down" git commit -m x' deny
+run_case "override-export-deny"         'export AGENT_REVIEW_OVERRIDE=reason-long-enough'            deny
+run_case "override-export-bare-deny"    'export AGENT_REVIEW_OVERRIDE'                               deny
+run_case "override-env-deny"            'env FOO=1 AGENT_REVIEW_OVERRIDE=reason-long-enough git commit' deny
+run_case "override-env-quoted-name-deny" "env 'AGENT_REVIEW_OVERRIDE'=r git commit"                  deny
+run_case "override-declare-x-deny"      'declare -x AGENT_REVIEW_OVERRIDE=reason-long-enough'        deny
+run_case "override-typeset-x-deny"      'typeset -x AGENT_REVIEW_OVERRIDE=reason-long-enough'        deny
+run_case "override-chained-export-deny" 'cd /tmp && export AGENT_REVIEW_OVERRIDE=reason-long-enough'  deny
+run_case "override-bash-c-deny"         'bash -c "AGENT_REVIEW_OVERRIDE=x git commit"'               deny
+run_case "override-bash-lc-deny"        "bash -lc 'cd r && AGENT_REVIEW_OVERRIDE=reason git commit'" deny
+run_case "override-other-prefix-deny"   'FOO=1 AGENT_REVIEW_OVERRIDE=r git commit'                   deny
+run_case "override-plus-equals-deny"    'AGENT_REVIEW_OVERRIDE+=r git commit'                        deny
+run_case "override-subshell-deny"       '(AGENT_REVIEW_OVERRIDE=r git commit)'                       deny
+run_case "override-eval-deny"           'eval "AGENT_REVIEW_OVERRIDE=r git commit"'                  deny
+run_case "override-if-then-export-deny" 'if true; then export AGENT_REVIEW_OVERRIDE=r; fi'           deny
+run_case "override-with-ask-guard-deny" 'AGENT_REVIEW_OVERRIDE=r git commit --no-verify -m x'        deny
+run_case "override-env-backslash-name-deny" 'env AGENT_REVIEW_OVER\RIDE=x git commit'                 deny
+run_case "override-ansi-c-quoted-deny"  "\$'AGENT_REVIEW_OVERRIDE'=x git commit"                    deny
+run_case "override-read-deny"           'read -r AGENT_REVIEW_OVERRIDE <<< "reason long enough"'     deny
+run_case "override-printf-v-deny"       'printf -v AGENT_REVIEW_OVERRIDE "%s" reason-long-enough'    deny
+run_case "override-mapfile-deny"        'mapfile -t AGENT_REVIEW_OVERRIDE < f'                       deny
+run_case "override-readarray-deny"      'readarray AGENT_REVIEW_OVERRIDE < f'                        deny
+run_case "override-readonly-deny"       'readonly AGENT_REVIEW_OVERRIDE=reason-long-enough'          deny
+run_case "override-local-deny"          'f() { local AGENT_REVIEW_OVERRIDE=reason-long-enough; }'    deny
+run_case "override-set-a-deny"          'set -a; . ./vars; AGENT_REVIEW_OVERRIDE=reason-long-enough git commit' deny
+run_case "override-set-a-mention-deny"  'set -a && source env.sh && echo $AGENT_REVIEW_OVERRIDE'     deny
+run_case "override-test-bracket-allow"  '[[ "$AGENT_REVIEW_OVERRIDE" == "" ]]'                       allow
+run_case "override-env-pipe-grep-allow" 'env | grep AGENT_REVIEW_OVERRIDE'                           allow
+run_case "override-grep-mention-allow"  'grep AGENT_REVIEW_OVERRIDE core/infra/review-evidence.py'   allow
+run_case "override-grep-count-assign-token-deny" 'grep -c "AGENT_REVIEW_OVERRIDE=" f'               deny
+run_case "override-grep-export-allow"   'grep -n export AGENT_REVIEW_OVERRIDE f'                     allow
+run_case "override-echo-read-allow"     'echo "$AGENT_REVIEW_OVERRIDE"'                              allow
+run_case "override-unset-allow"         'unset AGENT_REVIEW_OVERRIDE'                                allow
+run_case "override-spaced-equals-allow" 'AGENT_REVIEW_OVERRIDE = foo'                                allow
+run_case "override-commit-msg-allow"    'git commit -m "docs: AGENT_REVIEW_OVERRIDE=<reason> user-only"' allow
+run_case "override-pr-body-assign-token-deny" 'gh pr create --body "set AGENT_REVIEW_OVERRIDE=x"'  deny
+run_case "override-heredoc-message-allow" $'git commit -m "$(cat <<\'EOF\'\nfix: AGENT_REVIEW_OVERRIDE=x docs\nEOF\n)"' allow
+run_case "override-timeout-launcher-deny" 'timeout 5 AGENT_REVIEW_OVERRIDE=reason git commit'         deny
+run_case "override-nice-launcher-deny"  'nice -n 5 AGENT_REVIEW_OVERRIDE=reason git commit'          deny
+run_case "override-bash-o-c-deny"       "bash -o pipefail -c 'AGENT_REVIEW_OVERRIDE=r git commit'"   deny
+run_case "workers-dir-assign-deny"      'AGENT_WORKERS_DIR=/tmp/forged git commit -m x'              deny
+run_case "workers-dir-export-deny"      'export AGENT_WORKERS_DIR=/tmp/forged'                       deny
+run_case "workers-dir-env-deny"         'env AGENT_WORKERS_DIR=/tmp/forged git commit'               deny
+run_case "logs-dir-assign-deny"         'cd x && AGENT_LOGS_DIR=/tmp/forged git commit'              deny
+run_case "logs-dir-plus-equals-deny"    'AGENT_LOGS_DIR+=x git commit'                               deny
+run_case "githead-assign-deny"          'GITHEAD_0123456789012345678901234567890123456789=x git commit' deny
+run_case "workers-dir-echo-allow"       'echo "$AGENT_WORKERS_DIR"'                                  allow
+run_case "workers-dir-grep-allow"       'grep AGENT_WORKERS_DIR core/infra/review-evidence.py'       allow
+run_case "logs-dir-test-bracket-allow"  '[[ "$AGENT_LOGS_DIR" == "" ]]'                              allow
+run_case "override-export-other-then-grep-allow" 'export FOO=1; grep AGENT_REVIEW_OVERRIDE x'        allow
+
+echo
+echo "=== evidence-ledger: agent may not WRITE reviews.jsonl / review-override.jsonl -> deny ==="
+run_case "ledger-redirect-deny"        'echo "{}" > ~/.agent/workers/k/reviews.jsonl'                deny
+run_case "ledger-append-deny"          'echo "{}" >> reviews.jsonl'                                  deny
+run_case "ledger-override-append-deny" 'printf x >> ~/.agent/logs/review-override.jsonl'             deny
+run_case "ledger-tee-deny"             'echo "{}" | tee -a reviews.jsonl'                            deny
+run_case "ledger-sed-i-deny"           "sed -i '' 's/failed/complete/' ~/.agent/workers/k/reviews.jsonl" deny
+run_case "ledger-cp-onto-deny"         'cp forged.jsonl ~/.agent/workers/k/reviews.jsonl'            deny
+run_case "ledger-mv-onto-deny"         'mv forged.jsonl reviews.jsonl'                               deny
+run_case "ledger-python-append-deny"   "python3 -c \"open('reviews.jsonl','a').write('x')\""         deny
+run_case "ledger-python-write-deny"    "python3 -c \"open('/x/review-override.jsonl', 'w').write('')\"" deny
+run_case "ledger-truncate-deny"        'truncate -s 0 reviews.jsonl'                                 deny
+run_case "ledger-prefixed-name-redirect-allow" 'echo x > my_reviews.jsonl'                          allow
+run_case "ledger-prefixed-name-cp-allow" 'cp data.jsonl old-reviews.jsonl'                           allow
+run_case "ledger-prefixed-name-python-allow" "python3 -c \"open('my_reviews.jsonl','a').write('x')\"" allow
+run_case "ledger-dir-qualified-append-deny" 'echo x >> ~/.agent/workers/k/reviews.jsonl'             deny
+run_case "ledger-dot-slash-redirect-deny" 'echo x > ./reviews.jsonl'                                 deny
+run_case "ledger-cat-allow"            'cat ~/.agent/workers/k/reviews.jsonl'                        allow
+run_case "ledger-grep-allow"           'grep complete reviews.jsonl'                                 allow
+run_case "ledger-jq-redirect-elsewhere-allow" 'jq . reviews.jsonl > /tmp/out.json'                   allow
+run_case "ledger-cp-any-arg-deny"      'cp reviews.jsonl /tmp/backup.jsonl'                          deny
+run_case "ledger-cp-into-workers-dir-deny" 'cp forged.jsonl ~/.agent/workers/abc123/'                deny
+run_case "ledger-uppercase-deny"       'echo x >> ~/.agent/workers/k/REVIEWS.JSONL'                  deny
+run_case "ledger-clobber-redirect-deny" 'echo x >| reviews.jsonl'                                    deny
+run_case "ledger-dd-deny"              'dd if=forged of=reviews.jsonl'                               deny
+run_case "ledger-rsync-deny"           'rsync forged.jsonl ~/.agent/workers/k/reviews.jsonl'         deny
+run_case "ledger-launcher-tee-deny"    'timeout 5 tee reviews.jsonl'                                 deny
+run_case "ledger-python-uppercase-deny" "python3 -c \"open('Reviews.jsonl','a').write('x')\""        deny
+run_case "ledger-ln-deny"              'ln -sf forged.jsonl reviews.jsonl'                           deny
+run_case "ledger-python-read-allow"    "python3 -c \"print(open('reviews.jsonl').read())\""          allow
+run_case "ledger-python-read-r-allow"  "python3 -c \"print(open('reviews.jsonl','r').read())\""      allow
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]

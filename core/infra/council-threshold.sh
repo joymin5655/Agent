@@ -6,7 +6,8 @@
 # re-derive the numbers themselves:
 #   - changed line total  >= AGENT_COUNCIL_LINES  (default 200)
 #   - changed file count  >= AGENT_COUNCIL_FILES  (default 10)
-#   - any changed path matches a risk-area pattern (mirrors
+#   - any changed path matches a risk-area pattern (migration, secret, edge-fn,
+#     billing, auth; all but auth mirror
 #     core/hooks/spec-gate.py:72 GUARD_PATTERNS, plus a project's own
 #     risk_areas.secrets.paths override via core/hooks/hook_config.py —
 #     the same loader core/hooks/pre-tool-guard.sh already shells out to)
@@ -114,8 +115,9 @@ case "$ARG" in
     ;;
 esac
 
-# Risk-area patterns — mirror spec-gate.py:72 GUARD_PATTERNS exactly (label
-# kept identical so a firing reads the same across both gates).
+# Risk-area patterns — migration/secret/edge-fn/billing mirror spec-gate.py:72
+# GUARD_PATTERNS (labels kept identical so a firing reads the same across both
+# gates). The auth class exists only here; spec-gate/plan-scope-allow lack it.
 risk_area_for() {
   local path="$1"
   if printf '%s' "$path" | grep -qE '(^|/)migrations/.+\.sql$'; then
@@ -130,6 +132,27 @@ risk_area_for() {
   if printf '%s' "$path" | grep -qE '(^|/)billing/'; then
     echo "billing"; return
   fi
+  # auth (exists only here — spec-gate/plan-scope-allow have no such class).
+  # CODE files only: a docs/markdown/json path never matches, even under an auth
+  # dir. camelCase is split before lowercasing (UserAuth.ts -> user_auth.ts); tr,
+  # not ${var,,}, because macOS ships bash 3.2. Basename: auth/oauth/login as a
+  # whole token (author*/authority/authored are not auth). Dir: auth-family
+  # segment, optionally prefixed x_/x- and suffixed _x/-x, optionally wrapped in ()
+  # or [] (user_auth/, auth-service/, app/(auth)/), plus authlib/oauthlib. Out of the class:
+  # sso, session, jwt, token*, password*, rbac/acl/iam, oidc/saml, mfa/otp, signin/signup,
+  # logout, and non-code policy files (only .rego counts).
+  local norm ext LC_ALL=C  # byte semantics for the bash regex; sed/tr get an explicit LC_ALL=C prefix (a local is not exported)
+  norm="$(printf '%s' "$path" | LC_ALL=C sed -E 's/([a-z0-9])([A-Z])/\1_\2/g' | LC_ALL=C tr '[:upper:]' '[:lower:]')"
+  ext="${norm##*.}"
+  case "$ext" in
+    py|ts|tsx|js|jsx|go|rs|rb|java|kt|swift|sh|php|cs|c|h|cc|cpp|hpp|mjs|cjs|vue|svelte|sql|ex|exs|scala|dart|m|mm|rego)
+      # [[(] / [])] : POSIX bracket forms for an optional "(" or "[" / ")" or "]" wrapper
+      re_dir='(^|/)[[(]?([^/]*[_-])?(o?auth[0-9]*|o?authlib|authn|authz|authenticat[a-z]*|authoriz[a-z]*|login)([_-][^/]*)?[])]?/'
+      re_base='(^|[_-])(o?auth($|[^o]|o($|[^r])|ori[sz])|login)'
+      if [[ "$norm" =~ $re_dir ]] || [[ "${norm##*/}" =~ $re_base ]]; then
+        echo "auth"; return
+      fi ;;
+  esac
 }
 
 # Project-declared secret paths (hook_config.py risk_areas.secrets.paths) —

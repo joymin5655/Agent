@@ -6,8 +6,8 @@ AI-agnostic hook implementations. Each script reads a canonical event JSON from 
 
 | Hook | Event | Purpose |
 |---|---|---|
-| `pre-tool-guard.sh` | PreToolUse (Bash) | Bash command safety — destructive deletion, force push, secrets/.env access, DROP/TRUNCATE TABLE |
-| `secret-content-scan.py` | PreToolUse (Write/Edit/MultiEdit + MCP write tools) | Secret bypass patterns in file content + MCP URL/query/content payloads |
+| `pre-tool-guard.sh` | PreToolUse (Bash) | Bash command safety — destructive deletion, force push, secrets/.env access, DROP/TRUNCATE TABLE; `review-override` denies the recognised forms that set `AGENT_REVIEW_OVERRIDE`/`AGENT_WORKERS_DIR`/`AGENT_LOGS_DIR`/`GITHEAD_*`, `evidence-ledger` denies writes to `reviews.jsonl`/`review-override.jsonl` (logged; Bash speed bumps, not boundaries: interpreter one-liners and run-after-write scripts evade them) |
+| `secret-content-scan.py` | PreToolUse (Write/Edit/MultiEdit + MCP write tools) | Secret bypass patterns in file content + MCP URL/query/content payloads; also denies Write/Edit of the review evidence ledgers (`reviews.jsonl`, `review-override.jsonl`) inside the workers/logs dirs |
 | `r4-mutex-check.sh` | PreToolUse (`*`) | Resource mutex — production-db, edge-function-deploy, production-deploy |
 | `r4-file-mutex-check.sh` | PreToolUse (Write/Edit/MultiEdit) | File-level mutex when another session is editing the same path |
 | `r4-file-mutex-register.sh` | SessionStart (`baseline`) + PostToolUse Bash (`commit`) | Register worktree-commit-changed files in lock file |

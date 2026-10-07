@@ -144,6 +144,7 @@ parity_case "ask-no-verify-bash"    pre-tool-guard.sh    ask     Bash   "git com
 parity_case "deny-destructive-bash" pre-tool-guard.sh    deny    Bash   "rm -rf /"                      ""    ""
 parity_case "allow-quoted-bash"     pre-tool-guard.sh    allow   Bash   "echo it's fine"                ""    ""
 parity_case "deny-quoted-secrets"   pre-tool-guard.sh    deny    Bash   "cat secrets/a.env # it's mine" ""    ""
+parity_case "deny-review-override-bash" pre-tool-guard.sh deny Bash "export AGENT_REVIEW_OVERRIDE=reason-long-enough" "" ""
 echo "--- file/content shape (check-hardcoding.py reads tool_input.file_path + .content) ---"
 # 2026-07-27 guard-trim: check-hardcoding defaults to dryrun (advisory); the
 # deny path is opt-in via AGENT_HARDCODING_MODE=block. Cover both across all
@@ -158,6 +159,8 @@ export AGENT_HARDCODING_SINK="$_HC_SCRATCH/hardcoding.jsonl"
 export AGENT_REPRODUCE_TEST=1
 export AGENT_HARDCODING_MODE=block
 parity_case "deny-hardcoded-content" check-hardcoding.py deny    Write  ""  "app.js"  "$HC_FIXTURE"
+parity_case "deny-ledger-write" secret-content-scan.py deny Write "" "$HOME/.agent/workers/k/reviews.jsonl" "{}"
+parity_case "allow-project-reviews-jsonl" secret-content-scan.py allow Write "" "/x/data/reviews.jsonl" "{}"
 unset AGENT_HARDCODING_MODE   # unset = the shipped default (dryrun/advisory)
 parity_case "advisory-hardcoded-default" check-hardcoding.py advisory Write "" "app.js" "$HC_FIXTURE"
 parity_case "allow-quoted-content"   check-hardcoding.py allow   Write  ""  "app.js"  "const s = \"it's 100% fine\""
@@ -272,8 +275,13 @@ agy_case "ask-no-verify-bash"    pre-tool-guard.sh ask   Bash "git commit --no-v
 agy_case "deny-destructive-bash" pre-tool-guard.sh deny  Bash "rm -rf /"                      "" ""
 agy_case "allow-quoted-bash"     pre-tool-guard.sh allow Bash "echo it's fine"                "" ""
 agy_case "deny-quoted-secrets"   pre-tool-guard.sh deny  Bash "cat secrets/a.env # it's mine" "" ""
+agy_case "deny-review-override-bash" pre-tool-guard.sh deny Bash "export AGENT_REVIEW_OVERRIDE=reason-long-enough" "" ""
 export AGENT_HARDCODING_MODE=block
 agy_case "deny-hardcoded-content" check-hardcoding.py deny Write "" "app.js" "$HC_FIXTURE"
+export AGENT_WORKERS_DIR="$_AGY_SCRATCH/workers"   # every adapter, agy included, sees the same ledger root
+agy_case "deny-ledger-write" secret-content-scan.py deny Write "" "$_AGY_SCRATCH/workers/k/reviews.jsonl" "{}"
+unset AGENT_WORKERS_DIR
+agy_case "allow-project-reviews-jsonl" secret-content-scan.py allow Write "" "/x/data/reviews.jsonl" "{}"
 unset AGENT_HARDCODING_MODE
 agy_case "advisory-hardcoded-default" check-hardcoding.py advisory Write "" "app.js" "$HC_FIXTURE"
 agy_case "allow-quoted-content"   check-hardcoding.py allow Write "" "app.js" "const s = \"it's 100% fine\""

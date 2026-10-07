@@ -23,6 +23,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   whose rewrite would not be a fixed point; unscannable files are counted, never silent. Known
   limitation: siblings containing boundary punctuation (e.g. `/old(backup)/`) are matched, so
   review the dry-run before `--apply`.
+- **review gate**: `auth` risk class in `council-threshold.sh` (code files incl. `.rego`: an
+  auth-family directory such as `auth/`, `oauth/`, `authn/`, `authz/`, `authentication/`,
+  `authorize*/`, `login/`, optionally wrapped (`(auth)/`) or prefixed (`user_auth/`), or a file
+  named `auth*`/`login*`/`*_auth*`, camelCase split; `author*` is not auth). `sso`, `session`,
+  `jwt`, `token*` and similar are out of the class.
+- **guard**: `pre-tool-guard.sh` `review-override` denies agent Bash commands that assign a
+  protected variable — `AGENT_REVIEW_OVERRIDE`, `AGENT_WORKERS_DIR`, `AGENT_LOGS_DIR`,
+  `GITHEAD_<hex>` — anywhere in the quote-normalized, message-stripped command (`NAME=`, `+=`,
+  `:=`, or a builtin such as `export`/`declare`/`read`/`printf -v` naming one), and logs the
+  attempt. A literal `NAME=` token in another argument is denied too; mentions without `=` are
+  allowed. A speed bump, not a boundary: interpreter one-liners and scripts evade it.
+- **guard**: `evidence-ledger` denies agent Bash writes to `reviews.jsonl` /
+  `review-override.jsonl` (case-insensitive; redirect incl. `>|`, a write verb naming a ledger
+  or `.agent/workers`, sed -i, python open for write), and `secret-content-scan.py` denies
+  Write/Edit of those files when they sit under the workers/logs dirs (`AGENT_WORKERS_DIR`/
+  `AGENT_LOGS_DIR` and the default `~/.agent/workers`, `~/.agent/logs`; realpath,
+  case-insensitive), so a project's own `reviews.jsonl` stays editable. Reads are allowed. Bash guards are speed bumps, not boundaries.
+- **git hook**: `core/git-hooks/pre-merge-commit` runs the review-completeness check for
+  auto-merge commits, which skip pre-commit.
+- **plan-scope-allow**: the auth class is a never-allow screen (kept out of spec-gate and
+  tdd-guard, which exempt risk paths).
+
+### Changed
+- **review gate**: a merge commit no longer re-demands review for a risk file whose staged
+  state equals a merged-in parent's when a remote DEFAULT branch (`refs/remotes/<r>/HEAD`,
+  else `<r>/main`/`master`) contains that parent (any parent of an octopus). This is a
+  relaxation and a convenience for merging the default branch in, not proof of review:
+  remote-tracking refs are local state an agent could rewrite. Local branches, scratch
+  branches pushed to the remote and a hand-written `MERGE_HEAD` earn no exemption. The
+  environment is never read for parents: `pre-merge-commit` passes the merged heads
+  explicitly. Cherry-pick and rebase run no pre-commit at all (observed) and are not covered.
+- **review-evidence**: `summary` takes vendor, role and status from the matching
+  `reviews.jsonl` row (by capture path) before falling back to `backends.json`.
 
 ### Fixed
 - **antigravity-worker**: quota / HTTP 429 / `RESOURCE_EXHAUSTED` / rate-limit errors now exit 75,
