@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.16] - 2026-10-07
+
+Cross-vendor realign campaign (#148–#152). Behavior change: a commit that stages
+risk-area files now needs an external-vendor review bound to the staged content (or the
+user's logged `AGENT_REVIEW_OVERRIDE`).
+
 ### Changed
 - **docs**: README (en/ko) now declares the core purpose, cross-vendor review diversity, with
   an honest enforcement status; `docs/internal/harness-improvement-plan.md` gains the V series
