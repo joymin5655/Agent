@@ -1,0 +1,5 @@
+{
+  "comment": "Owned by the codex adapter — model IDs are forbidden in core/infra/backends.json, and the pin itself is resolved from codex's own catalog, so this file only picks the model FAMILY per tier. top = deep.config.toml, low = quick.config.toml; each value is a lowercase family token (sol, astra, luna). Install: cp codex-tiers.json.template ~/.agent/codex-tiers.json (setup.sh --codex does this). Use `python3 core/infra/codex-models.py check` to see the resolved model and `apply` to update the profiles.",
+  "top": "sol",
+  "low": "luna"
+}

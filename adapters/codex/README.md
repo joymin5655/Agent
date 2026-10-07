@@ -58,6 +58,7 @@ Design background:
 | `codex-config.toml.template` | `~/.codex/config.toml` template (sandbox + brain MCP; hooks live in `hooks.json`). |
 | `quick.config.toml.template` | LOW-tier profile, installed beside `config.toml` as `quick.config.toml`. |
 | `deep.config.toml.template` | TOP-tier profile, installed beside `config.toml` as `deep.config.toml`. |
+| `codex-tiers.json.template` | Tier -> model family (`top`=deep, `low`=quick), installed as `~/.agent/codex-tiers.json`. |
 | `AGENTS.md.template`       | Project-level instructions Codex reads. |
 
 `legacy/codex-shell-wrap/codex-shell-wrap.sh` is the retired compatibility
@@ -114,6 +115,38 @@ probe — measured 2026-08-20 on codex 0.147.0: logged out exits 1 and prints
 state, no network call) and not billable, which is why
 `core/infra/backends.json` uses it as the codex backend's `preflight`
 instead of `codex --version` (which says nothing about auth).
+
+## Model auto-detection
+
+The tier profiles pin a model ID, and the vendor retires or restricts IDs without notice.
+`core/infra/codex-models.py` keeps the pins honest against codex's own catalog
+(`$CODEX_HOME/models_cache.json`, refreshed by codex itself; reading it costs nothing).
+
+- **Resolution**: per tier, the listed, non-retiring model of the tier's family
+  (`sol`/`astra`/`luna`) with the lowest `priority`. Families come from
+  `~/.agent/codex-tiers.json` (default `top=sol`, `low=luna`); values must match `^[a-z]+$`.
+- `codex-models.py check [--json]`: read-only; exit 0 match, 10 change suggested, 2 no catalog.
+- `codex-models.py apply [--tier top|low] [--yes]`: a listed model can still be rejected for
+  an account, so each candidate gets a paid one-line `codex exec` probe first. The first
+  passing one replaces only the `model = "..."` line; the old file is kept as
+  `<profile>.bak-<date>`. Without `--yes` it asks on a TTY and refuses (exit 3) otherwise.
+  A probe is OK, REJECTED (codex's `ERROR:` line says the model is unsupported or retired)
+  or INCONCLUSIVE (timeout, no `codex`, usage limit); an inconclusive one stops `apply`
+  without writing or remembering anything. A rejection is remembered in
+  `~/.agent/state/codex-probe-failed.json` and the model is skipped by `check` for 30 days
+  (`AGENT_CODEX_PROBE_FAIL_TTL_DAYS`), so an entry your account cannot run does not raise
+  the advisory every week. A later passing probe clears it.
+- Candidates must also list the profile's `model_reasoning_effort` among the catalog's
+  `supported_reasoning_levels` (when the catalog gives them). A profile without a
+  `model = ...` line is reported but never changed.
+- **Weekly advisory**: `session-init.py` runs `check` at most once per 7 days (stamp
+  `~/.agent/state/codex-catalog-check`) and prints one stderr line when a pin lags.
+- **Self-heal**: when `call-worker.sh` sees a codex "model is not supported / retired" error
+  it re-runs once with `-m <successor>` (`codex-models.py upgrade-for`) and records
+  `retry_reason` in the capture. Only codex's own `ERROR:` line counts, and only when it names
+  the model from codex's header line (`model: ...`), so quoted prompt text cannot trigger it.
+  It never edits profile files; run `apply` to persist.
+- `setup.sh --doctor` WARNs when `check` exits 10.
 
 ## Test
 

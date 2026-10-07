@@ -20,6 +20,7 @@ import shutil
 import sys
 import pathlib
 import subprocess
+import time
 import types
 from typing import Optional
 
@@ -85,6 +86,47 @@ def check_env() -> None:
         pass
 
 
+def check_codex_catalog() -> None:
+    """Weekly advisory (stderr only) when a codex tier pin lags the local catalog.
+
+    The stamp is touched before the check so a slow or failing resolver cannot
+    make every session retry. Silent on any error; never blocks, never stdout.
+    """
+    try:
+        codex_home = pathlib.Path(os.environ.get("CODEX_HOME") or pathlib.Path.home() / ".codex")
+        if not (codex_home / "models_cache.json").is_file():
+            return
+        state = pathlib.Path(
+            os.environ.get("AGENT_STATE_DIR") or pathlib.Path.home() / ".agent" / "state"
+        )
+        stamp = state / "codex-catalog-check"
+        interval = int(os.environ.get("AGENT_CODEX_CHECK_INTERVAL_S", "604800"))
+        if stamp.exists() and time.time() - stamp.stat().st_mtime < interval:
+            return
+        state.mkdir(parents=True, exist_ok=True)
+        stamp.touch()
+        tool = pathlib.Path(__file__).resolve().parent.parent / "infra" / "codex-models.py"
+        proc = subprocess.run(
+            [sys.executable, str(tool), "check", "--json"],
+            capture_output=True, text=True, timeout=5, stdin=subprocess.DEVNULL, check=False,
+        )
+        if proc.returncode != 10:
+            return
+        rows = [r for r in json.loads(proc.stdout)["tiers"] if r.get("change")]
+        if not rows:
+            return
+        r = rows[0]
+        label = {"top": "deep", "low": "quick"}.get(r["tier"], r["tier"])
+        more = f" (+{len(rows) - 1} more)" if len(rows) > 1 else ""
+        print(
+            f"[agent-harness] codex: {label} {r['current']} -> {r['resolved']} suggested{more}"
+            f" — run: python3 {tool} apply",
+            file=sys.stderr,
+        )
+    except Exception:
+        pass
+
+
 def _load_inventory_module() -> Optional[types.ModuleType]:
     """Load the hyphen-named agent-inventory.py sibling (not importable by name)."""
     path = pathlib.Path(__file__).with_name("agent-inventory.py")
@@ -138,6 +180,7 @@ def reconcile_inventory(root: pathlib.Path) -> None:
 
 def main() -> None:
     check_env()
+    check_codex_catalog()
 
     # Drain stdin (the AI sends event JSON; we don't need it for init)
     try:

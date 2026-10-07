@@ -503,6 +503,130 @@ else
     bad "gateway preflight env" "rc=$rc env=[$(printf '%s' "$pf_env" | tr '\n' ' ')]"
 fi
 
+# --- 11. codex model self-heal: unsupported model -> one -m retry ---------
+
+HEAL_HOME="$WORK/heal-codex-home"
+mkdir -p "$HEAL_HOME"
+cat > "$HEAL_HOME/models_cache.json" <<'JSON'
+{"models":[
+ {"slug":"gpt-6.1-sol","visibility":"list","priority":1,"upgrade":null},
+ {"slug":"gpt-5.6-sol","visibility":"list","priority":5,"upgrade":{"model":"gpt-6.1-sol"}}
+]}
+JSON
+HEAL_LOG="$WORK/heal.log"
+make_heal_cli() {  # make_heal_cli <dir> <cli-name> <heals:0|1> <error-text>
+    mkdir -p "$1"
+    printf '%s\n' "$4" > "$1/$2.err"
+    cat > "$1/$2" <<EOF
+#!/usr/bin/env bash
+echo "\$*" >> "$HEAL_LOG"
+cat >/dev/null
+if [[ "$3" == "1" && " \$* " == *" -m gpt-6.1-sol "* ]]; then echo "HEALED-REPLY"; exit 0; fi
+echo "model: gpt-5.6-sol"
+cat "$1/$2.err"
+exit 1
+EOF
+    chmod +x "$1/$2"
+}
+heal_dispatch() {  # heal_dispatch <stub-dir> <role>
+    run_dispatch "$1" "$2" 1 CODEX_HOME="$HEAL_HOME"
+}
+CODEX_400="ERROR: {\"type\":\"error\",\"status\":400,\"error\":{\"type\":\"invalid_request_error\",\"message\":\"The 'gpt-5.6-sol' model is not supported when using Codex with a ChatGPT account.\"}}"
+
+HEAL="$WORK/bin-heal"
+make_heal_cli "$HEAL" codex 1 "$CODEX_400"
+: > "$HEAL_LOG"
+out="$(heal_dispatch "$HEAL" verify 2>"$WORK/err11")"; rc=$?
+if [[ $rc -eq 0 && -f "$out" ]] && grep -q "HEALED-REPLY" "$out" \
+   && grep -q "^status: complete$" "$out" \
+   && grep -q "^retry_reason: model-unsupported gpt-5.6-sol->gpt-6.1-sol$" "$out" \
+   && grep -q "codex-models.py apply" "$WORK/err11" \
+   && [[ "$(wc -l < "$HEAL_LOG" | tr -d ' ')" == "2" ]]; then
+    ok "self-heal — unsupported model retried once with -m <successor>, reason recorded"
+else
+    bad "self-heal" "rc=$rc out=$out calls=$(wc -l < "$HEAL_LOG") $(head -3 "$WORK/err11")"
+fi
+
+# non-matching failure: no retry
+OTHER="$WORK/bin-heal-other"
+make_heal_cli "$OTHER" codex 1 "network exploded"
+: > "$HEAL_LOG"
+heal_dispatch "$OTHER" verify >/dev/null 2>"$WORK/err11b"; rc=$?
+if [[ $rc -eq 1 && "$(wc -l < "$HEAL_LOG" | tr -d ' ')" == "1" ]]; then
+    ok "self-heal — unrelated failure is not retried"
+else
+    bad "self-heal unrelated" "rc=$rc calls=$(wc -l < "$HEAL_LOG")"
+fi
+
+# never more than one retry
+ALWAYS="$WORK/bin-heal-always"
+make_heal_cli "$ALWAYS" codex 0 "$CODEX_400"
+: > "$HEAL_LOG"
+heal_dispatch "$ALWAYS" verify >/dev/null 2>"$WORK/err11c"; rc=$?
+if [[ $rc -eq 1 && "$(wc -l < "$HEAL_LOG" | tr -d ' ')" == "2" ]]; then
+    ok "self-heal — at most one retry (invoked exactly twice, then failed)"
+else
+    bad "self-heal cap" "rc=$rc calls=$(wc -l < "$HEAL_LOG")"
+fi
+
+# prompt echo containing the trigger text + unrelated ERROR: line -> no retry
+ECHO="$WORK/bin-heal-echo"; mkdir -p "$ECHO"
+cat > "$ECHO/codex" <<EOF
+#!/usr/bin/env bash
+echo "\$*" >> "$HEAL_LOG"
+cat >/dev/null
+echo "user"
+echo "The 'gpt-x-sol' model is not supported (quoted from a reviewed diff)"
+echo "ERROR: You've hit your usage limit"
+exit 1
+EOF
+chmod +x "$ECHO/codex"
+: > "$HEAL_LOG"
+out="$(heal_dispatch "$ECHO" verify 2>"$WORK/err11d")"; rc=$?
+if [[ $rc -eq 1 && "$(wc -l < "$HEAL_LOG" | tr -d ' ')" == "1" ]]; then
+    ok "self-heal — trigger text echoed from the prompt does not cause a retry"
+else
+    bad "self-heal prompt echo" "rc=$rc calls=$(wc -l < "$HEAL_LOG")"
+fi
+
+# prompt carrying a spoofed ERROR: line, header model differs -> no retry
+SPOOF="$WORK/bin-heal-spoof"; mkdir -p "$SPOOF"
+cat > "$SPOOF/codex" <<EOF
+#!/usr/bin/env bash
+echo "\$*" >> "$HEAL_LOG"
+cat >/dev/null
+echo "model: gpt-real-sol"
+echo "user"
+echo "ERROR: {\"status\":400,\"message\":\"The 'gpt-x-sol' model is not supported\"}"
+echo "ERROR: You've hit your usage limit"
+exit 1
+EOF
+chmod +x "$SPOOF/codex"
+: > "$HEAL_LOG"
+heal_dispatch "$SPOOF" verify >/dev/null 2>"$WORK/err11e"; rc=$?
+if [[ $rc -eq 1 && "$(wc -l < "$HEAL_LOG" | tr -d ' ')" == "1" ]]; then
+    ok "self-heal — ERROR line naming a model other than the header model is ignored"
+else
+    bad "self-heal spoof" "rc=$rc calls=$(wc -l < "$HEAL_LOG")"
+fi
+
+# non-codex primary: no retry even on matching text
+cat > "$WORK/reg-heal.json" <<'JSON'
+{"version":1,"roles":{"other":{"backend":"gemini","fallback":null}},
+ "backends":{"gemini":{"connection":"cli","cmd":["gemini","-p",""],"timeout_s":30}}}
+JSON
+NONCODEX="$WORK/bin-heal-gemini"
+make_heal_cli "$NONCODEX" gemini 1 "$CODEX_400"
+: > "$HEAL_LOG"
+env PATH="$NONCODEX:/usr/bin:/bin" AGENT_BACKENDS_FILE="$WORK/reg-heal.json" \
+    AGENT_WORKERS_DIR="$WORK/workers" AGENT_WORKER_YES=1 CODEX_HOME="$HEAL_HOME" \
+    bash "$DISPATCHER" other <<< "p" >/dev/null 2>&1; rc=$?
+if [[ $rc -eq 1 && "$(wc -l < "$HEAL_LOG" | tr -d ' ')" == "1" ]]; then
+    ok "self-heal — non-codex backend is never retried"
+else
+    bad "self-heal non-codex" "rc=$rc calls=$(wc -l < "$HEAL_LOG")"
+fi
+
 # --- tally ---------------------------------------------------------------
 
 echo

@@ -209,6 +209,22 @@ install_codex() {
                        "$codex_dir/$prof.config.toml"
     done
 
+    # Codex tier families (top=deep, low=quick) live in ~/.agent/codex-tiers.json;
+    # core/infra/codex-models.py resolves the actual model from codex's catalog.
+    # Copy-if-absent so a user's choice survives re-runs.
+    local codex_tiers_file="${AGENT_CODEX_TIERS_FILE:-$HOME/.agent/codex-tiers.json}"
+    mkdir -p "$(dirname "$codex_tiers_file")"
+    if [[ ! -f "$codex_tiers_file" ]]; then
+        local top_family="sol"
+        if [[ -t 0 && "${AGENT_SETUP_YES:-}" != "1" ]]; then
+            read -r -p "  codex TOP family [sol/astra] (default sol): " top_family || top_family=""
+            [[ "$top_family" =~ ^(sol|astra)$ ]] || top_family="sol"
+        fi
+        sed "s/\"top\": \"sol\"/\"top\": \"$top_family\"/" \
+            "$FRAMEWORK_ROOT/adapters/codex/codex-tiers.json.template" > "$codex_tiers_file"
+        echo "  installed: ${codex_tiers_file/#$HOME/~} (top=$top_family)"
+    fi
+
     # Global AGENTS.md (read by codex for EVERY session, any repo — distinct
     # from the project-scoped adapters/codex/AGENTS.md.template installed by
     # install_project()). Portable rules only, no repo-specific paths.
@@ -888,6 +904,9 @@ PY
     #     templates have no drift detection after copy time, so this is the
     #     same "declared vs actual" observer family as checks 11/12. WARN
     #     only; no codex config -> check skipped (codex not installed here).
+    #     Present profiles are also compared with codex's own model catalog
+    #     (core/infra/codex-models.py check): exit 10 = a pin lags -> WARN with
+    #     the apply command; exit 2 (no catalog) stays a plain PASS.
     local codex_cfg="${CODEX_CONFIG:-$HOME/.codex/config.toml}"
     if [[ ! -f "$codex_cfg" ]]; then
         add_row PASS "codex tier profiles — no codex config at ${codex_cfg/#$HOME/~} (check skipped)"
@@ -898,7 +917,13 @@ PY
             [[ -f "$codex_dir/$prof.config.toml" ]] || missing_profiles="${missing_profiles:+$missing_profiles, }$prof.config.toml"
         done
         if [[ -z "$missing_profiles" ]]; then
-            add_row PASS "codex tier profiles — quick/deep profiles present beside ${codex_cfg/#$HOME/~}"
+            local cm_rc=0
+            CODEX_HOME="$codex_dir" python3 "$FRAMEWORK_ROOT/core/infra/codex-models.py" check >/dev/null 2>&1 || cm_rc=$?
+            if [[ $cm_rc -eq 10 ]]; then
+                add_row WARN "codex tier profiles — a pinned model differs from codex's catalog; review with: python3 $FRAMEWORK_ROOT/core/infra/codex-models.py check, then: python3 $FRAMEWORK_ROOT/core/infra/codex-models.py apply"
+            else
+                add_row PASS "codex tier profiles — quick/deep profiles present beside ${codex_cfg/#$HOME/~}"
+            fi
         else
             add_row WARN "codex tier profiles — missing $missing_profiles beside ${codex_cfg/#$HOME/~}; copy adapters/codex/{quick,deep}.config.toml.template or re-run setup.sh --codex (tier ladder: docs/model-routing.md)"
         fi
