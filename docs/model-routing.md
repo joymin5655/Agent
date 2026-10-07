@@ -224,6 +224,14 @@ just what this doc recommends.
 | Antigravity (the live gemini lane) | Tiers keyed by model ID in a single tiers file the antigravity-worker resolves per call — MID/TOP entries, moved from the vendor-owned directory to a harness-owned path so an agy CLI reinstall can't silently reset the pin; `--effort` flag optional alongside the tier's own baked-in reasoning level | `~/.agent/antigravity-tiers.json` (installed from `adapters/antigravity/antigravity-tiers.json.template`), `adapters/antigravity/antigravity-worker.sh` |
 | Claude Code — purpose launchers | Session-start human choice of tier/gateway (`claude-build`/`claude-quick`/`claude-research`/`claude-ox`); a launcher presets the model before the session exists — the allowed side of the no-runtime-switching line | `adapters/claude-code/launchers/`, `docs/launchers.md` |
 
+**Codex pin drift**: the Codex row's model IDs are a snapshot. Which family each tier uses
+lives in `~/.agent/codex-tiers.json` (`adapters/codex/codex-tiers.json.template`, families
+only — no model IDs, same rule as the antigravity tiers file), and
+`core/infra/codex-models.py` resolves the current ID from codex's local catalog, probes it,
+and updates the profile on request (models whose probe failed are skipped for 30 days, so an
+unusable catalog entry does not re-raise the advisory). `call-worker.sh` also retries once on the successor
+when codex rejects a pinned model. Details: `adapters/codex/README.md`.
+
 ## Cross-vendor second-opinion lane
 
 A Claude session can dispatch Codex as a review/verification **second

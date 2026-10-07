@@ -294,6 +294,19 @@ OUT_J3="$(CODEX_CONFIG=/nonexistent/codex/config.toml bash "$SETUP" --doctor 2>&
 check "codex-config-absent-skip" $?
 
 echo
+echo "=== (j4) codex tier profiles: pin differs from catalog -> WARN with apply command ==="
+CODEX_FIX4="$(safe_mktemp_d)" || { echo "FAIL: mktemp -d failed (codex drift fixture)"; exit 1; }
+track_fixture "$CODEX_FIX4"
+touch "$CODEX_FIX4/config.toml"
+printf 'model = "gpt-5.6-sol"\n' > "$CODEX_FIX4/deep.config.toml"
+printf 'model = "gpt-6-luna"\n' > "$CODEX_FIX4/quick.config.toml"
+printf '{"models":[{"slug":"gpt-6.1-sol","visibility":"list","priority":1,"upgrade":null},{"slug":"gpt-6-luna","visibility":"list","priority":2,"upgrade":null}]}' > "$CODEX_FIX4/models_cache.json"
+OUT_J4="$(CODEX_CONFIG="$CODEX_FIX4/config.toml" AGENT_CODEX_TIERS_FILE=/nonexistent/tiers.json bash "$SETUP" --doctor 2>&1)"
+[[ "$OUT_J4" == *"[WARN"*"codex tier profiles"*"codex-models.py apply"* ]]
+check "codex-pin-drift-warn" $?
+rm -rf "$CODEX_FIX4"
+
+echo
 echo "=== (k) codex wiring: brain path exists; legacy wrapper is not enforcement ==="
 CXW_FIX="$(safe_mktemp_d)" || { echo "FAIL: mktemp -d failed (codex wiring fixture)"; exit 1; }
 track_fixture "$CXW_FIX"

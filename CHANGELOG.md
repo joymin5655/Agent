@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **codex model resolver**: `core/infra/codex-models.py` (`check` / `apply` / `upgrade-for`)
+  compares the `deep`/`quick` profile pins with codex's own model catalog, probes candidates
+  before rewriting only the `model` line (with a dated backup), and reads the per-tier
+  family from `~/.agent/codex-tiers.json` (`adapters/codex/codex-tiers.json.template`,
+  installed by `setup.sh --codex`). `session-init.py` prints a once-a-week advisory,
+  `setup.sh --doctor` WARNs on drift, and `call-worker.sh` retries once on the catalog's
+  successor when codex rejects a pinned model (`retry_reason` in the capture header).
+  Failed probes are remembered for 30 days so an unusable catalog entry is not suggested
+  every week. The deep profile template now pins `gpt-6.1-sol` at `high` effort.
+
 ## [0.5.14] - 2026-10-07
 
 ### Changed

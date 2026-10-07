@@ -103,6 +103,8 @@ cat > "$PROMPT_TMP"
 # Reply lands in $OUT_TMP. Portable timeout (macOS ships no GNU timeout):
 # background worker + watchdog; TERM from the watchdog maps to 124.
 UNAVAILABLE_REASON=""
+# Extra argv for ONE re-run (the model self-heal below); empty on every other call.
+EXTRA_ARGV=()
 run_backend() {
     local name="$1" timeout_s grace_s rc=0 pid wpid
     jq -e --arg b "$name" '.backends[$b]' "$BACKENDS_FILE" >/dev/null 2>&1 \
@@ -185,6 +187,8 @@ run_backend() {
     fi
     while IFS= read -r line; do cmd+=("$line"); done \
         < <(jq -r --arg r "$ROLE" '.roles[$r].args_extra // [] | .[]' "$BACKENDS_FILE")
+    local extra
+    for extra in ${EXTRA_ARGV[@]+"${EXTRA_ARGV[@]}"}; do cmd+=("$extra"); done
     timeout_s="${AGENT_WORKER_TIMEOUT_S:-$(jq -r --arg b "$name" '.backends[$b].timeout_s // 300' "$BACKENDS_FILE")}"
     [[ "$timeout_s" =~ ^[0-9]+$ ]] \
         || { echo "call-worker: backend '$name' timeout_s is not numeric ('$timeout_s') — the watchdog would silently never fire" >&2; return 64; }
@@ -216,6 +220,35 @@ BACKEND_USED="$PRIMARY"
 rc=0
 run_backend "$PRIMARY" || rc=$?
 
+# Model self-heal: a codex pin that the vendor retired or the account cannot use
+# fails identically on every call. Only codex's own "ERROR:" lines count: it
+# echoes the prompt into the output, and a reviewed diff may quote this very
+# text. Re-run ONCE on the catalog's successor and say so; the profile files
+# are never edited here (codex-models.py apply does that, behind a paid probe
+# and the user's consent).
+RETRY_REASON=""
+if [[ "$PRIMARY" == "codex" && $rc -ne 0 && $rc -ne 124 ]] \
+   && grep -Eq "^ERROR:.*(model is not supported|has been retired|is retired)" "$OUT_TMP"; then
+    old_model="$(sed -nE "/^ERROR:/s/.*The '([^']+)' model.*/\1/p" "$OUT_TMP" | head -n 1)"
+    # codex prints its header (model: <id>) before echoing the prompt, so the first
+    # such line is the model actually running; an ERROR: line quoted from the
+    # prompt names some other model and must not steer a paid retry.
+    running_model="$(sed -n 's/^model: *//p' "$OUT_TMP" | head -n 1)"
+    new_model=""
+    if [[ -n "$old_model" && "$old_model" == "$running_model" ]]; then
+        new_model="$(python3 "$(dirname "${BASH_SOURCE[0]}")/codex-models.py" upgrade-for "$old_model" 2>/dev/null || true)"
+    fi
+    if [[ -n "$new_model" && "$new_model" != "$old_model" ]]; then
+        RETRY_REASON="model-unsupported $old_model->$new_model"
+        echo "call-worker: codex model '$old_model' unsupported — retrying once with '$new_model'" >&2
+        echo "call-worker: persist the fix with: python3 $(dirname "${BASH_SOURCE[0]}")/codex-models.py apply" >&2
+        EXTRA_ARGV=(-m "$new_model")
+        rc=0
+        run_backend "$PRIMARY" || rc=$?
+        EXTRA_ARGV=()
+    fi
+fi
+
 if [[ $rc -ne 0 && -n "$FALLBACK" ]]; then
     case "$rc" in
         127) FALLBACK_REASON="primary '$PRIMARY' CLI not found" ;;
@@ -242,6 +275,7 @@ write_capture() {
         echo "status: $1"
         echo "captured: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
         [[ -n "$FALLBACK_REASON" ]] && echo "fallback_reason: $FALLBACK_REASON"
+        [[ -n "$RETRY_REASON" ]] && echo "retry_reason: $RETRY_REASON"
         [[ -n "$UNAVAILABLE_REASON" ]] && echo "unavailable_reason: $UNAVAILABLE_REASON"
         echo "---"
         echo

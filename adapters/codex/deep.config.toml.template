@@ -1,8 +1,10 @@
 # Codex profile: TOP tier — planning, architecture, security review.
 # Copy to ~/.codex/deep.config.toml; invoke with `codex --profile deep`.
-# Model ID is a 2026-09 snapshot (GPT-6 family; the GPT-5.x line is retired,
-# gpt-5.5 last on 2026-10-14). If a task warrants more depth and your account
-# exposes a higher effort level (max/ultra), raise model_reasoning_effort
-# here before switching models. (docs/model-routing.md)
-model = "gpt-6-astra"
-model_reasoning_effort = "xhigh"
+# Model ID is a snapshot of the default family (sol). The pin drifts as the
+# vendor ships and retires models: `python3 core/infra/codex-models.py check`
+# compares it with codex's own catalog and `apply` updates it after a probe.
+# If a task warrants more depth and your account exposes a higher effort level
+# (xhigh/max), raise model_reasoning_effort here before switching models.
+# (docs/model-routing.md)
+model = "gpt-6.1-sol"
+model_reasoning_effort = "high"
