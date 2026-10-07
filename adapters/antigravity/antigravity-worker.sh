@@ -65,7 +65,9 @@
 #        ERROR); 2 usage/config (incl. a missing Keychain item); 6 mktemp failure;
 #        7 sandbox unavailable (fail closed); 8 unsafe $HOME for a scheme string;
 #        9 agy exited 0 but soft-denied a tool call; 10 agy exited 0 but the
-#        envelope is unparseable or its status is not SUCCESS
+#        envelope is unparseable or its status is not SUCCESS; 75 quota / rate limit
+#        (HTTP 429, RESOURCE_EXHAUSTED, quota, rate limit in stderr or the
+#        envelope's .error) — EX_TEMPFAIL, call-worker records `rate-limited`
 set -euo pipefail
 
 self="${BASH_SOURCE[0]}"
@@ -278,6 +280,37 @@ rc=0
 wait "$child" || rc=$?
 cat "$CAP_DIR/err" >&2
 cat "$CAP_DIR/out"
+
+# Quota / rate-limit detection (EX_TEMPFAIL 75, same contract as the grok and
+# openrouter workers) so call-worker.sh records the lane `rate-limited`, not
+# `failed` (observed 2026-10-07: a gemini 429 captured as failed). A false match
+# turns a hard failure into a fail-open lane, so only quota-specific phrases with
+# non-alphanumeric boundaries count — never bare "quota", "rate limit" or "429"
+# ("disk quota exceeded", "separate limits", "took 0.429s" must stay failures).
+# Scope: on a nonzero exit, the LAST 20 stderr lines (agy may echo prompt/diff
+# text earlier) plus the envelope's .error; on exit 0 with a non-SUCCESS
+# envelope, .error only. Never .response (the model's own text). Watchdog kills
+# (124/137/143) are excluded: a timeout must not be reclassified.
+QB='(^|[^[:alnum:]_])'
+QE='([^[:alnum:]_]|$)'
+QUOTA_RE="${QB}(RESOURCE_EXHAUSTED|too many requests|(gemini|http|https|status|code|error)[^[:alnum:]]{0,4}429${QE}|https?/[0-9.]+[[:space:]]+429${QE}|429[^[:alnum:]]{1,3}too many|quota[^[:alnum:]]+(exceeded|exhausted)|exceeded[^[:alnum:]]+((your|the)[^[:alnum:]]+)?quota|rate[ _-]?limit(ed|[ _-]+(exceeded|reached|hit))|usage limit[ _-]+(reached|exceeded))"
+# is_quota_error <stderr|envelope>: "stderr" also scans the stderr tail.
+is_quota_error() {
+    local scope="$1" blob env_err rcm=1
+    env_err="$(jq -rs 'if length == 1 then (.[0].error // "" | tostring) else "" end' "$CAP_DIR/out" 2>/dev/null || true)"
+    blob="$env_err"
+    [[ "$scope" == "stderr" ]] && blob="$(tail -n 20 "$CAP_DIR/err")"$'\n'"$env_err"
+    # "disk quota" is a filesystem condition, not a vendor quota: drop it first.
+    blob="$(printf '%s' "$blob" | sed -E 's/[Dd][Ii][Ss][Kk][ _-]+[Qq][Uu][Oo][Tt][Aa]//g')"
+    shopt -s nocasematch
+    [[ "$blob" =~ $QUOTA_RE ]] && rcm=0
+    shopt -u nocasematch
+    return $rcm
+}
+if [[ $rc -ne 0 && $rc -ne 124 && $rc -ne 137 && $rc -ne 143 ]] && is_quota_error stderr; then
+    echo "antigravity-worker: agy reported a quota / rate-limit error (exit $rc) — exiting 75 (EX_TEMPFAIL)" >&2
+    exit 75
+fi
 [[ $rc -eq 0 ]] || exit "$rc"
 
 SOFT_DENY_RE='permission check failed|denied permission to|auto-denied|cannot prompt for'
@@ -295,6 +328,10 @@ shopt -u nocasematch
 # -s: the whole stdout must be exactly ONE json value — trailing text fails.
 status="$(jq -rs 'if length == 1 then (.[0].status // empty) else empty end' "$CAP_DIR/out" 2>/dev/null || true)"
 if [[ "$status" != "SUCCESS" ]]; then
+    if is_quota_error envelope; then
+        echo "antigravity-worker: agy exited 0 but the envelope reports a quota / rate-limit error — exiting 75 (EX_TEMPFAIL)" >&2
+        exit 75
+    fi
     echo "antigravity-worker: agy exited 0 but the json envelope status is '${status:-<unparseable>}', not SUCCESS — not reporting success" >&2
     exit 10
 fi

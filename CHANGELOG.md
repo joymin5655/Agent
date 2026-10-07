@@ -16,7 +16,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/`, empty or newline prefixes, refuses non-idempotent promote-up rewrites (decided
   2026-08-09), and skips binaries, symlinks and the `.git` object store. New skill
   `skills/reorg-sync/SKILL.md` wraps it report-then-confirm; out-of-tree targets are surfaced,
-  never auto-mutated. Hardened over 15 adversarial review rounds; `reorg-sync-test.sh` 351 checks; reads go through a no-follow fd; writes go through a directory fd (no path-based chmod/rename), foreign or read-only files and shared-writable parents are reported, not rewritten. It refuses relative, root, empty or line-separator prefixes, promote-up and overlapping moves, and lines whose rewrite would not be a fixed point; unscannable files are counted, never silent. Known limitation: siblings containing boundary punctuation (e.g. `/old(backup)/`) are matched, so review the dry-run before `--apply`.
+  never auto-mutated. Hardened over 15 adversarial review rounds; `reorg-sync-test.sh` 351 checks;
+  reads go through a no-follow fd; writes go through a directory fd (no path-based chmod/rename),
+  foreign or read-only files and shared-writable parents are reported, not rewritten. It refuses
+  relative, root, empty or line-separator prefixes, promote-up and overlapping moves, and lines
+  whose rewrite would not be a fixed point; unscannable files are counted, never silent. Known
+  limitation: siblings containing boundary punctuation (e.g. `/old(backup)/`) are matched, so
+  review the dry-run before `--apply`.
+
+### Fixed
+- **antigravity-worker**: quota / HTTP 429 / `RESOURCE_EXHAUSTED` / rate-limit errors now exit 75,
+  so `call-worker.sh` captures the lane as `rate-limited` instead of `failed`.
+- **setup --doctor**: WARN when the canonical `~/.agent/antigravity-tiers.json` and the legacy
+  `~/.gemini/antigravity-cli/agent-tiers.json` both exist and differ.
+- **supervisor-goal-audit**: the check extractor captures `grep -c PATTERN FILE` whole (quoted
+  patterns included) and stops at the end of the command; new `supervisor-goal-audit-test.sh`.
+- **manager-audit**: SubagentStart/Stop lifecycle rows no longer count as `top-inherit-leak`
+  dispatches (they carry `agent_type`, never `subagent_type`, producing "N dispatch(es) ...: , ").
 
 ## [0.5.16] - 2026-10-07
 

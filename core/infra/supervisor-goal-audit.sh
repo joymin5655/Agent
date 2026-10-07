@@ -85,12 +85,22 @@ if [[ -z "$WAVE_SECTION" ]]; then
 fi
 
 # ---------- Extract verification commands ----------
+# `grep -c PATTERN FILE` is captured whole: PATTERN may be single- or double-quoted
+# (spaces allowed) and FILE ends the command, so prose after it (`→`, backticks,
+# ` -> `) is never swept into the eval'd check. Option tokens (`-v`, `--`) may precede
+# PATTERN; a match containing `$(` or a backtick is dropped because the check is eval'd.
 declare -a CHECKS=()
 while IFS= read -r cmd; do
     cmd="$(echo "$cmd" | sed -E 's/^[[:space:]]+|[[:space:]]+$//g')"
     [[ -z "$cmd" ]] && continue
+    case "$cmd" in
+        grep\ -c*)
+            # eval'd below: never let a captured command substitution run
+            # shellcheck disable=SC2016  # literal `$(` is the thing being matched
+            case "$cmd" in *'$('*|*'`'*) continue ;; esac ;;
+    esac
     CHECKS+=("$cmd")
-done < <({ echo "$WAVE_SECTION" | grep -oE '(npm run (build|lint|test|test:run|test:e2e|typecheck|test:a11y)|npx tsc[^[:space:]]*|pytest[^"]*|uv run pytest[^"]*|ruff check[^"]*|test -f [^[:space:]]+|test ! -f [^[:space:]]+|bash -n [^[:space:]]+|wc -l [^[:space:]]+|grep -c [^[:space:]]+|bash core/[^[:space:]]+\.sh|bash tests/[^[:space:]]+\.sh|tests/integration/[^[:space:]]+\.sh|jq [^"|]+\.(jsonl|json)|time bash [^[:space:]]+\.sh)' || true; } | sort -u)
+done < <({ echo "$WAVE_SECTION" | grep -oE '(npm run (build|lint|test|test:run|test:e2e|typecheck|test:a11y)|npx tsc[^[:space:]]*|pytest[^"]*|uv run pytest[^"]*|ruff check[^"]*|test -f [^[:space:]]+|test ! -f [^[:space:]]+|bash -n [^[:space:]]+|wc -l [^[:space:]]+|grep -c (-[A-Za-z]+ |-- )*("([^"\\]|\\.)*"|'"'"'[^'"'"']*'"'"'|[^[:space:]`"'"'"']+) ("[^"]+"|'"'"'[^'"'"']+'"'"'|[^[:space:]`"'"'"'|;&<>()$]+)|bash core/[^[:space:]]+\.sh|bash tests/[^[:space:]]+\.sh|tests/integration/[^[:space:]]+\.sh|jq [^"|]+\.(jsonl|json)|time bash [^[:space:]]+\.sh)' || true; } | sort -u)
 
 # ---------- Scoring functions (deterministic — no LLM calls) ----------
 
@@ -218,7 +228,7 @@ ALL_PASS=true
 for cmd in "${CHECKS[@]}"; do
     echo "[audit] running: $cmd" >&2
     LOG_FILE=$(mktemp)
-    if eval "$cmd" > "$LOG_FILE" 2>&1; then
+    if eval "$cmd" > "$LOG_FILE" 2>&1 < /dev/null; then
         PASS=true
         EXIT_CODE=0
     else

@@ -336,7 +336,9 @@ install_antigravity() {
     # Tiers file lives under ~/.agent (not the vendor CLI's own config dir) so
     # it does not depend on ~/.gemini/antigravity-cli existing. If only the old
     # path (pre-2026-09) has a file, the worker migrates it on first dispatch —
-    # this install step never needs the old dir to be present.
+    # this install step never needs the old dir to be present. (~/.gemini/agent-tiers.json
+    # seeded by --gemini belongs to the gemini adapter, not this lane.) The old file is
+    # never deleted; --doctor WARNs when both exist and differ.
     mkdir -p "$HOME/.agent"
     if [[ ! -f "$HOME/.agent/antigravity-tiers.json" ]]; then
         OLD_ANTIGRAVITY_TIERS="$HOME/.gemini/antigravity-cli/agent-tiers.json"
@@ -1053,6 +1055,23 @@ PY
             fi
             ;;
     esac
+
+    # 15d. antigravity tiers file — the canonical path is ~/.agent/antigravity-tiers.json;
+    #      the pre-2026-09 path under the vendor CLI dir is a read-only legacy copy the
+    #      worker migrates when it is the only one. Both present AND different means an
+    #      edit to one is silently ignored (the worker uses the canonical path), so WARN.
+    #      Never deletes either file.
+    local ag_tiers_new="$HOME/.agent/antigravity-tiers.json"
+    local ag_tiers_old="$HOME/.gemini/antigravity-cli/agent-tiers.json"
+    if [[ -f "$ag_tiers_new" && -f "$ag_tiers_old" ]]; then
+        local ag_cmp=0
+        cmp -s "$ag_tiers_new" "$ag_tiers_old" || ag_cmp=$?
+        if [[ $ag_cmp -eq 1 ]]; then
+            add_row WARN "antigravity tiers file — ${ag_tiers_old/#$HOME/~} differs from the canonical ${ag_tiers_new/#$HOME/~}; only the canonical file is read, so edits to the legacy copy are ignored — merge what you need into the canonical file, then remove the legacy one by hand"
+        elif [[ $ag_cmp -ne 0 ]]; then
+            add_row WARN "antigravity tiers file — could not compare ${ag_tiers_old/#$HOME/~} with ${ag_tiers_new/#$HOME/~} (unreadable); fix the permissions, then re-run --doctor"
+        fi
+    fi
 
     # 16. gemini wiring — same declared-vs-actual family for the gemini
     #     settings (previously doctor had NO gemini checks at all). Same
