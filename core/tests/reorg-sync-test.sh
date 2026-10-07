@@ -1149,7 +1149,7 @@ rm -rf "$TR5"
 # ---- review round 4 (security lane, final)
 echo
 echo "--- review round 4"
-mode_of() { stat -f %Lp "$1" 2>/dev/null || stat -c %a "$1"; }
+mode_of() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }  # GNU first: GNU `stat -f` is --file-system and exits 0
 
 # (a) no path-based chmod may remain: the temp file is chmod'd by fd, before close
 grep -q 'os\.chmod(' "$TOOL" && rc=1 || rc=0
@@ -1225,7 +1225,7 @@ echo
 echo "--- review round 5"
 # 2. the rewritten copy keeps the original file's group
 TGID="$(mktemp -d)"
-DIRG="$(stat -f %g "$TGID" 2>/dev/null || stat -c %g "$TGID")"
+DIRG="$(stat -c %g "$TGID" 2>/dev/null || stat -f %g "$TGID")"
 OTHERG=""
 for g in $(id -G); do [[ "$g" != "$DIRG" ]] && { OTHERG="$g"; break; }; done
 if [[ -z "$OTHERG" ]]; then
@@ -1234,7 +1234,7 @@ else
   printf 'see /old/prefix/a\n' > "$TGID/g.md"
   if chgrp "$OTHERG" "$TGID/g.md" 2>/dev/null; then
     bash "$TOOL" --old "$OLD" --new "$NEW" --root "$TGID" --apply >/dev/null 2>&1 && rc=0 || rc=$?
-    GAFTER="$(stat -f %g "$TGID/g.md" 2>/dev/null || stat -c %g "$TGID/g.md")"
+    GAFTER="$(stat -c %g "$TGID/g.md" 2>/dev/null || stat -f %g "$TGID/g.md")"
     [[ "$rc" -eq 0 && "$GAFTER" == "$OTHERG" && "$(cat "$TGID/g.md")" == 'see /new/loc/a' ]] && rc=0 || rc=1
     check "rewrite-keeps-original-group" "$rc"
   else
