@@ -20,6 +20,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lane row; both are best-effort and never alter exit code or stdout.
 
 ### Added
+- **Runtime profile** (cross-vendor realign W4): `core/infra/runtime-profile.py`
+  (`detect` / `recommend` / `save`) reports `{installed, authenticated, plan}` per runtime from
+  local CLIs and files only, recommends a main vendor plus reviewer vendors, and saves
+  `~/.agent/profile.json` (0600, `AGENT_PROFILE_FILE` overrides). Reads only claude
+  `loggedIn`/`subscriptionType` and the codex JWT `chatgpt_plan_type` claim; the google plan
+  is always `unknown`. `setup.sh` asks for the main vendor on a TTY (`AGENT_SETUP_NO_PROFILE=1`
+  skips), `--doctor` gains a "runtime profile" row, and `/worker-setup` Step 1 shows the plans.
 - **Risk-path review enforcement** (cross-vendor realign W3): `review-evidence.py check --staged`
   blocks a commit of risk-area files unless `reviews.jsonl` holds a `complete` row from a
   non-anthropic vendor bound to the exact staged content (editing a risk file after review
