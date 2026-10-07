@@ -366,5 +366,28 @@ else
 fi
 
 echo
+echo "=== W3: risk-area diff — council-unavailable escape is refused ==="
+reset_repo
+mkdir -p "$REPO/billing"; gen_lines 5 > "$REPO/billing/pay.py"
+git -C "$REPO" add billing/pay.py
+run "$(evt Task code-reviewer)"
+[[ "$RC" -eq 0 && "$OUT" == *"deny"* ]] && ok "w3a-risk-first-dispatch-denied" || bad "w3a-risk-first-dispatch-denied" "rc=$RC out='$OUT'"
+run "$(evt_p Task code-reviewer "$REASON_PROMPT")"
+if [[ "$RC" -eq 0 && "$OUT" == *"permissionDecision"*"deny"* && "$OUT" == *"AGENT_REVIEW_OVERRIDE"* ]]; then
+  ok "w3b-risk-escape-with-reason-still-denied"
+else
+  bad "w3b-risk-escape-with-reason-still-denied" "rc=$RC out='$OUT'"
+fi
+reset_repo
+stage_large_diff
+run "$(evt Task code-reviewer)"
+run "$(evt_p Task code-reviewer "$REASON_PROMPT")"
+if [[ "$RC" -eq 0 && "$OUT" != *"permissionDecision"*"deny"* ]]; then
+  ok "w3c-non-risk-escape-unchanged"
+else
+  bad "w3c-non-risk-escape-unchanged" "rc=$RC out='$OUT'"
+fi
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]

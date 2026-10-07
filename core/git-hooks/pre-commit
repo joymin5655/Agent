@@ -41,6 +41,25 @@ else
   echo "${YELLOW}⚠ python3 or check-staged.py missing — skipping hardcoding scan.${NC}" >&2
 fi
 
+# 3) review completeness — risk-area staged files need an external-vendor review.
+# Locate the script next to this hook (consumer repos do not vendor core/infra), then
+# fall back to the repo's own copy. Override (AGENT_REVIEW_OVERRIDE) is user-only.
+# pwd -P: consumer repos reach this directory through the .git-hooks-framework
+# symlink, and ../infra only exists beside the physical framework copy.
+HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+EVIDENCE=""
+for cand in "$HOOK_DIR/../infra/review-evidence.py" "$ROOT/core/infra/review-evidence.py"; do
+  if [ -f "$cand" ]; then EVIDENCE="$cand"; break; fi
+done
+if command -v python3 >/dev/null 2>&1 && [ -n "$EVIDENCE" ]; then
+  if ! python3 "$EVIDENCE" check --staged; then
+    echo "${RED}✗ review completeness — risk-area commit blocked.${NC}" >&2
+    fail=1
+  fi
+else
+  echo "${YELLOW}⚠ python3 or review-evidence.py missing — skipping review completeness check.${NC}" >&2
+fi
+
 if [ "$fail" -ne 0 ]; then
   exit 1
 fi

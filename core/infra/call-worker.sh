@@ -49,8 +49,9 @@
 #        2 usage/config | 3 not approved | 124 timeout | 127 no backend CLI
 #        (disabled/preflight-failed backends terminate 127 too — "unavailable")
 # captures: $AGENT_WORKERS_DIR, else ~/.agent/workers/<project-key>/ — the key comes
-#        from the CALLER's project (AGENT_PROJECT_DIR / CLAUDE_PROJECT_DIR / git
-#        toplevel of $PWD), never this script's own location, so a plugin-cache
+#        from the CALLER's project (git toplevel of $PWD; AGENT_PROJECT_DIR /
+#        CLAUDE_PROJECT_DIR only outside a repo — review-evidence.py project-key),
+#        never this script's own location, so a plugin-cache
 #        install does not bury evidence in the cache. Each capture also appends a
 #        row to <workers dir>/reviews.jsonl (diff_key = $AGENT_REVIEW_DIFF_KEY) and
 #        to ${AGENT_LOGS_DIR:-~/.agent/logs}/council-lanes.jsonl; both are
