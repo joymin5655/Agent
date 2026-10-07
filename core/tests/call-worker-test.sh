@@ -44,6 +44,8 @@ PASS=0
 FAIL=0
 WORK="$(mktemp -d)"
 trap '[[ -n "$WORK" && -d "$WORK" ]] && rm -rf "$WORK"' EXIT
+# Standalone runs must not append fixture lane rows to the real ~/.agent/logs.
+export AGENT_LOGS_DIR="$WORK/logs"
 
 ok()   { PASS=$((PASS+1)); echo "  PASS  $1"; }
 bad()  { FAIL=$((FAIL+1)); echo "  FAIL  $1 — $2"; }
