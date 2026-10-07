@@ -100,10 +100,12 @@ An empty `"denied_actions":[]` is not a soft-deny.
 | 0 | envelope `status == "SUCCESS"`, no soft-deny signal | 0 if `.response` holds the token |
 | 9 | agy exited 0 but soft-denied a tool call (envelope or stderr) | 8 — lane **absent** |
 | 10 | agy exited 0 but the envelope is unparseable or `status` is not SUCCESS | 5 |
+| 75 | quota / rate limit (HTTP 429, `RESOURCE_EXHAUSTED`, "quota", "rate limit", "usage limit") in stderr or the envelope's `.error` — EX_TEMPFAIL; `call-worker.sh` records the lane `rate-limited`, not `failed`. The model's own `.response` text is never matched, and watchdog exits 124/137/143 are not reclassified | 5 |
 | 3 | agy's own exit code when the envelope `status` is `ERROR` (undocumented; the docs list 0/1/2) | 5 |
 | 2 | usage/config error, or `ANTIGRAVITY_AUTH=apikey` with no Keychain item / no `security` | 5 |
 
-Any agy nonzero exit code (including 3) passes through the worker unchanged; the preflight
+Any agy nonzero exit code (including 3) passes through the worker unchanged, except a quota
+signal, which becomes 75; the preflight
 reports every such probe exit as 5 (state unknown). A hook-level deny
 is invisible to the caller: it is exit 0, status `SUCCESS`, no stderr, no `denied_actions` (a
 denied step just shows up in the transcript as `tool call denied by pre-tool hook`), so it
@@ -112,6 +114,14 @@ if the environment variable reaches the hook, the adapter's worker mode) denies 
 `run_command` or write tool call, so it is silent. A worker exit 0 therefore does not prove the
 model made no tool calls, and exit 9 no longer fires for tool-use attempts (it still fires for
 permission soft-denies from tools outside the deny matcher).
+
+## Tiers file
+
+The model pin lives in `~/.agent/antigravity-tiers.json` (canonical; override with
+`ANTIGRAVITY_TIERS_FILE`). The pre-2026-09 path `~/.gemini/antigravity-cli/agent-tiers.json` is a
+legacy copy: the worker migrates it (copy, never delete) only when the canonical file is absent,
+and `setup.sh --doctor` WARNs when both exist and differ, since only the canonical one is read.
+`~/.gemini/agent-tiers.json` is the retired gemini adapter's file and is unrelated to this lane.
 
 ## Native hooks (plugin)
 

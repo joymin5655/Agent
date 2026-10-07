@@ -75,6 +75,18 @@ case "\${AGY_STUB_MODE:-success}" in
   waiting)  printf '{"conversation_id":"c1","status":"WAITING","response":""}\n' ;;
   garbage)  printf 'not json at all\n' ;;
   fail1)    printf '{"conversation_id":"c1","status":"ERROR","error":"run failure"}\n'; exit 1 ;;
+  # Quota exhaustion (observed 2026-10-07: "gemini 429"): fixtures only, never a live agy.
+  quota_stderr)   printf 'Error: 429 Too Many Requests: RESOURCE_EXHAUSTED\n' >&2; exit 1 ;;
+  quota_envelope) printf '{"conversation_id":"c1","status":"ERROR","error":"RESOURCE_EXHAUSTED: quota exceeded for model"}\n'; exit 3 ;;
+  quota_exit0)    printf '{"conversation_id":"c1","status":"ERROR","error":"rate limit reached, retry later"}\n' ;;
+  quota_in_response) printf '{"conversation_id":"c1","status":"ERROR","error":"boom","response":"429 quota rate limit"}\n'; exit 1 ;;
+  quota_timeout) printf 'quota 429\n' >&2; exit 124 ;;
+  # Free-text stderr fixtures for the false-positive / phrase matrix (AGY_STUB_TEXT, AGY_STUB_RC).
+  text_stderr) printf '%s\n' "\${AGY_STUB_TEXT}" >&2; exit "\${AGY_STUB_RC:-1}" ;;
+  # quota phrase FIRST, then 25 filler lines: outside the last-20-lines window.
+  long_stderr) printf 'quota exceeded\n' >&2; for i in \$(seq 1 25); do printf 'filler line %s\n' "\$i" >&2; done; exit 1 ;;
+  exit0_stderr_quota) printf '{"conversation_id":"c1","status":"ERROR","error":"boom"}\n'; printf 'rate limit reached\n' >&2 ;;
+  port_4290)      printf 'Error: connect to port 14290 failed\n' >&2; exit 1 ;;
 esac
 STUB
 chmod +x "$STUB_DIR/agy"
@@ -385,6 +397,62 @@ else
   sb_write "$SBHOME/.gemini/antigravity-cli/state";                      check "sandbox-still-allows-agy-cli-dir-write" 0 $?
   sb_write "$SBHOME/outside.txt";                                        check "sandbox-blocks-write-outside-allowlist" 1 $?
 fi
+
+echo
+echo "=== (q) quota / 429 -> exit 75 (EX_TEMPFAIL), generic failure stays unclassified ==="
+for m in quota_stderr quota_envelope quota_exit0; do
+  printf 'x' | AGY_STUB_MODE=$m ANTIGRAVITY_TIERS_FILE="$TIERS" bash "$WORKER" --tier mid >/dev/null 2>&1
+  check "$m-exits-75" 75 $?
+done
+printf 'x' | AGY_STUB_MODE=quota_in_response ANTIGRAVITY_TIERS_FILE="$TIERS" bash "$WORKER" --tier mid >/dev/null 2>&1
+check "quota-words-in-response-only-stay-1" 1 $?
+printf 'x' | AGY_STUB_MODE=quota_timeout ANTIGRAVITY_TIERS_FILE="$TIERS" bash "$WORKER" --tier mid >/dev/null 2>&1
+check "watchdog-timeout-not-reclassified" 124 $?
+printf 'x' | AGY_STUB_MODE=port_4290 ANTIGRAVITY_TIERS_FILE="$TIERS" bash "$WORKER" --tier mid >/dev/null 2>&1
+check "digits-containing-429-not-quota" 1 $?
+printf 'x' | AGY_STUB_MODE=fail1 ANTIGRAVITY_TIERS_FILE="$TIERS" bash "$WORKER" --tier mid >/dev/null 2>&1
+check "generic-failure-not-75" 1 $?
+
+# Tight matching: bare "quota" / "rate limit" / "429" substrings must NOT reclassify.
+run_text() {  # run_text <text> [rc] -> worker exit code
+  printf 'x' | AGY_STUB_MODE=text_stderr AGY_STUB_TEXT="$1" AGY_STUB_RC="${2:-1}" \
+    ANTIGRAVITY_TIERS_FILE="$TIERS" bash "$WORKER" --tier mid >/dev/null 2>&1
+  echo $?
+}
+for t in "disk quota exceeded" "separate limits" "took 0.429s" "accurate limit" "port 14290" "Disk-quota exceeded"; do
+  check "not-quota[$t]" 1 "$(run_text "$t")"
+done
+printf 'x' | AGY_STUB_MODE=long_stderr ANTIGRAVITY_TIERS_FILE="$TIERS" bash "$WORKER" --tier mid >/dev/null 2>&1
+check "quota-phrase-outside-last-20-lines-not-75" 1 $?
+printf 'x' | AGY_STUB_MODE=exit0_stderr_quota ANTIGRAVITY_TIERS_FILE="$TIERS" bash "$WORKER" --tier mid >/dev/null 2>&1
+check "rc0-non-success-quota-only-in-stderr-is-10" 10 $?
+for t in "RESOURCE_EXHAUSTED" "Too Many Requests" "HTTP 429" "HTTP/2 429" "status: 429" "error code 429" "429 Too Many" "gemini 429" \
+         "quota exceeded" "Quota exhausted" "exceeded your quota" "exceeded the quota" "rate limit exceeded" "rate-limited" \
+         "rate_limit reached" "rate limit hit" "usage limit reached" "usage limit exceeded"; do
+  check "quota-phrase[$t]" 75 "$(run_text "$t")"
+done
+check "watchdog-137-with-quota-line-unchanged" 137 "$(run_text "quota exceeded" 137)"
+check "watchdog-143-with-quota-line-unchanged" 143 "$(run_text "quota exceeded" 143)"
+
+# Through call-worker.sh: a quota worker exit lands as capture status
+# rate-limited (dispatcher exit 1); a generic failure lands as failed.
+CW_REG="$TMP/cw-backends.json"
+cat > "$CW_REG" <<JSON
+{ "version": 1,
+  "roles": { "probe": { "backend": "antigravity", "fallback": null } },
+  "backends": { "antigravity": { "connection": "cli", "cmd": ["$WORKER", "--tier", "mid"], "timeout_s": 30 } } }
+JSON
+cw_status() {  # cw_status <stub-mode> -> prints "<dispatcher rc> <capture status>"
+  local mode="$1" wd="$TMP/cw-workers-$1" rc
+  rm -rf "$wd"
+  printf 'x' | AGY_STUB_MODE="$mode" ANTIGRAVITY_TIERS_FILE="$TIERS" AGENT_BACKENDS_FILE="$CW_REG" \
+    AGENT_WORKERS_DIR="$wd" AGENT_LOGS_DIR="$TMP/cw-logs" AGENT_WORKER_YES=1 \
+    bash "$REPO_ROOT/core/infra/call-worker.sh" probe >/dev/null 2>&1
+  rc=$?
+  echo "$rc $(sed -n 's/^status: //p' "$wd"/*.md 2>/dev/null | head -n 1)"
+}
+check "call-worker-quota-capture-rate-limited" "1 rate-limited" "$(cw_status quota_stderr)"
+check "call-worker-generic-failure-capture-failed" "1 failed" "$(cw_status fail1)"
 
 echo
 echo "=== (f) no stray grok-worker reference in the antigravity adapter ==="

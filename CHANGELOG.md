@@ -8,19 +8,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- **review gate**: `auth` risk class in `council-threshold.sh` (code files only: an
+- **`/reorg-sync` — orphaned path-reference sweeper (W-2, #53).** After a tree moves,
+  `core/infra/reorg-sync.sh --old <prefix> --new <prefix> --root <tree>` reports absolute-path
+  references in five classes (shebang, git worktree `gitdir:`, crontab, doc/config anchors,
+  path-keyed native-memory dirs using the `/ . _` → `-` encoding). Dry-run by default;
+  `--apply` replaces only at path-component boundaries with atomic per-file writes, refuses
+  `/`, empty or newline prefixes, refuses non-idempotent promote-up rewrites (decided
+  2026-08-09), and skips binaries, symlinks and the `.git` object store. New skill
+  `skills/reorg-sync/SKILL.md` wraps it report-then-confirm; out-of-tree targets are surfaced,
+  never auto-mutated. Hardened over 15 adversarial review rounds; `reorg-sync-test.sh` 351 checks;
+  reads go through a no-follow fd; writes go through a directory fd (no path-based chmod/rename),
+  foreign or read-only files and shared-writable parents are reported, not rewritten. It refuses
+  relative, root, empty or line-separator prefixes, promote-up and overlapping moves, and lines
+  whose rewrite would not be a fixed point; unscannable files are counted, never silent. Known
+  limitation: siblings containing boundary punctuation (e.g. `/old(backup)/`) are matched, so
+  review the dry-run before `--apply`.
+- **review gate**: `auth` risk class in `council-threshold.sh` (code files incl. `.rego`: an
   auth-family directory such as `auth/`, `oauth/`, `authn/`, `authz/`, `authentication/`,
-  `authorize*/`, `login/`, or a file named `auth*`/`login*`/`*_auth*`, camelCase split;
-  `author*` is not auth). The class exists only in this classifier; spec-gate and
-  plan-scope-allow are unchanged.
-- **guard**: `pre-tool-guard.sh` `review-override` denies the recognised forms that set
-  `AGENT_REVIEW_OVERRIDE` in command position (prefix assignment, `+=`, `env`, `export`/
-  `declare`/`typeset`/`local`/`readonly`/`read`/`mapfile`/`readarray`/`printf -v`, inside
-  `bash -c`/`eval`/subshell/if-then, quotes and backslashes normalized) and logs the attempt.
-  The protected set is `AGENT_REVIEW_OVERRIDE`, `AGENT_WORKERS_DIR`, `AGENT_LOGS_DIR`,
-  `GITHEAD_<hex>`; an assignment anywhere in the message-stripped command is denied, so a
-  literal `NAME=` token in any other argument (grep pattern, `--body`) is too. Mentions without
-  `=` are allowed. A speed bump, not a boundary.
+  `authorize*/`, `login/`, optionally wrapped (`(auth)/`) or prefixed (`user_auth/`), or a file
+  named `auth*`/`login*`/`*_auth*`, camelCase split; `author*` is not auth). `sso`, `session`,
+  `jwt`, `token*` and similar are out of the class.
+- **guard**: `pre-tool-guard.sh` `review-override` denies agent Bash commands that assign a
+  protected variable — `AGENT_REVIEW_OVERRIDE`, `AGENT_WORKERS_DIR`, `AGENT_LOGS_DIR`,
+  `GITHEAD_<hex>` — anywhere in the quote-normalized, message-stripped command (`NAME=`, `+=`,
+  `:=`, or a builtin such as `export`/`declare`/`read`/`printf -v` naming one), and logs the
+  attempt. A literal `NAME=` token in another argument is denied too; mentions without `=` are
+  allowed. A speed bump, not a boundary: interpreter one-liners and scripts evade it.
 - **guard**: `evidence-ledger` denies agent Bash writes to `reviews.jsonl` /
   `review-override.jsonl` (case-insensitive; redirect incl. `>|`, a write verb naming a ledger
   or `.agent/workers`, sed -i, python open for write), and `secret-content-scan.py` denies
@@ -43,6 +56,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   explicitly. Cherry-pick and rebase run no pre-commit at all (observed) and are not covered.
 - **review-evidence**: `summary` takes vendor, role and status from the matching
   `reviews.jsonl` row (by capture path) before falling back to `backends.json`.
+
+### Fixed
+- **antigravity-worker**: quota / HTTP 429 / `RESOURCE_EXHAUSTED` / rate-limit errors now exit 75,
+  so `call-worker.sh` captures the lane as `rate-limited` instead of `failed`.
+- **setup --doctor**: WARN when the canonical `~/.agent/antigravity-tiers.json` and the legacy
+  `~/.gemini/antigravity-cli/agent-tiers.json` both exist and differ.
+- **supervisor-goal-audit**: the check extractor captures `grep -c PATTERN FILE` whole (quoted
+  patterns included) and stops at the end of the command; new `supervisor-goal-audit-test.sh`.
+- **manager-audit**: SubagentStart/Stop lifecycle rows no longer count as `top-inherit-leak`
+  dispatches (they carry `agent_type`, never `subagent_type`, producing "N dispatch(es) ...: , ").
 
 ## [0.5.16] - 2026-10-07
 

@@ -42,6 +42,8 @@ trivial work out by design.
   personas in front of a piece of UX/copy/content and report how ordinary users
   would react. A user-perspective lens beside `code-reviewer` (correctness) and
   `security-reviewer` (vulnerabilities) — it judges experience, not code.
+- **`/reorg-sync <old> <new>`** — after a directory move, sweep orphaned absolute-path
+  references (shebangs, worktree pointers, crontab, doc anchors, memory keys); dry-run first.
 - **`/worker-setup`** — install → auth → verify onboarding for the
   cross-vendor worker lanes (codex, antigravity, grok, kiro), with a
   cost-model briefing before anything installs. Reach for it when
