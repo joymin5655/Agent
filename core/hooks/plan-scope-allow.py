@@ -27,7 +27,9 @@ Contract and polarity — this is the harness's first permission-WEAKENING hook:
 
 Never-allow screens (hit -> silent, their own guards + native prompt decide):
 spec-gate GUARD_PATTERNS verbatim (migrations/*.sql, secrets/ + .env,
-functions/*/index.ts|js, billing/) plus self-tamper surfaces (.agent/
+functions/*/index.ts|js, billing/), the auth class (kept in step with
+core/infra/council-threshold.sh; spec-gate and tdd-guard exempt risk paths, so
+they must NOT get it), plus self-tamper surfaces (.agent/
 hook-config.yml, .git/, .claude/settings*.json, .envrc, .mcp.json — settings
 and .envrc can inject session env such as AGENT_PLAN_ALLOW_MODE itself, and
 .mcp.json can register a durable command-executing MCP server, so
@@ -53,7 +55,8 @@ PLAN_FLAG = "/tmp/agent-plan-approved"
 
 EDIT_TOOLS = {"Write", "Edit", "MultiEdit"}
 
-# spec-gate GUARD_PATTERNS verbatim + self-tamper surfaces. IGNORECASE so a
+# spec-gate GUARD_PATTERNS verbatim + self-tamper surfaces (the auth class is
+# _is_auth_path below). IGNORECASE so a
 # case-insensitive filesystem spelling can't slip past.
 NEVER_ALLOW = [
     re.compile(r"(^|/)migrations/.+\.sql$", re.IGNORECASE),
@@ -70,6 +73,25 @@ NEVER_ALLOW = [
     re.compile(r"(^|/)\.envrc$", re.IGNORECASE),
     re.compile(r"(^|/)\.mcp\.json$", re.IGNORECASE),
 ]
+
+
+_AUTH_CODE_EXT = {
+    "py", "ts", "tsx", "js", "jsx", "go", "rs", "rb", "java", "kt", "swift", "sh", "php",
+    "cs", "c", "h", "cc", "cpp", "hpp", "mjs", "cjs", "vue", "svelte", "sql", "ex", "exs",
+    "scala", "dart", "m", "mm", "rego",
+}
+_AUTH_DIR = re.compile(
+    r"(^|/)[(\[]?([^/]*[_-])?(o?auth[0-9]*|o?authlib|authn|authz|authenticat[a-z]*|authoriz[a-z]*"
+    r"|login)([_-][^/]*)?[)\]]?/")
+_AUTH_BASE = re.compile(r"(^|[_-])(o?auth($|[^o]|o($|[^r])|ori[sz])|login)")
+
+
+def _is_auth_path(path):
+    """Mirror of council-threshold.sh's auth class (code files only; camelCase split)."""
+    norm = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", path).lower()
+    if norm.rsplit(".", 1)[-1] not in _AUTH_CODE_EXT:
+        return False
+    return bool(_AUTH_DIR.search(norm) or _AUTH_BASE.search(norm.rsplit("/", 1)[-1]))
 
 
 def workspace_root(event_cwd):
@@ -151,6 +173,13 @@ def main():
     # Re-screen the RESOLVED path too: a symlink may rename a guarded target.
     for pattern in NEVER_ALLOW:
         if pattern.search(real_target):
+            return
+    # auth screen runs on the workspace-relative path so a parent directory named
+    # like an auth module does not disable auto-allow for the whole project.
+    lexical = os.path.abspath(
+        file_path if os.path.isabs(file_path) else os.path.join(base, file_path))
+    for candidate in (real_target, lexical):
+        if _is_auth_path(os.path.relpath(candidate, real_root)):
             return
 
     if mode != "on":

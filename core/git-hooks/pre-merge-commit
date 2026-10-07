@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Git pre-merge-commit hook — review completeness for an auto-merge commit.
+# `git merge` without --no-commit creates the merge commit without running
+# pre-commit, so the risk-area review gate (pre-commit step 3) runs here too.
+# Override (AGENT_REVIEW_OVERRIDE) is user-only. Bypass (NOT recommended):
+# git merge --no-verify.
+
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+RED=$'\033[0;31m'
+YELLOW=$'\033[0;33m'
+NC=$'\033[0m'
+
+# Same resolution as pre-commit: the script lives next to the physical hooks dir
+# (pwd -P resolves the .git-hooks-framework symlink), else the repo's own copy.
+HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+EVIDENCE=""
+for cand in "$HOOK_DIR/../infra/review-evidence.py" "$ROOT/core/infra/review-evidence.py"; do
+  if [ -f "$cand" ]; then EVIDENCE="$cand"; break; fi
+done
+# git writes no MERGE_HEAD while this hook runs; it exports GITHEAD_<sha>=<name> per merged
+# head. Only THIS hook turns those into explicit --merge-head args (a plain commit never
+# reads the environment, so a command-line GITHEAD_x=... cannot inject a parent).
+HEADS=()
+while IFS= read -r name; do
+  case "$name" in
+    GITHEAD_*) HEADS+=(--merge-head "${name#GITHEAD_}") ;;
+  esac
+done < <(compgen -e)
+if command -v python3 >/dev/null 2>&1 && [ -n "$EVIDENCE" ]; then
+  if ! python3 "$EVIDENCE" check --staged ${HEADS[@]+"${HEADS[@]}"}; then
+    echo "${RED}✗ review completeness — risk-area merge blocked.${NC}" >&2
+    exit 1
+  fi
+else
+  echo "${YELLOW}⚠ python3 or review-evidence.py missing — skipping review completeness check.${NC}" >&2
+fi
+exit 0

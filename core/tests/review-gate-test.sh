@@ -149,6 +149,178 @@ mkcap "$WORK/c5.md" advisor-free openrouter complete
 out="$(AGENT_BACKENDS_FILE="$BK" python3 "$EVID" summary "$WORK/c1.md" "$WORK/c5.md")"
 printf '%s\n' "$out" | head -n 1 | grep -q "single-vendor" && ok "u4-advisory-lane-not-external" || bad "u4" "$out"
 
+# summary: the matching reviews.jsonl row (by capture path) wins over backends.json
+rm -f "$IDX"
+mkcap "$WORK/c6.md" r6 codex complete; mkcap "$WORK/c7.md" r7 mystery complete
+printf '{"role":"r6","backend":"codex","vendor":"anthropic","status":"complete","diff_key":"k","capture":"%s"}\n' "$WORK/c6.md" >> "$IDX"
+out="$(AGENT_BACKENDS_FILE="$BK" python3 "$EVID" summary "$WORK/c6.md")"
+printf '%s\n' "$out" | head -n 1 | grep -q "single-vendor" \
+    && ok "u5-index-row-vendor-overrides-backends-json" || bad "u5" "$out"
+printf '{"role":"r7","backend":"mystery","vendor":"openai","status":"complete","diff_key":"k","capture":"%s"}\n' "$WORK/c7.md" >> "$IDX"
+out="$(AGENT_BACKENDS_FILE="$BK" python3 "$EVID" summary "$WORK/c7.md")"
+printf '%s\n' "$out" | grep -q "single-vendor" \
+    && bad "u6" "$out" || ok "u6-index-row-vendor-for-unknown-backend-counts-external"
+printf '{"role":"advisor-free","backend":"mystery","vendor":"openai","status":"complete","diff_key":"k","capture":"%s"}\n' "$WORK/c7.md" >> "$IDX"
+out="$(AGENT_BACKENDS_FILE="$BK" python3 "$EVID" summary "$WORK/c7.md")"
+printf '%s\n' "$out" | head -n 1 | grep -q "single-vendor" \
+    && ok "u7-index-row-advisor-role-excluded" || bad "u7" "$out"
+out="$(AGENT_BACKENDS_FILE="$BK" python3 "$EVID" summary "$WORK/c4.md")"
+printf '%s\n' "$out" | grep -q "single-vendor" \
+    && bad "u8" "$out" || ok "u8-capture-without-index-row-falls-back-to-backends"
+# status also comes from the matching row; the row path may be spelled differently
+mkcap "$WORK/c8.md" r8 codex failed
+mkdir -p "$WORK/lnk"; ln -sfn "$WORK" "$WORK/lnk/w"
+printf '{"role":"r8","backend":"codex","vendor":"openai","status":"complete","diff_key":"k","capture":"%s"}\n' "$WORK/lnk/w/c8.md" >> "$IDX"
+out="$(AGENT_BACKENDS_FILE="$BK" python3 "$EVID" summary "$WORK/c8.md")"
+printf '%s\n' "$out" | grep -q "codex ✓ (complete)" && ! printf '%s\n' "$out" | grep -q single-vendor \
+    && ok "u9-index-row-status-and-symlinked-path-match" || bad "u9" "$out"
+rm -f "$IDX"
+
+echo "=== auth risk class through the commit gate ==="
+reset; mkdir -p "$REPO/src/auth"; echo "tok $RANDOM" > "$REPO/src/auth/session.py"; git -C "$REPO" add -A
+expect_rc "a1-staged-auth-file-without-evidence-blocked" 1
+grep -q "src/auth/session.py" "$WORK/err.txt" && ok "a1a-message-lists-auth-file" || bad "a1a" "$(cat "$WORK/err.txt")"
+row openai complete
+expect_rc "a2-staged-auth-file-with-external-review-passes" 0
+reset; mkdir -p "$REPO/docs"; echo x > "$REPO/docs/author.md"; git -C "$REPO" add -A
+expect_rc "a3-author-doc-not-risk-passes" 0
+
+echo "=== merge commits: risk files equal to a parent contained in the remote DEFAULT branch are not re-gated ==="
+MAIN_BR="$(git -C "$REPO" symbolic-ref --short HEAD)"
+G() { git -C "$REPO" "$@"; }
+gp() { echo "$REPO/$(G rev-parse --git-path "$1")"; }  # git-path is relative to the repo
+reset; mkdir -p "$REPO/billing" "$REPO/src"
+seq 1 40 > "$REPO/billing/x.py"; echo old > "$REPO/billing/old.py"
+G add -A; G commit -q -m "base risk"; BASE="$(G rev-parse HEAD)"
+ORIGIN="$WORK/origin.git"; rm -rf "$ORIGIN"; git init -q --bare "$ORIGIN"
+G remote remove origin 2>/dev/null; G remote add origin "$ORIGIN"
+# publish <rev>: make <rev> the tip of the remote default branch (origin/$MAIN_BR + origin/HEAD)
+publish() { G push -q -f origin "$1:refs/heads/$MAIN_BR" && G remote set-head origin "$MAIN_BR" >/dev/null; }
+G checkout -q -b side
+echo "pay side" > "$REPO/billing/pay.py"; sed -i.bak '2s/.*/side-edit/' "$REPO/billing/x.py"; rm -f "$REPO/billing/x.py.bak"
+G rm -q billing/old.py; G add -A; G commit -q -m "side risk"
+G checkout -q "$MAIN_BR"
+echo plain > "$REPO/src/b2.py"; sed -i.bak '38s/.*/main-edit/' "$REPO/billing/x.py"; rm -f "$REPO/billing/x.py.bak"
+G add -A; G commit -q -m "main edit"
+publish side   # the remote default branch now contains the parent
+G merge -q --no-commit --no-ff side >/dev/null 2>&1
+G diff --cached --name-only | grep -q "billing/pay.py" || bad "g0" "merge not in expected state"
+# x.py differs from both parents -> risky; pay.py (added) and old.py (deleted) equal MERGE_HEAD -> dropped
+expect_rc "g1-merge-with-fresh-merged-risk-content-blocked" 1
+grep -q "billing/x.py" "$WORK/err.txt" && ! grep -q "billing/pay.py" "$WORK/err.txt" && ! grep -q "billing/old.py" "$WORK/err.txt" \
+    && ok "g1a-only-the-unreviewed-risk-file-listed" || bad "g1a" "$(cat "$WORK/err.txt")"
+G checkout -q side -- billing/x.py
+expect_rc "g2-merge-risk-files-equal-merge-head-passes-without-evidence" 0
+[[ -z "$(cd "$REPO" && python3 "$EVID" key --staged)" ]] && ok "g2a-key-staged-agrees-empty" || bad "g2a" "key not empty"
+G update-index --chmod=+x billing/pay.py
+expect_rc "g3-mode-only-change-vs-merge-head-blocked" 1
+G update-index --chmod=-x billing/pay.py
+# same content outside a merge needs review
+G merge --abort >/dev/null 2>&1; reset
+G checkout -q side -- billing/pay.py
+expect_rc "g4-same-content-outside-merge-blocked" 1
+# cherry-pick is not covered: CHERRY_PICK_HEAD never relaxes the gate
+G rev-parse side > "$(gp CHERRY_PICK_HEAD)"
+expect_rc "g5-cherry-pick-head-stays-gated" 1
+rm -f "$(gp CHERRY_PICK_HEAD)"; reset
+# merge inside a linked worktree (MERGE_HEAD lives under .git/worktrees/<name>/)
+WT="$WORK/wt"
+G worktree add -q -b wtb "$WT" "$MAIN_BR"
+git -C "$WT" checkout -q -b side2 "$BASE"; echo n > "$WT/billing/n.py"; git -C "$WT" add -A; git -C "$WT" commit -q -m n
+publish side2
+git -C "$WT" checkout -q wtb; git -C "$WT" merge -q --no-commit --no-ff side2 >/dev/null 2>&1
+(cd "$WT" && python3 "$EVID" check --staged 2>"$WORK/err.txt"); rc=$?
+[[ $rc -eq 0 ]] && ok "g6-merge-in-linked-worktree-passes" || bad "g6" "rc=$rc $(cat "$WORK/err.txt")"
+git -C "$WT" merge --abort >/dev/null 2>&1
+echo "wt edit" > "$WT/billing/n.py"; git -C "$WT" add -A
+(cd "$WT" && python3 "$EVID" check --staged 2>/dev/null); rc=$?
+[[ $rc -eq 1 ]] && ok "g6a-linked-worktree-non-merge-risk-blocked" || bad "g6a" "rc=$rc"
+G worktree remove --force "$WT"
+# octopus: a risk file equal to ANY listed parent is dropped
+G checkout -q -b o1 "$BASE"; echo a1 > "$REPO/billing/a1.py"; G add -A; G commit -q -m o1
+G checkout -q -b o2 "$BASE"; echo a2 > "$REPO/billing/a2.py"; G add -A; G commit -q -m o2
+G checkout -q -b o3 "$BASE"; echo a3 > "$REPO/billing/a3.py"; G add -A; G commit -q -m o3   # NOT pushed
+G checkout -q "$MAIN_BR"
+publish "$(G commit-tree -p o1 -p o2 -m tip "o1^{tree}")"
+G merge -q --no-commit o1 o2 >/dev/null 2>&1
+[[ "$(wc -l < "$(gp MERGE_HEAD)" | tr -d ' ')" == 2 ]] || bad "g7-0" "not an octopus merge"
+expect_rc "g7-octopus-each-file-equals-one-parent-passes" 0
+echo changed >> "$REPO/billing/a1.py"; G add -A
+expect_rc "g7a-octopus-file-differing-from-all-parents-blocked" 1
+reset
+# octopus with one unpublished parent: its file earns no exemption, the published one still does
+publish o1
+G merge -q --no-commit o1 o3 >/dev/null 2>&1
+expect_rc "g7b-octopus-unpublished-parent-file-blocked" 1
+grep -q "billing/a3.py" "$WORK/err.txt" && ! grep -q "billing/a1.py" "$WORK/err.txt" \
+    && ok "g7c-only-unpublished-parent-file-listed" || bad "g7c" "$(cat "$WORK/err.txt")"
+reset
+
+echo "=== merge exemption needs a parent contained in the remote DEFAULT branch ==="
+publish "$BASE"
+# local-only branch: same shape as g2, but never pushed
+G checkout -q -b localonly "$BASE"; echo lo > "$REPO/billing/lo.py"; G add -A; G commit -q -m lo
+G checkout -q "$MAIN_BR"
+G merge -q --no-commit --no-ff localonly >/dev/null 2>&1
+expect_rc "h1-merge-of-unpublished-branch-blocked" 1
+reset
+# a scratch branch pushed to the remote is NOT the default branch: no exemption
+G push -q origin localonly:refs/heads/scratch
+G merge -q --no-commit --no-ff localonly >/dev/null 2>&1
+expect_rc "h1b-pushed-scratch-branch-not-trusted-blocked" 1
+reset
+# stash laundering: stage risk content, stash it, merge the stash commit
+mkdir -p "$REPO/billing"; echo "laundered $RANDOM" > "$REPO/billing/laun.py"; G add -A; G stash push -q -m launder
+G merge -q --no-commit --no-ff 'stash@{0}' >/dev/null 2>&1
+expect_rc "h2-stash-laundering-chain-blocked" 1
+reset; G stash drop -q 2>/dev/null
+# hand-written MERGE_HEAD pointing at a stash-create commit
+echo "forged $RANDOM" > "$REPO/billing/forged.py"; G add -A
+G stash create > "$(gp MERGE_HEAD)"
+expect_rc "h3-forged-merge-head-stash-create-blocked" 1
+rm -f "$(gp MERGE_HEAD)"; reset
+# MERGE_HEAD naming a sha that does not exist: no exemption, still blocked
+echo "forged $RANDOM" > "$REPO/billing/forged.py"; G add -A
+echo 0123456789012345678901234567890123456789 > "$(gp MERGE_HEAD)"
+expect_rc "h4-bogus-merge-head-blocked" 1
+rm -f "$(gp MERGE_HEAD)"; reset
+
+# GITHEAD_<sha> in the environment of a plain commit must not inject a parent
+publish side
+G checkout -q side -- billing/pay.py
+export "GITHEAD_$(G rev-parse side)=side"
+expect_rc "h5-githead-env-on-plain-commit-blocked" 1
+unset "GITHEAD_$(G rev-parse side)"
+reset
+# default branch resolved without refs/remotes/origin/HEAD: falls back to origin/$MAIN_BR
+G remote set-head origin -d >/dev/null 2>&1
+G merge -q --no-commit --no-ff side >/dev/null 2>&1; G checkout -q side -- billing/x.py
+expect_rc "h6-fallback-to-origin-main-when-remote-head-unset-passes" 0
+reset; G remote set-head origin "$MAIN_BR" >/dev/null
+
+echo "=== pre-merge-commit hook: auto-merge commits are gated too ==="
+G config core.hooksPath "$REPO_ROOT/core/git-hooks"
+[[ -x "$REPO_ROOT/core/git-hooks/pre-merge-commit" ]] && ok "m0-pre-merge-commit-hook-executable" || bad "m0" "missing or not executable"
+G checkout -q "$MAIN_BR"
+G merge -q --no-ff -m "merge unpublished" localonly >"$WORK/c.out" 2>&1; rc=$?
+[[ $rc -ne 0 && "$(G rev-parse HEAD)" != "$(G rev-parse localonly)" ]] && grep -q "council-review --staged" "$WORK/c.out" \
+    && ok "m1-auto-merge-of-unpublished-risk-branch-blocked" || bad "m1" "rc=$rc $(tail -n 5 "$WORK/c.out")"
+G merge --abort >/dev/null 2>&1; reset
+publish side2
+G merge -q --no-ff -m "merge published" side2 >"$WORK/c.out" 2>&1; rc=$?
+[[ $rc -eq 0 ]] && ok "m2-auto-merge-of-published-branch-passes" || bad "m2" "rc=$rc $(tail -n 5 "$WORK/c.out")"
+# cherry-pick / rebase replay commits without running pre-commit: observed, documented gap
+G checkout -q -b cp-target "$BASE"
+G cherry-pick localonly >"$WORK/c.out" 2>&1; rc=$?
+[[ $rc -eq 0 && -f "$REPO/billing/lo.py" ]] && ok "cp1-cherry-pick-of-risk-commit-skips-pre-commit-documented-gap" \
+    || bad "cp1" "rc=$rc $(tail -n 3 "$WORK/c.out")"
+G checkout -q "$MAIN_BR"; G branch -q -D cp-target
+G config --unset core.hooksPath
+G reset -q --hard "$BASE"
+G branch -q -D side side2 o1 o2 o3 localonly wtb 2>/dev/null
+G checkout -q -f "$MAIN_BR"
+reset
+
 echo "=== pre-commit end-to-end ==="
 reset
 git -C "$REPO" config core.hooksPath "$REPO_ROOT/core/git-hooks"

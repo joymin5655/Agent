@@ -234,7 +234,33 @@ Citation drops: codex 1, gemini 0
 The commit gate (`core/git-hooks/pre-commit`) blocks risk-area commits that have no
 external `complete` review bound to the staged content. The user-only escape
 `AGENT_REVIEW_OVERRIDE="<reason>"` exists for the case where every external lane is
-down; an agent must never set it itself.
+down; an agent must never set it itself (`pre-tool-guard.sh` denies a Bash command that
+sets the recognised assignment forms, and logs the attempt; a speed bump, not a boundary).
+Risk areas are classified by `core/infra/council-threshold.sh`: migration,
+secret, edge-fn, billing, and auth (code files only: an auth-family directory such as
+`auth/`, `oauth/`, `authn/`, `authz/`, `authentication/`, `authorize*/`, `login/`, or a file
+named `auth*`/`login*`/`*_auth*`; `author*` never matches). Out of the auth class: sso, session, jwt, token*, password*,
+rbac/acl/iam, oidc/saml, mfa/otp, signin/signup, logout, and non-code policy files (only
+`.rego` counts).
+
+During a merge, a risk file whose staged state equals a merged-in parent's is not re-gated
+when a remote DEFAULT branch (the target of `refs/remotes/<remote>/HEAD`, else
+`<remote>/main`/`master`) contains that parent (any parent of an octopus). Remote-tracking
+refs are local state an agent could rewrite, so this is a convenience for merging the
+default branch in, not proof of review; a local branch, a scratch branch pushed to the
+remote and a hand-written `MERGE_HEAD` earn no exemption. `core/git-hooks/pre-merge-commit`
+runs the same check for auto-merge commits and passes the merged heads explicitly. Observed
+limit: `git cherry-pick` and `git rebase` commit without running pre-commit at all, so they
+are not gated.
+
+Limits of the gate, stated plainly. The `pre-tool-guard.sh` guards (`review-override` for
+`AGENT_REVIEW_OVERRIDE`/`AGENT_WORKERS_DIR`/`AGENT_LOGS_DIR`/`GITHEAD_*`, `evidence-ledger`
+for `reviews.jsonl`/`review-override.jsonl`) are Bash-tool speed bumps: an interpreter
+one-liner (python/perl/node -e) that sets env or writes files, and a script written then
+run, evade them. The ledger row binds the diff key to "an external lane returned complete
+while this key was set", not to the bytes the vendor actually read. In this framework repo
+the gate code itself (`core/git-hooks`, `core/infra/review-evidence.py`,
+`core/infra/council-threshold.sh`, `core/hooks/pre-tool-guard.sh`) is editable in-tree.
 
 ### 6. Clear the council-active flag
 

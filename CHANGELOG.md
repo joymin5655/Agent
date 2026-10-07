@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **review gate**: `auth` risk class in `council-threshold.sh` (code files only: an
+  auth-family directory such as `auth/`, `oauth/`, `authn/`, `authz/`, `authentication/`,
+  `authorize*/`, `login/`, or a file named `auth*`/`login*`/`*_auth*`, camelCase split;
+  `author*` is not auth). The class exists only in this classifier; spec-gate and
+  plan-scope-allow are unchanged.
+- **guard**: `pre-tool-guard.sh` `review-override` denies the recognised forms that set
+  `AGENT_REVIEW_OVERRIDE` in command position (prefix assignment, `+=`, `env`, `export`/
+  `declare`/`typeset`/`local`/`readonly`/`read`/`mapfile`/`readarray`/`printf -v`, inside
+  `bash -c`/`eval`/subshell/if-then, quotes and backslashes normalized) and logs the attempt.
+  The protected set is `AGENT_REVIEW_OVERRIDE`, `AGENT_WORKERS_DIR`, `AGENT_LOGS_DIR`,
+  `GITHEAD_<hex>`; an assignment anywhere in the message-stripped command is denied, so a
+  literal `NAME=` token in any other argument (grep pattern, `--body`) is too. Mentions without
+  `=` are allowed. A speed bump, not a boundary.
+- **guard**: `evidence-ledger` denies agent Bash writes to `reviews.jsonl` /
+  `review-override.jsonl` (case-insensitive; redirect incl. `>|`, a write verb naming a ledger
+  or `.agent/workers`, sed -i, python open for write), and `secret-content-scan.py` denies
+  Write/Edit of those files when they sit under the workers/logs dirs (`AGENT_WORKERS_DIR`/
+  `AGENT_LOGS_DIR`, else `~/.agent/...`; realpath, case-insensitive), so a project's own
+  `reviews.jsonl` stays editable. Reads are allowed. Bash guards are speed bumps, not boundaries.
+- **git hook**: `core/git-hooks/pre-merge-commit` runs the review-completeness check for
+  auto-merge commits, which skip pre-commit.
+- **plan-scope-allow**: the auth class is a never-allow screen (kept out of spec-gate and
+  tdd-guard, which exempt risk paths).
+
+### Changed
+- **review gate**: a merge commit no longer re-demands review for a risk file whose staged
+  state equals a merged-in parent's when a remote DEFAULT branch (`refs/remotes/<r>/HEAD`,
+  else `<r>/main`/`master`) contains that parent (any parent of an octopus). This is a
+  relaxation and a convenience for merging the default branch in, not proof of review:
+  remote-tracking refs are local state an agent could rewrite. Local branches, scratch
+  branches pushed to the remote and a hand-written `MERGE_HEAD` earn no exemption. The
+  environment is never read for parents: `pre-merge-commit` passes the merged heads
+  explicitly. Cherry-pick and rebase run no pre-commit at all (observed) and are not covered.
+- **review-evidence**: `summary` takes vendor, role and status from the matching
+  `reviews.jsonl` row (by capture path) before falling back to `backends.json`.
+
 ## [0.5.16] - 2026-10-07
 
 Cross-vendor realign campaign (#148–#152). Behavior change: a commit that stages
