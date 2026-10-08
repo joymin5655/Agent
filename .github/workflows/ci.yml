@@ -19,11 +19,11 @@ jobs:
     name: gitleaks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
       - name: Run gitleaks
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_CONFIG: gitleaks.toml
@@ -32,7 +32,7 @@ jobs:
     name: validate plugin manifests + hooks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       # The four checks now live in core/tests/registry-drift.sh (one source of
       # truth) so they also run locally and inside verify-all.sh, instead of being
       # trapped in this YAML. This job is a thin caller.
@@ -43,7 +43,7 @@ jobs:
     name: sanitize gate (no prior-project taint)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0   # history needed to diff the PR/push commit range (--range scan)
       - name: Grep tracked files for prior-project tokens (excluding legacy/ and the audit tool)
@@ -85,7 +85,7 @@ jobs:
     name: supply-chain scan (no self-injection directives)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Scan shipped instruction files + hooks for injection-style directives
         run: bash core/tests/supply-chain-scan.sh
       - name: Verify the scanner (fixture detection + clean-tree pass + no false-positive)
@@ -95,7 +95,7 @@ jobs:
     name: doc-reality (no doc drift)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Gate docs against repo reality (paths exist + counts match)
         run: bash core/tests/doc-reality.sh
       - name: Verify the gate (fixture detection + clean-tree pass + no false-positive)
@@ -105,7 +105,7 @@ jobs:
     name: evals (labeled dataset, Pass^3, regression gate)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Run the eval suite (Pass^3 + baseline regression gate)
         run: python3 evals/run-evals.py
       - name: Verify the eval runner (mislabel detection + regression + dataset defects)
@@ -123,7 +123,7 @@ jobs:
     name: verify-all (unified runner — every core/tests check, no silent omission)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       # Anti-lying self-test first: proves the runner enumerates every core/tests
       # script (a battery/gate dropped from the runner fails here) before we trust
       # its all-green. Without this step the completeness guarantee gates nothing.
@@ -140,7 +140,7 @@ jobs:
     name: plugin-path install smoke (marketplace/plugin cache → doctor guidance)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       # Distinct from clean-install below: clean-install proves the SHELL install
       # path (`setup.sh --claude`) end to end. This job proves the PLUGIN/marketplace
       # install path — which never runs setup.sh's install functions at all — still
@@ -166,7 +166,7 @@ jobs:
     name: clean-install smoke (bare checkout → scratch-home install → doctor)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       # Cold-install proof (M-5): the portable-harness promise is "install once,
       # use everywhere", but until this job the only cold install was a manual
       # one. A scratch $HOME stands in for a machine that has never seen the
@@ -212,7 +212,7 @@ jobs:
     name: claude plugin validate --strict (skips if the CLI is unavailable)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       # Best-effort install — same package the harness documents for a native
       # install (docs/runtime-registry.json claude-code entry). Never fail the
       # job on install failure: a network hiccup or a registry outage here is an
