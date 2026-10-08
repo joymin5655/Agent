@@ -15,12 +15,24 @@ exception: if that `.yml` declares `risk_areas`, the Bash guard fails closed and
 denies read/copy/upload commands, plus any command containing one of those verbs as a
 substring (e.g. `git add .`), until PyYAML is installed (P1-9).
 
-## tdd-guard whitelist override
+## tdd-guard whitelist extension
 
-`risk_areas.secrets.paths` also overrides tdd-guard's built-in secret whitelist
-(files exempt from RGR enforcement). Non-empty valid paths replace the built-in
-secret pattern; the migrations / edge-fn / billing entries stay built-in. No
-config, empty paths, or a skipped `.yml` (PyYAML absent) keep the built-ins.
+`risk_areas.secrets.paths` also extends tdd-guard's whitelist (files exempt from RGR
+enforcement). It is additive: the built-in secrets / migrations / edge-fn / billing
+patterns always stay. The config root resolves like the Bash guard
+(`AGENT_PROJECT_DIR`, then `CLAUDE_PROJECT_DIR`, then git toplevel).
+
+Differences from the Bash guard, which uses the same field:
+
+- The Bash guard uses the field to **block**; tdd-guard uses it to **exempt**. So
+  tdd-guard honors only specific tokens (containing `/` or starting with `.`).
+  Bare words such as `env`, `src` or `auth` are ignored with one stderr note.
+- Matching is anchored at a path boundary (`(^|/)token`), with a right boundary
+  unless the token ends in `/`. It is case-sensitive.
+- Without PyYAML, a `.yml` config is skipped and tdd-guard falls back to the
+  built-ins (fail-open). The Bash guard fails closed (P1-9). A `.json` config
+  works without PyYAML.
+- The PyYAML warning can print once per hook invocation, so once per Edit/Write.
 
 ## Schema
 

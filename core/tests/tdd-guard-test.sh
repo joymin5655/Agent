@@ -121,23 +121,57 @@ OUT=$(cd "$R" && printf 'not json{' | AGENT_TDD_GUARD_MODE=block python3 "$HOOK"
 [[ $RC -eq 0 ]]; check "malformed-no-crash" $?
 
 echo
-echo "=== (j) hook-config risk_areas.secrets.paths overrides the secret whitelist ==="
+echo "=== (j) hook-config risk_areas.secrets.paths UNIONs with the built-in whitelist ==="
 write_cfg() { printf '%s' "$2" > "$1/.agent/hook-config.json"; }
+armed_repo() { local r; r=$(fresh_repo); write_cache "$r" '{"testResults":[]}'; printf '%s' "$r"; }
+LOG() { printf '%s' "$1/.agent/logs/tdd-guard-dryrun.jsonl"; }
 CFG='{"risk_areas":{"secrets":{"paths":["vault/**"]}}}'
-R=$(fresh_repo); write_cache "$R" '{"testResults":[]}'
-# no override: src/vault is ordinary code (denied), src/secrets is whitelisted
-run "$R" block "src/vault/k.ts"; is_deny; check "no-override-vault-enforced" $?
-run "$R" block "src/secrets/k.ts"; ! is_deny; check "no-override-builtin-secret-allowed" $?
-# override: vault/ becomes whitelisted, built-in secrets/ no longer is
-R=$(fresh_repo); write_cache "$R" '{"testResults":[]}'; write_cfg "$R" "$CFG"
-run "$R" block "src/vault/k.ts"; ! is_deny; check "override-vault-allowed" $?
-grep -q 'guard_skip' "$R/.agent/logs/tdd-guard-dryrun.jsonl" 2>/dev/null; check "override-vault-logged" $?
-run "$R" block "src/secrets/k.ts"; is_deny; check "override-replaces-builtin-secret" $?
-# other built-ins stay
-run "$R" block "src/billing/x.ts"; ! is_deny; check "override-keeps-billing" $?
-# broken config -> built-ins
-R=$(fresh_repo); write_cache "$R" '{"testResults":[]}'; write_cfg "$R" '{not json'
-run "$R" block "src/secrets/k.ts"; ! is_deny; check "bad-config-keeps-builtins" $?
+R=$(armed_repo)
+run "$R" block "src/vault/k.ts"; is_deny; check "no-config-vault-enforced" $?
+run "$R" block "src/secrets/k.ts"; ! is_deny; check "no-config-builtin-secret-allowed" $?
+write_cfg "$R" "$CFG"
+run "$R" block "src/vault/k.ts"; ! is_deny; check "config-vault-allowed" $?
+grep -q 'secret-config' "$(LOG "$R")"; check "config-vault-logged" $?
+run "$R" block "src/secrets/k.ts"; ! is_deny; check "union-builtin-secrets-still-allowed" $?
+run "$R" block "src/.env.local.ts"; ! is_deny; check "union-builtin-env-still-allowed" $?
+run "$R" block "src/billing/x.ts"; ! is_deny; check "union-keeps-billing" $?
+run "$R" block "src/vaultish/k.ts"; is_deny; check "dir-token-path-anchored" $?
+run "$R" block "$R/src/vault/k.ts"; ! is_deny; check "absolute-path-allowed" $?
+
+echo
+echo "=== (k) bare-word tokens never exempt; right boundary enforced ==="
+R=$(armed_repo)
+write_cfg "$R" '{"risk_areas":{"secrets":{"paths":["env","src","auth","vault/keys"]}}}'
+run "$R" block "src/envelope.py"; is_deny; check "bare-env-does-not-exempt-envelope" $?
+run "$R" block "src/foo.ts"; is_deny; check "bare-src-does-not-exempt-all" $?
+run "$R" block "src/auth/login.ts"; is_deny; check "bare-auth-does-not-exempt" $?
+run "$R" block "src/vault/keys/a.ts"; ! is_deny; check "slash-token-exempts" $?
+run "$R" block "src/vault/keysmith/a.ts"; is_deny; check "slash-token-right-boundary" $?
+ERR=$(cd "$R" && printf '%s' '{"tool_input":{"file_path":"src/foo.ts"}}' | AGENT_TDD_GUARD_MODE=block python3 "$HOOK" 2>&1 >/dev/null)
+[[ "$ERR" == *"ignored bare-word"* ]]; check "bare-token-stderr-note" $?
+
+echo
+echo "=== (l) broken config falls back to built-ins (positive evidence) ==="
+R=$(armed_repo); write_cfg "$R" '{not json'
+run "$R" block "src/secrets/k.ts"; [[ $RC -eq 0 && -z "$OUT" ]]; check "bad-config-builtin-allow-empty" $?
+grep -q '"guard_area": "secret"' "$(LOG "$R")"; check "bad-config-builtin-logged" $?
+run "$R" block "src/vault/k.ts"; is_deny; check "bad-config-no-extra-exempt" $?
+
+echo
+echo "=== (m) .yml, .yml+.json together, project-dir resolution ==="
+if python3 -c 'import yaml' 2>/dev/null; then
+  R=$(armed_repo)
+  printf 'risk_areas:\n  secrets:\n    paths:\n      - "ymlonly/**"\n' > "$R/.agent/hook-config.yml"
+  run "$R" block "src/ymlonly/k.ts"; ! is_deny; check "yml-token-allowed" $?
+  write_cfg "$R" '{"risk_areas":{"secrets":{"paths":["jsononly/**"]}}}'
+  run "$R" block "src/ymlonly/k.ts"; ! is_deny; check "both-yml-token-allowed" $?
+  run "$R" block "src/jsononly/k.ts"; ! is_deny; check "both-json-token-allowed" $?
+else
+  echo "  skip [yml cases] PyYAML not importable"
+fi
+R=$(armed_repo); P=$(fresh_repo); write_cfg "$P" "$CFG"
+OUT=$(cd "$R" && printf '%s' '{"tool_input":{"file_path":"src/vault/k.ts"}}' | AGENT_PROJECT_DIR="$P" AGENT_TDD_GUARD_MODE=block python3 "$HOOK" 2>/dev/null)
+[[ -z "$OUT" ]]; check "agent-project-dir-config-root" $?
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
