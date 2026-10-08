@@ -5,9 +5,9 @@
 # the (empty) prompt, so no prompt-file bridge is needed — this wrapper exists
 # for the TIER seam (model IDs are forbidden in core/infra/backends.json, and
 # the gemini CLI has no profile concept) and for the SAME OS-enforced read-only
-# posture as adapters/grok/grok-worker.sh.
+# posture as the retired grok worker (legacy/lanes-2026-10/grok/grok-worker.sh).
 #
-# THREAT MODEL & sandbox: identical to grok-worker.sh — the prompt carries an
+# THREAT MODEL & sandbox: identical to that worker — the prompt carries an
 # untrusted diff, agentic CLIs' own flags are not a write barrier, so the
 # sandbox-exec profile (fail-closed) denies all writes except this run's
 # WORK_DIR and ~/.gemini (minus the tiers file), and denies reads of the

@@ -254,7 +254,8 @@ echo "=== (13) NO BATTERY MAY SKIP VIA exit 0: that is reported as PASS ==="
 # printed by the runner as `PASS <name>` with its SKIP text discarded (output is
 # echoed on FAIL only) — the same false green the skip lane exists to remove,
 # just declared from the battery's side instead of the runner's. Two batteries
-# shipped exactly this (backends-schema-test.sh, kiro-preflight-test.sh: both
+# shipped exactly this (backends-schema-test.sh and kiro-preflight-test.sh, the
+# latter since moved to legacy/lanes-2026-10/tests/: both
 # `echo "SKIP: jq not installed"; exit 0`), so with jq absent they reported PASS
 # having asserted nothing. Static tripwire, because the dynamic path only shows
 # up on a host that happens to be missing the optional binary — which is

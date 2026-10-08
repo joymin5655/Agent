@@ -24,7 +24,7 @@ Three independent axes must never be collapsed:
 1. **Runtime host** — owns the agent loop, tool execution, permissions, sandbox,
    hooks, and session lifecycle. Examples: Claude Code, Codex, Antigravity CLI.
 2. **Model backend** — generates or reviews content. Examples: Anthropic,
-   OpenAI, Google, xAI, OpenRouter-routed, and local models.
+   OpenAI, Google, and local models.
 3. **Evaluation evidence** — informs role-to-tier routing. Examples: Agent's
    evals, task-specific benchmarks, and Arena.
 

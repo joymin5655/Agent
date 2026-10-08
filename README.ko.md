@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/joymin5655/Agent/actions/workflows/ci.yml/badge.svg)](https://github.com/joymin5655/Agent/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-![Version](https://img.shields.io/badge/version-0.6.0-blue.svg)
+![Version](https://img.shields.io/badge/version-0.7.0-blue.svg)
 ![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-7c3aed.svg)
 ![AI-agnostic](https://img.shields.io/badge/AI-Claude%20%7C%20Codex%20%7C%20Antigravity-orange.svg)
 
@@ -10,7 +10,7 @@
 
 > **상태: 개인 하네스를 참고용으로 공개한 레포입니다.** 개발자 한 명이 매일 쓰는 구성을
 > 그대로 공개해, 다른 사람이 읽고 일부를 가져가거나 포크할 수 있게 했습니다. 일부는 그
-> 구성에 맞춰져 있습니다. 워커 레인(grok, kiro, openrouter), 모델 라우팅 티어, 시크릿 스캔
+> 구성에 맞춰져 있습니다. 워커 레인(codex, antigravity), 모델 라우팅 티어, 시크릿 스캔
 > 훅이 매칭하는 MCP 서버가 그렇습니다. 다른 개발자 환경에서 실사용 검증은 아직 없고(CI는 빈
 > HOME 설치 스모크만 실행), 강제력은 Claude Code에서 가장 강합니다([크로스 런타임 설계](docs/cross-runtime-harness-design.md)).
 > 내부 작업 문서(백로그, 감사)는 [`docs/internal/`](docs/internal/README.md)에 있습니다.
@@ -54,7 +54,7 @@
 증명합니다. 런타임마다 다른 것은 CLI 활동 중 얼마나 많은 부분이 그 코어에
 도달하는가입니다 — [런타임 커버리지](#런타임-커버리지) 참고.
 
-> 상태: v0.6.0 · 라이선스: **MIT**
+> 상태: v0.7.0 · 라이선스: **MIT**
 
 ---
 
@@ -150,7 +150,7 @@ flowchart LR
 |---|---|
 | **하네스(harness)** | 에이전트 + 훅 + 스킬 + 규칙을 묶어 AI를 감싸는 안전 계층 전체. |
 | **훅(hook)** | AI 런타임이 어떤 행동 전/후에 자동으로 실행하는 작은 스크립트. **allow**, **ask**, **deny** 중 하나로 답합니다. [`core/hooks/`](core/hooks/)에 `hooks/hooks.json`으로 배선된 스크립트 27개(공유 모듈 포함 31개)가 있습니다. |
-| **어댑터(adapter)** | 각 AI CLI의 고유 이벤트 형식과 하네스의 표준 JSON 사이를 번역하는 얇은 계층. 런타임 어댑터 4개(claude-code, codex, gemini, antigravity)와 grok/kiro/openrouter 워커 레인이 있습니다([`adapters/`](adapters/)). |
+| **어댑터(adapter)** | 각 AI CLI의 고유 이벤트 형식과 하네스의 표준 JSON 사이를 번역하는 얇은 계층. 런타임 어댑터 4개(claude-code, codex, gemini, antigravity)가 [`adapters/`](adapters/)에 있습니다. |
 | **에이전트(agent)** | AI가 일을 위임하는 전문가 — 예: 리뷰만 하고 절대 코드를 쓰지 않는 보안 리뷰어. 3종이 포함됩니다([`agents/`](agents/)). |
 | **스킬(skill)** | AI가 따라가는 재사용 가능한 단계별 워크플로우 — 예: 커밋+PR 자동화 흐름. 14종이 포함됩니다([`skills/`](skills/)). |
 | **게이트(gate)** | 훅의 결정 지점(deny / ask / block). 모든 게이트는 자신이 가정하는 모델 약점과 함께 등록됩니다 — [`docs/gate-registry.md`](docs/gate-registry.md). |
@@ -233,7 +233,7 @@ Antigravity(agy 1.2.12)는 훅의 `{}`를 deny로 처리하므로 통과는 `ask
 2. **확인합니다.** `/plugin` 실행 — `agent-harness`가 *enabled*로 표시됩니다. 새 세션에서 에이전트가 `agent-harness:code-reviewer`, `agent-harness:security-reviewer`로 resolve되고 `/project-init`을 쓸 수 있습니다.
 3. **프로젝트를 스캐폴드합니다.** 아무 저장소에서 `/project-init`을 실행하면 `CLAUDE.md`, 규칙, `gitleaks.toml`이 생성됩니다.
 4. *(선택)* 훅이 많은 다른 플러그인을 쓰는 저장소에서는 `/plugin`으로 agent-harness를 꺼도 됩니다 — 에이전트는 `agent-harness:*` 네임스페이스라 어느 쪽이든 충돌하지 않습니다.
-5. *(선택)* 크로스벤더 워커 레인(codex/antigravity/grok/kiro 세컨드 오피니언)을 쓰려면 `/agent-harness:worker-setup`을 실행하세요 — 설치→인증→검증을 비용 안내와 함께 안내합니다.
+5. *(선택)* 크로스벤더 워커 레인(codex/antigravity 세컨드 오피니언)을 쓰려면 `/agent-harness:worker-setup`을 실행하세요 — 설치→인증→검증을 비용 안내와 함께 안내합니다.
 
 플러그인에 포함: **에이전트 3종**, **스킬 14종**, 훅 세트, `/project-init` 커맨드.
 
@@ -253,16 +253,14 @@ bash ~/agent/setup.sh --antigravity     # Antigravity(agy) 워커 레인 + 네�
 | `--project` | 현재 저장소 스캐폴드: `CLAUDE.md` / `AGENTS.md` / `GEMINI.md` / `gitleaks.toml` / `hook-config.yml` / git pre-commit + pre-push 훅 |
 | `--hooks-only` | git-hooks만, AI 설정 없음 |
 | `--all` | 위 전부 |
-| `--grok` | **옵트인**, `--all`/기본에 미포함 — grok 워커 레인(자문 전용 크로스벤더 리뷰) |
 | `--antigravity` | **옵트인**, `--all`/기본에 미포함 — antigravity(agy) 워커 레인(크로스벤더 리뷰) **및** `~/.gemini/config/plugins/agent-harness`에 설치되는 네이티브 훅 플러그인(agy 자체 도구 호출 가드; `adapters/antigravity/README.md` 참고) |
-| `--kiro` | **옵트인**, `--all`/기본에 미포함 — kiro 게이트웨이 워커 레인(과금형) |
 
 플래그는 조합 가능합니다(`bash setup.sh --claude --project`). 멱등 — 기존 파일은
 건너뛰고, 교체가 필요하면 대화형으로 물어봅니다. 비대화형 실행은 `AGENT_SETUP_YES=1`.
 `--force` 플래그는 없습니다.
 
 크로스벤더 워커 레인 온보딩(설치→인증→검증, 비용 안내 포함)은 단일 플래그가 아니라
-가이드형 절차입니다 — `--grok`/`--antigravity`/`--kiro`를 직접 쓰기보다
+가이드형 절차입니다 — `--antigravity`를 직접 쓰기보다
 `/agent-harness:worker-setup`(플러그인) 또는 `worker-setup` 스킬(셸 설치)을 실행하세요.
 
 ## 동작 확인
@@ -300,7 +298,7 @@ flowchart TB
     subgraph CORE["Layer 1 — core/ (단일 진실 원천)"]
         H["hooks/ — 배선된 스크립트 27개: 시크릿 스캔 · 뮤텍스 ·<br/>spec-gate · tdd-guard · supervisor …"]
         I["infra/ — 세션 · goal 모드 ·<br/>감사 · auto-ship"]
-        T["tests/ — 자가검증 스크립트 98개"]
+        T["tests/ — 자가검증 스크립트 95개"]
     end
     R["rules/ — 정책<br/>원문(SOT)"]
     PLUG[".claude-plugin/ + hooks/hooks.json<br/>플러그인 배포"]
@@ -463,7 +461,7 @@ Agent/
 │   ├── hooks/          #   이식 가능한 훅 스크립트 31개 (배선 27 + 공유 모듈)
 │   ├── infra/          #   세션 조정 · goal 모드 · 감사 · auto-ship
 │   ├── git-hooks/      #   pre-commit · pre-push
-│   └── tests/          #   테스트 스크립트 98개 (verify-all.sh가 전부 실행)
+│   └── tests/          #   테스트 스크립트 95개 (verify-all.sh가 전부 실행)
 │
 ├── adapters/           # claude-code (얇음) · codex · gemini · antigravity
 ├── rules/              # 범용 정책 문서

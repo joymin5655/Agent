@@ -381,7 +381,7 @@ fi
 
 # --- 10. gateway isolation: gateway backends never inherit the caller's cwd ---
 #
-# The hazard (adapters/kiro/README.md § The workspace-shadowing hazard): a
+# The hazard (legacy/lanes-2026-10/kiro/README.md § The workspace-shadowing hazard): a
 # gateway CLI resolves --agent from ./.kiro/agents BEFORE the global dir, so a
 # dispatch inheriting the caller's cwd lets the repository under review replace
 # the framework's read-only profile with a shell+write one. The preflight's scan

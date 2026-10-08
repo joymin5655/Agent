@@ -41,8 +41,6 @@ echo
 echo "=== vendor coverage ==="
 grep -qi 'codex' "$SKILL";       check "mentions-codex" $?
 grep -qi 'antigravity' "$SKILL"; check "mentions-antigravity" $?
-grep -qi 'grok' "$SKILL";        check "mentions-grok" $?
-grep -qi 'kiro' "$SKILL";        check "mentions-kiro" $?
 
 echo
 echo "=== no model IDs (tier policy lives in vendor profiles, not here) ==="
@@ -51,7 +49,6 @@ grep -Eq '(gpt|claude|sonnet|opus|haiku|fable|gemini|grok)-[0-9]' "$SKILL"
 
 echo
 echo "=== does not collect or echo credentials ==="
-grep -q 'KIRO_API_KEY' "$SKILL";  check "mentions-kiro-api-key" $?
 grep -qi 'never echo\|never.*store\|instruct.*not collect\|instruct, don.t collect' "$SKILL"
 check "states-credential-non-collection-policy" $?
 

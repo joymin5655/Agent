@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/joymin5655/Agent/actions/workflows/ci.yml/badge.svg)](https://github.com/joymin5655/Agent/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-![Version](https://img.shields.io/badge/version-0.6.0-blue.svg)
+![Version](https://img.shields.io/badge/version-0.7.0-blue.svg)
 ![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-7c3aed.svg)
 ![AI-agnostic](https://img.shields.io/badge/AI-Claude%20%7C%20Codex%20%7C%20Antigravity-orange.svg)
 
@@ -10,7 +10,7 @@
 
 > **Status: a personal harness, published as a reference.** This is the setup one
 > developer runs every day, kept public so others can read it, borrow from it, or fork it.
-> Parts of it are tuned to that setup: the worker lanes (grok, kiro, openrouter), the
+> Parts of it are tuned to that setup: the worker lanes (codex, antigravity), the
 > model-routing tiers, and the MCP servers the secret-scan hook matches. It has not been
 > field-tested on other developers' setups (CI only runs a scratch-home install smoke), and
 > enforcement is strongest on Claude Code (see
@@ -59,7 +59,7 @@ The rules are written once: when an event reaches the core, it returns the same
 `core/tests/adapter-parity.sh`. What *differs* per runtime is how much of the
 CLI's activity reaches that core; see [Runtime coverage](#runtime-coverage).
 
-> Status: v0.6.0 · License: **MIT**
+> Status: v0.7.0 · License: **MIT**
 
 ---
 
@@ -160,7 +160,7 @@ New to this space? These ten terms are all you need to read the rest of this pag
 |---|---|
 | **harness** | The whole safety layer: agents + hooks + skills + rules, wrapped around your AI. |
 | **hook** | A small script your AI runtime runs automatically before/after an action. It answers **allow**, **ask**, or **deny**. 27 scripts wired via `hooks/hooks.json` (31 incl. shared modules) live in [`core/hooks/`](core/hooks/). |
-| **adapter** | A translator from a runtime hook or controlled wrapper event to the harness's canonical JSON. There are 4 runtime adapters (claude-code, codex, gemini, antigravity) plus the grok/kiro/openrouter worker lanes ([`adapters/`](adapters/)). |
+| **adapter** | A translator from a runtime hook or controlled wrapper event to the harness's canonical JSON. There are 4 runtime adapters (claude-code, codex, gemini, antigravity) in [`adapters/`](adapters/). |
 | **agent** | A specialist your AI delegates to — e.g. a security reviewer that only reviews and never writes. 3 ship here ([`agents/`](agents/)). |
 | **skill** | A reusable step-by-step workflow the AI follows, e.g. the commit + PR flow. 14 ship here ([`skills/`](skills/)). |
 | **gate** | A hook decision point (deny / ask / block). Every gate is registered with the model weakness it assumes — [`docs/gate-registry.md`](docs/gate-registry.md). |
@@ -254,7 +254,7 @@ Then:
    `/agent-harness:project-init` to generate runtime instructions, hook policy,
    secret-scan config, and Git-hook wiring.
 4. *(Optional)* In a repo that already runs another hook-heavy plugin, disable agent-harness there via `/plugin` — agents stay namespaced as `agent-harness:*`, so there's no collision either way.
-5. *(Optional)* Want the cross-vendor worker lanes (codex/antigravity/grok/kiro second opinions)? Run `/agent-harness:worker-setup` for a guided install → auth → verify walkthrough with an upfront cost briefing.
+5. *(Optional)* Want the cross-vendor worker lanes (codex/antigravity second opinions)? Run `/agent-harness:worker-setup` for a guided install → auth → verify walkthrough with an upfront cost briefing.
 
 The plugin bundles: **3 agents**, **14 skills**, the hook set, and the
 `/agent-harness:project-init` command.
@@ -278,9 +278,7 @@ bash ~/agent/setup.sh --antigravity     # add Antigravity (agy) worker lane + na
 | `--project` | Scaffold the current repo: `CLAUDE.md` / `AGENTS.md` / `GEMINI.md` / `gitleaks.toml` / `hook-config.yml` / git pre-commit + pre-push hooks |
 | `--hooks-only` | git-hooks only, no AI configs |
 | `--all` | Everything above |
-| `--grok` | **opt-in**, not part of `--all`/default — grok worker lane (advisory-only cross-vendor review) |
 | `--antigravity` | **opt-in**, not part of `--all`/default — antigravity (agy) worker lane (cross-vendor review) **and** the native-hook plugin installed into `~/.gemini/config/plugins/agent-harness` (guards agy's own tool calls; see `adapters/antigravity/README.md`) |
-| `--kiro` | **opt-in**, not part of `--all`/default — kiro gateway worker lanes (metered/paid) |
 
 Flags combine (`bash setup.sh --claude --project`). Idempotent — existing files are
 skipped; when a file would be replaced, setup asks interactively. Set `AGENT_SETUP_YES=1`
@@ -289,7 +287,7 @@ for non-interactive runs. There is no `--force` flag.
 Cross-vendor worker-lane onboarding (install → auth → verify, with a cost
 briefing) is a guided walkthrough, not a bare flag: run `/agent-harness:worker-setup`
 (plugin) or the `worker-setup` skill (shell install) rather than reaching for
-`--grok`/`--antigravity`/`--kiro` directly.
+`--antigravity` directly.
 
 ## See it work
 
@@ -330,7 +328,7 @@ flowchart TB
     subgraph CORE["Layer 1 — core/ (the single source of truth)"]
         H["hooks/ — 27 wired scripts: secret scan · mutex ·<br/>spec-gate · tdd-guard · supervisor …"]
         I["infra/ — sessions · goal mode ·<br/>audits · auto-ship"]
-        T["tests/ — 98 self-verification scripts"]
+        T["tests/ — 95 self-verification scripts"]
     end
     R["rules/ — policy<br/>source of truth"]
     PLUG[".claude-plugin/ + hooks/hooks.json<br/>plugin distribution"]
@@ -497,7 +495,7 @@ Agent/
 │   ├── hooks/          #   31 portable hook scripts (27 wired + shared modules)
 │   ├── infra/          #   session coordination · goal mode · audits · auto-ship
 │   ├── git-hooks/      #   pre-commit · pre-push
-│   └── tests/          #   98 test scripts (verify-all.sh runs them all)
+│   └── tests/          #   95 test scripts (verify-all.sh runs them all)
 │
 ├── adapters/           # claude-code (thin) · codex · gemini · antigravity
 ├── rules/              # generic policy docs

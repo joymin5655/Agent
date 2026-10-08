@@ -5,9 +5,9 @@
 # AGENT_BACKENDS_FILE — zero paid calls. The probe is fail-closed: each case
 # pins one refusal path, and the exact-token case pins the only pass path.
 # The stub is named after the fixture registry's own cmd[0] (gemini-worker),
-# so the probe's registry->argv resolution is exercised for real (kiro
-# preflight hole (d): a probe that validates a different executable than the
-# dispatch lies).
+# so the probe's registry->argv resolution is exercised for real (preflight
+# hole (d) in gemini-preflight.sh: a probe that validates a different
+# executable than the dispatch lies).
 #
 # Usage: bash core/tests/gemini-preflight-test.sh
 set -uo pipefail

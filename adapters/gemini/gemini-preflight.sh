@@ -10,7 +10,7 @@
 #
 # call-worker.sh runs this before dispatching; nonzero here means "unavailable"
 # (125 -> 127) and NO paid dispatch is made. Same refusal bias and the same
-# closed holes as adapters/kiro/kiro-preflight.sh:
+# closed holes as the retired kiro preflight (legacy/lanes-2026-10/kiro/):
 #   (a) exit codes prove nothing — only a real inference round trip does;
 #   (b) a cached credential (~/.gemini/oauth_creds.json) can be stale — presence of the
 #       file is not an auth check;

@@ -2,7 +2,7 @@
 # claude-build — the TOP rung: full harness, default model selection.
 #
 # No flags of its own — this launcher exists for SET SYMMETRY with
-# claude-quick/claude-research/claude-ox (adapters/claude-code/launchers/README.md):
+# claude-quick/claude-research (adapters/claude-code/launchers/README.md):
 # a session-start human choice should have a name at every rung, even the one
 # that is just plain `claude`.
 #

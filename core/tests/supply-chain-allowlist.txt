@@ -12,6 +12,4 @@
 
 # worker-lane CLI installers (skills/worker-setup/SKILL.md)
 chatgpt.com
-x.ai
 antigravity.google
-cli.kiro.dev

@@ -28,10 +28,10 @@ no paid worker dispatch). Sections labeled "1.1.14" keep the earlier 2026-08-19 
 - **Opt-in API-key path (`ANTIGRAVITY_AUTH=apikey`).** The keyring stays the default. With the
   variable set, `antigravity-worker.sh` reads a Gemini API key from the macOS Keychain
   (service `gemini-api-key`, the same `security find-generic-password -a "$USER" -s <service>
-  -w` pattern as the OpenRouter worker) and exports `GEMINI_API_KEY` into agy's environment
-  only. The key is never put in argv, never logged, and never named in an error message. A
-  missing Keychain item or a missing `security` binary exits 2 with a message that names the
-  service. Any other value (or unset) keeps the keyring path and never calls `security`.
+  -w` pattern the retired OpenRouter worker used) and exports `GEMINI_API_KEY` into agy's
+  environment only. The key is never put in argv, never logged, and never named in an error
+  message. A missing Keychain item or a missing `security` binary exits 2 with a message that
+  names the service. Any other value (or unset) keeps the keyring path and never calls `security`.
   Register the key yourself (the command prompts for the value, so it stays out of argv):
   `security add-generic-password -a "$USER" -s gemini-api-key -w`. agy also needs
   `"modelProvider": "gemini"` in `~/.gemini/antigravity-cli/settings.json` for the variable
@@ -73,8 +73,9 @@ denial surfaced) — so the write path is "no file produced," not "provably
 gated." A code review needs neither write nor exec (it reads the diff from the
 prompt and emits findings text), so the worker runs default mode with
 `--dangerously-skip-permissions` FORBIDDEN, and — belt-and-suspenders, matching
-the grok lane — under an OS `sandbox-exec` deny-write/deny-cred-read profile so
-the unproven write path cannot matter. See `antigravity-worker.sh`.
+the retired grok lane (`legacy/lanes-2026-10/grok/`) — under an OS `sandbox-exec`
+deny-write/deny-cred-read profile so the unproven write path cannot matter. See
+`antigravity-worker.sh`.
 
 ## Success contract (soft-deny)
 

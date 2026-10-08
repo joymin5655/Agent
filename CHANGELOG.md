@@ -7,12 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-08
+
+Three vendor lanes only: Claude Code, Codex and Gemini (through the Antigravity CLI `agy`).
+Breaking for opt-in users: `setup.sh --grok`/`--kiro`/`--openrouter`, `/council-review
+--with-grok`/`--with-free` and the `claude-ox` launcher are gone. Earlier installs may leave
+`~/bin/grok-*`, `~/bin/kiro-preflight`, `~/bin/openrouter-*` and `~/bin/claude-ox` symlinks
+pointing at removed paths; nothing reads them, so delete them by hand.
+
+### Removed
+- **grok, kiro and openrouter worker lanes, `claude-ox` launcher** (maintainer decision
+  2026-10-08). None held a council or gate vote, so review and gate outcomes do not change.
+  The adapters, their three test batteries and `claude-ox.template` move to
+  `legacy/lanes-2026-10/` (README there explains how to restore one).
+  `core/infra/backends.json` drops backends `grok`, `kiro-openai`, `kiro-zhipu`,
+  `kiro-anthropic`, `openrouter` and roles `advisor-third`, `advisor-free`; `setup.sh` drops
+  the three flags, their installers and the kiro doctor check; `docs/runtime-registry.json`
+  drops the three runtimes; council-review, worker-setup, harness-help, project-init, the
+  launcher docs and README (en/ko) follow. The gemini and antigravity worker sandboxes still
+  deny reads of `~/.grok` (credential deny-list).
+- `core/tests/supply-chain-allowlist.txt`: `cli.kiro.dev` and `x.ai`, the installer hosts of
+  the removed lanes; no shipped file references them any more.
+
 ### Changed
-- **runtime registry**: grok re-surveyed 2026-10-08 (static check, the CLI was not run).
-  `cli_version_measured` 1.0.46 (npm latest); every flag `grok-worker.sh` passes is still in
-  the 1.0.46 headless docs, and the `grok-4.6` pin is current on docs.x.ai. Clears the strict
-  `runtime-currency.sh` failure (`grok-measured_on-stale`). The README read-only table is
-  still from 0.2.118 and needs a real re-measure on 1.x.
 - **docs**: `branch-cleanup-2026-10.md` records the 2026-10-08 deletion of the 19 merged
   branches.
 

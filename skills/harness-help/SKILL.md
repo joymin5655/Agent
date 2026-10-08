@@ -45,7 +45,7 @@ trivial work out by design.
 - **`/reorg-sync <old> <new>`** — after a directory move, sweep orphaned absolute-path
   references (shebangs, worktree pointers, crontab, doc anchors, memory keys); dry-run first.
 - **`/worker-setup`** — install → auth → verify onboarding for the
-  cross-vendor worker lanes (codex, antigravity, grok, kiro), with a
+  cross-vendor worker lanes (codex, antigravity), with a
   cost-model briefing before anything installs. Reach for it when
   `setup.sh --doctor` WARNs about a worker lane, or `/council-review`
   reports a lane absent.
