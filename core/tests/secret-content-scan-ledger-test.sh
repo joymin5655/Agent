@@ -6,6 +6,8 @@
 # Usage: bash core/tests/secret-content-scan-ledger-test.sh
 # Exit 0: all pass. Exit 1: one or more failures.
 set -u
+# X-5: keep this battery's gate records out of the live sink (caller-set seam wins)
+export AGENT_GATE_SINK_DIR="${AGENT_GATE_SINK_DIR:-$(mktemp -d)}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 HOOK="$REPO_ROOT/core/hooks/secret-content-scan.py"

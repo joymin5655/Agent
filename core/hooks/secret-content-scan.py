@@ -230,7 +230,7 @@ def log_violation(reason: str) -> None:
     if not repo_root:
         return
 
-    log_dir = Path(repo_root) / ".agent" / "logs"
+    log_dir = Path(os.environ.get("AGENT_GATE_SINK_DIR") or Path(repo_root) / ".agent" / "logs")
     try:
         log_dir.mkdir(parents=True, exist_ok=True)
     except Exception:
@@ -247,6 +247,7 @@ def log_violation(reason: str) -> None:
         "session_id": os.environ.get("AGENT_SESSION_ID", "main"),
         "decision": "deny",
         "reproduce_test": reproduce_test,
+        "origin": os.environ.get("AGENT_LOG_ORIGIN") or "session",
         "schema_version": "2.0.0",
     }
     try:

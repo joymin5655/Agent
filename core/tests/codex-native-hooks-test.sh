@@ -22,6 +22,8 @@
 #
 # Usage: bash core/tests/codex-native-hooks-test.sh
 set -u
+# X-5: keep this battery's gate records out of the live sink (caller-set seam wins)
+export AGENT_GATE_SINK_DIR="${AGENT_GATE_SINK_DIR:-$(mktemp -d)}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ADAPTER="$REPO_ROOT/adapters/codex/adapter.sh"

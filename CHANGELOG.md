@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Gate telemetry isolation (X-5).** The five `security-violations.jsonl` writers honor
+  `AGENT_GATE_SINK_DIR`; `verify-all.sh` and the four batteries that fire gates outside a
+  temp project redirect to a scratch dir, so a test run no longer adds live-sink rows. The
+  `r4-mutex-check`, `context-mode-guard`, `secret-content-scan` and `council-escalation-gate`
+  records now carry `origin` like `pre-tool-guard`.
+- `telemetry-digest.sh --gates --projects <p1:p2>` (or `AGENT_GATE_PROJECTS`) sums sinks across
+  project `.agent/logs/` dirs and reports `fixture-rows-excluded`.
+
 ## [0.7.0] - 2026-10-08
 
 Three vendor lanes only: Claude Code, Codex and Gemini (through the Antigravity CLI `agy`).

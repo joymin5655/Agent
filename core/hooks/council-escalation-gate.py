@@ -341,7 +341,7 @@ def log_event(root, decision, reason):
     (see module docstring "Audit sink" for why this stays IN the repo while
     the escape-hatch state above does not). Never raises; silent on stdout."""
     try:
-        log_dir = os.path.join(root, ".agent", "logs")
+        log_dir = os.environ.get("AGENT_GATE_SINK_DIR") or os.path.join(root, ".agent", "logs")
         os.makedirs(log_dir, exist_ok=True)
         rec = {
             "ts": datetime.now(timezone.utc).isoformat(),
@@ -350,6 +350,7 @@ def log_event(root, decision, reason):
             "reason": reason,
             "session_id": os.environ.get("AGENT_SESSION_ID", "main"),
             "decision": decision,
+            "origin": os.environ.get("AGENT_LOG_ORIGIN") or "session",
             "schema_version": "2.0.0",
         }
         with open(os.path.join(log_dir, "security-violations.jsonl"), "a", encoding="utf-8") as f:
