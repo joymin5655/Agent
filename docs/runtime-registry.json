@@ -101,12 +101,14 @@
     "grok": {
       "kind": "first-party",
       "vendor": "xai",
-      "cli_version_measured": "unknown",
-      "measured_on": "2026-08-18",
-      "docs": [],
+      "cli_version_measured": "1.0.46",
+      "measured_on": "2026-10-08",
+      "docs": [
+        {"url": "https://docs.x.ai/docs/models", "checked_on": "2026-10-08"}
+      ],
       "pin_files": ["adapters/grok/grok-tiers.json.template"],
       "retired_model_patterns": [],
-      "notes": "Opt-in advisory lane; not re-surveyed in the 2026-09 cycle."
+      "notes": "Opt-in advisory lane. 2026-10-08 re-survey was static, not a run: npm @xai-official/grok latest is 1.0.46 (2026-09-30; alpha 1.0.50), and the darwin-arm64 binary's embedded headless docs still list every flag grok-worker.sh passes (--prompt-file, -m, --output-format plain, --no-subagents, --no-memory as a compatibility flag, --max-turns, --disable-web-search, --reasoning-effort). Its embedded default model is grok-4.6 with efforts low/medium/high/xhigh and default high, so the MID tier (no effort arg) now runs at high like TOP. docs.x.ai lists grok-4.6 as current, grok-4.7 newest, none retired. The read-only table in adapters/grok/README.md was measured on 0.2.118 and needs a real re-measure before the lane is trusted on 1.x."
     }
   }
 }

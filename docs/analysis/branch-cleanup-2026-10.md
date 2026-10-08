@@ -4,6 +4,10 @@ Generated 2026-10-08 from `git fetch origin --prune`, `git branch -r --merged or
 `gh pr list --state all` and `git worktree list`. **Nothing was deleted.** This is a list for
 the maintainer to review; deletion timing is the maintainer's call.
 
+**Executed 2026-10-08 on the maintainer's go-ahead:** the 14 section-1 branches and the five
+section-5 branches (#155–#159, worktrees removed first) were deleted after re-checking that each
+tip still equalled its merged PR head. Section 3 branches were kept.
+
 A branch counts as merged when `git branch -r --merged origin/main` lists it, or its PR is
 MERGED (squash merges leave the branch tip outside main's history, so `--merged` alone misses
 them). A PR-merged branch is a candidate only when its tip equals the PR's `headRefOid`
