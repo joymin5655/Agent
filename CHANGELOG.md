@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Gate telemetry isolation (X-5).** The five `security-violations.jsonl` writers honor
+  `AGENT_GATE_SINK_DIR` (test runners only — in a real session it hides every firing from the
+  digest). `verify-all.sh` exports it for the whole run, and the batteries that fire gates
+  against the live repo when run alone (`adapter-parity.sh`, `pre-tool-guard-test`,
+  `secret-content-scan-ledger-test`, `codex-native-hooks-test`, `claude-extended-events-test`,
+  `antigravity-adapter-test`, `setup-doctor-test`, `adapters/{claude-code,codex,gemini}/tests/run.sh`)
+  set it themselves. Guarantee: the live sink row count is unchanged after a `verify-all.sh` run
+  (which globs `core/tests/` only); a script outside that list run on its own is not covered.
+- `telemetry-digest.sh --gates --projects <p1:p2>` sums sinks across project `.agent/logs/` dirs.
+  The flag MERGES with `AGENT_GATE_PROJECTS` (union), entries are deduped by realpath, and a
+  missing dir warns on stderr. The report ends with `fixture-rows-excluded`.
+- `core/tests/gate-telemetry-isolation-test.sh`.
+
+### Changed
+- `r4-mutex-check`, `context-mode-guard`, `secret-content-scan` and `council-escalation-gate`
+  records now carry `origin` like `pre-tool-guard`.
+
 ## [0.7.0] - 2026-10-08
 
 Three vendor lanes only: Claude Code, Codex and Gemini (through the Antigravity CLI `agy`).

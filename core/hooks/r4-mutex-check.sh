@@ -186,14 +186,17 @@ OWNER_BRANCH=$(jq -r --arg sid "$OWNER" '[.sessions[]? | select(.session_id == $
 # Append to security-violations.jsonl (silent-fail)
 log_violation() {
   local guard="$1" reason="$2" resource="$3"
-  local log_file="$ROOT/.agent/logs/security-violations.jsonl"
-  mkdir -p "$ROOT/.agent/logs" 2>/dev/null || return 0
+  local log_dir="${AGENT_GATE_SINK_DIR:-$ROOT/.agent/logs}"
+  local log_file="$log_dir/security-violations.jsonl"
+  mkdir -p "$log_dir" 2>/dev/null || return 0
+  local origin="${AGENT_LOG_ORIGIN:-session}"
+  origin="${origin//[^A-Za-z0-9_.-]/}"
   local ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
   local sid="${SESSION_ID:-main}"
   local repro="false"
   case "${AGENT_REPRODUCE_TEST:-}" in 1|true|TRUE|True) repro="true" ;; esac
-  printf '{"ts":"%s","guard":"%s","hook":"r4-mutex-check.sh","resource":"%s","reason":%s,"session_id":"%s","decision":"ask","reproduce_test":%s,"schema_version":"2.0.0"}\n' \
-    "$ts" "$guard" "$resource" "$(printf '%s' "$reason" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))' 2>/dev/null || echo "\"$reason\"")" "$sid" "$repro" \
+  printf '{"ts":"%s","guard":"%s","hook":"r4-mutex-check.sh","resource":"%s","reason":%s,"session_id":"%s","decision":"ask","reproduce_test":%s,"origin":"%s","schema_version":"2.0.0"}\n' \
+    "$ts" "$guard" "$resource" "$(printf '%s' "$reason" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))' 2>/dev/null || echo "\"$reason\"")" "$sid" "$repro" "$origin" \
     >> "$log_file" 2>/dev/null || true
   [[ -x "$ROOT/core/infra/agent-session.sh" ]] && \
     "$ROOT/core/infra/agent-session.sh" broadcast blocked \

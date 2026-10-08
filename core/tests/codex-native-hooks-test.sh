@@ -33,6 +33,8 @@ PASS=0
 FAIL=0
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/codex-native.XXXXXX")"
 trap '[[ -n "$WORK" && -d "$WORK" ]] && rm -rf "$WORK"' EXIT
+# X-5: keep this battery's gate records out of the live .agent/logs sink (caller-set seam wins)
+export AGENT_GATE_SINK_DIR="${AGENT_GATE_SINK_DIR:-$WORK/gate-sink}"
 
 ok()  { echo "  ok   [$1]"; PASS=$((PASS + 1)); }
 bad() { echo "  FAIL [$1] $2"; FAIL=$((FAIL + 1)); }

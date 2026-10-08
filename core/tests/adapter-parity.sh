@@ -28,6 +28,12 @@
 # command/content with a quote must not break canonical-JSON construction or bypass
 # the gate).
 set -u
+# X-5: keep this battery's gate records out of the live .agent/logs sink (caller-set seam wins)
+if [[ -z "${AGENT_GATE_SINK_DIR:-}" ]]; then
+  AGENT_GATE_SINK_DIR="$(mktemp -d)" || exit 1   # an empty override would fall back to the live sink
+  trap 'rm -rf "$AGENT_GATE_SINK_DIR"' EXIT
+fi
+export AGENT_GATE_SINK_DIR
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CLAUDE_ADAPTER="$REPO_ROOT/adapters/claude-code/adapter.sh"

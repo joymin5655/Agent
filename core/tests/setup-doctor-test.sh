@@ -63,6 +63,9 @@ cleanup_fixtures() {
   done
 }
 trap cleanup_fixtures EXIT
+# X-5: keep this battery's gate records out of the live .agent/logs sink (caller-set seam wins)
+GATE_SINK_TMP="$(safe_mktemp_d)" || exit 1; track_fixture "$GATE_SINK_TMP"
+export AGENT_GATE_SINK_DIR="${AGENT_GATE_SINK_DIR:-$GATE_SINK_TMP}"
 # INT/TERM must also STOP: a handler that only cleaned up and returned would resume
 # the interrupted section with its fixture tree already deleted.
 trap 'cleanup_fixtures; exit 130' INT

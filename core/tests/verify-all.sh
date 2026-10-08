@@ -138,6 +138,9 @@ trap 'rm -rf "$WORK"' EXIT
 # seam wins so a test can still point them elsewhere
 export AGENT_LOGS_DIR="${AGENT_LOGS_DIR:-$WORK/agent-logs}"
 export AGENT_WORKERS_DIR="${AGENT_WORKERS_DIR:-$WORK/agent-workers}"
+# X-5: gate hooks write security-violations.jsonl under <repo>/.agent/logs; redirect the
+# whole run so the live sink row count is unchanged (origin=test above stays as 2nd line).
+export AGENT_GATE_SINK_DIR="${AGENT_GATE_SINK_DIR:-$WORK/gate-sink}"
 OUTFILE="$WORK/check.out"
 
 passed=0

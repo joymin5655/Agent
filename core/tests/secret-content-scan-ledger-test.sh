@@ -13,6 +13,8 @@ PASS=0
 FAIL=0
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
+# X-5: keep this battery's gate records out of the live .agent/logs sink (caller-set seam wins)
+export AGENT_GATE_SINK_DIR="${AGENT_GATE_SINK_DIR:-$WORK/gate-sink}"
 mkdir -p "$WORK/home/.agent/workers/k" "$WORK/home/.agent/logs" "$WORK/proj/data" "$WORK/custom"
 
 # run_case <name> <expect: deny|allow> <tool> <file_path> [ENV=val ...]
