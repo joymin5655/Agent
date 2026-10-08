@@ -36,7 +36,7 @@ check "a: live sink unchanged under AGENT_GATE_SINK_DIR" "$([[ "$before" == "$af
 check "a: redirected sink got an origin=test row" \
   "$([[ -f "$TMP/sink/security-violations.jsonl" ]] && grep -q '"origin":"test"' "$TMP/sink/security-violations.jsonl"; echo $?)"
 # control: without the seam the same event DOES reach the live sink (proves the test can fail)
-printf '%s' "$EVENT" | AGENT_PROJECT_DIR="$PROJ" bash "$GUARD" >/dev/null 2>&1
+printf '%s' "$EVENT" | env -u AGENT_GATE_SINK_DIR AGENT_PROJECT_DIR="$PROJ" bash "$GUARD" >/dev/null 2>&1
 check "a: control — unredirected run writes the live sink" "$([[ "$(rows "$LIVE")" -gt "$after" ]]; echo $?)"
 
 # (b) verify-all isolates a whole run
