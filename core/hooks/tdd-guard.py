@@ -18,10 +18,13 @@ Configuration env vars:
 
 Risk-area whitelist:
   Files matching the built-in risk-area patterns (production data / secrets / deploy /
-  billing) are exempted — RGR enforcement defers to the risk-area hooks. These
-  patterns are currently the hardcoded GUARD_PATTERNS below; making them
-  hook-config.yml-overridable (like pre-tool-guard's risk_areas.secrets.paths, P1-8)
-  is a tracked follow-up, not yet wired here.
+  billing) are exempted — RGR enforcement defers to the risk-area hooks. The
+  built-ins are GUARD_PATTERNS below. A project may extend the whitelist via
+  hook-config `risk_areas.secrets.paths` (same field and loader as the Bash guard,
+  hook_config.load_risk_area_secret_paths): its tokens are ADDED to the built-ins
+  (never weaken them), and only tokens with '/' or a leading '.' count. With PyYAML
+  missing, a .yml config is skipped (hook_config policy: one stderr warning) and the
+  built-ins apply; .json config needs no PyYAML.
 
 Decision flow:
   1. Mode check
@@ -56,8 +59,8 @@ CACHE_RELATIVE = os.environ.get(
 )
 
 # Risk-area whitelist — files matching these patterns skip TDD enforcement.
-# Built-in defaults; edit this list to change them. (hook-config.yml override for
-# these patterns is a tracked follow-up — not read here yet; see the module docstring.)
+# Built-in defaults; extended (never reduced) by hook-config risk_areas.secrets.paths
+# (see guard_patterns()).
 # Each entry: (compiled-regex, category-label).
 GUARD_PATTERNS = [
     (re.compile(r"(^|/)migrations/.+\.sql$"), "production-migration"),
@@ -65,6 +68,40 @@ GUARD_PATTERNS = [
     (re.compile(r"(^|/)functions/[^/]+/index\.(ts|js)$"), "edge-fn"),
     (re.compile(r"(^|/)billing/"), "billing"),
 ]
+
+def project_root(fallback):
+    """Config root, resolved like pre-tool-guard.sh (AGENT_PROJECT_DIR, CLAUDE_PROJECT_DIR, git)."""
+    return os.environ.get("AGENT_PROJECT_DIR") or os.environ.get("CLAUDE_PROJECT_DIR") or fallback
+
+
+def guard_patterns(root):
+    """Built-in whitelist UNIONed with hook-config risk_areas.secrets.paths.
+
+    Additive like the Bash guard: built-ins are never weakened. This field means
+    "block" there but "exempt from TDD" here, so only specific tokens are honored
+    (contain '/' or start with '.'); bare words (env, src, auth) would over-exempt
+    and are ignored with one stderr note. Fail-safe: any problem -> built-ins only.
+    """
+    cfg_root = project_root(root)
+    if not any(os.path.isfile(os.path.join(cfg_root, ".agent", f))
+               for f in ("hook-config.yml", "hook-config.json")):
+        return GUARD_PATTERNS
+    try:
+        import hook_config
+        tokens = hook_config.load_risk_area_secret_paths(cfg_root)
+    except Exception:
+        return GUARD_PATTERNS
+    ok = [t for t in tokens if "/" in t or t.startswith(".")]
+    if len(ok) != len(tokens):
+        sys.stderr.write(
+            "tdd-guard: ignored bare-word risk_areas.secrets.paths tokens "
+            "(need '/' or leading '.'): "
+            + ", ".join(t for t in tokens if t not in ok) + "\n")
+    if not ok:
+        return GUARD_PATTERNS
+    alt = "|".join(re.escape(t) + ("" if t.endswith("/") else "(?=/|$)") for t in ok)
+    return GUARD_PATTERNS + [(re.compile(r"(^|/)(" + alt + ")"), "secret-config")]
+
 
 # Scope — only enforce TDD on files matching this. Configurable via env.
 SCOPE_RE = re.compile(
@@ -198,7 +235,7 @@ def main():
     root = repo_root()
 
     # Risk-area whitelist
-    for pat, area in GUARD_PATTERNS:
+    for pat, area in guard_patterns(root):
         if pat.search(file_path):
             log_dryrun(root, file_path, "guard_skip", area, area, 0)
             sys.exit(0)
