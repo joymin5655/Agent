@@ -136,6 +136,16 @@ d. If `--goal-mode`, initialise:
    core/infra/supervisor-goal.sh init <slug> <N> [<budget>] "<objective>"
    ```
 
+#### Pattern selection
+
+While reading the plan, name each wave's shape (Pipeline, Fan-out/Fan-in,
+Expert Pool, Producer-Reviewer; Supervisor is always the outer frame) using
+[`docs/concepts/team-patterns.md`](../../docs/concepts/team-patterns.md), which
+maps each pattern to the lanes and caps in Step 2. A plan that needs
+Hierarchical Delegation is split into separate plans, not nested. If a wave's
+shape does not fit any pattern, say so in the restatement's Assumptions rather
+than improvising a lane.
+
 ### 2. Per-wave loop
 
 For each wave i ∈ {1..N}:
