@@ -204,6 +204,18 @@ governs promoting effort before promoting tier):
 | `/verify-completion` terminal verdict | high | A refute-by-default judge that verifies at low effort silently degrades into a rubber stamp — the gate's entire value is in the verification budget |
 | Security review (`security-reviewer`) | max | The domain the vendor study measured the largest gain in (64%→87%); this is also the one TOP-F reservation (see The ladder) — tier and effort both maxed together, deliberately, for the one review class where a missed finding is a security incident |
 
+**Advisory nudge.** `core/hooks/model-routing-advisor.py` adds one short note
+(inside its single `additionalContext` object, combined with the missing-`model`
+note when both apply) only when a Task/Agent dispatch's description or first 500
+prompt chars name a risk area — security, auth, concurrency, storage/database,
+migration — and carries no valid `effort`: use `effort: high` if an effort
+policy applies. A missing `effort` alone is never nudged (Claude's Agent tool
+guidance sets effort only on request), and the per-wave default table lives in
+`skills/supervise/SKILL.md`. It never blocks; registry-pinned specialists and
+`Plan` stay silent. The rationale ("lower effort misses edge cases") is an
+assumption registered as the `effort-floor` row in `docs/gate-registry.md`,
+not a measurement made in this repo.
+
 **How the harness records this today.** Effort is not yet a silent default —
 it is a stated field: agents carry an `effort:` value alongside their
 `model:` pin in frontmatter, and the dispatch-observation hooks that already

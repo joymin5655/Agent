@@ -23,6 +23,9 @@ quality lever in multi-agent work — fill every section or state why it is empt
   implementation waves, low for mechanical/bounded fan-out work. OMIT the field
   (inherit the session model) only for judgment work: planning, gate verdicts,
   synthesis. Tier ladder and floors: `docs/model-routing.md`>
+- **effort** (optional): <`low` | `medium` | `high` — the wave-default table in
+  `skills/supervise/SKILL.md` (approved spec → low; no spec → medium; risk area
+  → high). Advisory; OMIT when no effort policy applies>
 
 ## Self-contained (no history assumed)
 

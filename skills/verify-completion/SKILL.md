@@ -152,6 +152,13 @@ produces plausible-sounding false CONFIRMED verdicts and silently disables the
 gate. If the session itself runs on a low tier, the judge dispatch must carry
 an explicit `model` override up to the workhorse tier.
 
+**Judge effort floor: `high`** (advisory). Dispatch the judge with
+`effort: high` or above — a refute-by-default judge at low effort degrades
+into a rubber stamp (`docs/model-routing.md` → The effort axis).
+`core/infra/completion-verify.py` is the deterministic pass only (file/test/
+assertion checks via `subprocess`); it makes no model call, so it has no
+effort parameter — the floor applies to the semantic judge you dispatch here.
+
 ### 3. Combine and gate
 
 Merge the two passes into one verdict (`docs/scoring-convention.md` schema):
