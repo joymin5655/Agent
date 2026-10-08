@@ -104,7 +104,10 @@ done < <(jq -r '.roles | to_entries[] | [.key, (.value.tier // "null"), (.value.
 check "role-tier-in-fallback-tier-args" "$ok_fb_tier"
 # EVERY tier of EVERY gateway backend, not only the tiers some role happens to
 # reference: an unpinned tier is a latent default-model, default-tools dispatch
-# the moment a role points at it.
+# the moment a role points at it. No shipped backend carries a gateway since the
+# kiro lanes were retired (2026-10, legacy/lanes-2026-10/), so the loop below is
+# empty and the check passes vacuously; it stays so a re-added gateway lane is
+# held to the same contract.
 ok_gw_tier=0
 while IFS=$'\t' read -r backend tier; do
   if [[ "$tier" == "<tier_args-not-an-object>" ]]; then
@@ -127,6 +130,8 @@ jq -e '.backends | to_entries | map(select(.value.enabled == true))
        | all((.value.cmd | length > 0) and (.value.preflight | length > 0))' \
   "$REGISTRY" >/dev/null 2>&1
 check "enabled-have-cmd-and-preflight" $?
+# No shipped backend is disabled since the 2026-10-08 lane retirement, so this passes on an
+# empty set; it stays as the contract for a lane re-added with enabled:false.
 jq -e '.backends | to_entries | map(select(.value.enabled == false))
        | all(.value.disabled_reason | type == "string" and length > 0)' \
   "$REGISTRY" >/dev/null 2>&1
@@ -147,58 +152,6 @@ echo "=== agy/antigravity lane pins Google-vendor models only (vendor independen
 jq -e '.backends.gemini.comment // "" | test("(?i)google-vendor|gemini-\\*")' \
   "$REGISTRY" >/dev/null 2>&1
 check "gemini-lane-vendor-independence-comment" $?
-
-echo
-echo "=== shipped kiro profile templates: read-only + model pin ==="
-# These are the SHIPPED templates (adapters/kiro/*.json.template), not a fixture.
-# The profile's tool list is the lane's real isolation boundary — it overrides
-# even --trust-all-tools (adapters/kiro/README.md § Read-only by construction) —
-# and until now nothing tested it: flipping every template to
-# ["read","shell","write"] left the whole battery green. The registry forbids
-# model IDs, so the model pin only exists here too; both properties are asserted
-# on the shipped bytes.
-KIRO_TPL_DIR="$REPO_ROOT/adapters/kiro"
-kiro_tpls=()
-for f in "$KIRO_TPL_DIR"/*.json.template; do
-  [[ -e "$f" ]] || continue          # bash 3.2: unmatched glob stays literal
-  kiro_tpls+=("$f")
-done
-[[ ${#kiro_tpls[@]} -gt 0 ]]; check "kiro-templates-exist" $?
-# Read-only capability is an ALLOWLIST, not a denylist: an unrecognized tool name
-# fails the check, so a future shell/write-equivalent capability cannot pass by
-# not being on a blocklist. Both field names are checked — a permissive entry
-# under either one grants the capability.
-KIRO_RO_JQ='
-  ["read", "fs_read", "@builtin/read"] as $ro
-  | [ (.tools // "<missing>"), (.allowedTools // "<missing>") ]
-  | map(if type == "array" then . else ["<not-an-array>"] end)
-  | add
-  | map(. as $e | select((($e | type) != "string") or (($ro | index($e)) == null)))
-  | map(tostring) | unique | join(",")'
-kiro_bad_json="" kiro_bad_tools="" kiro_bad_model="" kiro_empty_tools=""
-for f in ${kiro_tpls[@]+"${kiro_tpls[@]}"}; do
-  base="$(basename "$f")"
-  if ! jq -e . "$f" >/dev/null 2>&1; then
-    kiro_bad_json="${kiro_bad_json:+$kiro_bad_json, }$base"
-    continue
-  fi
-  jq -e '(.model | type == "string") and (.model != "")' "$f" >/dev/null 2>&1 \
-    || kiro_bad_model="${kiro_bad_model:+$kiro_bad_model, }$base"
-  jq -e '((.tools // null) | type == "array" and length > 0)
-         and ((.allowedTools // null) | type == "array" and length > 0)' "$f" >/dev/null 2>&1 \
-    || kiro_empty_tools="${kiro_empty_tools:+$kiro_empty_tools, }$base"
-  offenders="$(jq -r "$KIRO_RO_JQ" "$f" 2>/dev/null)"
-  [[ -z "$offenders" ]] \
-    || kiro_bad_tools="${kiro_bad_tools:+$kiro_bad_tools; }$base -> $offenders"
-done
-[[ -z "$kiro_bad_json" ]] || echo "       invalid JSON: $kiro_bad_json"
-[[ -z "$kiro_bad_json" ]]; check "kiro-templates-valid-json" $?
-[[ -z "$kiro_bad_model" ]] || echo "       no nonempty .model pin: $kiro_bad_model"
-[[ -z "$kiro_bad_model" ]]; check "kiro-templates-pin-a-model" $?
-[[ -z "$kiro_empty_tools" ]] || echo "       tools/allowedTools missing or empty: $kiro_empty_tools"
-[[ -z "$kiro_empty_tools" ]]; check "kiro-templates-declare-both-tool-fields" $?
-[[ -z "$kiro_bad_tools" ]] || echo "       non-read-only tool entries: $kiro_bad_tools"
-[[ -z "$kiro_bad_tools" ]]; check "kiro-templates-are-read-only" $?
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="

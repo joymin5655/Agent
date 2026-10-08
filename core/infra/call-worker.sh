@@ -12,23 +12,25 @@
 #   - backend.enabled: false -> loud refusal citing disabled_reason (never a
 #     silent fallback); backend.preflight argv is run first when present, and
 #     a failing preflight is the same loud-unavailable path.
-#   - backend.gateway (e.g. "kiro"): the vendor is reached THROUGH another
-#     vendor's CLI. Such a backend is dispatched from a NEUTRAL, harness-owned
-#     working directory instead of the caller's cwd — see "Gateway isolation".
+#   - backend.gateway (e.g. "kiro", retired 2026-10 — legacy/lanes-2026-10/):
+#     the vendor is reached THROUGH another vendor's CLI. Such a backend is
+#     dispatched from a NEUTRAL, harness-owned working directory instead of the
+#     caller's cwd — see "Gateway isolation". No shipped backend uses it now.
 #   - The capture header carries "status:" — the mechanical truth layer
 #     (complete|failed|timeout|unavailable) beneath any lane self-report.
 #
 # Gateway isolation (why gateway backends do not inherit the caller's cwd):
 #   A gateway CLI resolves its per-lane profile from the WORKING DIRECTORY first
-#   (kiro: `--agent <name>` reads ./.kiro/agents/<name>.json before
-#   ~/.kiro/agents/<name>.json — measured, and the workspace copy wins). This
-#   dispatcher is normally invoked from the repository under review, so that
-#   repository could ship .kiro/agents/kiro-openai-top.json with
-#   "tools": ["shell","write"] and replace the read-only profile the framework
-#   installed — a write+shell grant handed to an untrusted checkout, with the
-#   registry still reading as a pinned read-only lane. A pre-dispatch scan (the
-#   kiro preflight still does one) cannot close it: the plant can land after the
-#   scan and before the dispatch. So the CWD ITSELF is taken off the table —
+#   (the kiro lanes, retired 2026-10 — legacy/lanes-2026-10/: `--agent <name>`
+#   read ./.kiro/agents/<name>.json before ~/.kiro/agents/<name>.json —
+#   measured, and the workspace copy won). This dispatcher is normally invoked
+#   from the repository under review, so that repository could ship
+#   .kiro/agents/kiro-openai-top.json with "tools": ["shell","write"] and
+#   replace the read-only profile the framework installed — a write+shell grant
+#   handed to an untrusted checkout, with the registry still reading as a pinned
+#   read-only lane. A pre-dispatch scan (the kiro preflight did one) cannot
+#   close it: the plant can land after the scan and before the dispatch. So the
+#   CWD ITSELF is taken off the table —
 #   every backend carrying "gateway" runs in a fresh mktemp directory owned by
 #   this process, which no repository can write into ahead of time. Non-gateway
 #   backends keep inheriting the caller's cwd exactly as before (codex needs it:
@@ -154,8 +156,9 @@ run_backend() {
     # inspects a different directory than the dispatch resolves from is exactly
     # the class of lie this lane already paid for), and is told which lane and
     # which registry to reproduce: AGENT_PREFLIGHT_LANE + AGENT_BACKENDS_FILE let
-    # adapters/kiro/kiro-preflight.sh compose the real dispatch argv instead of
-    # guessing a binary and a model. Harmless for probes that ignore them.
+    # adapters/antigravity/antigravity-preflight.sh compose the real dispatch
+    # argv instead of guessing a binary and a model. Harmless for probes that
+    # ignore them.
     local pf=()
     while IFS= read -r line; do pf+=("$line"); done \
         < <(jq -r --arg b "$name" '.backends[$b].preflight // [] | .[]' "$BACKENDS_FILE")
@@ -165,10 +168,10 @@ run_backend() {
         # call, so the default budget is wider; the env seam still wins.
         # Per-backend preflight_timeout_s beats the gateway/non-gateway split:
         # the split encoded "non-gateway probes are cheap version checks", but a
-        # non-gateway lane whose probe is a REAL inference round trip (grok,
-        # gemini — exact-token probes) dies at 10s under ordinary LLM latency
-        # and spuriously reports unavailable. The registry entry that declares
-        # such a probe now declares its budget too.
+        # non-gateway lane whose probe is a REAL inference round trip (gemini's
+        # exact-token probe; the retired grok lane's was another) dies at 10s
+        # under ordinary LLM latency and spuriously reports unavailable. The
+        # registry entry that declares such a probe now declares its budget too.
         pf_timeout="${AGENT_WORKER_PREFLIGHT_TIMEOUT_S:-}"
         if [[ -z "$pf_timeout" ]]; then
             pf_timeout="$(jq -r --arg b "$name" '.backends[$b].preflight_timeout_s // empty' "$BACKENDS_FILE")"

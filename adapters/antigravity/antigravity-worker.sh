@@ -13,7 +13,7 @@
 # adapters/antigravity/README.md). The worker never logs in; a dead credential is
 # the preflight's problem (fail closed).
 # OPT-IN API KEY: ANTIGRAVITY_AUTH=apikey reads a Gemini API key from the macOS
-# Keychain (service gemini-api-key — same pattern as the OpenRouter worker) and
+# Keychain (service gemini-api-key — same pattern as the retired OpenRouter worker) and
 # exports GEMINI_API_KEY for agy ONLY through the environment: never argv, never
 # logged, never in an error message. agy also needs "modelProvider": "gemini" in
 # ~/.gemini/antigravity-cli/settings.json for the variable to take effect — the
@@ -281,9 +281,9 @@ wait "$child" || rc=$?
 cat "$CAP_DIR/err" >&2
 cat "$CAP_DIR/out"
 
-# Quota / rate-limit detection (EX_TEMPFAIL 75, same contract as the grok and
-# openrouter workers) so call-worker.sh records the lane `rate-limited`, not
-# `failed` (observed 2026-10-07: a gemini 429 captured as failed). A false match
+# Quota / rate-limit detection (EX_TEMPFAIL 75, the adapter contract
+# call-worker.sh maps to `rate-limited`) so the lane is recorded `rate-limited`,
+# not `failed` (observed 2026-10-07: a gemini 429 captured as failed). A false match
 # turns a hard failure into a fail-open lane, so only quota-specific phrases with
 # non-alphanumeric boundaries count — never bare "quota", "rate limit" or "429"
 # ("disk quota exceeded", "separate limits", "took 0.429s" must stay failures).

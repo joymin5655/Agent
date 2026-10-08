@@ -303,7 +303,7 @@ check_true "security-not-called-for-other-auth-value" test ! -e "$SECREC"
 : > "$RECORD"; : > "$ENVREC"; rm -f "$SECREC"
 out="$(printf 'x' | HOME="$AH" USER=testuser ANTIGRAVITY_AUTH=apikey ANTIGRAVITY_TIERS_FILE="$TIERS" bash "$WORKER" --tier mid 2>"$TMP/apikey.err")"
 check "apikey-dispatch-exits-0" 0 $?
-grep -q -- '^argv: find-generic-password -a testuser -s gemini-api-key -w$' "$SECREC"; check "keychain-read-argv-matches-openrouter-pattern" 0 $?
+grep -q -- '^argv: find-generic-password -a testuser -s gemini-api-key -w$' "$SECREC"; check "keychain-read-argv-shape" 0 $?
 grep -q "^GEMINI_API_KEY=$FAKE_KEY\$" "$ENVREC"; check "key-reaches-agy-env" 0 $?
 grep -q '^AGENT_ANTIGRAVITY_WORKER=1$' "$ENVREC"; check "worker-flag-exported-with-apikey" 0 $?
 grep -q "$FAKE_KEY" "$RECORD"; check "key-never-in-agy-argv" 1 $?

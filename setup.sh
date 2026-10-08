@@ -6,14 +6,8 @@
 #   bash setup.sh --claude         # claude only
 #   bash setup.sh --codex          # codex only
 #   bash setup.sh --gemini         # gemini only
-#   bash setup.sh --grok           # grok worker lane only (opt-in — advisory lane,
-#                                   # deliberately NOT part of the default/--all set)
 #   bash setup.sh --antigravity    # antigravity (agy) worker lane + native-hook plugin (opt-in)
-#   bash setup.sh --kiro           # kiro gateway lanes only (opt-in — metered/paid,
-#                                   # deliberately NOT part of the default/--all set)
-#   bash setup.sh --openrouter     # openrouter free-tier worker lane only (opt-in —
-#                                   # advisory lane, deliberately NOT part of --all/default)
-#   bash setup.sh --launchers      # purpose launchers (claude-build/quick/research/ox) only
+#   bash setup.sh --launchers      # purpose launchers (claude-build/quick/research) only
 #   bash setup.sh --project        # +current project scaffold (CLAUDE.md, hook-config.yml, etc.)
 #   bash setup.sh --hooks-only     # install git-hooks (pre-commit, pre-push) only
 #   bash setup.sh --all            # alias for default (all 3 AIs)
@@ -46,10 +40,7 @@ if [[ $# -eq 0 ]]; then
     DO_CODEX=1
     DO_GEMINI=1
 fi
-DO_GROK=${DO_GROK:-0}
 DO_ANTIGRAVITY=${DO_ANTIGRAVITY:-0}
-DO_KIRO=${DO_KIRO:-0}
-DO_OPENROUTER=${DO_OPENROUTER:-0}
 DO_LAUNCHERS=${DO_LAUNCHERS:-0}
 
 for arg in "$@"; do
@@ -57,10 +48,7 @@ for arg in "$@"; do
         --claude)      DO_CLAUDE=1 ;;
         --codex)       DO_CODEX=1 ;;
         --gemini)      DO_GEMINI=1 ;;
-        --grok)        DO_GROK=1 ;;
         --antigravity) DO_ANTIGRAVITY=1 ;;
-        --kiro)        DO_KIRO=1 ;;
-        --openrouter)  DO_OPENROUTER=1 ;;
         --launchers)   DO_LAUNCHERS=1 ;;
         --project)     DO_PROJECT=1 ;;
         --hooks-only)  DO_HOOKS=1 ;;
@@ -70,12 +58,12 @@ for arg in "$@"; do
         --dry-run)     BOOTSTRAP_DRY_RUN=1 ;;
         --all)         DO_CLAUDE=1; DO_CODEX=1; DO_GEMINI=1 ;;
         -h|--help)
-            sed -n '3,16p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '3,10p' "$0" | sed 's/^# \{0,1\}//'
             exit 0
             ;;
         *)
             echo "ERROR: unknown arg: $arg" >&2
-            sed -n '3,16p' "$0" | sed 's/^# \{0,1\}//' >&2
+            sed -n '3,10p' "$0" | sed 's/^# \{0,1\}//' >&2
             exit 2
             ;;
     esac
@@ -299,25 +287,6 @@ install_gemini() {
 }
 
 # ---------------------------------------------------------------------------
-# Grok (xAI) CLI — worker lane only (adapters/grok/README.md)
-# ---------------------------------------------------------------------------
-install_grok() {
-    echo "=== Grok CLI (worker lane) ==="
-    chmod +x "$FRAMEWORK_ROOT/adapters/grok/grok-worker.sh" \
-             "$FRAMEWORK_ROOT/adapters/grok/grok-preflight.sh"
-    ensure_home_bin
-    ln -sf "$FRAMEWORK_ROOT/adapters/grok/grok-worker.sh" "$HOME/bin/grok-worker"
-    ln -sf "$FRAMEWORK_ROOT/adapters/grok/grok-preflight.sh" "$HOME/bin/grok-preflight"
-    echo "  symlink: ~/bin/grok-worker, ~/bin/grok-preflight"
-    if [[ -d "$HOME/.grok" && ! -f "$HOME/.grok/agent-tiers.json" ]]; then
-        cp "$FRAMEWORK_ROOT/adapters/grok/grok-tiers.json.template" "$HOME/.grok/agent-tiers.json"
-        echo "  installed: ~/.grok/agent-tiers.json"
-    elif [[ ! -d "$HOME/.grok" ]]; then
-        echo "  NOTE: grok CLI not initialized yet (~/.grok missing) — run the grok CLI once, then re-run 'setup.sh --grok' to seed agent-tiers.json"
-    fi
-}
-
-# ---------------------------------------------------------------------------
 # Antigravity (agy) CLI — worker lane + native-hook plugin folder
 # (adapters/antigravity/README.md). Successor to the retired gemini CLI review
 # lane; default auth lives in the OS keyring, API-key auth is opt-in guidance.
@@ -372,78 +341,6 @@ GUIDE
 }
 
 # ---------------------------------------------------------------------------
-# Kiro CLI — gateway worker lanes only (adapters/kiro/README.md). Metered/paid
-# (KIRO_API_KEY, billed per call, including the preflight itself) — opt-in,
-# deliberately NOT part of --all/default, same stance as --grok/--antigravity.
-# ---------------------------------------------------------------------------
-install_kiro() {
-    echo "=== Kiro CLI (gateway worker lanes) ==="
-    ensure_home_bin
-    mkdir -p "$HOME/.kiro/agents"
-
-    local tpl base dst
-    for tpl in "$FRAMEWORK_ROOT"/adapters/kiro/*.json.template; do
-        [[ -e "$tpl" ]] || continue   # bash 3.2: unmatched glob stays literal
-        base="$(basename "$tpl" .json.template)"
-        dst="$HOME/.kiro/agents/$base.json"
-        # -L as well as -e: a dangling symlink is false under -e, and cp would
-        # then write THROUGH the link to wherever it points instead of skipping.
-        if [[ -e "$dst" || -L "$dst" ]]; then
-            echo "  skipped (exists — user-owned model pin): $dst"
-        else
-            cp "$tpl" "$dst"
-            echo "  seeded: $dst"
-        fi
-    done
-
-    chmod +x "$FRAMEWORK_ROOT/adapters/kiro/kiro-preflight.sh"
-    # -n so an existing symlink-to-a-directory is replaced, not linked into.
-    ln -sfn "$FRAMEWORK_ROOT/adapters/kiro/kiro-preflight.sh" "$HOME/bin/kiro-preflight"
-    echo "  symlink: ~/bin/kiro-preflight"
-
-    # AGENT_KIRO_CLI: test seam (like CODEX_GLOBAL_AGENTS) — lets the doctor
-    # battery assert the missing-CLI note deterministically on a machine where
-    # the real kiro-cli IS installed.
-    if ! command -v "${AGENT_KIRO_CLI:-kiro-cli}" >/dev/null 2>&1; then
-        echo "  NOTE: kiro-cli not found on PATH — install: curl -fsSL https://cli.kiro.dev/install | bash"
-        echo "  NOTE: auth is KIRO_API_KEY (paid, issued at app.kiro.dev -> API Keys) — see adapters/kiro/README.md"
-    fi
-    return 0
-}
-
-# ---------------------------------------------------------------------------
-# OpenRouter — free-tier worker lane only (adapters/openrouter/README.md).
-# No CLI to install — a direct HTTPS call, credential in the macOS Keychain.
-# ---------------------------------------------------------------------------
-install_openrouter() {
-    echo "=== OpenRouter (worker lane, free advisory) ==="
-    chmod +x "$FRAMEWORK_ROOT/adapters/openrouter/openrouter-worker.sh" \
-             "$FRAMEWORK_ROOT/adapters/openrouter/openrouter-preflight.sh"
-    ensure_home_bin
-    ln -sf "$FRAMEWORK_ROOT/adapters/openrouter/openrouter-worker.sh" "$HOME/bin/openrouter-worker"
-    ln -sf "$FRAMEWORK_ROOT/adapters/openrouter/openrouter-preflight.sh" "$HOME/bin/openrouter-preflight"
-    echo "  symlink: ~/bin/openrouter-worker, ~/bin/openrouter-preflight"
-
-    mkdir -p "$HOME/.openrouter"
-    if [[ ! -f "$HOME/.openrouter/agent-tiers.json" ]]; then
-        cp "$FRAMEWORK_ROOT/adapters/openrouter/openrouter-tiers.json.template" "$HOME/.openrouter/agent-tiers.json"
-        echo "  installed: ~/.openrouter/agent-tiers.json"
-    fi
-
-    # Shared with adapters/claude-code/launchers/claude-ox — one guard file,
-    # two consumers. Never overwritten once present (personal entries live here).
-    mkdir -p "$HOME/.config/agent-harness"
-    if [[ ! -f "$HOME/.config/agent-harness/sensitive-paths" ]]; then
-        cp "$FRAMEWORK_ROOT/adapters/openrouter/sensitive-paths.template" "$HOME/.config/agent-harness/sensitive-paths"
-        echo "  installed: ~/.config/agent-harness/sensitive-paths (generic defaults — add personal paths locally)"
-    fi
-
-    if command -v security >/dev/null 2>&1 && ! security find-generic-password -a "$USER" -s openrouter-api-key -w >/dev/null 2>&1; then
-        echo "  NOTE: no Keychain entry 'openrouter-api-key' yet — register: security add-generic-password -a \"\$USER\" -s openrouter-api-key -w"
-    fi
-}
-
-# ---------------------------------------------------------------------------
 # Purpose launchers — session-start rung entry points
 # (adapters/claude-code/launchers/README.md). Opt-in.
 # ---------------------------------------------------------------------------
@@ -456,12 +353,6 @@ install_launchers() {
     ln -sf "$ldir/claude-quick"    "$HOME/bin/claude-quick"
     ln -sf "$ldir/claude-research" "$HOME/bin/claude-research"
     echo "  symlink: ~/bin/claude-build, ~/bin/claude-quick, ~/bin/claude-research"
-
-    # claude-ox is user-customizable (OX_MODEL, blocklist overrides live in the
-    # rendered file) — copy-if-absent / drift-confirm via apply_template, same
-    # as every other rendered-not-symlinked file in this script.
-    apply_template "$ldir/claude-ox.template" "$HOME/bin/claude-ox"
-    chmod +x "$HOME/bin/claude-ox" 2>/dev/null || true
 }
 
 # ---------------------------------------------------------------------------
@@ -1332,197 +1223,6 @@ PY
         esac
     fi
 
-    # 21. kiro gateway-lane wiring — sibling of check 13 (codex tier profiles):
-    #     the registry declares a tier ladder, and nothing after copy time
-    #     verifies the pieces it names are actually installed here. A kiro
-    #     lane needs three things beyond the registry entry: the gateway CLI,
-    #     one profile file per `--agent <name>` in tier_args (the profile is
-    #     where the model AND the read-only tool list live — see
-    #     adapters/kiro/README.md), and a resolvable preflight probe. Names
-    #     are DERIVED from backends.json, never hardcoded, so a registry edit
-    #     is picked up without touching this check. WARN-only: an uninstalled
-    #     optional lane is machine state, not repo integrity. No enabled kiro
-    #     backend -> skipped (nothing to wire). jq absent -> skipped LOUDLY
-    #     (the registry is JSON; guessing would be a false PASS).
-    #
-    #     An ENABLED lane that yields ZERO profiles or ZERO preflight entries is
-    #     a WARN naming the lane, never a PASS: an earlier revision only
-    #     accumulated MISSING files, so {"tier_args":{"TOP":[]},"preflight":[]}
-    #     printed "0 profile(s) present ... preflight resolvable (none
-    #     declared)" as a PASS — a lane with neither a read-only profile nor a
-    #     fail-closed probe reported healthy. Malformed shapes are named for the
-    #     same reason (they used to be silently dropped by the jq program): a
-    #     non-array cmd, a non-object tier_args, a dangling trailing --agent, a
-    #     non-string first preflight element.
-    local kiro_reg="${AGENT_BACKENDS_FILE:-$FRAMEWORK_ROOT/core/infra/backends.json}"
-    local kiro_agents_dir="${AGENT_KIRO_AGENTS_DIR:-$HOME/.kiro/agents}"
-    # strip control chars before echoing registry/config-derived text back to a
-    # terminal (escape-sequence display spoofing — same hardening as checks 12/15/16/20).
-    local kiro_agents_shown kiro_reg_shown
-    kiro_agents_shown="$(printf '%s' "${kiro_agents_dir/#$HOME/~}" | tr -d '\000-\037\177')"
-    kiro_reg_shown="$(printf '%s' "${kiro_reg/#$HOME/~}" | tr -d '\000-\037\177')"
-    # kcsv <accumulator> <item> — comma-join with dedup. bash 3.2 has no
-    # associative arrays and these lists are single-digit sized.
-    kcsv() {
-        local acc="$1" item="$2"
-        case ",$acc," in *",$item,"*|*", $item,"*) printf '%s' "$acc"; return 0 ;; esac
-        printf '%s' "${acc:+$acc, }$item"
-    }
-    if [[ ! -f "$kiro_reg" ]]; then
-        add_row PASS "kiro gateway lanes — no backends registry at $kiro_reg_shown (check skipped)"
-    elif ! command -v jq >/dev/null 2>&1; then
-        add_row WARN "kiro gateway lanes — check skipped: jq not found and the backends registry is JSON, so the enabled kiro lanes cannot be enumerated (no guess is made — that would be a false PASS). Install: brew install jq (macOS) or apt install jq"
-    else
-        # One jq pass emits tagged TAB-separated lines, one per (lane, fact).
-        # Control chars in any derived name are replaced INSIDE jq (`sane`) so a
-        # crafted registry cannot split a line here, let alone a doctor row.
-        # Every shape that is not usable emits a bad* row instead of vanishing.
-        local kiro_jq_out kiro_jq_rc=0
-        kiro_jq_out="$(jq -r '
-            def sane: gsub("[[:cntrl:]]"; "?");
-            (.backends // {}) | to_entries
-            | map(select((.value.gateway? == "kiro") and (.value.enabled == true)))
-            | .[]
-            | (.key | sane) as $n
-            | ( "lane\t" + $n ),
-              ( (.value.cmd // null)
-                | if (type == "array") and (length > 0)
-                     and ((.[0] | type) == "string") and (.[0] != "")
-                  then "cli\t" + $n + "\t" + (.[0] | sane)
-                  else "badcmd\t" + $n end ),
-              ( (.value.tier_args // {}) as $ta
-                | if ($ta | type) == "object"
-                  then ( $ta | to_entries[] | (.key | sane) as $t | .value
-                         | if type == "array"
-                           then ( . as $a
-                                  | [ range(0; ($a | length)) as $i
-                                      | select($a[$i] == "--agent")
-                                      | select(($i + 1) < ($a | length))
-                                      | select(($a[$i + 1] | type) == "string")
-                                      | select($a[$i + 1] != "")
-                                      | $a[$i + 1] ]
-                                  | if length == 0
-                                    then "badtier\t" + $n + "\t" + $t
-                                    else (.[] | "profile\t" + $n + "\t" + sane) end )
-                           else "badtier\t" + $n + "\t" + $t end )
-                  else "badtierargs\t" + $n end ),
-              ( (.value.preflight // [])
-                | if type == "array"
-                  then ( if length == 0 then "nopreflight\t" + $n
-                         elif ((.[0] | type) == "string") and (.[0] != "")
-                         then "preflight\t" + $n + "\t" + (.[0] | sane)
-                         else "badpreflight\t" + $n end )
-                  else "badpreflight\t" + $n end )
-        ' "$kiro_reg" 2>&1)" || kiro_jq_rc=$?
-        if [[ $kiro_jq_rc -ne 0 ]]; then
-            local kiro_err
-            kiro_err="$(printf '%s\n' "$kiro_jq_out" | head -1 | tr -d '\000-\037\177')"
-            add_row WARN "kiro gateway lanes — registry unreadable ($kiro_reg_shown): $kiro_err; the enabled kiro lanes cannot be enumerated"
-        else
-            local k_tag k_a k_b
-            # Arrays, not space-joined strings: a registry-derived name
-            # containing whitespace must stay ONE name (word splitting would
-            # both mangle the row and stat() nonexistent fragments).
-            local kiro_lane_names=() kiro_clis=() kiro_profs=() kiro_prof_lanes=()
-            local kiro_pfs=() kiro_badtier_lanes=()
-            local kiro_badcmd="" kiro_badtier="" kiro_badtierargs=""
-            local kiro_nopf="" kiro_badpf=""
-            while IFS=$'\t' read -r k_tag k_a k_b; do
-                case "$k_tag" in
-                    lane)        kiro_lane_names+=("$k_a") ;;
-                    cli)         kiro_clis+=("$k_b") ;;
-                    profile)     kiro_prof_lanes+=("$k_a"); kiro_profs+=("$k_b") ;;
-                    preflight)   kiro_pfs+=("$k_b") ;;
-                    badcmd)      kiro_badcmd="$(kcsv "$kiro_badcmd" "$k_a")" ;;
-                    badtier)     kiro_badtier="$(kcsv "$kiro_badtier" "$k_a:$k_b")"
-                                 kiro_badtier_lanes+=("$k_a") ;;
-                    badtierargs) kiro_badtierargs="$(kcsv "$kiro_badtierargs" "$k_a")" ;;
-                    nopreflight) kiro_nopf="$(kcsv "$kiro_nopf" "$k_a")" ;;
-                    badpreflight) kiro_badpf="$(kcsv "$kiro_badpf" "$k_a")" ;;
-                esac
-            done <<< "$kiro_jq_out"
-            local kiro_lanes=${#kiro_lane_names[@]}
-            local kiro_item kiro_missing=""
-            if [[ "$kiro_lanes" -eq 0 ]]; then
-                add_row PASS "kiro gateway lanes — no enabled kiro backend in $kiro_reg_shown (check skipped)"
-            else
-                for kiro_item in ${kiro_clis[@]+"${kiro_clis[@]}"}; do
-                    command -v "$kiro_item" >/dev/null 2>&1 \
-                        || kiro_missing="$(kcsv "$kiro_missing" "$kiro_item")"
-                done
-                if [[ -n "$kiro_missing" ]]; then
-                    # One actionable row, not a cascade: with no gateway CLI the
-                    # profile and preflight rows below are noise, so they are skipped.
-                    add_row WARN "kiro gateway lanes — gateway CLI not installed: $kiro_missing; all $kiro_lanes enabled kiro lane(s) in $kiro_reg_shown are dead until it is on PATH. Install Kiro CLI, or set enabled: false with a disabled_reason (adapters/kiro/README.md)"
-                else
-                    # Per-lane: zero usable profiles is a WARN on its own, before
-                    # any question of whether a profile FILE is installed.
-                    local kiro_lane kiro_noprof="" kiro_partial="" kiro_seen
-                    local kiro_lane_profs kiro_lane_bad
-                    for kiro_lane in ${kiro_lane_names[@]+"${kiro_lane_names[@]}"}; do
-                        kiro_lane_profs=0
-                        for kiro_seen in ${kiro_prof_lanes[@]+"${kiro_prof_lanes[@]}"}; do
-                            [[ "$kiro_seen" == "$kiro_lane" ]] && kiro_lane_profs=$((kiro_lane_profs + 1))
-                        done
-                        kiro_lane_bad=0
-                        for kiro_seen in ${kiro_badtier_lanes[@]+"${kiro_badtier_lanes[@]}"}; do
-                            [[ "$kiro_seen" == "$kiro_lane" ]] && kiro_lane_bad=$((kiro_lane_bad + 1))
-                        done
-                        if [[ "$kiro_lane_profs" -eq 0 ]]; then
-                            kiro_noprof="$(kcsv "$kiro_noprof" "$kiro_lane")"
-                        elif [[ "$kiro_lane_bad" -gt 0 ]]; then
-                            kiro_partial="$(kcsv "$kiro_partial" "$kiro_lane")"
-                        fi
-                    done
-                    local kiro_missing_profs="" kiro_prof_count=0 kiro_uniq_profs=""
-                    for kiro_item in ${kiro_profs[@]+"${kiro_profs[@]}"}; do
-                        case ",$kiro_uniq_profs," in *",$kiro_item,"*) continue ;; esac
-                        kiro_uniq_profs="${kiro_uniq_profs:+$kiro_uniq_profs,}$kiro_item"
-                        kiro_prof_count=$((kiro_prof_count + 1))
-                        [[ -f "$kiro_agents_dir/$kiro_item.json" ]] \
-                            || kiro_missing_profs="$(kcsv "$kiro_missing_profs" "$kiro_item")"
-                    done
-                    local kiro_missing_pfs=""
-                    for kiro_item in ${kiro_pfs[@]+"${kiro_pfs[@]}"}; do
-                        command -v "$kiro_item" >/dev/null 2>&1 \
-                            || kiro_missing_pfs="$(kcsv "$kiro_missing_pfs" "$kiro_item")"
-                    done
-                    if [[ -n "$kiro_badcmd" ]]; then
-                        add_row WARN "kiro gateway lanes — enabled lane(s) with an unusable cmd in $kiro_reg_shown: $kiro_badcmd; cmd must be an array whose first element is a nonempty string (it is the gateway binary call-worker.sh dispatches and the preflight probes)"
-                    fi
-                    if [[ -n "$kiro_badtierargs" ]]; then
-                        add_row WARN "kiro gateway lanes — enabled lane(s) whose tier_args is not an object in $kiro_reg_shown: $kiro_badtierargs; no tier can resolve, so every dispatch runs with the gateway's default model and default (NOT read-only) tools"
-                    fi
-                    if [[ -n "$kiro_noprof" ]]; then
-                        add_row WARN "kiro gateway lanes — enabled lane(s) pinning NO --agent profile in $kiro_reg_shown: $kiro_noprof; the model AND the read-only tool list live in the profile, so such a lane dispatches with the gateway's defaults (default model, NOT read-only). Give each tier [\"--agent\", \"<profile>\"], or set enabled: false with a disabled_reason (adapters/kiro/README.md)"
-                    fi
-                    if [[ -n "$kiro_partial" ]]; then
-                        add_row WARN "kiro gateway lanes — tier(s) that do not pin a profile: $kiro_badtier; a tier whose args carry no \"--agent <name>\" (empty, or a trailing --agent with nothing after it) composes to the bare cmd: default model, NOT read-only. Lane(s) affected: $kiro_partial"
-                    fi
-                    if [[ -n "$kiro_nopf" ]]; then
-                        add_row WARN "kiro gateway lanes — enabled lane(s) declaring NO preflight probe in $kiro_reg_shown: $kiro_nopf; nothing then verifies the credential before a paid dispatch, and no kiro-cli subcommand reports auth failure via exit code (adapters/kiro/README.md § Authentication). Declare \"preflight\": [\"kiro-preflight\"]"
-                    fi
-                    if [[ -n "$kiro_badpf" ]]; then
-                        add_row WARN "kiro gateway lanes — enabled lane(s) with an unusable preflight argv in $kiro_reg_shown: $kiro_badpf; preflight must be an array whose first element is a nonempty string (call-worker.sh execs it verbatim)"
-                    fi
-                    if [[ -n "$kiro_missing_profs" ]]; then
-                        add_row WARN "kiro gateway lanes — profile(s) referenced by an enabled kiro backend missing from $kiro_agents_shown: $kiro_missing_profs; the lane's model and its read-only tool list live in the profile, so --agent resolves to nothing. Install: for f in adapters/kiro/*.json.template; do cp \"\$f\" $kiro_agents_shown/\"\$(basename \"\$f\" .json.template)\".json; done (adapters/kiro/README.md § Installation)"
-                    fi
-                    if [[ -n "$kiro_missing_pfs" ]]; then
-                        add_row WARN "kiro gateway lanes — preflight probe not resolvable on PATH: $kiro_missing_pfs; call-worker.sh runs the registry's preflight argv before every dispatch, so an unresolvable probe exits 127 there and the lane reports UNAVAILABLE (call-worker exit 127) — the lane is dead, not merely unhardened. Install: ln -sf \"\$PWD/adapters/kiro/kiro-preflight.sh\" ~/bin/kiro-preflight (adapters/kiro/README.md § Installation)"
-                    fi
-                    if [[ -z "$kiro_badcmd$kiro_badtierargs$kiro_noprof$kiro_partial$kiro_nopf$kiro_badpf$kiro_missing_profs$kiro_missing_pfs" ]]; then
-                        local kiro_pf_shown=""
-                        for kiro_item in ${kiro_pfs[@]+"${kiro_pfs[@]}"}; do
-                            kiro_pf_shown="$(kcsv "$kiro_pf_shown" "$kiro_item")"
-                        done
-                        add_row PASS "kiro gateway lanes — $kiro_lanes enabled lane(s), $kiro_prof_count profile(s) present in $kiro_agents_shown, preflight resolvable ($kiro_pf_shown)"
-                    fi
-                fi
-            fi
-        fi
-    fi
-
     # -- worker symlink dir: ~/bin exists AND is on PATH. Every install_* above
     # now creates ~/bin unconditionally (ensure_home_bin) and lands its
     # worker/preflight symlinks there, so this is a companion check to the
@@ -1543,11 +1243,9 @@ PY
     fi
 
     # -- worker lanes (generic): every ENABLED backend in the registry must
-    # resolve its cmd[0] and its preflight[0] on PATH. This generalizes the
-    # kiro-specific block above to non-gateway lanes (grok-worker, and
-    # gemini-worker once that lane is re-enabled): call-worker.sh execs both
-    # argvs verbatim, so an unresolvable one is a dead lane (exit 127), not
-    # merely an unhardened one.
+    # resolve its cmd[0] and its preflight[0] on PATH. call-worker.sh execs
+    # both argvs verbatim, so an unresolvable one is a dead lane (exit 127),
+    # not merely an unhardened one.
     if command -v jq >/dev/null 2>&1 && [[ -f "$FRAMEWORK_ROOT/core/infra/backends.json" ]]; then
         local wl_missing="" wl_lanes="" wl_row
         while IFS=$'\t' read -r wl_lane wl_bin; do
@@ -1559,7 +1257,7 @@ PY
                         | .key as $l | ((.value.cmd // [])[0] // ""), ((.value.preflight // [])[0] // "")
                         | [$l, .] | @tsv' "$FRAMEWORK_ROOT/core/infra/backends.json" 2>/dev/null)
         if [[ -n "$wl_missing" ]]; then
-            add_row WARN "worker lanes — enabled backend(s) whose cmd[0]/preflight[0] is not resolvable on PATH: $wl_missing; call-worker.sh execs the registry argv verbatim, so the lane reports UNAVAILABLE (exit 127). Install the symlinks (setup.sh --codex/--gemini/--grok/--antigravity/--kiro/--openrouter, or ln -sf by hand — see the adapter README), and note a lane also needs its vendor CLI installed and authenticated — /worker-setup walks that per lane"
+            add_row WARN "worker lanes — enabled backend(s) whose cmd[0]/preflight[0] is not resolvable on PATH: $wl_missing; call-worker.sh execs the registry argv verbatim, so the lane reports UNAVAILABLE (exit 127). Install the symlinks (setup.sh --codex/--gemini/--antigravity, or ln -sf by hand — see the adapter README), and note a lane also needs its vendor CLI installed and authenticated — /worker-setup walks that per lane"
         elif [[ -n "$wl_lanes" ]]; then
             add_row PASS "worker lanes — enabled backend(s) resolvable on PATH: $wl_lanes"
         fi
@@ -1814,8 +1512,7 @@ echo
 if [[ $DO_INSTRUCTIONS -eq 1 ]]; then
     if [[ $DO_CLAUDE -eq 1 || $DO_CODEX -eq 1 || $DO_GEMINI -eq 1 ||
           $DO_PROJECT -eq 1 || $DO_HOOKS -eq 1 || $DO_BOOTSTRAP -eq 1 ||
-          $DO_DOCTOR -eq 1 || $DO_GROK -eq 1 || $DO_ANTIGRAVITY -eq 1 ||
-          $DO_KIRO -eq 1 || $DO_OPENROUTER -eq 1 || $DO_LAUNCHERS -eq 1 ]]; then
+          $DO_DOCTOR -eq 1 || $DO_ANTIGRAVITY -eq 1 || $DO_LAUNCHERS -eq 1 ]]; then
         echo "--instructions-only cannot be combined with other install modes" >&2
         exit 2
     fi
@@ -1844,10 +1541,7 @@ fi
 [[ $DO_CLAUDE -eq 1 ]] && install_claude
 [[ $DO_CODEX -eq 1 ]]  && install_codex
 [[ $DO_GEMINI -eq 1 ]] && install_gemini
-[[ $DO_GROK -eq 1 ]]   && install_grok
 [[ $DO_ANTIGRAVITY -eq 1 ]] && install_antigravity
-[[ $DO_KIRO -eq 1 ]]   && install_kiro
-[[ $DO_OPENROUTER -eq 1 ]] && install_openrouter
 [[ $DO_LAUNCHERS -eq 1 ]] && install_launchers
 [[ $DO_PROJECT -eq 1 ]] && install_project
 

@@ -234,7 +234,7 @@ just what this doc recommends.
 | Codex CLI | GPT-6 named profiles (per-profile config files): `quick` = LOW (`gpt-6-luna` @ low effort), default = MID (`gpt-6-sol` @ medium effort), `deep` = TOP (`gpt-6-astra` @ xhigh effort); `model_reasoning_effort` is the effort dial | `adapters/codex/codex-config.toml.template` + `quick.config.toml.template` / `deep.config.toml.template` |
 | Gemini CLI (direct `oauth-personal`) | `settings.json` default model = workhorse; callers escalate with explicit `-m`. Retired for individuals (2026-07-17) — see the Cross-vendor lane note below; kept here only as the adapter-template record | `adapters/gemini/gemini-settings.json.template` |
 | Antigravity (the live gemini lane) | Tiers keyed by model ID in a single tiers file the antigravity-worker resolves per call — MID/TOP entries, moved from the vendor-owned directory to a harness-owned path so an agy CLI reinstall can't silently reset the pin; `--effort` flag optional alongside the tier's own baked-in reasoning level | `~/.agent/antigravity-tiers.json` (installed from `adapters/antigravity/antigravity-tiers.json.template`), `adapters/antigravity/antigravity-worker.sh` |
-| Claude Code — purpose launchers | Session-start human choice of tier/gateway (`claude-build`/`claude-quick`/`claude-research`/`claude-ox`); a launcher presets the model before the session exists — the allowed side of the no-runtime-switching line | `adapters/claude-code/launchers/`, `docs/launchers.md` |
+| Claude Code — purpose launchers | Session-start human choice of tier (`claude-build`/`claude-quick`/`claude-research`); a launcher presets the model before the session exists — the allowed side of the no-runtime-switching line | `adapters/claude-code/launchers/`, `docs/launchers.md` |
 
 **Codex pin drift**: the Codex row's model IDs are a snapshot. Which family each tier uses
 lives in `~/.agent/codex-tiers.json` (`adapters/codex/codex-tiers.json.template`, families
@@ -252,33 +252,29 @@ shared blind spot doesn't survive review.
 
 - **SSOT (machine-readable): `core/infra/backends.json`** — role → backend →
   CLI argv. Roles shipped: `second-opinion-review` and `second-opinion-verify`
-  (codex primary, `kiro-openai` fallback). Model names deliberately never
-  appear in the registry or the dispatcher: each vendor's adapter profile owns
-  its tier (the rows above — `codex --profile deep` is the TOP-tier reasoning
-  profile; `kiro --agent <profile>` pins its model in
-  `adapters/kiro/*.json.template`), so tier policy stays in one place.
-- **Gateway backends (2026-07-30).** Kiro CLI is one credential reaching many
-  vendors, so it registers as several backends — `kiro-openai`, `kiro-zhipu`,
-  `kiro-anthropic` — each carrying the vendor it actually reaches plus
-  `"gateway": "kiro"`. The split is not cosmetic: a second opinion is only
-  independent when its vendor differs from the dispatching session's, and a
-  single `"vendor": "aws"` entry would hide a Claude-session-reviewing-Claude
-  lane behind a label that looks cross-vendor. Kiro lanes are read-only by
-  profile — verified that a profile's tool list overrides even
-  `--trust-all-tools` — so they carry review/verify/advisor, never
-  `implementer`. Auth is `KIRO_API_KEY` (Pro-tier) and no kiro-cli subcommand
-  reports auth failure via exit code, hence the `kiro-preflight` probe — a real
-  round trip that must get one exact token back, composed from the registry's own
-  `cmd` + `tier_args` so it exercises the `--agent` resolution the dispatch uses
-  (billable: it rides the lane's cheapest profile). `adapters/kiro/README.md` has
-  the measurements, the cost note and the lapse path.
+  (codex, no fallback — an absent lane is reported absent, never substituted).
+  Model names deliberately never appear in the registry or the dispatcher: each
+  vendor's adapter profile owns its tier (the rows above — `codex --profile
+  deep` is the TOP-tier reasoning profile; the antigravity worker pins its
+  model in `adapters/antigravity/antigravity-tiers.json.template`), so tier
+  policy stays in one place. The harness ships three vendor lanes: Claude Code
+  (host), Codex (openai) and Gemini through the Antigravity CLI `agy` (google).
+- **Gateway backends (2026-07-30; none shipped since 2026-10-08).** A CLI that
+  is one credential reaching many vendors registers as several backends, each
+  carrying the vendor it actually reaches plus a `"gateway": "<cli>"` field. The
+  split is not cosmetic: a second opinion is only independent when its vendor
+  differs from the dispatching session's, and a single `"vendor": "aws"`-style
+  entry would hide a Claude-session-reviewing-Claude lane behind a label that
+  looks cross-vendor. The only gateway was Kiro (`kiro-openai`, `kiro-zhipu`,
+  `kiro-anthropic`), retired with the other lanes below; the registry field and
+  the isolation that follows stay supported.
 - **Gateway isolation.** A gateway CLI resolves its profile from the working
-  directory first (`./.kiro/agents/<name>.json` beats `~/.kiro/agents/...` —
-  measured), so `call-worker.sh` dispatches any backend carrying `"gateway"` from
-  a neutral `mktemp -d` it owns, never the caller's cwd. Otherwise the repository
-  under review could replace a read-only profile with a `shell`+`write` one; a
-  pre-dispatch scan cannot close that (plant-after-scan wins). Non-gateway
-  backends still inherit the caller's cwd.
+  directory first (kiro: `./.kiro/agents/<name>.json` beat `~/.kiro/agents/...`
+  — measured), so `call-worker.sh` dispatches any backend carrying `"gateway"`
+  from a neutral `mktemp -d` it owns, never the caller's cwd. Otherwise the
+  repository under review could replace a read-only profile with a
+  `shell`+`write` one; a pre-dispatch scan cannot close that (plant-after-scan
+  wins). Non-gateway backends still inherit the caller's cwd.
 - **Gemini backend: retired (2026-07-17) for direct `oauth-personal` access,
   re-enabled (2026-08-20, #114) via an Antigravity worker bridge.** Upstream
   deprecated `oauth-personal` for individuals (gemini-cli 0.44–0.46 throws
@@ -287,18 +283,16 @@ shared blind spot doesn't survive review.
   now dispatches through `antigravity-worker` (`cmd`) with an
   `antigravity-preflight` health probe — `enabled: true`, `third-opinion-review`
   live. `third-opinion-review` still carries `fallback: null` on purpose —
-  falling back to `kiro-openai` would duplicate the codex lane's vendor and
+  falling back to an openai-vendor lane would duplicate the codex lane's vendor and
   fake the council's independence signal; an absent lane is reported absent
   instead of silently substituted.
-- **Grok advisor lane (2026-08-19).** `grok` registers enabled as vendor `xai`
-  carrying the **`advisor-third`** role only — deliberately wired to NO gate
-  role: Grok 4.6 benchmarks a tier below the frontier on code correctness, so
-  the lane exists for perspective diversity, is opt-in per consumer
-  (`/council-review --with-grok`), and its findings are tagged
-  `[grok:advisory]` and never flip a verdict. Read-only is OS-enforced by
-  `grok-worker.sh` (sandbox-exec deny-write + neutral cwd) because the CLI's
-  own flags demonstrably do not block writes — measurements in
-  `adapters/grok/README.md`.
+- **Retired lanes (2026-10-08).** The grok advisor lane (`advisor-third`,
+  `/council-review --with-grok`), the kiro gateway lanes (`kiro-openai`,
+  `kiro-zhipu`, `kiro-anthropic`), the openrouter free advisor lane
+  (`advisor-free`, `--with-free`) and the `claude-ox` launcher were retired by
+  the maintainer. None held a council or gate vote, so review and gate outcomes
+  are unchanged. The files stay under `legacy/lanes-2026-10/` for reference;
+  its `README.md` has the reasons and what restoring a lane takes.
 - **Dispatcher: `core/infra/call-worker.sh <role> < prompt.md`** — captures
   the reply to `~/.agent/workers/<project-key>/<ts>-<role>.md` (key = sha256 of the
   caller's project root, first 12 hex; override with `AGENT_WORKERS_DIR`), appends
@@ -320,9 +314,8 @@ shared blind spot doesn't survive review.
   `/council-review` consumes the review roles in parallel — codex
   (`second-opinion-review`, implementation-correctness lens) + gemini
   (`third-opinion-review`, architecture/consistency lens) beside the Claude
-  `code-reviewer` agent, grok (`advisor-third`) opt-in and deliberately
-  unscoped — and synthesizes with citation verification against the actual
-  files. Lens preambles (emphasis, not permission) live in
+  `code-reviewer` agent — and synthesizes with citation verification against
+  the actual files. Lens preambles (emphasis, not permission) live in
   `skills/council-review/SKILL.md` step 1.
 - **Conditional council auto-escalation (2026-08-20).** A council-scale diff
   (changed lines ≥ `AGENT_COUNCIL_LINES` [200], changed files ≥
@@ -350,36 +343,24 @@ shared blind spot doesn't survive review.
   regardless of tier — `security-reviewer`'s dispatch timing is unchanged by
   this policy.
 - **Lane cost models (2026-08-20).** Onboarding is `/worker-setup`; this is
-  its SSOT for what each lane actually costs. **grok** — the user's xAI
-  account, operated on the free tier by design; a rate-limit hit fails open
-  (lane skipped, retry later, no upgrade prompt — see the rate-limit
-  contract above). **antigravity (gemini lane)** — the user's Google account
-  quota (Antigravity free/AI Pro tiers), authenticated via the OS keyring.
-  **codex** — the user's ChatGPT subscription quota. **kiro-* (openai/zhipu/
-  anthropic gateway lanes)** — `KIRO_API_KEY`, metered/paid per call, and the
-  preflight itself is a real billable round trip on the lane's cheapest tier
-  (`adapters/kiro/README.md` § Cost of a preflight) — never free to check.
-  **openrouter (`advisor-free`, 2026-08-25)** — OpenRouter `:free` routes,
-  zero-cost by design (20 req/min, 50 req/day; 1,000/day after a one-time
-  ≥$10 credit purchase); a 429 fails open exactly like grok. Free is not
-  costless: a `:free` route's upstream provider may retain/train on prompts,
-  so the worker refuses sensitive working directories (shared
-  `~/.config/agent-harness/sensitive-paths` guard) and prints a retention
-  warning on every dispatch — non-voting `advisor-free` role only, opt-in via
-  `/council-review --with-free` (`adapters/openrouter/README.md`).
+  its SSOT for what each lane actually costs. **antigravity (gemini lane)** —
+  the user's Google account quota (Antigravity free/AI Pro tiers),
+  authenticated via the OS keyring; a quota hit fails open (the lane is
+  recorded `rate-limited` and skipped, retry later, no upgrade prompt).
+  **codex** — the user's ChatGPT subscription quota.
 - **Free-lane allocation (designed 2026-08-25,
   `.agent/plans/free-lanes-and-launchers/spec.md`).** The former
   "tier/cost-aware task allocation" follow-up is now designed, and the
   allocation mechanism is deliberately *human-held and deterministic*: a
   purpose launcher chosen at session start (`docs/launchers.md`) decides the
-  session's tier, and opt-in council flags (`--with-grok`, `--with-free`)
-  decide which free advisory lanes run — prefer-free-over-metered is a
-  standing caller guideline, never a classifier (see § What this policy
-  deliberately does not do). New free lanes are wired only when all four GO
-  criteria hold (sustained card-free quota; OpenAI-compatible endpoint; ToS
-  clean for proprietary code; adds a vendor not already in the roster) AND a
-  consumer role needs the lane. Evaluated 2026-08-25: **NVIDIA NIM —
-  deferred** (trial-only credit pool; API Trial ToS forbids confidential
+  session's tier — prefer-free-over-metered is a standing caller guideline,
+  never a classifier (see § What this policy deliberately does not do). The
+  opt-in council flags that once also decided which free advisory lanes run
+  were retired with those lanes (2026-10-08). New free lanes are wired only
+  when all four GO criteria hold (sustained card-free quota; OpenAI-compatible
+  endpoint; ToS clean for proprietary code; adds a vendor not already in the
+  roster) AND a consumer role needs the lane. Evaluated 2026-08-25: **NVIDIA
+  NIM — deferred** (trial-only credit pool; API Trial ToS forbids confidential
   input §2.6(a) yet collects content to improve NVIDIA models §3.3);
   **Groq — strongest future candidate** (sustained, OpenAI-compatible,
   ~14,400 req/day), unwired pending a role that needs its Llama/GPT-OSS-class
@@ -440,4 +421,9 @@ mapping was checked, not new mappings):
   dropped all OpenAI models and `claude-opus-5`, which IS registry territory:
   `kiro-openai` disabled (dated reason), its same-vendor fallbacks nulled on
   the codex roles, `kiro-anthropic-top` re-pinned to `claude-sonnet-4.5`
-  (`adapters/kiro/README.md` § Tier ladder has the roster-recheck rule).
+  (`legacy/lanes-2026-10/kiro/README.md` § Tier ladder has the roster-recheck rule).
+
+- **2026-10-08** — lane roster trimmed to three vendors (maintainer decision):
+  the grok, kiro and openrouter worker lanes and the `claude-ox` launcher moved
+  to `legacy/lanes-2026-10/` (see **Retired lanes** above). The 2026-08-25
+  entry records the wiring of lanes that no longer ship.
