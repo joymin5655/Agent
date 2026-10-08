@@ -75,7 +75,10 @@ not be able to plant or backdate it; the log is WRITE-ONLY (this gate never
 reads it back), so a hostile repo forging or padding it can pollute
 telemetry but cannot buy a bypass — and keeping it in-repo is what makes it
 visible to core/infra/telemetry-digest.sh, which only counts sinks under
-<repo>/.agent/logs/.
+<repo>/.agent/logs/ (plus --projects dirs). AGENT_GATE_SINK_DIR, when set,
+redirects the write to that dir instead — test runners use it (X-5) so a battery
+never lands in the live sink; do not set it in a real session, or the digest
+will read this gate as DEAD.
 
 Fail-open: any exception, missing git repo, missing/broken threshold script,
 or a threshold exit code other than 0/10 all resolve to silent allow — a
@@ -341,7 +344,7 @@ def log_event(root, decision, reason):
     (see module docstring "Audit sink" for why this stays IN the repo while
     the escape-hatch state above does not). Never raises; silent on stdout."""
     try:
-        log_dir = os.path.join(root, ".agent", "logs")
+        log_dir = os.environ.get("AGENT_GATE_SINK_DIR") or os.path.join(root, ".agent", "logs")
         os.makedirs(log_dir, exist_ok=True)
         rec = {
             "ts": datetime.now(timezone.utc).isoformat(),
@@ -350,6 +353,9 @@ def log_event(root, decision, reason):
             "reason": reason,
             "session_id": os.environ.get("AGENT_SESSION_ID", "main"),
             "decision": decision,
+            # Inline (not hook_config.log_origin): this gate is deliberately import-free
+            # of the config loader so a broken loader can never affect its fail-open path.
+            "origin": os.environ.get("AGENT_LOG_ORIGIN") or "session",
             "schema_version": "2.0.0",
         }
         with open(os.path.join(log_dir, "security-violations.jsonl"), "a", encoding="utf-8") as f:

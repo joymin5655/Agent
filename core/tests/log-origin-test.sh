@@ -18,6 +18,8 @@
 # Usage: bash core/tests/log-origin-test.sh
 # Exit 0: all pass. Exit 1: one or more failures.
 set -u
+# X-5: this battery reads the project-local sink, so the run-wide redirect must not apply.
+unset AGENT_GATE_SINK_DIR
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 GUARD_HOOK="$REPO_ROOT/core/hooks/pre-tool-guard.sh"
@@ -117,7 +119,7 @@ echo
 echo "=== (e) pre-tool-guard-test.sh under AGENT_LOG_ORIGIN=test -> its last record origin=='test' ==="
 PROJ_E="$WORK/proj-e"
 mkdir -p "$PROJ_E"
-( AGENT_PROJECT_DIR="$PROJ_E" AGENT_LOG_ORIGIN=test bash "$REPO_ROOT/core/tests/pre-tool-guard-test.sh" >/dev/null 2>&1 )
+( AGENT_PROJECT_DIR="$PROJ_E" AGENT_GATE_SINK_DIR="$PROJ_E/.agent/logs" AGENT_LOG_ORIGIN=test bash "$REPO_ROOT/core/tests/pre-tool-guard-test.sh" >/dev/null 2>&1 )
 [[ "$(guard_last_origin "$PROJ_E")" == "test" ]]
 check "pre-tool-guard-test-battery-tags-origin-test" $?
 

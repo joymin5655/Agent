@@ -242,3 +242,11 @@ Antigravity itself can also serve other vendors' models, an unpinned lane
 would silently duplicate another lane's vendor instead of giving council a
 genuine second vendor's read. This is a vendor-identity constraint, not a
 tier or effort one; it does not change with a personal profile.
+
+## Telemetry env seams
+
+| Variable | Used by | Meaning |
+|---|---|---|
+| `AGENT_GATE_SINK_DIR` | gate hooks writing `security-violations.jsonl` | Write records here instead of `<repo>/.agent/logs`. For test runners (`verify-all.sh` sets it); in a real session it hides every gate firing from the digest, which then shows the gates as DEAD |
+| `AGENT_GATE_PROJECTS` | `telemetry-digest.sh --gates` | Colon-separated project roots (or `.agent/logs` dirs) summed into the sweep; merged with `--projects`, deduped by realpath |
+| `AGENT_LOG_ORIGIN` | gate hooks | `origin` tag on each record (`session` default; test runners use `test`) |

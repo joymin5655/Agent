@@ -79,8 +79,14 @@ risk_areas:
 Each block writes one record to `.agent/logs/security-violations.jsonl`:
 
 ```json
-{"ts":"2026-…","risk":"secrets","hook":"pre-tool-guard.sh","reason":"…","session_id":"…","decision":"deny"}
+{"ts":"2026-…","risk":"secrets","hook":"pre-tool-guard.sh","reason":"…","session_id":"…","decision":"deny","reproduce_test":false,"origin":"session","schema_version":"2.0.0"}
 ```
+
+`origin` (`session` by default, or the value of `AGENT_LOG_ORIGIN` — test runners export
+`test`) tells a real-session record from a battery's. `reproduce_test: true` marks synthetic
+events. `telemetry-digest.sh --gates` counts only `origin` absent/`session` and reports the
+rest as `fixture-rows-excluded`. Test runners also set `AGENT_GATE_SINK_DIR` so their records
+never reach the live sink; never set it in a real session.
 
 Audit at T+30d to find bypass patterns and false-positive trends.
 

@@ -30,6 +30,14 @@
 #     AGENT_GATE_LOGS_DIR. Also reports a per-gate block-rate table (W1-5:
 #     fired/blocked/rate%, blocked = records with decision=="deny").
 #
+#     X-5: --projects <p1:p2> adds each project root's .agent/logs (or a path already
+#     ending in .agent/logs) to the sweep; per-gate firings are summed, JSON carries
+#     by_project. The flag MERGES with env AGENT_GATE_PROJECTS (union, not override);
+#     entries are deduped by realpath and a missing logs dir warns on stderr.
+#     The report ends with fixture-rows-excluded: in-window rows dropped as
+#     reproduce_test or origin!=session, counted once per distinct sink file.
+#     Writers redirect test output with AGENT_GATE_SINK_DIR (see verify-all.sh).
+#
 #     W1-5 origin filter (applies to --gates AND --model): both modes count only
 #     records whose `origin` field is "session" or ABSENT (a legacy pre-W1-4
 #     record — kept, not lost); origin=="test" (this repo's own
@@ -123,6 +131,7 @@ MODEL_MODE=0
 ROUTING_LOG_PATH=""
 MODEL_REGISTRY_PATH=""
 REVIEW_MODE=0
+PROJECTS_ARG="${AGENT_GATE_PROJECTS:-}"
 WORKERS_ROOT="${AGENT_WORKERS_ROOT:-$HOME/.agent/workers}"
 
 while [[ $# -gt 0 ]]; do
@@ -155,6 +164,17 @@ while [[ $# -gt 0 ]]; do
             LOGS_DIR="${2:-}"
             shift 2
             ;;
+        --projects)
+            # MERGES with AGENT_GATE_PROJECTS (union, deduped by realpath). `shift 2`
+            # alone never advances when the value is missing, so guard it.
+            if [[ $# -ge 2 && "$2" != --* ]]; then
+                PROJECTS_ARG="${PROJECTS_ARG:+$PROJECTS_ARG:}$2"
+                shift 2
+            else
+                echo "telemetry-digest: --projects needs a value (p1:p2) — ignored" >&2
+                shift
+            fi
+            ;;
         --fatigue)
             FATIGUE_THRESHOLD="${2:-50}"
             shift 2
@@ -173,7 +193,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         -h|--help)
             echo "usage: telemetry-digest.sh [path] [--window <days>] [--json]" >&2
-            echo "       telemetry-digest.sh --gates [--registry <md>] [--logs-dir <d>] [--window <days>] [--fatigue <N>] [--stale-days <N>] [--json]" >&2
+            echo "       telemetry-digest.sh --gates [--registry <md>] [--logs-dir <d>] [--projects <p1:p2>, merged with \$AGENT_GATE_PROJECTS] [--window <days>] [--fatigue <N>] [--stale-days <N>] [--json]" >&2
             echo "       telemetry-digest.sh --model [--routing-log <path>] [--model-registry <path>] [--json]" >&2
             echo "       telemetry-digest.sh --review [--window <days>] [--json]" >&2
             exit 0
@@ -188,7 +208,7 @@ done
 if [[ "$GATES_MODE" -eq 1 ]]; then
     [[ -z "$REGISTRY_PATH" ]] && REGISTRY_PATH="${AGENT_GATE_REGISTRY:-$REPO_ROOT/docs/gate-registry.md}"
     [[ -z "$LOGS_DIR" ]] && LOGS_DIR="${AGENT_GATE_LOGS_DIR:-$REPO_ROOT/.agent/logs}"
-    python3 - "$REGISTRY_PATH" "$LOGS_DIR" "$WINDOW_DAYS" "$FATIGUE_THRESHOLD" "$STALE_DAYS" "$JSON_MODE" <<'PY'
+    python3 - "$REGISTRY_PATH" "$LOGS_DIR" "$WINDOW_DAYS" "$FATIGUE_THRESHOLD" "$STALE_DAYS" "$JSON_MODE" "$PROJECTS_ARG" <<'PY'
 import sys, os, json, datetime, collections
 
 registry_path, logs_dir = sys.argv[1], sys.argv[2]
@@ -205,6 +225,28 @@ try:
 except Exception:
     stale_days = 90
 json_mode = sys.argv[6] == "1"
+# X-5: extra project roots (colon-separated); each contributes <root>/.agent/logs.
+# An entry is a project root (<root>/.agent/logs is used) or a logs dir itself (path
+# ending in .agent/logs). Duplicates (same realpath: p1:p1, symlinks, env+flag) are
+# dropped so no sink is counted twice; a missing dir warns on stderr.
+project_dirs = []
+all_dirs = [logs_dir]
+_seen = {os.path.realpath(logs_dir)}
+for _p in (sys.argv[7].split(":") if len(sys.argv) > 7 else []):
+    if not _p:
+        continue
+    # path-component match, so "foo.agent/logs" is a project root, not a logs dir
+    _d = _p if os.path.normpath(_p).split(os.sep)[-2:] == [".agent", "logs"] \
+        else os.path.join(_p, ".agent", "logs")
+    if not os.path.isdir(_d):
+        sys.stderr.write("telemetry-digest: --projects entry has no logs dir, skipped: {}\n".format(_d))
+        continue
+    _r = os.path.realpath(_d)
+    if _r in _seen:
+        continue
+    _seen.add(_r)
+    project_dirs.append(_d)
+    all_dirs.append(_d)
 
 now = datetime.datetime.now(datetime.timezone.utc)
 cutoff = now - datetime.timedelta(days=window_days)
@@ -254,75 +296,106 @@ except Exception as e:
 
 # --- count in-window firings per sink, once per distinct sink ----------------
 def count_sink(sink, match, hook):
-    """Return (fired, suppressed, blocked) in-window counts for (sink, match,
-    hook) — suppressed = matching records excluded as reproduce_test. match '*'
-    counts every valid JSON-object line; otherwise counts lines whose guard
-    field == match. When a record ALSO carries a `hook` field it must equal the
-    registry hook — two gates sharing one sink AND one guard value (secrets-bash
-    vs secrets-content, both guard=secrets in security-violations.jsonl) would
-    otherwise each count the union and double-report. Records without a hook
-    field keep matching on guard alone (older schema stays countable).
-    The sink is confined to logs_dir: a registry line with a '../' traversal
-    resolves outside and is refused (returns None — treated like an absent sink),
-    so a bad registry entry can never make the digest read arbitrary files.
+    """Return (fired, suppressed, blocked, excluded, by_project) in-window counts
+    for (sink, match, hook), summed over every dir in all_dirs (X-5 cross-project
+    sweep). suppressed = matching reproduce_test rows; excluded = matching rows
+    whose origin is neither "session" nor absent (test-battery fixtures). Both
+    are TALLIED, never silently dropped, so the digest can report how much
+    fixture noise it removed. Returns None when NO dir has the sink (absent !=
+    0 firings). match '*' counts every valid JSON-object line; otherwise lines
+    whose guard field == match. A record carrying a `hook` field must equal the
+    registry hook (two gates sharing one sink+guard would otherwise double-count);
+    records without one keep matching on guard alone.
+    Each sink is confined to its dir: a registry '../' traversal is refused.
+    `blocked` = firings whose decision == "deny"."""
+    n = suppressed = blocked = excluded = 0
+    by_project = {}
+    found = False
+    seen_files = set()
+    for d in all_dirs:
+        path = os.path.join(d, sink)
+        real_logs = os.path.realpath(d)
+        real_path = os.path.realpath(path)
+        if real_path != real_logs and not real_path.startswith(real_logs + os.sep):
+            continue
+        # distinct dirs may reach one sink file through an in-tree symlink: count it once
+        if real_path in seen_files:
+            continue
+        seen_files.add(real_path)
+        pn = 0
+        try:
+            with open(path, encoding="utf-8") as f:
+                found = True
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                    except Exception:
+                        continue
+                    if not isinstance(rec, dict):
+                        continue
+                    ts = parse_ts(rec.get("ts"))
+                    if ts is not None and ts < cutoff:
+                        continue
+                    if match != "*" and rec.get("guard") != match:
+                        continue
+                    rec_hook = rec.get("hook")
+                    if rec_hook is not None and rec_hook != hook:
+                        continue
+                    if rec.get("reproduce_test") is True:
+                        suppressed += 1
+                        continue
+                    origin = rec.get("origin")
+                    if not (origin is None or origin == "session"):
+                        excluded += 1
+                        continue
+                    n += 1
+                    pn += 1
+                    if rec.get("decision") == "deny":
+                        blocked += 1
+        except Exception:
+            continue           # sink absent/unreadable in this dir
+        by_project[d] = pn
+    if not found:
+        return None
+    return n, suppressed, blocked, excluded, by_project
 
-    W1-5: only origin=="session" (real usage) or a MISSING origin (a legacy
-    pre-W1-4 record, kept rather than lost) counts toward `fired`/`blocked`.
-    origin=="test" (verify-all.sh's AGENT_LOG_ORIGIN=test) is test-battery
-    noise and is excluded entirely, same as the reproduce_test filter above it —
-    without this, running verify-all.sh would itself inflate FATIGUE/block-rate
-    on the very gates it exercises.
-    `blocked` counts firings whose `decision` field == "deny" (a record with no
-    decision field, or a non-deny decision such as "ask", is fired-but-not-blocked)."""
-    path = os.path.join(logs_dir, sink)
-    real_logs = os.path.realpath(logs_dir)
-    real_path = os.path.realpath(path)
-    if real_path != real_logs and not real_path.startswith(real_logs + os.sep):
-        return None
-    n = 0
-    suppressed = 0
-    blocked = 0
-    try:
-        with open(path, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    rec = json.loads(line)
-                except Exception:
-                    continue
-                if not isinstance(rec, dict):
-                    continue
-                ts = parse_ts(rec.get("ts"))
-                if ts is not None and ts < cutoff:
-                    continue
-                if match != "*" and rec.get("guard") != match:
-                    continue
-                rec_hook = rec.get("hook")
-                if rec_hook is not None and rec_hook != hook:
-                    continue
-                # Test-reproduction records (batteries feeding synthetic events
-                # to a hook) carry reproduce_test:true — they are not real gate
-                # firings, so they must never inflate fire-rate / FATIGUE. They
-                # are TALLIED (not silently dropped) so a lingering
-                # AGENT_REPRODUCE_TEST=1 in a real session shows up as a
-                # suppressed-count anomaly instead of invisibly blinding the
-                # DEAD audit (security review 2026-07-27).
-                if rec.get("reproduce_test") is True:
-                    suppressed += 1
-                    continue
-                origin = rec.get("origin")
-                if not (origin is None or origin == "session"):
-                    continue
-                n += 1
-                if rec.get("decision") == "deny":
-                    blocked += 1
-    except FileNotFoundError:
-        return None            # sink absent — distinct from 0 firings
-    except Exception:
-        return None
-    return n, suppressed, blocked
+
+def fixture_rows_total():
+    """Distinct-sink fixture tally (each file once, so gates sharing a sink are
+    not double-counted): rows excluded as reproduce_test or origin != session."""
+    seen = set()
+    total = 0
+    for g in gates:
+        if g["sink"] == "-":
+            continue
+        for d in all_dirs:
+            path = os.path.join(d, g["sink"])
+            real = os.path.realpath(path)
+            real_logs = os.path.realpath(d)
+            if real in seen or not (real == real_logs or real.startswith(real_logs + os.sep)):
+                continue
+            seen.add(real)
+            try:
+                with open(path, encoding="utf-8") as f:
+                    for line in f:
+                        try:
+                            rec = json.loads(line)
+                        except Exception:
+                            continue
+                        if not isinstance(rec, dict):
+                            continue
+                        ts = parse_ts(rec.get("ts"))
+                        if ts is not None and ts < cutoff:
+                            continue
+                        origin = rec.get("origin")
+                        if rec.get("reproduce_test") is True or not (origin is None or origin == "session"):
+                            total += 1
+            except Exception:
+                continue
+    return total
 
 
 reports = []
@@ -331,6 +404,8 @@ for g in gates:
     fired = None
     suppressed = 0
     blocked = 0
+    excluded = 0
+    by_project = {}
     if g["sink"] == "-":
         classes.append("UNINSTRUMENTED")
     else:
@@ -339,7 +414,7 @@ for g in gates:
             classes.append("DEAD")          # sink never created == never fired
             fired = 0
         else:
-            fired, suppressed, blocked = counts
+            fired, suppressed, blocked, excluded, by_project = counts
             if fired == 0:
                 classes.append("DEAD")
             elif fired >= fatigue:
@@ -352,6 +427,7 @@ for g in gates:
         "id": g["id"], "hook": g["hook"], "decision": g["decision"],
         "sink": g["sink"], "fired": fired, "suppressed": suppressed,
         "blocked": blocked, "block_rate": block_rate,
+        "excluded": excluded, "by_project": by_project,
         "last_reviewed": g["last_reviewed"],
         "flags": classes, "assumption": g["assumption"],
     })
@@ -361,6 +437,8 @@ result = {
     "registry": registry_path,
     "registry_error": registry_error,
     "logs_dir": logs_dir,
+    "project_logs_dirs": project_dirs,
+    "fixture_rows_excluded": fixture_rows_total(),
     "window_days": window_days,
     "fatigue_threshold": fatigue,
     "stale_days": stale_days,
@@ -377,6 +455,8 @@ else:
     if registry_error:
         print("  registry error: {} (0 gates parsed)".format(registry_error))
     print("logs dir: {}".format(logs_dir))
+    for d in project_dirs:
+        print("project logs dir: {}".format(d))
     print("window: last {} day(s) | fatigue >= {} | stale > {} day(s)".format(
         window_days, fatigue, stale_days))
     print("gates: {}".format(len(gates)))
@@ -392,6 +472,9 @@ else:
         sup = " suppressed={}".format(r["suppressed"]) if r.get("suppressed") else ""
         print("  {:<20} {:<26} fired={:<5} reviewed={} [{}]{}".format(
             r["id"], r["hook"], str(fired), r["last_reviewed"], flags, sup))
+        if len(all_dirs) > 1 and r["by_project"]:
+            print("      by logs dir: " + ", ".join(
+                "{}={}".format(d, c) for d, c in r["by_project"].items()))
     print()
     print("-- flag summary --")
     if not flag_counts:
@@ -411,6 +494,11 @@ else:
             rate_str = "n/a"
         print("  {:<20} fired={:<5} blocked={:<5} rate={}".format(
             r["id"], r["fired"] if r["fired"] is not None else 0, r["blocked"], rate_str))
+    print()
+    # X-5: how much fixture noise was removed from the inputs above.
+    print("-- fixture rows excluded --")
+    print("fixture-rows-excluded: {} (reproduce_test or origin!=session, in-window, distinct sinks)".format(
+        result["fixture_rows_excluded"]))
     print()
     print("gate-digest: {} gate(s), {} DEAD, {} FATIGUE, {} STALE, {} UNINSTRUMENTED".format(
         len(gates), flag_counts.get("DEAD", 0), flag_counts.get("FATIGUE", 0),

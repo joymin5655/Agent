@@ -28,6 +28,8 @@
 # Usage: bash core/tests/council-escalation-gate-test.sh
 # Exit 0: all pass. Exit 1: one or more failures.
 set -u
+# X-5: this battery reads the project-local sink, so the run-wide redirect must not apply.
+unset AGENT_GATE_SINK_DIR
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 HOOK="$REPO_ROOT/core/hooks/council-escalation-gate.py"

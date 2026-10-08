@@ -220,6 +220,15 @@ def scan_content(content: str) -> list[tuple[str, str]]:
     return findings
 
 
+def _log_origin() -> str:
+    """Origin tag shared with the other hooks (hook_config.log_origin); the
+    loader import is guarded above, so fall back to the same env rule."""
+    try:
+        return hook_config.log_origin()
+    except Exception:
+        return os.environ.get("AGENT_LOG_ORIGIN") or "session"
+
+
 def log_violation(reason: str) -> None:
     """Append security violation record to .agent/logs/security-violations.jsonl.
 
@@ -230,7 +239,7 @@ def log_violation(reason: str) -> None:
     if not repo_root:
         return
 
-    log_dir = Path(repo_root) / ".agent" / "logs"
+    log_dir = Path(os.environ.get("AGENT_GATE_SINK_DIR") or Path(repo_root) / ".agent" / "logs")
     try:
         log_dir.mkdir(parents=True, exist_ok=True)
     except Exception:
@@ -247,6 +256,7 @@ def log_violation(reason: str) -> None:
         "session_id": os.environ.get("AGENT_SESSION_ID", "main"),
         "decision": "deny",
         "reproduce_test": reproduce_test,
+        "origin": _log_origin(),
         "schema_version": "2.0.0",
     }
     try:
