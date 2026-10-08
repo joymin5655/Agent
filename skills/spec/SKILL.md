@@ -52,6 +52,10 @@ cares which submode produced the artifacts.
    - **3 rounds** have run.
    Unresolved rows carry into `spec.md` under `## Open questions` — named and
    deferred beats silently guessed.
+5. **Run the interview at `effort: low`** (advisory). The loop drafts against
+   what the user already surfaced rather than discovering edge cases, and the
+   more detailed the approved spec, the lower the implementation effort can be
+   (`docs/model-routing.md` → The effort axis).
 
 The interview's Q/A trail is recorded in `spec.md` under `## Interview log`
 (one line per question: the question, the answer, the decision it settled),
