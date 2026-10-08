@@ -47,9 +47,9 @@ mkdir -p "$S/archive/old"
 WORK="$TMP_DIR/cwd"; mkdir -p "$WORK"
 
 printf '# Auth Refactor\n\nWe rewrote the authentication middleware today.\n' > "$S/2026-01-02-auth.md"
-printf '# Globe Page\n\nRendering globe with zebra texture.\n' > "$S/2026-02-03-globe.md"
-printf 'no heading here, just pelican notes\n' > "$S/notes.md"
-printf '# Archived\n\nancient walrus discussion\n' > "$S/archive/old/2025-12-01-walrus.md"
+printf '# Globe Page\n\nRendering globe with zebra texture sharedword.\n' > "$S/2026-02-03-globe.md"
+printf 'no heading here, just pelican notes sharedword\n' > "$S/notes.md"
+printf '# Archived\n\nancient walrus discussion sharedword\n' > "$S/archive/old/2025-12-01-walrus.md"
 
 idx() { (cd "$WORK" && python3 "$SCRIPT" "$@"); }
 jq_py() { python3 -c "import json,sys; d=json.load(sys.stdin); $1"; }
@@ -84,8 +84,23 @@ out="$(idx --query nonexistentterm)"
 [[ "$(echo "$out" | jq_py 'print(len(d))')" == "0" ]]; check "no match -> empty array" $?
 
 # (e)
-out="$(idx --query "the OR we OR with OR just OR discussion OR texture OR notes" --top 2)"
+out="$(idx --query sharedword --top 2)"
 [[ "$(echo "$out" | jq_py 'print(len(d))')" == "2" ]]; check "--top limits result count" $?
+
+# (n) FTS5 query syntax in user input is literal text, not operators
+printf '# Hyphen\n\nthe auth-refactor plan, foo:bar pair, a "quoted phrase, alphabet soup, NOT sure\n' > "$S/2026-04-05-syntax.md"
+q_ids() { echo "$1" | jq_py 'print(" ".join(r["session_id"] for r in d))'; }
+for q in 'auth-refactor' 'foo:bar' '"quoted' 'a*' 'NOT'; do
+  out="$(idx --query "$q" 2>"$TMP_DIR/err")"; rc=$?
+  [[ $rc -eq 0 && ! -s "$TMP_DIR/err" ]] && [[ "$(q_ids "$out")" == *2026-04-05-syntax* ]]; check "syntax query [$q] exits 0 and finds doc" $?
+done
+for q in '' '   '; do
+  out="$(idx --query "$q" 2>"$TMP_DIR/err")"; rc=$?
+  [[ $rc -eq 0 && "$(echo "$out" | jq_py 'print(len(d))')" == "0" ]]; check "blank query [${q:-empty}] -> [] exit 0" $?
+done
+out="$(idx --query 'auth-refactor plan')"
+[[ "$(q_ids "$out")" == "2026-04-05-syntax" ]]; check "multi-token query is implicit AND" $?
+rm -f "$S/2026-04-05-syntax.md"
 
 # (g)
 idx >/dev/null 2>&1; rc=$?
