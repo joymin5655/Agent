@@ -7,7 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-08
+
+Harness backlog campaign 2026-10 (#155–#159 plus this release PR). Behavior changes: the commit
+gate gains an `auth` risk class, and agent Bash commands that set the review-override or
+ledger variables, or write the review ledgers, are denied.
+
 ### Changed
+- **gate registry**: 12 DEAD/FATIGUE gates re-reviewed 2026-10-08 and kept, none removed. The
+  firing logs cannot support a sunset call: sinks are per-project `.agent/logs/`, and this
+  repo's `security-violations.jsonl` mixes fixture rows into live ones (9254 rows, all
+  `session_id` "main"). Backlog X-5 tracks test-log isolation and cross-project aggregation.
 - **docs**: README (en/ko) runtime line, badge and coverage table now name Claude, Codex and
   Antigravity (Gemini CLI kept as one line); hook, adapter, skill and test counts refreshed.
 - `.claude-plugin/marketplace.json` description: "Portable, AI-agnostic safety harness for
