@@ -29,9 +29,11 @@ check() {
   fi
 }
 
-TMP_DIR="$(cd "$(mktemp -d)" && pwd -P)"
+TMP_DIR="$(mktemp -d)" || exit 1
+TMP_DIR="$(cd "$TMP_DIR" && pwd -P)" || exit 1
 trap 'rm -rf "$TMP_DIR"' EXIT
-unset AGENT_LINK_DIRS AGENT_WORKSPACE_SCOPE
+unset AGENT_LINK_DIRS AGENT_WORKSPACE_SCOPE GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE
+export HOME="$TMP_DIR/home"; mkdir -p "$HOME"
 
 MAIN="$TMP_DIR/main"
 mkdir -p "$MAIN"

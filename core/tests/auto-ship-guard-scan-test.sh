@@ -30,7 +30,7 @@ check() {
   fi
 }
 
-TMP_DIR="$(mktemp -d)"
+TMP_DIR="$(mktemp -d)" || exit 1
 trap 'rm -rf "$TMP_DIR"' EXIT
 unset AGENT_EXEMPT_PATTERNS AGENT_SECRETS_REGEX
 
@@ -65,7 +65,7 @@ check "exempt state resets for next file" $?
 
 # (f)
 { hdr docs/a.md; echo '+API_KEY=1'; } | AGENT_EXEMPT_PATTERNS="vendor/" scan; rc=$?
-[[ $rc -eq 1 ]]; check "AGENT_EXEMPT_PATTERNS override un-exempts docs/" $?
+[[ $rc -eq 1 ]] && grep -q BLOCK "$TMP_DIR/err"; check "AGENT_EXEMPT_PATTERNS override un-exempts docs/" $?
 { hdr vendor/x.py; echo '+API_KEY=1'; } | AGENT_EXEMPT_PATTERNS="vendor/" scan; rc=$?
 [[ $rc -eq 0 ]]; check "AGENT_EXEMPT_PATTERNS override exempts vendor/" $?
 
@@ -73,7 +73,7 @@ check "exempt state resets for next file" $?
 { hdr src/a.py; echo '+API_KEY=1'; } | AGENT_SECRETS_REGEX='HUNTME' scan; rc=$?
 [[ $rc -eq 0 ]]; check "AGENT_SECRETS_REGEX replaces default (no hit)" $?
 { hdr src/a.py; echo '+x = "HUNTME"'; } | AGENT_SECRETS_REGEX='HUNTME' scan; rc=$?
-[[ $rc -eq 1 ]]; check "AGENT_SECRETS_REGEX custom hit" $?
+[[ $rc -eq 1 ]] && grep -q BLOCK "$TMP_DIR/err"; check "AGENT_SECRETS_REGEX custom hit" $?
 
 # (h)
 long="$(python3 -c 'print("+API_KEY=" + "a"*400)')"
@@ -91,9 +91,9 @@ printf '' | scan; rc=$?
 
 # (k)
 { hdr src/a.py; echo "+k = sk-$(python3 -c 'print("A"*24)')"; } | scan; rc=$?
-[[ $rc -eq 1 ]]; check "sk- token detected" $?
+[[ $rc -eq 1 ]] && grep -q BLOCK "$TMP_DIR/err"; check "sk- token detected" $?
 { hdr src/a.py; echo "+t = eyJ$(python3 -c 'print("a"*40)')"; } | scan; rc=$?
-[[ $rc -eq 1 ]]; check "JWT-like token detected" $?
+[[ $rc -eq 1 ]] && grep -q BLOCK "$TMP_DIR/err"; check "JWT-like token detected" $?
 { hdr src/a.py; echo "+k = sk-short"; } | scan; rc=$?
 [[ $rc -eq 0 ]]; check "short sk- string not flagged (boundary)" $?
 

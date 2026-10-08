@@ -99,7 +99,7 @@ check "new file auto-indexed on query" $?
 
 # (j)
 printf '# Auth Refactor\n\nnow mentions quokka only\n' > "$S/2026-01-02-auth.md"
-touch -d '+1 minute' "$S/2026-01-02-auth.md"
+python3 -c 'import os,sys,time; t=time.time()+60; os.utime(sys.argv[1],(t,t))' "$S/2026-01-02-auth.md"
 out="$(idx --query quokka)"
 echo "$out" | jq_py 'assert d and d[0]["session_id"]=="2026-01-02-auth", d'
 check "modified file reindexed" $?

@@ -30,9 +30,10 @@ check() {
   fi
 }
 
-TMP_DIR="$(mktemp -d)"
+TMP_DIR="$(mktemp -d)" || exit 1
 trap 'rm -rf "$TMP_DIR"' EXIT
 export HOME="$TMP_DIR/home"
+unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE
 export SAFE_STASH_ROOT="$TMP_DIR/backup"
 mkdir -p "$HOME"
 
@@ -94,7 +95,7 @@ run restore ghost >/dev/null 2>&1; rc=$?
 [[ $rc -eq 1 ]]; check "restore unknown slug exits 1" $?
 
 # (i) prune only old
-touch -d '40 days ago' "$SAFE_STASH_ROOT/2020-01-01-000000-multi"
+touch -t 202001010000 "$SAFE_STASH_ROOT/2020-01-01-000000-multi"
 out="$(run prune 30 2>&1)"; rc=$?
 [[ $rc -eq 0 && ! -d "$SAFE_STASH_ROOT/2020-01-01-000000-multi" && -d "$SAFE_STASH_ROOT/2030-01-01-000000-multi" ]]
 check "prune removes only snapshots older than N days" $?
