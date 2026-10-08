@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **runtime registry**: grok re-surveyed 2026-10-08 (static check, the CLI was not run).
+  `cli_version_measured` 1.0.46 (npm latest); every flag `grok-worker.sh` passes is still in
+  the 1.0.46 headless docs, and the `grok-4.6` pin is current on docs.x.ai. Clears the strict
+  `runtime-currency.sh` failure (`grok-measured_on-stale`). The README read-only table is
+  still from 0.2.118 and needs a real re-measure on 1.x.
+- **docs**: `branch-cleanup-2026-10.md` records the 2026-10-08 deletion of the 19 merged
+  branches.
+
 ## [0.6.0] - 2026-10-08
 
 Harness backlog campaign 2026-10 (#155–#159 plus this release PR). Behavior changes: the commit
