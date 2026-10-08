@@ -78,6 +78,12 @@ For events that allow decisions (`PreToolUse`, `UserPromptSubmit`), the hook wri
 
 For observation-only events (`PostToolUse`, `SessionStart`, `Stop`) or pass-through cases, the hook writes empty `stdout` (zero bytes) — equivalent to `allow`.
 
+**Exception — `PostToolUse` `additionalContext`.** A `PostToolUse` hook may emit
+`{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"..."}}` to feed a
+notice back to the model (no decision field; it cannot block). Today only `plan-gate.py` does
+this (W-8 re-verify notice on `ExitPlanMode`). This is Claude-only in practice: Codex and
+Gemini have no `ExitPlanMode`, and the Antigravity adapter emits `{}` on `PostToolUse`.
+
 **Decision semantics:**
 
 - `allow` — proceed silently. Reason ignored.

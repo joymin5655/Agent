@@ -52,6 +52,16 @@ For interactive and autonomous tiers touching 3+ files:
 4. AI writes the plan to `/tmp/agent-plan-<slug>.md` (Phase 4 — Final Plan)
 5. AI starts implementation only after user approval (Phase 5 — exit plan-mode)
    - Implemented as a flag file: `core/hooks/plan-gate.py` writes `/tmp/agent-plan-approved` on approval.
+   - Source-first (W-8): a plan that cites memory but has no `file:line` / fenced
+     command-output evidence gets no flag (only this session's own flag is cleared; the flag
+     records `session=<id>`, consumers only test existence) and a re-verify notice. A
+     same-session `.withheld` marker keeps plan-class `Agent`/`Task` dispatches from re-opening
+     the gate until a passing `ExitPlanMode`.
+   - W-8 limits: Claude-only (needs `ExitPlanMode` + `additionalContext`); regex heuristic that
+     misses paraphrases ("my notes", "earlier session"); the flag file is still global, so a
+     flag from another session is left in place and edits may pass; `spec-gate.py` only asks
+     when its mode is `block` (default `dryrun`); plan-class detection still substring-matches
+     "plan" in Agent descriptions (e.g. "explanation").
 
 Claude Code has native plan-mode with `ExitPlanMode` tool. Codex and Gemini may not — the adapter degrades gracefully by setting `tier=interactive` and asking the user to confirm before any destructive action.
 
