@@ -139,17 +139,32 @@ def extract_date(filename: str) -> str:
     return match.group(1) if match else "unknown"
 
 
+def build_fts_query(query: str) -> str:
+    """Quote each whitespace token as an FTS5 string literal (implicit AND)."""
+    return " ".join(
+        '"' + token.replace('"', '""') + '"' for token in query.split()
+    )
+
+
 def search_sessions(
     conn: sqlite3.Connection, query: str, top_k: int = TOP_K_DEFAULT
 ) -> list:
     index_sessions(conn)
 
-    rows = conn.execute(
-        "SELECT filename, title, snippet(sessions, 2, '>>>', '<<<', '...', 64), "
-        "rank FROM sessions WHERE sessions MATCH ? "
-        "ORDER BY rank LIMIT ?",
-        (query, top_k),
-    ).fetchall()
+    fts_query = build_fts_query(query)
+    if not fts_query:
+        return []
+
+    try:
+        rows = conn.execute(
+            "SELECT filename, title, snippet(sessions, 2, '>>>', '<<<', '...', 64), "
+            "rank FROM sessions WHERE sessions MATCH ? "
+            "ORDER BY rank LIMIT ?",
+            (fts_query, top_k),
+        ).fetchall()
+    except sqlite3.OperationalError as exc:
+        print(f"session-indexer: search failed: {exc}", file=sys.stderr)
+        return []
 
     results = []
     for filename, title, snippet, rank in rows:
@@ -191,7 +206,7 @@ def main() -> None:
         conn.close()
         return
 
-    if not args.query:
+    if args.query is None:
         parser.print_help()
         conn.close()
         sys.exit(1)

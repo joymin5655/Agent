@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `session-indexer.py -q` no longer crashes on FTS5 syntax characters (`-`, `:`, `"`, `*`, `NOT`, ...):
+  each query token is quoted as a literal (implicit AND), blank queries return `[]`. `OR`/`NEAR`
+  in a query are now plain words, not operators.
+
 ## [0.7.0] - 2026-10-08
 
 Three vendor lanes only: Claude Code, Codex and Gemini (through the Antigravity CLI `agy`).
