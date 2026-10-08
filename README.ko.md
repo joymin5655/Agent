@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 ![Version](https://img.shields.io/badge/version-0.5.16-blue.svg)
 ![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-7c3aed.svg)
-![AI-agnostic](https://img.shields.io/badge/AI-Claude%20%7C%20Codex%20%7C%20Gemini-orange.svg)
+![AI-agnostic](https://img.shields.io/badge/AI-Claude%20%7C%20Codex%20%7C%20Antigravity-orange.svg)
 
 [English](README.md) | **한국어**
 
@@ -27,9 +27,11 @@
 하나로 차단 전환. 여기에 하네스 자신을 검증하는 CI까지.
 
 **핵심 목적은 교차 벤더 리뷰 다양성입니다.** 세션마다 메인 AI 하나가 작업을 이끌고, 다른
-벤더의 CLI(Codex, Gemini 등)가 독립 리뷰어로 붙어 한 모델 계열이 자기 작업을 스스로
-승인하지 못하게 합니다. 현재 상태: `/council-review`가 요청 시 이 역할을 하고, 위험 경로에
-대한 기계적 강제는 진행 중입니다([`docs/internal/`](docs/internal/README.md)의 V 시리즈 백로그).
+벤더의 CLI(Codex, Antigravity 등)가 독립 리뷰어로 붙어 한 모델 계열이 자기 작업을 스스로
+승인하지 못하게 합니다. 현재 상태: `/council-review`가 요청 시 이 역할을 하고, 커밋 게이트는
+외부 벤더 리뷰가 묶이지 않은 위험 경로(auth·시크릿·결제·마이그레이션)의 스테이징을
+막습니다. 에이전트에 대한 과속방지턱일 뿐 경계는 아니며, 남은 강제 작업은
+[`docs/internal/`](docs/internal/README.md)의 V 시리즈 백로그입니다.
 
 **하나의 거버넌스 계층, 세 개의 에이전트 CLI.** 설치는 한 번:
 
@@ -38,12 +40,12 @@
 /plugin install agent-harness@agent
 ```
 
-(위는 Claude Code 기준; Codex CLI / Gemini CLI는 [셸 설치](#빠른-시작) 사용.
+(위는 Claude Code 기준; Codex CLI / Antigravity CLI는 [셸 설치](#빠른-시작) 사용.
 설치 전에 증거부터 보고 싶다면 — AI 런타임 없이 재현되는 게이트 검출 3장면:
 [`docs/demo.md`](docs/demo.md).)
 
 **Agent는 AI 코딩 에이전트를 위한 안전장치(하네스)입니다.** 등산용 하네스를 떠올려 보세요.
-코드를 쓰고, 명령을 실행하고, PR을 여는 "등반"은 AI(Claude Code, Codex CLI, Gemini CLI)가
+코드를 쓰고, 명령을 실행하고, PR을 여는 "등반"은 AI(Claude Code, Codex CLI, Antigravity CLI)가
 하고, 하네스는 추락을 막습니다 — 시크릿 커밋, 다른 AI 세션과의 충돌, 테스트 건너뛰기,
 건드리면 안 되는 영역 접근을 구조적으로 차단합니다.
 
@@ -91,9 +93,9 @@ flowchart LR
 |---|---|---|
 | "완료" 주장이 독립적으로 반박되는가? | **yes** — `core/infra/completion-verify.py` + 신선한 컨텍스트 저지, 크래시 → REFUTED | 드묾; 빌더가 자기 작업을 자기가 승인 |
 | 강제가 툴 경계의 하드 deny/ask인가? | **yes** — `core/hooks/pre-tool-guard.sh` 등 | 압도적으로 프롬프트 전용 "you MUST" |
-| 하네스가 *자기 자신을* CI 검증하는가? | **yes** — 8잡, 뮤테이션 프로브가 있는 클린인스톨 스모크 포함 | 거의 없음 |
+| 하네스가 *자기 자신을* CI 검증하는가? | **yes** — 10잡, 뮤테이션 프로브가 있는 클린인스톨 스모크 포함 | 거의 없음 |
 | 문서가 레포와 기계 대조되는가? | **yes** — `core/tests/doc-reality.sh`가 팬텀 경로에 빌드 실패 | 없음 |
-| Claude / Codex / Gemini에서 같은 결정인가? | **yes** — `core/tests/adapter-parity.sh`가 증명 | 단일 CLI 우선, 포팅은 나중 |
+| Claude / Codex / Antigravity에서 같은 결정인가? | **yes** — `core/tests/adapter-parity.sh`가 증명 | 단일 CLI 우선, 포팅은 나중 |
 
 그리고 번들 리뷰어를 인기 경쟁 스택과 블라인드 벤치마크했을 때: **심어둔 버그 8/8
 탐지, 오탐 0** (경쟁 스택: 8/8에 헤지성 오탐 1 — 그리고 정직하게 말하면, 우리 레인이
@@ -115,7 +117,7 @@ flowchart LR
   낮은 확신도는 물론 저지 크래시조차 전부 REFUTED로 수렴합니다(fail-closed) —
   [검증 다이어그램](#실행-흐름-심화) 참고.
 - Cross-AI 동일성은 약속이 아니라 기계 증명입니다: `core/tests/adapter-parity.sh`가
-  같은 이벤트를 3개 어댑터에 흘려 동일한 결정을 assert합니다. 이것이 증명하는 것은
+  같은 이벤트를 4개 어댑터에 흘려 동일한 결정을 assert합니다. 이것이 증명하는 것은
   *결정* 동일성입니다. 런타임별 *이벤트 커버리지*는 다릅니다 —
   [런타임 커버리지](#런타임-커버리지) 참고.
 
@@ -147,10 +149,10 @@ flowchart LR
 | 용어 | 쉬운 뜻 |
 |---|---|
 | **하네스(harness)** | 에이전트 + 훅 + 스킬 + 규칙을 묶어 AI를 감싸는 안전 계층 전체. |
-| **훅(hook)** | AI 런타임이 어떤 행동 전/후에 자동으로 실행하는 작은 스크립트. **allow**, **ask**, **deny** 중 하나로 답합니다. [`core/hooks/`](core/hooks/)에 배선된 게이트 훅 22개(공유 모듈 포함 스크립트 26개)가 있습니다. |
-| **어댑터(adapter)** | 각 AI CLI의 고유 이벤트 형식과 하네스의 표준 JSON 사이를 번역하는 얇은 계층. 3개가 있습니다([`adapters/`](adapters/)). |
+| **훅(hook)** | AI 런타임이 어떤 행동 전/후에 자동으로 실행하는 작은 스크립트. **allow**, **ask**, **deny** 중 하나로 답합니다. [`core/hooks/`](core/hooks/)에 `hooks/hooks.json`으로 배선된 스크립트 27개(공유 모듈 포함 31개)가 있습니다. |
+| **어댑터(adapter)** | 각 AI CLI의 고유 이벤트 형식과 하네스의 표준 JSON 사이를 번역하는 얇은 계층. 런타임 어댑터 4개(claude-code, codex, gemini, antigravity)와 grok/kiro/openrouter 워커 레인이 있습니다([`adapters/`](adapters/)). |
 | **에이전트(agent)** | AI가 일을 위임하는 전문가 — 예: 리뷰만 하고 절대 코드를 쓰지 않는 보안 리뷰어. 3종이 포함됩니다([`agents/`](agents/)). |
-| **스킬(skill)** | AI가 따라가는 재사용 가능한 단계별 워크플로우 — 예: 커밋+PR 자동화 흐름. 9종이 포함됩니다([`skills/`](skills/)). |
+| **스킬(skill)** | AI가 따라가는 재사용 가능한 단계별 워크플로우 — 예: 커밋+PR 자동화 흐름. 14종이 포함됩니다([`skills/`](skills/)). |
 | **게이트(gate)** | 훅의 결정 지점(deny / ask / block). 모든 게이트는 자신이 가정하는 모델 약점과 함께 등록됩니다 — [`docs/gate-registry.md`](docs/gate-registry.md). |
 | **웨이브(wave)** | `/supervise` 플랜 안의 작업 묶음 하나 — 디스패치·실행·감사를 마쳐야 다음 웨이브가 시작됩니다. |
 | **판정(verdict)** | 모든 검증기가 뱉는 공용 CONFIRMED / REFUTED 결과 스키마 — [`docs/scoring-convention.md`](docs/scoring-convention.md). |
@@ -165,20 +167,25 @@ flowchart LR
 반면 이벤트 *커버리지* — 각 CLI의 활동 중 얼마나 많은 부분이 그 코어를 거치는가 — 는
 동일하지 **않습니다**. 정직한 표는 다음과 같습니다:
 
-| 능력 | Claude Code | Codex CLI | Gemini CLI |
+| 능력 | Claude Code | Codex CLI | Antigravity CLI |
 |---|---|---|---|
-| PreToolUse: 셸 명령 | 네이티브 훅 | 네이티브 훅 | 셸 래퍼 |
-| PreToolUse: 네이티브 파일 쓰기 도구 | 네이티브 훅 | 네이티브 훅 (`apply_patch`) | 미가로채기 |
-| PostToolUse | 네이티브 훅 | 네이티브 훅 (Bash, `apply_patch`) | 없음 |
-| 세션 라이프사이클 | 네이티브 훅 | 네이티브 훅 (SessionStart/SessionEnd/Stop) | 시뮬레이션 (`core/infra/gemini-session.sh`) |
+| PreToolUse: 셸 명령 | 네이티브 훅 | 네이티브 훅 | 네이티브 훅 (`run_command`, `send_command_input`) |
+| PreToolUse: 네이티브 파일 쓰기 도구 | 네이티브 훅 | 네이티브 훅 (`apply_patch`) | 네이티브 훅 (`write_to_file`, `replace_file_content`, `multi_replace_file_content`) |
+| PostToolUse | 네이티브 훅 | 네이티브 훅 (Bash, `apply_patch`) | 관찰자만 (출력 폐기) |
+| 세션 라이프사이클 | 네이티브 훅 | 네이티브 훅 (SessionStart/SessionEnd/Stop) | `Stop` 게이트만 (SessionStart/UserPromptSubmit/SessionEnd 없음) |
 
 Codex 훅은 기본적으로 fail-open입니다: 지원되지 않는 `ask` 판정이나 훅 크래시가
 발생하면 도구 호출이 그대로 계속되므로, Codex 어댑터는 이 둘을 fail-closed `deny`로
 바꿔서 돌려줍니다. 또한 Codex는 `/hooks`로 검토·신뢰한 훅만 실행합니다 —
 `hooks.json`을 설치하는 것만으로는 아직 아무것도 강제되지 않습니다.
 
+Antigravity(agy 1.2.12)는 훅의 `{}`를 deny로 처리하므로 통과는 `ask`로, 코어의 `ask`는
+`force_ask`로 내보냅니다. view·MCP·브라우저 도구는 매칭되지 않습니다. 엔터프라이즈 Gemini CLI
+사용자는 gemini 어댑터를 그대로 씁니다(셸 래퍼, 네이티브 파일 쓰기 가로채기 없음).
+
 런타임별 상세와 우회 방법:
 [`adapters/codex/README.md`](adapters/codex/README.md) ·
+[`adapters/antigravity/README.md`](adapters/antigravity/README.md) ·
 [`adapters/gemini/README.md`](adapters/gemini/README.md).
 
 ## 사전 준비물
@@ -188,7 +195,7 @@ Codex 훅은 기본적으로 fail-open입니다: 지원되지 않는 `ask` 판�
 - `git` 2.30+
 - `bash` 5.0+ (macOS 기본은 3.2 — `brew install bash`)
 - `python3` 3.9+ (여러 훅이 Python 스크립트)
-- AI CLI 최소 1개: [Claude Code](https://claude.com/claude-code), Codex CLI, Gemini CLI
+- AI CLI 최소 1개: [Claude Code](https://claude.com/claude-code), Codex CLI, Antigravity CLI
 
 선택:
 
@@ -209,7 +216,7 @@ Codex 훅은 기본적으로 fail-open입니다: 지원되지 않는 `ask` 판�
 | 당신이… | 선택 |
 |---|---|
 | Claude Code 사용자라면 | **Path A** — 플러그인 (약 1분) |
-| Codex CLI / Gemini CLI도(또는 만) 쓰거나, 플러그인 시스템이 싫다면 | **Path B** — 셸 설치 |
+| Codex CLI / Antigravity CLI도(또는 만) 쓰거나, 플러그인 시스템이 싫다면 | **Path B** — 셸 설치 |
 
 잘 모르겠으면 Path A.
 
@@ -230,11 +237,12 @@ Codex 훅은 기본적으로 fail-open입니다: 지원되지 않는 `ask` 판�
 
 플러그인에 포함: **에이전트 3종**, **스킬 14종**, 훅 세트, `/project-init` 커맨드.
 
-### Path B — 셸 설치 (Codex CLI / Gemini CLI / 3개 전부)
+### Path B — 셸 설치 (Codex CLI / Antigravity CLI / 전부)
 
 ```bash
 gh repo clone joymin5655/Agent ~/agent   # 또는: git clone https://github.com/joymin5655/Agent ~/agent
-bash ~/agent/setup.sh                    # 플래그 없음 = 3개 AI 전부
+bash ~/agent/setup.sh                    # 플래그 없음 = Claude + Codex + Gemini (Antigravity는 옵트인)
+bash ~/agent/setup.sh --antigravity     # Antigravity(agy) 워커 레인 + 네이티브 훅 플러그인 추가
 ```
 
 | 플래그 | 설치 대상 |
@@ -265,8 +273,9 @@ AI에게 `secrets/` 아래 파일을 읽어 달라고 해보세요:
 🚫 Tool blocked: Direct secrets/ access blocked. Use environment variable.
 ```
 
-이 차단은 Claude Code, Codex CLI, Gemini CLI에서 똑같이 발동합니다 — 같은 스크립트,
-같은 결정. 그게 이 프로젝트의 핵심입니다.
+이 차단은 Claude Code, Codex CLI, Antigravity CLI에서 똑같이 발동합니다 — 같은 스크립트,
+같은 결정. 그게 이 프로젝트의 핵심입니다. 다만 네이티브 파일 쓰기와 라이프사이클
+커버리지는 런타임마다 여전히 다릅니다.
 
 ## 아키텍처
 
@@ -280,18 +289,18 @@ flowchart TB
         direction LR
         CC["Claude Code"]
         CX["Codex CLI"]
-        GM["Gemini CLI"]
+        GM["Antigravity CLI"]
     end
     subgraph AD["Layer 2 — adapters/ (얇은 번역기)"]
         direction LR
         A1["claude-code/"]
         A2["codex/"]
-        A3["gemini/"]
+        A3["antigravity/"]
     end
     subgraph CORE["Layer 1 — core/ (단일 진실 원천)"]
-        H["hooks/ — 배선된 게이트 21개: 시크릿 스캔 · 뮤텍스 ·<br/>spec-gate · tdd-guard · supervisor …"]
+        H["hooks/ — 배선된 스크립트 27개: 시크릿 스캔 · 뮤텍스 ·<br/>spec-gate · tdd-guard · supervisor …"]
         I["infra/ — 세션 · goal 모드 ·<br/>감사 · auto-ship"]
-        T["tests/ — 자가검증 스크립트 56개"]
+        T["tests/ — 자가검증 스크립트 98개"]
     end
     R["rules/ — 정책<br/>원문(SOT)"]
     PLUG[".claude-plugin/ + hooks/hooks.json<br/>플러그인 배포"]
@@ -310,7 +319,7 @@ flowchart TB
 4개 계층, 가장 아래가 이깁니다:
 
 - **L1 `core/`** — AI 무관(agnostic) 훅과 인프라. 단일 진실 원천.
-- **L2 `adapters/`** — AI별 번역기 (claude-code는 얇은 통과, codex/gemini는 실제 번역).
+- **L2 `adapters/`** — AI별 번역기 (claude-code는 얇은 통과, codex/gemini/antigravity는 실제 번역).
 - **L3 `templates/`** — `setup.sh --project` / `/project-init`이 복사하는 프로젝트 스캐폴드.
 - **L4 당신의 프로젝트** — `hook-config.yml`과 선택적 `.agent/` 파일로 오버라이드. 코어 수정 불필요.
 
@@ -422,7 +431,7 @@ manager-audit의 발견은 절대 스스로 적용되지 않습니다 — `PROPO
 | `reorg-sync` | 트리 이동 후 남은 절대경로 참조(셔뱅·worktree gitfile·crontab·문서 앵커·메모리 키) 일괄 스윕; 기본 dry-run 리포트, 확인 후 `--apply` |
 | `harness-help` | 라우터 — 상황에 맞는 스킬 안내와 전체 흐름 |
 
-| 훅 — 22개 배선(`hooks/hooks.json` → `core/hooks/`, 공유 모듈 포함 스크립트 26개) | 이벤트 |
+| 훅 — 27개 배선(`hooks/hooks.json` → `core/hooks/`, 공유 모듈 포함 스크립트 31개) | 이벤트 |
 |---|---|
 | secret-content-scan · check-hardcoding | PreToolUse (Write/Edit) |
 | pre-tool-guard · r4-mutex · context-mode-guard | PreToolUse |
@@ -451,12 +460,12 @@ Agent/
 ├── hooks/              # 플러그인 훅 배선 (hooks.json)
 │
 ├── core/               # AI 무관 코어 — 진실 원천
-│   ├── hooks/          #   이식 가능한 훅 스크립트 26개 (배선 22 + 공유 모듈)
+│   ├── hooks/          #   이식 가능한 훅 스크립트 31개 (배선 27 + 공유 모듈)
 │   ├── infra/          #   세션 조정 · goal 모드 · 감사 · auto-ship
 │   ├── git-hooks/      #   pre-commit · pre-push
-│   └── tests/          #   테스트 스크립트 78개 (verify-all.sh가 전부 실행)
+│   └── tests/          #   테스트 스크립트 98개 (verify-all.sh가 전부 실행)
 │
-├── adapters/           # claude-code (얇음) · codex · gemini
+├── adapters/           # claude-code (얇음) · codex · gemini · antigravity
 ├── rules/              # 범용 정책 문서
 ├── templates/          # 프로젝트 스캐폴드 템플릿
 ├── evals/              # 저지 + 검증기 평가 데이터셋과 러너
@@ -482,7 +491,7 @@ Agent/
 ## 이것이 아닌 것
 
 - **배포 가능한 애플리케이션이 아닙니다** — 당신의 프로젝트에 도입하는 프레임워크입니다.
-- **AI 런타임이 아닙니다** — 런타임은 직접 가져옵니다 (Claude Code, Codex, Gemini 등).
+- **AI 런타임이 아닙니다** — 런타임은 직접 가져옵니다 (Claude Code, Codex, Antigravity 등).
 - **`.claude/`의 대체물이 아닙니다** — `.claude/`, `.codex/`, `.gemini/` 설정을 생성하고 보완합니다.
 - **당신의 코드에 대한 의견이 없습니다** — 세션 조정, 시크릿 위생, 정책 강제에만 관여합니다. 스택, 언어, 아키텍처는 당신의 것입니다.
 
@@ -503,9 +512,9 @@ gitleaks detect --no-git --source . --config gitleaks.toml
 # 2) 도메인 중립성 게이트 (CI에서도 실행)
 bash core/tests/sanitize-audit.sh
 
-# 3) cross-AI 동일성: 같은 이벤트 → 3개 어댑터 모두 같은 결정
+# 3) cross-AI 동일성: 같은 이벤트 → 4개 어댑터 모두 같은 결정
 bash core/tests/adapter-parity.sh
-# → === Parity: 24 passed, 0 failed ===
+# → === Parity: 52 passed, 0 failed ===
 
 # 4) 문서-현실 정합 (팬텀 경로 + 펜스 균형)
 bash core/tests/doc-reality.sh

@@ -5,7 +5,7 @@
     "url": "https://github.com/joymin5655"
   },
   "metadata": {
-    "description": "joymin's personal agent harness — a portable, AI-agnostic agent system packaged as a Claude Code plugin.",
+    "description": "Portable, AI-agnostic safety harness for coding agents",
     "version": "0.5.16"
   },
   "plugins": [

@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 ![Version](https://img.shields.io/badge/version-0.5.16-blue.svg)
 ![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-7c3aed.svg)
-![AI-agnostic](https://img.shields.io/badge/AI-Claude%20%7C%20Codex%20%7C%20Gemini-orange.svg)
+![AI-agnostic](https://img.shields.io/badge/AI-Claude%20%7C%20Codex%20%7C%20Antigravity-orange.svg)
 
 **English** | [한국어](README.ko.md)
 
@@ -31,10 +31,12 @@ a spec gate that catches plan-skipping — in observation mode by default, one
 env var to block. Plus a CI that verifies the harness itself.
 
 **The core purpose: cross-vendor review diversity.** One main AI drives each session;
-other vendors' CLIs (Codex, Gemini and so on) act as independent reviewers, so one
+other vendors' CLIs (Codex, Antigravity and so on) act as independent reviewers, so one
 model family never signs off on its own work. Honest status: `/council-review` runs this
-today on request, while mechanical enforcement for risk-area paths is still in progress
-(backlog V series in [`docs/internal/`](docs/internal/README.md)).
+today on request, and the commit gate blocks staged risk-area paths (auth, secrets, billing,
+migrations) that lack a bound external-vendor review. The gate is a speed bump against an agent,
+not a boundary; remaining enforcement work is the V series in
+[`docs/internal/`](docs/internal/README.md).
 
 **One governance layer, three agent CLIs.** Install once:
 
@@ -43,12 +45,12 @@ today on request, while mechanical enforcement for risk-area paths is still in p
 /plugin install agent-harness@agent
 ```
 
-(Claude Code shown; Codex CLI / Gemini CLI use the [shell install](#quick-start).
+(Claude Code shown; Codex CLI / Antigravity CLI use the [shell install](#quick-start).
 Want proof before installing? Three reproducible gate-catches, no AI runtime
 needed: [`docs/demo.md`](docs/demo.md).)
 
 **Agent is a safety harness for AI coding agents.** Think of a climbing harness: your AI
-(Claude Code, Codex CLI, or Gemini CLI) does the climbing — writes code, runs commands,
+(Claude Code, Codex CLI, or Antigravity CLI) does the climbing — writes code, runs commands,
 opens PRs — and the harness stops it from falling: committing secrets, colliding with
 another AI session, skipping tests, or touching things it shouldn't.
 
@@ -96,9 +98,9 @@ question — the one no popular harness answers (per our own
 |---|---|---|
 | Does a "done" claim get independently refuted? | **yes** — `core/infra/completion-verify.py` + fresh-context judge, crash → REFUTED | rare; builders approve their own work |
 | Is enforcement a hard deny/ask at the tool boundary? | **yes, on covered routes** — `core/hooks/pre-tool-guard.sh` and friends | overwhelmingly prompt-only "you MUST" |
-| Does the harness CI-verify *itself*? | **yes** — 8 jobs incl. a clean-install smoke with mutation probes | almost never |
+| Does the harness CI-verify *itself*? | **yes** — 10 jobs incl. a clean-install smoke with mutation probes | almost never |
 | Are the docs machine-checked against the repo? | **yes** — `core/tests/doc-reality.sh` fails the build on a phantom path | no |
-| Same decision across Claude / Codex / Gemini? | **yes** — proven by `core/tests/adapter-parity.sh` | single-CLI first, ports later |
+| Same decision across Claude / Codex / Antigravity? | **yes** — proven by `core/tests/adapter-parity.sh` | single-CLI first, ports later |
 
 And when the shipped reviewers were benchmarked blind against a popular rival
 stack: **8/8 planted bugs found, 0 false positives** (the rival: 8/8 with 1
@@ -123,7 +125,7 @@ prompt wording.
   judge where low confidence and even judge crashes all resolve to REFUTED (fail-closed) —
   see the [verification diagram](#how-a-run-flows).
 - Cross-AI parity is machine-proved, not promised: `core/tests/adapter-parity.sh` feeds the
-  same events through the claude-code, codex and gemini adapters (and the antigravity one, after
+  same events through the claude-code, codex, gemini and antigravity adapters (antigravity after
   normalizing its `ask`/`force_ask` vocabulary) and asserts identical decisions. That proves
   *decision* parity; *event coverage* still differs per runtime — see
   [Runtime coverage](#runtime-coverage).
@@ -157,10 +159,10 @@ New to this space? These ten terms are all you need to read the rest of this pag
 | Term | Plain meaning |
 |---|---|
 | **harness** | The whole safety layer: agents + hooks + skills + rules, wrapped around your AI. |
-| **hook** | A small script your AI runtime runs automatically before/after an action. It answers **allow**, **ask**, or **deny**. 22 wired gate hooks (26 scripts incl. shared modules) live in [`core/hooks/`](core/hooks/). |
-| **adapter** | A translator from a runtime hook or controlled wrapper event to the harness's canonical JSON. There are 3 ([`adapters/`](adapters/)). |
+| **hook** | A small script your AI runtime runs automatically before/after an action. It answers **allow**, **ask**, or **deny**. 27 scripts wired via `hooks/hooks.json` (31 incl. shared modules) live in [`core/hooks/`](core/hooks/). |
+| **adapter** | A translator from a runtime hook or controlled wrapper event to the harness's canonical JSON. There are 4 runtime adapters (claude-code, codex, gemini, antigravity) plus the grok/kiro/openrouter worker lanes ([`adapters/`](adapters/)). |
 | **agent** | A specialist your AI delegates to — e.g. a security reviewer that only reviews and never writes. 3 ship here ([`agents/`](agents/)). |
-| **skill** | A reusable step-by-step workflow the AI follows, e.g. the commit + PR flow. 9 ship here ([`skills/`](skills/)). |
+| **skill** | A reusable step-by-step workflow the AI follows, e.g. the commit + PR flow. 14 ship here ([`skills/`](skills/)). |
 | **gate** | A hook decision point (deny / ask / block). Every gate is registered with the model weakness it assumes — [`docs/gate-registry.md`](docs/gate-registry.md). |
 | **wave** | One batch of work inside a `/supervise` plan — dispatched, executed, and audited before the next wave starts. |
 | **verdict** | The shared CONFIRMED / REFUTED result schema every verifier emits — [`docs/scoring-convention.md`](docs/scoring-convention.md). |
@@ -175,20 +177,25 @@ Decision parity is proven at the core: the same event produces the same verdict 
 runtime. Event *coverage* — how much of each CLI's activity is routed through that core —
 is **not** identical, and this is the honest table:
 
-| Capability | Claude Code | Codex CLI | Gemini CLI |
+| Capability | Claude Code | Codex CLI | Antigravity CLI |
 |---|---|---|---|
-| PreToolUse: shell commands | native hooks | native hooks | shell wrapper |
-| PreToolUse: native file-write tools | native hooks | native hooks (`apply_patch`) | not intercepted |
-| PostToolUse | native hooks | native hooks (Bash, `apply_patch`) | none |
-| Session lifecycle | native hooks | native hooks (SessionStart/SessionEnd/Stop) | simulated (`core/infra/gemini-session.sh`) |
+| PreToolUse: shell commands | native hooks | native hooks | native hooks (`run_command`, `send_command_input`) |
+| PreToolUse: native file-write tools | native hooks | native hooks (`apply_patch`) | native hooks (`write_to_file`, `replace_file_content`, `multi_replace_file_content`) |
+| PostToolUse | native hooks | native hooks (Bash, `apply_patch`) | observers only (output discarded) |
+| Session lifecycle | native hooks | native hooks (SessionStart/SessionEnd/Stop) | `Stop` gate only (no SessionStart/UserPromptSubmit/SessionEnd) |
 
 Codex hooks fail open by default: an unsupported `ask` decision or a crashed
 hook lets the tool call continue, so the Codex adapter turns both into a
 fail-closed `deny`. Codex also runs a hook only after you review and trust it
 with `/hooks` — installing `hooks.json` alone does not enforce anything yet.
 
+Antigravity (agy 1.2.12) treats a hook's `{}` as a deny, so a pass-through is emitted as `ask`
+and a core `ask` as `force_ask`; view/MCP/browser tools are not matched. Enterprise Gemini CLI
+users keep the gemini adapter (shell wrapper; no native file-write interception).
+
 Per-runtime details and workarounds:
 [`adapters/codex/README.md`](adapters/codex/README.md) ·
+[`adapters/antigravity/README.md`](adapters/antigravity/README.md) ·
 [`adapters/gemini/README.md`](adapters/gemini/README.md). The full current/target
 split is in the
 [runtime capability matrix](docs/benchmark/runtime-capability-matrix-2026-07.md).
@@ -205,7 +212,7 @@ Required:
   are denied until PyYAML is installed, and so is any command containing one of those
   verbs as a substring (e.g. `git add .` matches `dd`). Other `.yml` settings are still
   skipped. Install: `python3 -m pip install --user pyyaml`.
-- At least one AI CLI: [Claude Code](https://claude.com/claude-code), Codex CLI, or Gemini CLI
+- At least one AI CLI: [Claude Code](https://claude.com/claude-code), Codex CLI, or Antigravity CLI
 
 Optional:
 
@@ -226,7 +233,7 @@ Two install paths — both wire up the same core:
 | You… | Take |
 |---|---|
 | use Claude Code | **Path A** — plugin (about 1 minute) |
-| also (or only) drive Codex CLI / Gemini CLI, or prefer no plugin system | **Path B** — shell install |
+| also (or only) drive Codex CLI / Antigravity CLI, or prefer no plugin system | **Path B** — shell install |
 
 Not sure? Take Path A.
 
@@ -255,11 +262,12 @@ See the
 [plugin installation lifecycle](docs/claude-plugin-install-lifecycle.md) for
 the cache, activation, event flow, project-init side effects, and current gaps.
 
-### Path B — shell install (Codex CLI / Gemini CLI / all three)
+### Path B — shell install (Codex CLI / Antigravity CLI / all)
 
 ```bash
 gh repo clone joymin5655/Agent ~/agent   # or: git clone https://github.com/joymin5655/Agent ~/agent
-bash ~/agent/setup.sh                    # no flag = all three AIs
+bash ~/agent/setup.sh                    # no flag = Claude + Codex + Gemini (Antigravity is opt-in)
+bash ~/agent/setup.sh --antigravity     # add Antigravity (agy) worker lane + native-hook plugin
 ```
 
 | Flag | Installs |
@@ -292,8 +300,8 @@ Ask your AI to read a file under `secrets/`:
 ```
 
 That exact block fires on the configured Claude hook, Codex's native hook path,
-and the Gemini shell route — same script, same decision. Gemini's native
-file-write coverage still differs.
+and the Antigravity native hook — same script, same decision. Native
+file-write and lifecycle coverage still differs per runtime.
 
 No AI runtime attached yet? [`docs/demo.md`](docs/demo.md) reproduces three
 gate-catches (a denied secret read, a REFUTED false-"done" claim, a caught
@@ -311,18 +319,18 @@ flowchart TB
         direction LR
         CC["Claude Code"]
         CX["Codex CLI"]
-        GM["Gemini CLI"]
+        GM["Antigravity CLI"]
     end
     subgraph AD["Layer 2 — adapters/ (thin translators)"]
         direction LR
         A1["claude-code/"]
         A2["codex/"]
-        A3["gemini/"]
+        A3["antigravity/"]
     end
     subgraph CORE["Layer 1 — core/ (the single source of truth)"]
-        H["hooks/ — 22 wired gates: secret scan · mutex ·<br/>spec-gate · tdd-guard · supervisor …"]
+        H["hooks/ — 27 wired scripts: secret scan · mutex ·<br/>spec-gate · tdd-guard · supervisor …"]
         I["infra/ — sessions · goal mode ·<br/>audits · auto-ship"]
-        T["tests/ — 56 self-verification scripts"]
+        T["tests/ — 98 self-verification scripts"]
     end
     R["rules/ — policy<br/>source of truth"]
     PLUG[".claude-plugin/ + hooks/hooks.json<br/>plugin distribution"]
@@ -341,7 +349,7 @@ flowchart TB
 Four layers, lowest wins:
 
 - **L1 `core/`** — AI-agnostic hooks and infra. The single source of truth.
-- **L2 `adapters/`** — per-AI translators (claude-code is a thin pass-through; codex and gemini do real translation).
+- **L2 `adapters/`** — per-AI translators (claude-code is a thin pass-through; codex, gemini and antigravity do real translation).
 - **L3 `templates/`** — project scaffolds copied by `setup.sh --project` or
   `/agent-harness:project-init`.
 - **L4 your project** — overrides via `hook-config.yml` and optional `.agent/` files. No core edits needed.
@@ -455,7 +463,7 @@ Model is cost-tiered per work class ([`docs/model-routing.md`](docs/model-routin
 | `reorg-sync` | After a tree move, sweep orphaned absolute-path references (shebangs, worktree gitfiles, crontab, doc anchors, memory keys); dry-run report first, `--apply` after confirmation |
 | `harness-help` | Router — which skill fits the situation, and the main flow through them |
 
-| Hooks — 22 wired via `hooks/hooks.json` → `core/hooks/` (26 scripts incl. shared modules) | Event |
+| Hooks — 27 wired via `hooks/hooks.json` → `core/hooks/` (31 scripts incl. shared modules) | Event |
 |---|---|
 | secret-content-scan · check-hardcoding | PreToolUse (Write/Edit) |
 | pre-tool-guard · r4-mutex · context-mode-guard | PreToolUse |
@@ -486,12 +494,12 @@ Agent/
 ├── hooks/              # plugin hook wiring (hooks.json)
 │
 ├── core/               # AI-agnostic core — the truth
-│   ├── hooks/          #   26 portable hook scripts (22 wired + shared modules)
+│   ├── hooks/          #   31 portable hook scripts (27 wired + shared modules)
 │   ├── infra/          #   session coordination · goal mode · audits · auto-ship
 │   ├── git-hooks/      #   pre-commit · pre-push
-│   └── tests/          #   78 test scripts (verify-all.sh runs them all)
+│   └── tests/          #   98 test scripts (verify-all.sh runs them all)
 │
-├── adapters/           # claude-code (thin) · codex · gemini
+├── adapters/           # claude-code (thin) · codex · gemini · antigravity
 ├── rules/              # generic policy docs
 ├── templates/          # project scaffold templates
 ├── evals/              # judge + verifier eval datasets and runners
@@ -517,7 +525,7 @@ tail is delegated to broader stacks. Full method and raw findings:
 ## What this is NOT
 
 - **Not a deployable application** — this is a framework you adopt into your own project.
-- **Not an AI runtime** — you bring your own (Claude Code, Codex, Gemini, etc.).
+- **Not an AI runtime** — you bring your own (Claude Code, Codex, Antigravity, etc.).
 - **Not a replacement for `.claude/`** — it generates and supplements `.claude/`, `.codex/`, `.gemini/` configs.
 - **Not opinionated about your code** — only about session coordination, secret hygiene, and policy enforcement. Your stack, language, and architecture are up to you.
 
@@ -540,7 +548,7 @@ bash core/tests/sanitize-audit.sh
 
 # 3) cross-AI parity: same event → same decision across all 4 adapters (agy normalized)
 bash core/tests/adapter-parity.sh
-# → === Parity: 24 passed, 0 failed ===
+# → === Parity: 52 passed, 0 failed ===
 
 # 4) docs match the repo (phantom paths + fence balance)
 bash core/tests/doc-reality.sh

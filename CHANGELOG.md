@@ -7,7 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **docs**: README (en/ko) runtime line, badge and coverage table now name Claude, Codex and
+  Antigravity (Gemini CLI kept as one line); hook, adapter, skill and test counts refreshed.
+- `.claude-plugin/marketplace.json` description: "Portable, AI-agnostic safety harness for
+  coding agents".
+
 ### Added
+- `.github/workflows/currency.yml`: monthly strict `runtime-currency.sh` run that opens or
+  updates one tracking issue on failure (`contents: read`, `issues: write`, SHA-pinned).
+- `docs/analysis/branch-cleanup-2026-10.md`: remote-branch deletion candidates (nothing deleted).
 - **effort policy (W6, advisory)**: `model-routing-advisor.py` adds one `effort: high` note
   (same object as the model note) when a dispatch names a risk area and sets no `effort`.
   `effort-floor` registered in `docs/gate-registry.md`; `/spec` interview at `low`,
