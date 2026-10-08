@@ -5,6 +5,10 @@ When the AI uses ExitPlanMode (Claude Code) OR completes a Plan-class Agent
 dispatch, write a /tmp flag so subsequent Write/Edit can be permitted by the
 supervisor enforcer.
 
+W-8 source-first: memory fragments are triggers, not evidence. An ExitPlanMode
+plan that cites memory but carries no live-source evidence (file:line or
+command output) does not get the flag; spec-gate then asks before edits.
+
 Hook protocol: reads canonical event JSON from stdin, writes empty stdout (allow).
 Side-effect: writes /tmp/agent-plan-approved with timestamp.
 """
@@ -12,6 +16,7 @@ Side-effect: writes /tmp/agent-plan-approved with timestamp.
 import json
 import os
 import pathlib
+import re
 import sys
 from datetime import datetime
 
@@ -28,6 +33,31 @@ PLAN_DESCRIPTION_KEYWORDS = (
     "plan", "design", "architecture", "blueprint", "implementation",
     "구현 계획", "설계", "아키텍처", "구조",
 )
+
+
+# Memory-citation phrasing. Deliberately specific: bare "memory" (memory leak,
+# memory usage) must not match.
+MEMORY_CITATION = re.compile(
+    r"\b(per|from|according to|based on|as noted in)\s+(my\s+|the\s+)?"
+    r"(memory|memories|MEMORY\.md)\b"
+    r"|\bmemory (says|notes?|states?|indicates?)\b"
+    r"|\bI (recall|remember)\b|\bpreviously (noted|recorded)\b"
+    r"|\bMEMORY\.md\b|\bbrain_(get|search|neighbors)\b"
+    r"|메모리에\s*(따르면|의하면|기록)|기억(에|하기로)|이전에 기록",
+    re.IGNORECASE,
+)
+
+# Live-source evidence: path:line reference, or a shell prompt line in a fence.
+LIVE_EVIDENCE = re.compile(
+    r"[\w./-]+\.[A-Za-z0-9]{1,6}:\d+"
+    r"|^\s*\$ \S"
+    r"|```[^\n]*\n\s*\$ ",
+    re.MULTILINE,
+)
+
+
+def memory_only_plan(plan: str) -> bool:
+    return bool(MEMORY_CITATION.search(plan)) and not LIVE_EVIDENCE.search(plan)
 
 
 def is_plan_agent(data: dict) -> bool:
@@ -59,6 +89,24 @@ def main() -> None:
 
     # ExitPlanMode = user-approved plan in Claude Code → write flag
     if tool_name == "ExitPlanMode":
+        plan = (data.get("tool_input", {}) or {}).get("plan") or ""
+        if isinstance(plan, str) and memory_only_plan(plan):
+            try:
+                PLAN_FLAG.unlink()
+            except OSError:
+                pass
+            sys.stdout.write(json.dumps({
+                "hookSpecificOutput": {
+                    "hookEventName": "PostToolUse",
+                    "additionalContext": (
+                        "plan-gate: plan cites memory without live-source evidence; "
+                        "approval flag withheld. Memory is a trigger, not proof - "
+                        "re-verify each factual claim against the source (file:line "
+                        "or command output) and re-submit the plan."
+                    ),
+                }
+            }))
+            return
         now = datetime.now().isoformat()
         try:
             PLAN_FLAG.write_text(f"approved at {now}", encoding="utf-8")

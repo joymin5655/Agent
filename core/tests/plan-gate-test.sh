@@ -13,6 +13,9 @@
 #   Agent non-plan (subagent_type=code)  -> flag NOT written
 #   non-plan tool (Write)                -> flag NOT written
 #   malformed stdin                      -> no crash, flag NOT written, exit 0
+#   W-8 source-first: ExitPlanMode plan that cites only memory (no file:line /
+#   command-output evidence) -> flag withheld + re-verify notice; with evidence,
+#   or with no memory citation (incl. "memory leak" prose) -> flag written
 #
 # Usage: bash core/tests/plan-gate-test.sh
 set -u
@@ -63,6 +66,36 @@ run_case "agent-nonplan-absent" \
   '{"event":"PostToolUse","tool_name":"Agent","tool_input":{"subagent_type":"code-reviewer","description":"review this diff"}}' absent
 run_case "write-tool-absent" \
   '{"event":"PostToolUse","tool_name":"Write","tool_input":{"file_path":"src/x.ts","content":"x"}}' absent
+
+echo
+echo "=== W-8 source-first verification (ExitPlanMode plan text) ==="
+# plan_event <plan-text> -> ExitPlanMode event JSON carrying tool_input.plan
+plan_event() {
+  PLAN="$1" python3 -c 'import json,os;print(json.dumps({"event":"PostToolUse","tool_name":"ExitPlanMode","tool_input":{"plan":os.environ["PLAN"]}}))'
+}
+run_case "w8-memory-only-withheld" \
+  "$(plan_event $'Plan\nPer memory, the retry limit is 3 in config.py. Raise it to 5.')" absent
+run_case "w8-memory-korean-only-withheld" \
+  "$(plan_event $'계획\n메모리에 따르면 훅은 PreToolUse 에서 돈다. 그대로 수정.')" absent
+run_case "w8-memory-with-fileline-written" \
+  "$(plan_event $'Plan\nPer memory, retry limit is 3 (verified at core/config.py:42). Raise it.')" written
+run_case "w8-memory-with-cmd-output-written" \
+  "$(plan_event $'Plan\nFrom memory: tests pass. Re-checked live:\n```\n$ pytest -q\n12 passed\n```')" written
+run_case "w8-no-memory-claim-written" \
+  "$(plan_event $'Plan\nAdd a retry wrapper around the fetch call.')" written
+run_case "w8-memory-leak-prose-written" \
+  "$(plan_event $'Plan\nFix the memory leak in the cache layer and cut memory usage.')" written
+run_case "w8-no-plan-text-written" \
+  '{"event":"PostToolUse","tool_name":"ExitPlanMode","tool_input":{}}' written
+
+# withheld case must also surface a re-verify notice and clear a stale flag
+FLAG_W="$TMP_DIR/flag-w8-notice"
+echo stale > "$FLAG_W"
+OUT_W="$(plan_event $'Plan\nI recall that the limit is 3.' | AGENT_PLAN_FLAG="$FLAG_W" python3 "$HOOK" 2>/dev/null)"
+[[ ! -f "$FLAG_W" ]]
+check "w8-stale-flag-cleared" $?
+[[ "$OUT_W" == *'"hookEventName": "PostToolUse"'* && "$OUT_W" == *"re-verify"* ]]
+check "w8-notice-emitted" $?
 
 echo
 echo "=== malformed stdin -> no crash, no flag, exit 0 ==="

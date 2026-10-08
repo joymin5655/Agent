@@ -52,6 +52,8 @@ For interactive and autonomous tiers touching 3+ files:
 4. AI writes the plan to `/tmp/agent-plan-<slug>.md` (Phase 4 — Final Plan)
 5. AI starts implementation only after user approval (Phase 5 — exit plan-mode)
    - Implemented as a flag file: `core/hooks/plan-gate.py` writes `/tmp/agent-plan-approved` on approval.
+   - Source-first (W-8): a plan that cites memory but has no `file:line` / command-output
+     evidence gets no flag and a re-verify notice, so `spec-gate.py` asks before edits.
 
 Claude Code has native plan-mode with `ExitPlanMode` tool. Codex and Gemini may not — the adapter degrades gracefully by setting `tier=interactive` and asking the user to confirm before any destructive action.
 
