@@ -79,7 +79,7 @@ risk_areas:
 Each block writes one record to `.agent/logs/security-violations.jsonl`:
 
 ```json
-{"ts":"2026-…","risk":"secrets","hook":"pre-tool-guard.sh","reason":"…","session_id":"…","decision":"deny"}
+{"ts":"2026-…","risk":"secrets","hook":"pre-tool-guard.sh","reason":"…","session_id":"…","decision":"deny","reproduce_test":false,"origin":"session","schema_version":"2.0.0"}
 ```
 
 `origin` (`session` by default, or the value of `AGENT_LOG_ORIGIN` — test runners export

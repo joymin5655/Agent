@@ -167,7 +167,7 @@ while [[ $# -gt 0 ]]; do
         --projects)
             # MERGES with AGENT_GATE_PROJECTS (union, deduped by realpath). `shift 2`
             # alone never advances when the value is missing, so guard it.
-            if [[ $# -ge 2 ]]; then
+            if [[ $# -ge 2 && "$2" != --* ]]; then
                 PROJECTS_ARG="${PROJECTS_ARG:+$PROJECTS_ARG:}$2"
                 shift 2
             else
@@ -193,7 +193,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         -h|--help)
             echo "usage: telemetry-digest.sh [path] [--window <days>] [--json]" >&2
-            echo "       telemetry-digest.sh --gates [--registry <md>] [--logs-dir <d>] [--projects <p1:p2>, merged with $AGENT_GATE_PROJECTS] [--window <days>] [--fatigue <N>] [--stale-days <N>] [--json]" >&2
+            echo "       telemetry-digest.sh --gates [--registry <md>] [--logs-dir <d>] [--projects <p1:p2>, merged with \$AGENT_GATE_PROJECTS] [--window <days>] [--fatigue <N>] [--stale-days <N>] [--json]" >&2
             echo "       telemetry-digest.sh --model [--routing-log <path>] [--model-registry <path>] [--json]" >&2
             echo "       telemetry-digest.sh --review [--window <days>] [--json]" >&2
             exit 0
@@ -235,7 +235,8 @@ _seen = {os.path.realpath(logs_dir)}
 for _p in (sys.argv[7].split(":") if len(sys.argv) > 7 else []):
     if not _p:
         continue
-    _d = _p if os.path.normpath(_p).endswith(os.path.join(".agent", "logs")) \
+    # path-component match, so "foo.agent/logs" is a project root, not a logs dir
+    _d = _p if os.path.normpath(_p).split(os.sep)[-2:] == [".agent", "logs"] \
         else os.path.join(_p, ".agent", "logs")
     if not os.path.isdir(_d):
         sys.stderr.write("telemetry-digest: --projects entry has no logs dir, skipped: {}\n".format(_d))
@@ -310,12 +311,17 @@ def count_sink(sink, match, hook):
     n = suppressed = blocked = excluded = 0
     by_project = {}
     found = False
+    seen_files = set()
     for d in all_dirs:
         path = os.path.join(d, sink)
         real_logs = os.path.realpath(d)
         real_path = os.path.realpath(path)
         if real_path != real_logs and not real_path.startswith(real_logs + os.sep):
             continue
+        # distinct dirs may reach one sink file through an in-tree symlink: count it once
+        if real_path in seen_files:
+            continue
+        seen_files.add(real_path)
         pn = 0
         try:
             with open(path, encoding="utf-8") as f:
@@ -467,9 +473,8 @@ else:
         print("  {:<20} {:<26} fired={:<5} reviewed={} [{}]{}".format(
             r["id"], r["hook"], str(fired), r["last_reviewed"], flags, sup))
         if len(all_dirs) > 1 and r["by_project"]:
-            print("      by project: " + ", ".join(
-                "{}={}".format(os.path.dirname(os.path.dirname(d)) or d, c)
-                for d, c in r["by_project"].items()))
+            print("      by logs dir: " + ", ".join(
+                "{}={}".format(d, c) for d, c in r["by_project"].items()))
     print()
     print("-- flag summary --")
     if not flag_counts:

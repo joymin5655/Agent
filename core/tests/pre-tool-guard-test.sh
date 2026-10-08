@@ -42,7 +42,7 @@
 set -u
 # X-5: keep this battery's gate records out of the live .agent/logs sink (caller-set seam wins)
 if [[ -z "${AGENT_GATE_SINK_DIR:-}" ]]; then
-  AGENT_GATE_SINK_DIR="$(mktemp -d)"
+  AGENT_GATE_SINK_DIR="$(mktemp -d)" || exit 1   # an empty override would fall back to the live sink
   trap 'rm -rf "$AGENT_GATE_SINK_DIR"' EXIT
 fi
 export AGENT_GATE_SINK_DIR

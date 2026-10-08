@@ -14,6 +14,8 @@ set -u
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 DIGEST="$REPO_ROOT/core/infra/telemetry-digest.sh"
 GUARD="$REPO_ROOT/core/hooks/pre-tool-guard.sh"
+# the caller's env must not change the expected sweeps (the merge case sets it explicitly)
+unset AGENT_GATE_PROJECTS
 PASS=0; FAIL=0
 check() {
   if [[ "$2" -eq 0 ]]; then echo "  ok   [$1]"; PASS=$((PASS + 1)); else echo "  FAIL [$1]"; FAIL=$((FAIL + 1)); fi
@@ -106,6 +108,29 @@ check "f: --projects without a value terminates (rc 0)" "$?"
 direct=$(bash "$DIGEST" --gates --registry "$REG" --logs-dir "$TMP/main-logs" --projects "$P1/.agent/logs" --json 2>/dev/null \
   | python3 -c 'import sys,json; print(json.load(sys.stdin)["reports"][0]["fired"])')
 check "f: a path already ending in .agent/logs is accepted (3)" "$([[ "$direct" == 3 ]]; echo $?)"
+
+# (g) dedup is by sink FILE: two distinct dirs reaching one file through an in-tree symlink
+NL="$TMP/N"; mkdir -p "$NL/sub/.agent/logs"
+cp "$P1/.agent/logs/security-violations.jsonl" "$NL/sub/.agent/logs/"
+ln -s "sub/.agent/logs/security-violations.jsonl" "$NL/security-violations.jsonl"
+sym=$(bash "$DIGEST" --gates --registry "$REG" --logs-dir "$NL" --projects "$NL/sub" --json 2>/dev/null)
+sfired=$(printf '%s' "$sym" | python3 -c 'import sys,json; print(json.load(sys.stdin)["reports"][0]["fired"])')
+check "g: one file via two dirs counted once (fired=2, not 4)" "$([[ "$sfired" == 2 ]]; echo $?)"
+sfx=$(printf '%s' "$sym" | python3 -c 'import sys,json; print(json.load(sys.stdin)["fixture_rows_excluded"])')
+check "g: per-gate and fixture totals agree (excluded=2)" "$([[ "$sfx" == 2 ]]; echo $?)"
+
+# (h) CLI edge cases
+help_out=$(env -u AGENT_GATE_PROJECTS bash "$DIGEST" --help 2>&1); help_rc=$?
+check "h: --help exits 0 with AGENT_GATE_PROJECTS unset" "$help_rc"
+check "h: --help prints the variable name literally" "$(printf '%s' "$help_out" | grep -qF '$AGENT_GATE_PROJECTS'; echo $?)"
+nf=$(bash "$DIGEST" --gates --registry "$REG" --logs-dir "$TMP/main-logs" --projects --json 2>"$TMP/nf.err")
+check "h: '--projects --json' warns and still emits JSON" \
+  "$(grep -q 'needs a value' "$TMP/nf.err" && printf '%s' "$nf" | python3 -c 'import sys,json; json.load(sys.stdin)' 2>/dev/null; echo $?)"
+mkdir -p "$TMP/foo.agent/logs" "$TMP/foo.agent/.agent/logs"
+cp "$P1/.agent/logs/security-violations.jsonl" "$TMP/foo.agent/.agent/logs/"
+fo=$(bash "$DIGEST" --gates --registry "$REG" --logs-dir "$TMP/main-logs" --projects "$TMP/foo.agent" --json 2>/dev/null \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["reports"][0]["fired"])')
+check "h: 'foo.agent' is a project root, not a logs dir (main 1 + 2 = 3)" "$([[ "$fo" == 3 ]]; echo $?)"
 
 echo "gate-telemetry-isolation: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]
