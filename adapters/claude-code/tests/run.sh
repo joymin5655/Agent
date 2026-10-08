@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # Claude Code adapter smoke tests — verify pass-through to core hooks.
 set -euo pipefail
+# X-5: keep this battery's gate records out of the live .agent/logs sink (caller-set seam wins)
+if [[ -z "${AGENT_GATE_SINK_DIR:-}" ]]; then
+  AGENT_GATE_SINK_DIR="$(mktemp -d)"
+  trap 'rm -rf "$AGENT_GATE_SINK_DIR"' EXIT
+fi
+export AGENT_GATE_SINK_DIR
 
 ADAPTER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ADAPTER="$ADAPTER_DIR/adapter.sh"

@@ -40,8 +40,12 @@
 # Usage: bash core/tests/pre-tool-guard-test.sh
 # Exit 0: all pass. Exit 1: one or more failures.
 set -u
-# X-5: keep this battery's gate records out of the live sink (caller-set seam wins)
-export AGENT_GATE_SINK_DIR="${AGENT_GATE_SINK_DIR:-$(mktemp -d)}"
+# X-5: keep this battery's gate records out of the live .agent/logs sink (caller-set seam wins)
+if [[ -z "${AGENT_GATE_SINK_DIR:-}" ]]; then
+  AGENT_GATE_SINK_DIR="$(mktemp -d)"
+  trap 'rm -rf "$AGENT_GATE_SINK_DIR"' EXIT
+fi
+export AGENT_GATE_SINK_DIR
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 HOOK="$REPO_ROOT/core/hooks/pre-tool-guard.sh"

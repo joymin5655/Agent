@@ -30,8 +30,10 @@
 #     AGENT_GATE_LOGS_DIR. Also reports a per-gate block-rate table (W1-5:
 #     fired/blocked/rate%, blocked = records with decision=="deny").
 #
-#     X-5: --projects <p1:p2> (env AGENT_GATE_PROJECTS) adds each project root's
-#     .agent/logs to the sweep (per-gate firings are summed; JSON carries by_project).
+#     X-5: --projects <p1:p2> adds each project root's .agent/logs (or a path already
+#     ending in .agent/logs) to the sweep; per-gate firings are summed, JSON carries
+#     by_project. The flag MERGES with env AGENT_GATE_PROJECTS (union, not override);
+#     entries are deduped by realpath and a missing logs dir warns on stderr.
 #     The report ends with fixture-rows-excluded: in-window rows dropped as
 #     reproduce_test or origin!=session, counted once per distinct sink file.
 #     Writers redirect test output with AGENT_GATE_SINK_DIR (see verify-all.sh).
@@ -163,8 +165,15 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --projects)
-            PROJECTS_ARG="${PROJECTS_ARG:+$PROJECTS_ARG:}${2:-}"
-            shift 2
+            # MERGES with AGENT_GATE_PROJECTS (union, deduped by realpath). `shift 2`
+            # alone never advances when the value is missing, so guard it.
+            if [[ $# -ge 2 ]]; then
+                PROJECTS_ARG="${PROJECTS_ARG:+$PROJECTS_ARG:}$2"
+                shift 2
+            else
+                echo "telemetry-digest: --projects needs a value (p1:p2) — ignored" >&2
+                shift
+            fi
             ;;
         --fatigue)
             FATIGUE_THRESHOLD="${2:-50}"
@@ -184,7 +193,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         -h|--help)
             echo "usage: telemetry-digest.sh [path] [--window <days>] [--json]" >&2
-            echo "       telemetry-digest.sh --gates [--registry <md>] [--logs-dir <d>] [--projects <p1:p2>] [--window <days>] [--fatigue <N>] [--stale-days <N>] [--json]" >&2
+            echo "       telemetry-digest.sh --gates [--registry <md>] [--logs-dir <d>] [--projects <p1:p2>, merged with $AGENT_GATE_PROJECTS] [--window <days>] [--fatigue <N>] [--stale-days <N>] [--json]" >&2
             echo "       telemetry-digest.sh --model [--routing-log <path>] [--model-registry <path>] [--json]" >&2
             echo "       telemetry-digest.sh --review [--window <days>] [--json]" >&2
             exit 0
@@ -217,8 +226,26 @@ except Exception:
     stale_days = 90
 json_mode = sys.argv[6] == "1"
 # X-5: extra project roots (colon-separated); each contributes <root>/.agent/logs.
-project_dirs = [os.path.join(p, ".agent", "logs") for p in sys.argv[7].split(":") if p] if len(sys.argv) > 7 else []
-all_dirs = [logs_dir] + [d for d in project_dirs if os.path.realpath(d) != os.path.realpath(logs_dir)]
+# An entry is a project root (<root>/.agent/logs is used) or a logs dir itself (path
+# ending in .agent/logs). Duplicates (same realpath: p1:p1, symlinks, env+flag) are
+# dropped so no sink is counted twice; a missing dir warns on stderr.
+project_dirs = []
+all_dirs = [logs_dir]
+_seen = {os.path.realpath(logs_dir)}
+for _p in (sys.argv[7].split(":") if len(sys.argv) > 7 else []):
+    if not _p:
+        continue
+    _d = _p if os.path.normpath(_p).endswith(os.path.join(".agent", "logs")) \
+        else os.path.join(_p, ".agent", "logs")
+    if not os.path.isdir(_d):
+        sys.stderr.write("telemetry-digest: --projects entry has no logs dir, skipped: {}\n".format(_d))
+        continue
+    _r = os.path.realpath(_d)
+    if _r in _seen:
+        continue
+    _seen.add(_r)
+    project_dirs.append(_d)
+    all_dirs.append(_d)
 
 now = datetime.datetime.now(datetime.timezone.utc)
 cutoff = now - datetime.timedelta(days=window_days)

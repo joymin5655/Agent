@@ -44,11 +44,18 @@ FAKE="$TMP/fake-tests"; mkdir -p "$FAKE"
 cat >"$FAKE/fire-gate-test.sh" <<FAKE_EOF
 #!/usr/bin/env bash
 printf '%s' '$EVENT' | AGENT_PROJECT_DIR="$PROJ" bash "$GUARD" >/dev/null 2>&1
+echo "SINK=\${AGENT_GATE_SINK_DIR:-}" > "$TMP/seen-sink"
 exit 0
 FAKE_EOF
 before=$(rows "$LIVE")
-VERIFY_ALL_TESTS_DIR="$FAKE" VERIFY_ALL_SKIP_FIXED=1 bash "$REPO_ROOT/core/tests/verify-all.sh" >/dev/null 2>&1
+# env -u: an outer verify-all already exports the seam; the inner run must set it itself
+env -u AGENT_GATE_SINK_DIR VERIFY_ALL_TESTS_DIR="$FAKE" VERIFY_ALL_SKIP_FIXED=1 \
+  bash "$REPO_ROOT/core/tests/verify-all.sh" >/dev/null 2>&1
 check "b: verify-all run leaves the live sink row count unchanged" "$([[ "$(rows "$LIVE")" == "$before" ]]; echo $?)"
+seen="$(sed -n 's/^SINK=//p' "$TMP/seen-sink" 2>/dev/null)"
+# positive control: the fake battery saw a non-empty seam outside the live logs dir
+check "b: battery saw a non-empty AGENT_GATE_SINK_DIR set by verify-all" \
+  "$([[ -n "$seen" && "$seen" != "$PROJ/.agent/logs"* ]]; echo $?)"
 
 # --- digest fixtures: two projects, each with live + fixture rows ---
 REG="$TMP/registry.md"
@@ -79,6 +86,26 @@ fx=$(printf '%s' "$out" | python3 -c 'import sys,json; print(json.load(sys.stdin
 check "d: JSON fixture_rows_excluded=3" "$([[ "$fx" == 3 ]]; echo $?)"
 txt=$(bash "$DIGEST" --gates --registry "$REG" --logs-dir "$TMP/main-logs" --projects "$P1:$P2")
 check "d: text report prints fixture-rows-excluded: 3" "$(printf '%s' "$txt" | grep -q 'fixture-rows-excluded: 3'; echo $?)"
+
+# (e) duplicate inputs are counted once: p1:p1, symlink, flag + env together
+ln -s "$P1" "$TMP/p1-link"
+dup=$(bash "$DIGEST" --gates --registry "$REG" --logs-dir "$TMP/main-logs" --projects "$P1:$P1:$TMP/p1-link" --json 2>/dev/null)
+dfired=$(printf '%s' "$dup" | python3 -c 'import sys,json; print(json.load(sys.stdin)["reports"][0]["fired"])')
+check "e: p1:p1:symlink(p1) counted once (main 1 + p1 2 = 3)" "$([[ "$dfired" == 3 ]]; echo $?)"
+dfx=$(printf '%s' "$dup" | python3 -c 'import sys,json; print(json.load(sys.stdin)["fixture_rows_excluded"])')
+check "e: fixture_rows_excluded agrees with the deduped sweep (2)" "$([[ "$dfx" == 2 ]]; echo $?)"
+mer=$(AGENT_GATE_PROJECTS="$P1" bash "$DIGEST" --gates --registry "$REG" --logs-dir "$TMP/main-logs" --projects "$P1:$P2" --json 2>/dev/null \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["reports"][0]["fired"])')
+check "e: env + flag MERGE and dedupe (main 1 + p1 2 + p2 1 = 4)" "$([[ "$mer" == 4 ]]; echo $?)"
+
+# (f) bad input: missing dir warns on stderr; a value-less --projects does not hang
+warn=$(bash "$DIGEST" --gates --registry "$REG" --logs-dir "$TMP/main-logs" --projects "$TMP/nope" 2>&1 >/dev/null)
+check "f: nonexistent project warns on stderr" "$(printf '%s' "$warn" | grep -q 'no logs dir'; echo $?)"
+timeout 10 bash "$DIGEST" --gates --registry "$REG" --logs-dir "$TMP/main-logs" --projects >/dev/null 2>&1
+check "f: --projects without a value terminates (rc 0)" "$?"
+direct=$(bash "$DIGEST" --gates --registry "$REG" --logs-dir "$TMP/main-logs" --projects "$P1/.agent/logs" --json 2>/dev/null \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["reports"][0]["fired"])')
+check "f: a path already ending in .agent/logs is accepted (3)" "$([[ "$direct" == 3 ]]; echo $?)"
 
 echo "gate-telemetry-isolation: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]
