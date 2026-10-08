@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **effort policy (W6, advisory)**: `model-routing-advisor.py` adds one `effort: high` note
+  (same object as the model note) when a dispatch names a risk area and sets no `effort`.
+  `effort-floor` registered in `docs/gate-registry.md`; `/spec` interview at `low`,
+  `/supervise` wave-default table + optional `effort` in the delegation contract,
+  verify-completion judge floor `high`, council security lens `max`. Nothing blocks.
 - **`/reorg-sync` — orphaned path-reference sweeper (W-2, #53).** After a tree moves,
   `core/infra/reorg-sync.sh --old <prefix> --new <prefix> --root <tree>` reports absolute-path
   references in five classes (shebang, git worktree `gitdir:`, crontab, doc/config anchors,

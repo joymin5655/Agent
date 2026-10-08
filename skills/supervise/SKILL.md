@@ -66,6 +66,18 @@ Who runs on which model — and what enforces it:
 | **Execution dispatch** — implementation waves | Workhorse (MID) tier, via an explicit `model` override on the Agent dispatch (no executor agent is shipped) | Delegation-contract `model` field (`skills/supervise/templates/delegation-contract.md`). CI guards the guardable half: the template's model field and reviewer/verifier read-only toolsets (registry-drift gate); the call-time override itself stays a convention |
 | Mechanical fixes (build/type/lint cleanup), lookups, fan-out workers | Low tier, via an explicit `model` override | Per-call override — a convention |
 
+**Wave-dispatch default effort** (advisory — pass `effort` on the Agent call;
+`model-routing-advisor.py` nudges when it is missing; nothing blocks on it):
+
+| Wave situation | `effort` |
+|---|---|
+| An approved spec exists (the plan passed the spec gate) | `low` — the spec already did the edge-case work |
+| No spec (dryrun passed only) | `medium` |
+| Wave touches a risk area (security, auth, concurrency, storage, migration) | `high` |
+
+The risk-area row wins over the other two. Rationale and the full per-stage
+table: `docs/model-routing.md` → The effort axis.
+
 The orchestrating session keeps judgment and dispatches hands: when a wave is
 execution work, dispatch it at the tier the table names instead of doing it
 inline at the session model. Inline execution at the top tier is the expensive

@@ -202,7 +202,8 @@ sleep-polling.
 Security-shaped findings (auth, injection, secrets, crypto) are LISTED but
 not adjudicated here — route them to `security-reviewer` (the
 no-double-reporting contract in agents/code-reviewer.md applies to the
-council too).
+council too). Dispatch that security lens at `effort: max` (advisory;
+`docs/model-routing.md` → The effort axis).
 
 ### 5. Report
 
