@@ -7,7 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **docs**: README (en/ko) runtime line, badge and coverage table now name Claude, Codex and
+  Antigravity (Gemini CLI kept as one line); hook, adapter, skill and test counts refreshed.
+- `.claude-plugin/marketplace.json` description: "Portable, AI-agnostic safety harness for
+  coding agents".
+
 ### Added
+- `.github/workflows/currency.yml`: monthly strict `runtime-currency.sh` run that opens or
+  updates one tracking issue on failure (`contents: read`, `issues: write`, SHA-pinned).
+- `docs/analysis/branch-cleanup-2026-10.md`: remote-branch deletion candidates (nothing deleted).
 - **`/reorg-sync` — orphaned path-reference sweeper (W-2, #53).** After a tree moves,
   `core/infra/reorg-sync.sh --old <prefix> --new <prefix> --root <tree>` reports absolute-path
   references in five classes (shebang, git worktree `gitdir:`, crontab, doc/config anchors,

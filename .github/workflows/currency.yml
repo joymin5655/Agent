@@ -1,0 +1,58 @@
+# Monthly runtime-currency check: fails (and files ONE tracking issue) when
+# docs/runtime-registry.json is stale or a pinned model is retired.
+# Updating `checked_on` / `measured_on` in the registry is a manual step after a human re-check.
+# (ci.yml uses major-version tags; this workflow pins actions to full commit SHAs.)
+name: Runtime currency
+
+on:
+  schedule:
+    - cron: '0 6 1 * *' # 1st of each month, 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  currency:
+    name: runtime-currency (strict)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Run the currency gate in strict mode
+        id: gate
+        run: |
+          set -o pipefail
+          if bash core/tests/runtime-currency.sh --strict > currency-report.txt 2>&1; then
+            echo "failed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "failed=true" >> "$GITHUB_OUTPUT"
+          fi
+          cat currency-report.txt
+      - name: Open or update the tracking issue
+        if: steps.gate.outputs.failed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="Runtime currency check failed"
+          {
+            echo "The monthly strict runtime-currency gate failed: $RUN_URL"
+            echo
+            echo '~~~'
+            head -c 6000 currency-report.txt | sed 's/~~~/~ ~ ~/g'
+            echo '~~~'
+            echo
+            echo "Re-check the vendor docs, then update checked_on / measured_on in docs/runtime-registry.json by hand."
+          } > issue-body.md
+          existing="$(gh issue list --state open --search "\"$title\" in:title" --json number,title \
+            --jq "[.[] | select(.title == \"$title\")][0].number // empty")"
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body-file issue-body.md
+          else
+            gh issue create --title "$title" --body-file issue-body.md
+          fi
+      - name: Fail the job when the gate failed
+        if: steps.gate.outputs.failed == 'true'
+        run: exit 1

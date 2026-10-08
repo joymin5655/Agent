@@ -1,6 +1,6 @@
 {
   "name": "agent-harness",
-  "description": "Portable AI agent harness — curated review/build/test agents, secret-hardening + worktree + plan-gate hooks, and spec/supervise/wrap/verify-completion skills. Install once, use in every project. AI-agnostic core (Claude Code / Codex / Gemini).",
+  "description": "Portable AI agent harness — curated review/build/test agents, secret-hardening + worktree + plan-gate hooks, and spec/supervise/wrap/verify-completion skills. Install once, use in every project. AI-agnostic core (Claude Code / Codex / Antigravity).",
   "version": "0.5.16",
   "author": {
     "name": "joymin",
