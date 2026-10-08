@@ -121,5 +121,24 @@ OUT=$(cd "$R" && printf 'not json{' | AGENT_TDD_GUARD_MODE=block python3 "$HOOK"
 [[ $RC -eq 0 ]]; check "malformed-no-crash" $?
 
 echo
+echo "=== (j) hook-config risk_areas.secrets.paths overrides the secret whitelist ==="
+write_cfg() { printf '%s' "$2" > "$1/.agent/hook-config.json"; }
+CFG='{"risk_areas":{"secrets":{"paths":["vault/**"]}}}'
+R=$(fresh_repo); write_cache "$R" '{"testResults":[]}'
+# no override: src/vault is ordinary code (denied), src/secrets is whitelisted
+run "$R" block "src/vault/k.ts"; is_deny; check "no-override-vault-enforced" $?
+run "$R" block "src/secrets/k.ts"; ! is_deny; check "no-override-builtin-secret-allowed" $?
+# override: vault/ becomes whitelisted, built-in secrets/ no longer is
+R=$(fresh_repo); write_cache "$R" '{"testResults":[]}'; write_cfg "$R" "$CFG"
+run "$R" block "src/vault/k.ts"; ! is_deny; check "override-vault-allowed" $?
+grep -q 'guard_skip' "$R/.agent/logs/tdd-guard-dryrun.jsonl" 2>/dev/null; check "override-vault-logged" $?
+run "$R" block "src/secrets/k.ts"; is_deny; check "override-replaces-builtin-secret" $?
+# other built-ins stay
+run "$R" block "src/billing/x.ts"; ! is_deny; check "override-keeps-billing" $?
+# broken config -> built-ins
+R=$(fresh_repo); write_cache "$R" '{"testResults":[]}'; write_cfg "$R" '{not json'
+run "$R" block "src/secrets/k.ts"; ! is_deny; check "bad-config-keeps-builtins" $?
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]

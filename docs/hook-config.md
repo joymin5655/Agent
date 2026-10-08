@@ -15,6 +15,13 @@ exception: if that `.yml` declares `risk_areas`, the Bash guard fails closed and
 denies read/copy/upload commands, plus any command containing one of those verbs as a
 substring (e.g. `git add .`), until PyYAML is installed (P1-9).
 
+## tdd-guard whitelist override
+
+`risk_areas.secrets.paths` also overrides tdd-guard's built-in secret whitelist
+(files exempt from RGR enforcement). Non-empty valid paths replace the built-in
+secret pattern; the migrations / edge-fn / billing entries stay built-in. No
+config, empty paths, or a skipped `.yml` (PyYAML absent) keep the built-ins.
+
 ## Schema
 
 All keys live under a top-level `python_hooks:` mapping (a bare top-level mapping
