@@ -28,7 +28,7 @@ One-line description to reuse across listings:
 > A safety harness for AI coding agents — machine gates (not prompts) that
 > block secret leaks, refute false "done" claims, and catch plan-skipping
 > (observation-mode default, block opt-in), identically across Claude Code,
-> Codex CLI, and Gemini CLI.
+> Codex CLI, and Antigravity CLI.
 
 ## Launch posts (do once, after the GIF exists)
 
@@ -46,7 +46,7 @@ evidence-cited.
 > REFUTED), PreToolUse hooks that physically block secret reads and force
 > pushes, and a CI that verifies the harness itself (the README fails the
 > build if it names a file that doesn't exist). Works identically across
-> Claude Code, Codex CLI, and Gemini CLI through one decision core —
+> Claude Code, Codex CLI, and Antigravity CLI through one decision core —
 > cross-CLI parity is machine-tested, not promised. [GIF]
 
 **r/ClaudeAI draft:** same story, more casual, lead with the GIF and the
@@ -60,7 +60,7 @@ install one-liner + repo link.
 
 ## Cross-community (after cross-CLI headline lands in README)
 
-- [ ] Post in Codex CLI and Gemini CLI communities — the harness is one of
+- [ ] Post in Codex CLI and Antigravity CLI communities — the harness is one of
       the few governance layers that treats them as first-class runtimes
       (decision parity proven by `core/tests/adapter-parity.sh`).
 

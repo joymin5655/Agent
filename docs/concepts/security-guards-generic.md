@@ -106,7 +106,7 @@ real-vs-documented split.
 
 ## Cross-AI parity
 
-All 3 adapters (Claude / Codex / Gemini) must enforce risk areas identically. The cross-AI parity test verifies:
+All 3 adapters (Claude / Codex / Antigravity) must enforce risk areas identically. The cross-AI parity test verifies:
 
 ```bash
 echo '{"ai":"claude-code", ...secrets/db.env...}' | claude-code-adapter pre-tool-guard
@@ -115,7 +115,7 @@ echo '{"ai":"claude-code", ...secrets/db.env...}' | claude-code-adapter pre-tool
 echo '{"ai":"codex", ...secrets/db.env...}' | codex-adapter pre-tool-guard
 # expect: same denial
 
-echo '{"ai":"gemini", ...secrets/db.env...}' | gemini-adapter pre-tool-guard
+echo '{"ai":"antigravity", ...secrets/db.env...}' | antigravity-adapter pre-tool-guard
 # expect: same denial
 ```
 

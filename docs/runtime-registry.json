@@ -66,19 +66,6 @@
       "retired_model_patterns": ["gemini-2\\.", "gemini-3\\.0", "gemini-3-flash(?![a-z0-9-])"],
       "models_measured": ["gemini-3.8-flash-{high,medium,low}", "gemini-3.7-flash-*", "gemini-3.6-flash-*", "gemini-3.1-pro-{high,low}", "claude-sonnet-4-6", "claude-opus-4-6-thinking", "gpt-oss-120b-medium"],
       "notes": "W5 native hooks via a plugin folder: PreToolUse/PostToolUse/Stop go through adapters/antigravity/adapter.sh (no SessionStart/UserPromptSubmit/SessionEnd equivalent is wired; view_file and MCP tools are not matched). agy 1.2.12 (probe 2026-09-29): a PreToolUse stdout of {} is a DENY, so pass-through is {\"decision\":\"ask\"}. Headless soft-deny (exit 0) now also fills the envelope denied_actions array and prints a jetski auto-denied stderr notice; status ERROR exits 3. Preflights must read the JSON status, not the exit code. --effort low|medium|high|max exists. agy also serves Claude models: the council lane must stay pinned to gemini-* for vendor independence. Gemini CLI individual access ended 2026-06-18."
-    },
-    "gemini-cli": {
-      "kind": "first-party",
-      "vendor": "google",
-      "status": "retired-for-individuals",
-      "cli_version_measured": "0.46.0",
-      "measured_on": "2026-09-26",
-      "docs": [
-        {"url": "https://developers.googleblog.com/an-important-update-transitioning-gemini-cli-to-antigravity-cli/", "checked_on": "2026-09-26"}
-      ],
-      "pin_files": ["adapters/gemini/gemini-settings.json.template"],
-      "retired_model_patterns": [],
-      "notes": "Kept for enterprise (Code Assist) users only; not a council lane since 2026-08-19."
     }
   }
 }

@@ -23,7 +23,7 @@
 #       the repo) but IS caught by this scratch-HOME snapshot, which is the point.
 #       PYTHONDONTWRITEBYTECODE=1 is set to suppress an unrelated, pre-existing,
 #       harmless side effect: macOS system python3 (used by many PRE-EXISTING doctor
-#       checks, e.g. 7/8/11/12/15/16/18 — not introduced by this wave) writes its own
+#       checks, e.g. 7/8/11/12/15/18 — not introduced by this wave) writes its own
 #       bytecode cache under ~/Library/Caches/com.apple.python on first run against a
 #       fresh $HOME. Without suppressing that noise, the snapshot assertion could
 #       never go green regardless of this wave's fix, defeating its purpose.

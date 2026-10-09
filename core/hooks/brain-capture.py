@@ -6,7 +6,7 @@ session that did work-in-progress leaves ONE raw capture even if the agent never
 called the tool. Cross-AI by construction — it is driven either by
 
   * canonical JSON on stdin  (Claude registers it as a Stop hook), or
-  * environment             (the codex/gemini session wrappers call it from their
+  * environment             (the codex session wrapper calls it from its
                              stop path: AGENT / AGENT_SESSION_ID set, no stdin),
 
 so all three runtimes converge on the same capture through their own native
@@ -87,7 +87,7 @@ def _event_name(data: dict) -> str:
 
 def _resolve_ai(data: dict) -> str:
     """Which AI is ending this session. Prefers the canonical `ai` field, then the
-    AGENT env (set by the codex/gemini session wrappers). Claude's native Stop
+    AGENT env (set by the codex session wrapper, or by hand). Claude's native Stop
     payload carries neither — the passthrough adapter doesn't stamp `ai` (a known
     protocol gap: hook-protocol.md §2 lists `ai` as required, adapter.sh just
     exec's) — so fall back to Claude's signature keys rather than mis-filing the

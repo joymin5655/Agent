@@ -125,7 +125,7 @@ prompt wording.
   judge where low confidence and even judge crashes all resolve to REFUTED (fail-closed) —
   see the [verification diagram](#how-a-run-flows).
 - Cross-AI parity is machine-proved, not promised: `core/tests/adapter-parity.sh` feeds the
-  same events through the claude-code, codex, gemini and antigravity adapters (antigravity after
+  same events through the claude-code, codex and antigravity adapters (antigravity after
   normalizing its `ask`/`force_ask` vocabulary) and asserts identical decisions. That proves
   *decision* parity; *event coverage* still differs per runtime — see
   [Runtime coverage](#runtime-coverage).
@@ -160,7 +160,7 @@ New to this space? These ten terms are all you need to read the rest of this pag
 |---|---|
 | **harness** | The whole safety layer: agents + hooks + skills + rules, wrapped around your AI. |
 | **hook** | A small script your AI runtime runs automatically before/after an action. It answers **allow**, **ask**, or **deny**. 27 scripts wired via `hooks/hooks.json` (31 incl. shared modules) live in [`core/hooks/`](core/hooks/). |
-| **adapter** | A translator from a runtime hook or controlled wrapper event to the harness's canonical JSON. There are 4 runtime adapters (claude-code, codex, gemini, antigravity) in [`adapters/`](adapters/). |
+| **adapter** | A translator from a runtime hook or controlled wrapper event to the harness's canonical JSON. There are 3 runtime adapters (claude-code, codex, antigravity) in [`adapters/`](adapters/). |
 | **agent** | A specialist your AI delegates to — e.g. a security reviewer that only reviews and never writes. 3 ship here ([`agents/`](agents/)). |
 | **skill** | A reusable step-by-step workflow the AI follows, e.g. the commit + PR flow. 14 ship here ([`skills/`](skills/)). |
 | **gate** | A hook decision point (deny / ask / block). Every gate is registered with the model weakness it assumes — [`docs/gate-registry.md`](docs/gate-registry.md). |
@@ -190,13 +190,13 @@ fail-closed `deny`. Codex also runs a hook only after you review and trust it
 with `/hooks` — installing `hooks.json` alone does not enforce anything yet.
 
 Antigravity (agy 1.2.12) treats a hook's `{}` as a deny, so a pass-through is emitted as `ask`
-and a core `ask` as `force_ask`; view/MCP/browser tools are not matched. Enterprise Gemini CLI
-users keep the gemini adapter (shell wrapper; no native file-write interception).
+and a core `ask` as `force_ask`; view/MCP/browser tools are not matched. The direct Gemini CLI
+adapter (shell wrapper; no native file-write interception) was retired on 2026-10-09 and
+moved to [`legacy/lanes-2026-10/gemini/`](legacy/lanes-2026-10/gemini/README.md).
 
 Per-runtime details and workarounds:
 [`adapters/codex/README.md`](adapters/codex/README.md) ·
-[`adapters/antigravity/README.md`](adapters/antigravity/README.md) ·
-[`adapters/gemini/README.md`](adapters/gemini/README.md). The full current/target
+[`adapters/antigravity/README.md`](adapters/antigravity/README.md). The full current/target
 split is in the
 [runtime capability matrix](docs/benchmark/runtime-capability-matrix-2026-07.md).
 
@@ -266,7 +266,7 @@ the cache, activation, event flow, project-init side effects, and current gaps.
 
 ```bash
 gh repo clone joymin5655/Agent ~/agent   # or: git clone https://github.com/joymin5655/Agent ~/agent
-bash ~/agent/setup.sh                    # no flag = Claude + Codex + Gemini (Antigravity is opt-in)
+bash ~/agent/setup.sh                    # no flag = Claude + Codex (Antigravity is opt-in)
 bash ~/agent/setup.sh --antigravity     # add Antigravity (agy) worker lane + native-hook plugin
 ```
 
@@ -274,7 +274,6 @@ bash ~/agent/setup.sh --antigravity     # add Antigravity (agy) worker lane + na
 |---|---|
 | `--claude` | Claude Code only (`~/.claude/settings.json`) |
 | `--codex` | Codex CLI only (`~/.codex/config.toml`) |
-| `--gemini` | Gemini CLI only (`~/.gemini/settings.json`) |
 | `--project` | Scaffold the current repo: `CLAUDE.md` / `AGENTS.md` / `GEMINI.md` / `gitleaks.toml` / `hook-config.yml` / git pre-commit + pre-push hooks |
 | `--hooks-only` | git-hooks only, no AI configs |
 | `--all` | Everything above |
@@ -328,7 +327,7 @@ flowchart TB
     subgraph CORE["Layer 1 — core/ (the single source of truth)"]
         H["hooks/ — 27 wired scripts: secret scan · mutex ·<br/>spec-gate · tdd-guard · supervisor …"]
         I["infra/ — sessions · goal mode ·<br/>audits · auto-ship"]
-        T["tests/ — 95 self-verification scripts"]
+        T["tests/ — 100 self-verification scripts"]
     end
     R["rules/ — policy<br/>source of truth"]
     PLUG[".claude-plugin/ + hooks/hooks.json<br/>plugin distribution"]
@@ -347,7 +346,7 @@ flowchart TB
 Four layers, lowest wins:
 
 - **L1 `core/`** — AI-agnostic hooks and infra. The single source of truth.
-- **L2 `adapters/`** — per-AI translators (claude-code is a thin pass-through; codex, gemini and antigravity do real translation).
+- **L2 `adapters/`** — per-AI translators (claude-code is a thin pass-through; codex and antigravity do real translation).
 - **L3 `templates/`** — project scaffolds copied by `setup.sh --project` or
   `/agent-harness:project-init`.
 - **L4 your project** — overrides via `hook-config.yml` and optional `.agent/` files. No core edits needed.
@@ -481,7 +480,7 @@ and Git-hook wiring.
 Agent/
 ├── .claude-plugin/     # Claude Code plugin + marketplace manifests
 ├── .github/            # CI workflows · issue templates · PR template
-├── setup.sh            # shell installer — 6 combinable flags
+├── setup.sh            # shell installer — 5 combinable flags
 ├── gitleaks.toml       # base secret-scan config
 ├── AGENTS.md           # operating rules for AIs working on this repo
 ├── CHANGELOG.md
@@ -495,9 +494,9 @@ Agent/
 │   ├── hooks/          #   31 portable hook scripts (27 wired + shared modules)
 │   ├── infra/          #   session coordination · goal mode · audits · auto-ship
 │   ├── git-hooks/      #   pre-commit · pre-push
-│   └── tests/          #   95 test scripts (verify-all.sh runs them all)
+│   └── tests/          #   100 test scripts (verify-all.sh runs them all)
 │
-├── adapters/           # claude-code (thin) · codex · gemini · antigravity
+├── adapters/           # claude-code (thin) · codex · antigravity
 ├── rules/              # generic policy docs
 ├── templates/          # project scaffold templates
 ├── evals/              # judge + verifier eval datasets and runners
@@ -544,7 +543,7 @@ gitleaks detect --no-git --source . --config gitleaks.toml
 # 2) domain-neutrality gate (also runs in CI)
 bash core/tests/sanitize-audit.sh
 
-# 3) cross-AI parity: same event → same decision across all 4 adapters (agy normalized)
+# 3) cross-AI parity: same event → same decision across all 3 adapters (agy normalized)
 bash core/tests/adapter-parity.sh
 # → === Parity: 52 passed, 0 failed ===
 

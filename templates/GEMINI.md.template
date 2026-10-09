@@ -1,7 +1,7 @@
 # GEMINI.md
 
-This file is read by [Gemini CLI](https://github.com/google-gemini/gemini-cli)
-at the start of every session in this project.
+This file is read by the Antigravity CLI (`agy`) at the start of every session in
+this project.
 
 Replace `{{PROJECT_NAME}}` and `{{PROJECT_DESCRIPTION}}` below.
 
@@ -14,8 +14,12 @@ Replace `{{PROJECT_NAME}}` and `{{PROJECT_DESCRIPTION}}` below.
 1. **Never run shell commands that touch `secrets/`, `.env*` (excluding
    `.env.example`), or production deploy/migration paths without an
    explicit user request that names the exact target.**
-   The framework's shell wrapper (`gemini-shell-wrap.sh`) blocks such
-   calls with exit 100.
+   The framework's Antigravity plugin (`setup.sh --antigravity`) wires native hooks:
+   PreToolUse checks `run_command`, `send_command_input` and the file-write tools
+   (`write_to_file`, `replace_file_content`, `multi_replace_file_content`) and denies such
+   calls; PostToolUse observers run after the call and their output is discarded; the
+   Stop hook runs when you finish, but its advisories are not relayed to agy.
+   `view_file`, MCP and browser tools are not guarded, so this rule binds you there too.
 
 2. **5 Risk areas** — see `rules/policy/security-guards.md`:
    - `data` — production data migrations
@@ -24,10 +28,17 @@ Replace `{{PROJECT_NAME}}` and `{{PROJECT_DESCRIPTION}}` below.
    - `payment` — billing / payment integration
    - `domain-output` — uncertainty / quality fields
 
-3. **Multi-session coordination**:
-   - Worktree per concurrent task: `.worktrees/gemini-<task-slug>/`
-   - Register session: `bash core/infra/gemini-session.sh <task-slug>`
-   - Heartbeat every 5 minutes (the wrapper does this automatically)
+3. **Multi-session coordination** (no session wrapper ships for agy, so run it by hand).
+   Pass the same `AGENT_SESSION_ID` on every call: without it each call mints a new ID, so a
+   heartbeat matches no session and gc may drop the entry 30 minutes after start.
+   - Worktree per concurrent task: `.worktrees/gemini-<task-slug>/` (`start` creates it)
+
+   ```bash
+   # register at start, heartbeat every 5 minutes, release when done
+   AGENT=gemini AGENT_SESSION_ID=gemini-<task-slug> bash core/infra/agent-session.sh start <task-slug>
+   AGENT=gemini AGENT_SESSION_ID=gemini-<task-slug> bash core/infra/agent-session.sh heartbeat
+   AGENT=gemini AGENT_SESSION_ID=gemini-<task-slug> bash core/infra/agent-session.sh stop
+   ```
 
 4. **Never bypass the pre-push hook** with `--no-verify`.
 
@@ -48,7 +59,9 @@ Replace `{{PROJECT_NAME}}` and `{{PROJECT_DESCRIPTION}}` below.
 ## Agent brain (shared cross-AI knowledge)
 
 The harness ships a shared knowledge store queried via the `brain` MCP server
-(one store for Claude / Codex / Gemini). Two rules, always:
+(one store for Claude / Codex / Gemini). `setup.sh` registers the server for Claude and
+Codex; to use it from agy, add `core/brain/brain-mcp.py` to agy's own MCP configuration.
+Two rules, always:
 
 - **Query before re-deriving** — `brain_search` / `brain_get` / `brain_neighbors`
   may already hold the answer.

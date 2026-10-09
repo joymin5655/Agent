@@ -9,7 +9,7 @@
 - `git` 2.30+
 - `bash` 5.0+ (macOS 12+, any modern Linux)
 - `python3` (several hooks are Python scripts)
-- One of: Claude Code CLI / Codex CLI / Gemini CLI installed
+- One of: Claude Code CLI / Codex CLI / Antigravity CLI (`agy`) installed
 - Optional: `gitleaks` 8+ (`brew install gitleaks` or download from releases)
 - Optional: `gh` 2.0+ (for repo operations)
 
@@ -27,7 +27,7 @@ git clone https://github.com/joymin5655/Agent ~/agent
 
 ## 2. Configure your AI runtime(s)
 
-### All 3 AIs at once
+### Default set (Claude Code + Codex CLI)
 
 ```bash
 bash ~/agent/setup.sh
@@ -36,7 +36,9 @@ bash ~/agent/setup.sh
 This installs adapter configs to:
 - `~/.claude/settings.json` (Claude Code)
 - `~/.codex/config.toml` (Codex CLI)
-- `~/.gemini/settings.json` (Gemini CLI)
+
+Antigravity (`agy`) is opt-in: `bash ~/agent/setup.sh --antigravity` adds its worker lane and
+native-hook plugin (`~/.gemini/config/plugins/agent-harness`).
 
 Existing files are skipped; replacements prompt for confirmation. Set `AGENT_SETUP_YES=1` for non-interactive runs.
 
@@ -45,7 +47,7 @@ Existing files are skipped; replacements prompt for confirmation. Set `AGENT_SET
 ```bash
 bash ~/agent/setup.sh --claude
 bash ~/agent/setup.sh --codex
-bash ~/agent/setup.sh --gemini
+bash ~/agent/setup.sh --antigravity
 ```
 
 ### Hooks-only (no AI config, just git-hooks)
@@ -80,7 +82,7 @@ This scaffolds (skipping any existing files):
 
 - `CLAUDE.md` — Claude Code instructions for your project
 - `AGENTS.md` — generic AI instructions
-- `GEMINI.md` — Gemini CLI instructions
+- `GEMINI.md` — Antigravity CLI (`agy`) instructions
 - `gitleaks.toml` — secret scanner config (extending the base)
 - `.claude/rules/` — generic policy docs
 - `hook-config.yml` — YOUR risk areas, resources, policy patterns
@@ -130,15 +132,15 @@ codex
 # Reads AGENTS.md + applies the configured shell-wrapper gates
 ```
 
-### Gemini CLI
+### Antigravity CLI
 
 ```bash
 cd /path/to/your/project
-gemini
-# Reads GEMINI.md + applies the configured shell-wrapper gates
+agy
+# Reads GEMINI.md + AGENTS.md; applies the native-hook plugin if you ran setup.sh --antigravity
 ```
 
-The shipped Codex/Gemini wrapper covers shell calls, not every native file-write
+Hooks cover shell calls and the tools each runtime's matcher names, not every native
 tool. Check the
 [runtime capability matrix](benchmark/runtime-capability-matrix-2026-07.md)
 before relying on a gate. When a covered call is blocked, you will see:
@@ -241,5 +243,5 @@ carries your identity.
 | `gitleaks: command not found` | `brew install gitleaks` (macOS) or download from https://github.com/gitleaks/gitleaks/releases |
 | `Hooks not firing in Claude Code` | Check `~/.claude/settings.json` contains the `adapter.sh` registration. Restart Claude Code. |
 | `permission denied` on `setup.sh` | `chmod +x ~/agent/setup.sh` |
-| `command not found: claude/codex/gemini` | Install the AI's CLI first — this framework is the policy layer, not the AI itself. |
+| `command not found: claude/codex/agy` | Install the AI's CLI first — this framework is the policy layer, not the AI itself. |
 | Hook returns empty stdout but I expect a decision | That's correct — empty stdout = `allow`. See [`hook-protocol.md`](hook-protocol.md) § 3. |
