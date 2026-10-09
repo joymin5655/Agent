@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The flag MERGES with `AGENT_GATE_PROJECTS` (union), entries are deduped by realpath, and a
   missing dir warns on stderr. The report ends with `fixture-rows-excluded`.
 - `core/tests/gate-telemetry-isolation-test.sh`.
+- **Gate sink pollution detection (AG9).** Test runners export `AGENT_GATE_SINK_TEST_RUN=<sink
+  path>` next to `AGENT_GATE_SINK_DIR`; a sink dir without the matching marker is live-config
+  pollution. `telemetry-digest.sh` warns once on stderr (exit code and counts unchanged) and the
+  `--gates` report/JSON carry `sink-override`/`sink_override`. `setup.sh --doctor` check 22 WARNs
+  on the process env and on `env` blocks in `~/.claude` (or `CLAUDE_CONFIG_DIR`) and repo
+  `.claude` `settings{,.local}.json`, plus text mentions in the codex/gemini configs.
 
 ### Changed
 - `r4-mutex-check`, `context-mode-guard`, `secret-content-scan` and `council-escalation-gate`
