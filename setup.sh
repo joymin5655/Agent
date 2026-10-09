@@ -1283,6 +1283,64 @@ print("main=%s reviewers=%s" % (m, ",".join(r) or "-"))' "$profile_file" 2>/dev/
         add_row WARN "runtime profile — not recorded; run: python3 $FRAMEWORK_ROOT/core/infra/runtime-profile.py save"
     fi
 
+    # 22. gate-sink pollution (AG9, X-5 follow-up). AGENT_GATE_SINK_DIR (+ same-purpose test
+    #     vars) exists so TEST runners divert gate records away from the live sinks. Left in a
+    #     runtime settings `env` block / shell profile it silently diverts LIVE gate records and
+    #     makes telemetry-digest under-count. Test runners also export
+    #     AGENT_GATE_SINK_TEST_RUN=<same path> (verify-all.sh), so "sink dir set without a
+    #     matching marker" = pollution. Read-only; WARN only. Claude files are parsed as JSON
+    #     (`env` block); codex/gemini configs are text-scanned for the names.
+    local gs_root gs_hits="" gs_checked=0 gs_f gs_out gs_rc
+    gs_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+    local -a gs_claude=(
+        "$HOME/.claude/settings.json" "$HOME/.claude/settings.local.json"
+        "$gs_root/.claude/settings.json" "$gs_root/.claude/settings.local.json"
+    )
+    local -a gs_other=(
+        "${CODEX_CONFIG:-$HOME/.codex/config.toml}" "${GEMINI_SETTINGS:-$HOME/.gemini/settings.json}"
+    )
+    if [[ -n "${AGENT_GATE_SINK_DIR:-}" && "${AGENT_GATE_SINK_TEST_RUN:-}" != "$AGENT_GATE_SINK_DIR" ]]; then
+        gs_hits="process env AGENT_GATE_SINK_DIR=$(sanitize_display "$AGENT_GATE_SINK_DIR")"
+    fi
+    for gs_f in "${gs_claude[@]}"; do
+        [[ -f "$gs_f" ]] || continue
+        gs_checked=$((gs_checked + 1))
+        if gs_out="$(GS_FILE="$gs_f" python3 - <<'PY' 2>&1
+import json, os, sys
+names = ("AGENT_GATE_SINK_DIR", "AGENT_GATE_SINK_TEST_RUN", "AGENT_REPRODUCE_TEST")
+try:
+    env = (json.load(open(os.environ["GS_FILE"], encoding="utf-8")) or {}).get("env")
+except Exception as e:
+    print("unparseable (%s)" % type(e).__name__)
+    sys.exit(2)
+if not isinstance(env, dict):
+    sys.exit(0)
+hit = [n for n in names if n in env]
+if env.get("AGENT_LOG_ORIGIN") == "test":
+    hit.append("AGENT_LOG_ORIGIN=test")
+if hit:
+    print(", ".join(hit))
+    sys.exit(1)
+PY
+        )"; then gs_rc=0; else gs_rc=$?; fi
+        case $gs_rc in
+            0) ;;
+            *) gs_hits="${gs_hits:+$gs_hits; }$(sanitize_display "${gs_f/#$HOME/~}"): $(sanitize_display "$gs_out")" ;;
+        esac
+    done
+    for gs_f in "${gs_other[@]}"; do
+        [[ -f "$gs_f" ]] || continue
+        gs_checked=$((gs_checked + 1))
+        if grep -qE 'AGENT_GATE_SINK_DIR|AGENT_GATE_SINK_TEST_RUN|AGENT_REPRODUCE_TEST' "$gs_f" 2>/dev/null; then
+            gs_hits="${gs_hits:+$gs_hits; }$(sanitize_display "${gs_f/#$HOME/~}"): mentions a gate test-only variable"
+        fi
+    done
+    if [[ -n "$gs_hits" ]]; then
+        add_row WARN "gate sink pollution — $gs_hits; test-only vars divert live gate records and make telemetry-digest under-count. Remove them from the runtime settings/profile (only test runners should set them)"
+    else
+        add_row PASS "gate sink pollution — no AGENT_GATE_SINK_DIR in process env or $gs_checked runtime settings file(s)"
+    fi
+
     echo "=== Environment diagnosis (--doctor) ==="
     local row status msg
     for row in "${rows[@]}"; do

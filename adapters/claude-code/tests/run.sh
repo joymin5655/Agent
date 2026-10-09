@@ -7,6 +7,7 @@ if [[ -z "${AGENT_GATE_SINK_DIR:-}" ]]; then
   trap 'rm -rf "$AGENT_GATE_SINK_DIR"' EXIT
 fi
 export AGENT_GATE_SINK_DIR
+export AGENT_GATE_SINK_TEST_RUN="$AGENT_GATE_SINK_DIR"   # AG9: test-runner marker (see verify-all.sh)
 
 ADAPTER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ADAPTER="$ADAPTER_DIR/adapter.sh"

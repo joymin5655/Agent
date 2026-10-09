@@ -141,6 +141,9 @@ export AGENT_WORKERS_DIR="${AGENT_WORKERS_DIR:-$WORK/agent-workers}"
 # X-5: gate hooks write security-violations.jsonl under <repo>/.agent/logs; redirect the
 # whole run so the live sink row count is unchanged (origin=test above stays as 2nd line).
 export AGENT_GATE_SINK_DIR="${AGENT_GATE_SINK_DIR:-$WORK/gate-sink}"
+# AG9: marker = the sink path this runner owns; doctor/digest treat a sink dir WITHOUT a
+# matching marker as live-config pollution (a leaked settings.json env value never matches).
+export AGENT_GATE_SINK_TEST_RUN="$AGENT_GATE_SINK_DIR"
 OUTFILE="$WORK/check.out"
 
 passed=0

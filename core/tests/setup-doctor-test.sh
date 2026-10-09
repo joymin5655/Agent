@@ -66,6 +66,7 @@ trap cleanup_fixtures EXIT
 # X-5: keep this battery's gate records out of the live .agent/logs sink (caller-set seam wins)
 GATE_SINK_TMP="$(safe_mktemp_d)" || exit 1; track_fixture "$GATE_SINK_TMP"
 export AGENT_GATE_SINK_DIR="${AGENT_GATE_SINK_DIR:-$GATE_SINK_TMP}"
+export AGENT_GATE_SINK_TEST_RUN="$AGENT_GATE_SINK_DIR"   # AG9: runner marker
 # INT/TERM must also STOP: a handler that only cleaned up and returned would resume
 # the interrupted section with its fixture tree already deleted.
 trap 'cleanup_fixtures; exit 130' INT
@@ -999,6 +1000,68 @@ else
   echo "  skip [antigravity-tiers-warn-unreadable-not-differs] running as root"
 fi
 rm -rf "$AT_HOME"
+
+echo
+echo "=== (AG9) gate-sink pollution: process env / settings env blocks (HOME isolated) ==="
+GS_HOME="$(safe_mktemp_d)" || { echo "FAIL: mktemp -d failed (gate-sink fixture)"; exit 1; }
+track_fixture "$GS_HOME"
+mkdir -p "$GS_HOME/.claude"
+gs_doc() { # $1 = extra env assignments are passed as args; runs doctor with a clean, isolated env
+  env -u AGENT_GATE_SINK_DIR -u AGENT_GATE_SINK_TEST_RUN HOME="$GS_HOME" "$@" bash "$SETUP" --doctor 2>&1
+}
+# none -> PASS, no warning
+OUT_GS0="$(gs_doc)"
+grep -qE '^ +\[PASS\] gate sink pollution' <<<"$OUT_GS0" && ! grep -qE '^ +\[WARN\] gate sink pollution' <<<"$OUT_GS0"
+check "gate-sink-none-pass" $?
+# runner-set value (marker matches) is NOT pollution
+OUT_GS1="$(gs_doc AGENT_GATE_SINK_DIR=/tmp/gs-runner AGENT_GATE_SINK_TEST_RUN=/tmp/gs-runner)"
+[[ "$OUT_GS1" == *"[PASS"*"gate sink pollution"* ]]
+check "gate-sink-runner-marker-not-flagged" $?
+# value without marker, or with a mismatching (stale) marker -> WARN with the path
+OUT_GS2="$(gs_doc AGENT_GATE_SINK_DIR=/tmp/gs-leak)"
+[[ "$OUT_GS2" == *"[WARN"*"gate sink pollution"*"process env AGENT_GATE_SINK_DIR=/tmp/gs-leak"* ]]
+check "gate-sink-process-env-warn" $?
+OUT_GS3="$(gs_doc AGENT_GATE_SINK_DIR=/tmp/gs-leak AGENT_GATE_SINK_TEST_RUN=/tmp/other)"
+[[ "$OUT_GS3" == *"[WARN"*"gate sink pollution"* ]]
+check "gate-sink-mismatched-marker-warn" $?
+# settings env blocks (user-level, user-local) -> WARN naming the file
+printf '{"env":{"AGENT_GATE_SINK_DIR":"/tmp/gs-leak"}}' > "$GS_HOME/.claude/settings.json"
+OUT_GS4="$(gs_doc)"
+[[ "$OUT_GS4" == *"[WARN"*"gate sink pollution"*"settings.json: AGENT_GATE_SINK_DIR"* ]]
+check "gate-sink-settings-env-warn" $?
+RC_GS4="$(env -u AGENT_GATE_SINK_DIR -u AGENT_GATE_SINK_TEST_RUN HOME="$GS_HOME" bash "$SETUP" --doctor >/dev/null 2>&1; echo $?)"
+[[ "$RC_GS4" -eq 0 ]]
+check "gate-sink-warn-not-fail" $?
+printf '{"env":{"AGENT_LOG_ORIGIN":"test"}}' > "$GS_HOME/.claude/settings.json"
+printf '{"env":{"AGENT_REPRODUCE_TEST":"1"}}' > "$GS_HOME/.claude/settings.local.json"
+OUT_GS5="$(gs_doc)"
+[[ "$OUT_GS5" == *"AGENT_LOG_ORIGIN=test"* && "$OUT_GS5" == *"settings.local.json: AGENT_REPRODUCE_TEST"* ]]
+check "gate-sink-same-purpose-vars-warn" $?
+# unrelated env vars / non-dict env -> no warning
+printf '{"env":{"FOO":"1","AGENT_LOG_ORIGIN":"session"}}' > "$GS_HOME/.claude/settings.json"
+printf '{"env":"nope"}' > "$GS_HOME/.claude/settings.local.json"
+OUT_GS6="$(gs_doc)"
+[[ "$OUT_GS6" == *"[PASS"*"gate sink pollution"*"2 runtime settings file(s)"* ]]
+check "gate-sink-unrelated-env-pass" $?
+# broken JSON -> WARN (existing doctor convention), exit stays 0, no traceback
+printf '{broken' > "$GS_HOME/.claude/settings.json"
+rm -f "$GS_HOME/.claude/settings.local.json"
+OUT_GS7="$(gs_doc)"
+[[ "$OUT_GS7" == *"[WARN"*"gate sink pollution"*"unparseable"* && "$OUT_GS7" != *"Traceback"* ]]
+check "gate-sink-broken-json-warn" $?
+# codex config mention -> WARN
+rm -f "$GS_HOME/.claude/settings.json"
+mkdir -p "$GS_HOME/.codex"
+printf '[shell_environment_policy.set]\nAGENT_GATE_SINK_DIR = "/tmp/gs-leak"\n' > "$GS_HOME/.codex/config.toml"
+OUT_GS8="$(gs_doc)"
+[[ "$OUT_GS8" == *"[WARN"*"gate sink pollution"*"config.toml"* ]]
+check "gate-sink-codex-config-warn" $?
+# missing files only -> PASS (skipped silently)
+rm -rf "$GS_HOME/.codex"
+OUT_GS9="$(gs_doc)"
+[[ "$OUT_GS9" == *"[PASS"*"gate sink pollution"* ]]
+check "gate-sink-missing-files-pass" $?
+rm -rf "$GS_HOME"
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="

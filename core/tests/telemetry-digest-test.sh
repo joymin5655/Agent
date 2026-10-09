@@ -590,6 +590,32 @@ check "review-external-complete-parity-with-review-evidence" $?
 # existing modes unchanged by the new flag handling
 bash "$SCRIPT" "$SAMPLE" --json >/dev/null 2>&1; check "review-default-mode-still-runs" $?
 
+echo "=== (AG9) AGENT_GATE_SINK_DIR live-config pollution: stderr WARN + report line, exit 0 ==="
+AG9_ARGS=(--gates --registry "$GATE_DIR/registry.md" --logs-dir "$GATE_DIR/logs" --fatigue 2)
+ag9() { env -u AGENT_GATE_SINK_DIR -u AGENT_GATE_SINK_TEST_RUN "$@"; }
+# unset -> no warning, "none" in the report
+ag9 bash "$SCRIPT" "${AG9_ARGS[@]}" >"$TMP_DIR/ag9.out" 2>"$TMP_DIR/ag9.err"; RC=$?
+[[ $RC -eq 0 && ! -s "$TMP_DIR/ag9.err" ]]; check "sink-unset-no-warning" $?
+grep -q '^sink-override: none' "$TMP_DIR/ag9.out"; check "sink-unset-report-none" $?
+# set without runner marker -> one stderr line with the path, exit unchanged, report + JSON show it
+ag9 AGENT_GATE_SINK_DIR=/tmp/ag9-leak bash "$SCRIPT" "${AG9_ARGS[@]}" >"$TMP_DIR/ag9.out" 2>"$TMP_DIR/ag9.err"; RC=$?
+[[ $RC -eq 0 ]]; check "sink-polluted-exit-0" $?
+[[ "$(wc -l <"$TMP_DIR/ag9.err")" -eq 1 && "$(cat "$TMP_DIR/ag9.err")" == *"AGENT_GATE_SINK_DIR=/tmp/ag9-leak"* ]]; check "sink-polluted-one-line-warn" $?
+grep -q '^sink-override: WARN AGENT_GATE_SINK_DIR=/tmp/ag9-leak' "$TMP_DIR/ag9.out"; check "sink-polluted-report-line" $?
+ag9 AGENT_GATE_SINK_DIR=/tmp/ag9-leak bash "$SCRIPT" "${AG9_ARGS[@]}" --json 2>/dev/null \
+  | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin)["sink_override"]=="/tmp/ag9-leak" else 1)'; check "sink-polluted-json" $?
+# counts are unchanged by the warning (observer only)
+A="$(ag9 bash "$SCRIPT" "${AG9_ARGS[@]}" --json 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); d.pop("sink_override"); print(json.dumps(d,sort_keys=True))')"
+B="$(ag9 AGENT_GATE_SINK_DIR=/tmp/ag9-leak bash "$SCRIPT" "${AG9_ARGS[@]}" --json 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); d.pop("sink_override"); print(json.dumps(d,sort_keys=True))')"
+[[ -n "$A" && "$A" == "$B" ]]; check "sink-polluted-counts-unchanged" $?
+# test-runner value (matching marker) is not pollution
+ag9 AGENT_GATE_SINK_DIR=/tmp/ag9-run AGENT_GATE_SINK_TEST_RUN=/tmp/ag9-run bash "$SCRIPT" "${AG9_ARGS[@]}" >"$TMP_DIR/ag9.out" 2>"$TMP_DIR/ag9.err"
+[[ ! -s "$TMP_DIR/ag9.err" ]] && grep -q '^sink-override: none' "$TMP_DIR/ag9.out"; check "sink-runner-marker-not-flagged" $?
+# non---gates mode (positional log) also warns once and stays exit 0
+ag9 AGENT_GATE_SINK_DIR=/tmp/ag9-leak bash "$SCRIPT" "$SAMPLE" >/dev/null 2>"$TMP_DIR/ag9.err"; RC=$?
+[[ $RC -eq 0 && "$(cat "$TMP_DIR/ag9.err")" == *"AGENT_GATE_SINK_DIR=/tmp/ag9-leak"* ]]; check "sink-polluted-default-mode-warn" $?
+echo
+
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]
