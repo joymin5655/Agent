@@ -211,11 +211,15 @@ done
 # AG9: AGENT_GATE_SINK_DIR diverts gate records away from the live sinks this digest reads.
 # A test runner sets it together with AGENT_GATE_SINK_TEST_RUN=<same path> (verify-all.sh);
 # any other occurrence is live-config pollution (settings.json env block, shell profile) and
-# the digest silently under-counts. Warn only — never changes the exit code or any count.
+# the digest silently misses records. Warn only — never changes the exit code or any count.
+# Limit: a sink dir + marker leaked TOGETHER with the same path look like a runner here;
+# setup.sh --doctor's settings-file scan is what catches that case.
 SINK_OVERRIDE=""
 if [[ -n "${AGENT_GATE_SINK_DIR:-}" && "${AGENT_GATE_SINK_TEST_RUN:-}" != "$AGENT_GATE_SINK_DIR" ]]; then
     SINK_OVERRIDE="${AGENT_GATE_SINK_DIR//[^[:print:]]/?}"
-    echo "telemetry-digest: WARN AGENT_GATE_SINK_DIR=$SINK_OVERRIDE is set outside a test runner — live gate records are diverted and counts below are under-reported (unset it; setup.sh --doctor finds where it is configured)" >&2
+    echo "telemetry-digest: WARN AGENT_GATE_SINK_DIR=$SINK_OVERRIDE is set outside a test runner — gate records written while it is set went to that dir and are missing from these counts (unset it; setup.sh --doctor finds where it is configured)" >&2
+elif [[ -n "${AGENT_GATE_SINK_TEST_RUN:-}" && "${AGENT_GATE_SINK_DIR:-}" != "$AGENT_GATE_SINK_TEST_RUN" ]]; then
+    echo "telemetry-digest: WARN AGENT_GATE_SINK_TEST_RUN=${AGENT_GATE_SINK_TEST_RUN//[^[:print:]]/?} is set without a matching AGENT_GATE_SINK_DIR — stale test-runner marker in the environment (unset it)" >&2
 fi
 
 if [[ "$GATES_MODE" -eq 1 ]]; then
@@ -517,7 +521,7 @@ else:
     print()
     print("-- gate sink override --")
     if sink_override:
-        print("sink-override: WARN AGENT_GATE_SINK_DIR={} (outside a test runner; live gate records diverted, counts under-reported)".format(sink_override))
+        print("sink-override: WARN AGENT_GATE_SINK_DIR={} (outside a test runner; gate records written while it is set are missing from these counts)".format(sink_override))
     else:
         print("sink-override: none")
     print()

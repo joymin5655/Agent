@@ -611,6 +611,9 @@ B="$(ag9 AGENT_GATE_SINK_DIR=/tmp/ag9-leak bash "$SCRIPT" "${AG9_ARGS[@]}" --jso
 # test-runner value (matching marker) is not pollution
 ag9 AGENT_GATE_SINK_DIR=/tmp/ag9-run AGENT_GATE_SINK_TEST_RUN=/tmp/ag9-run bash "$SCRIPT" "${AG9_ARGS[@]}" >"$TMP_DIR/ag9.out" 2>"$TMP_DIR/ag9.err"
 [[ ! -s "$TMP_DIR/ag9.err" ]] && grep -q '^sink-override: none' "$TMP_DIR/ag9.out"; check "sink-runner-marker-not-flagged" $?
+# stale marker alone (no matching sink dir) warns once; exit 0
+ag9 AGENT_GATE_SINK_TEST_RUN=/tmp/ag9-stale bash "$SCRIPT" "${AG9_ARGS[@]}" >/dev/null 2>"$TMP_DIR/ag9.err"; RC=$?
+[[ $RC -eq 0 && "$(wc -l <"$TMP_DIR/ag9.err")" -eq 1 && "$(cat "$TMP_DIR/ag9.err")" == *"AGENT_GATE_SINK_TEST_RUN=/tmp/ag9-stale"* ]]; check "sink-marker-alone-warn" $?
 # non---gates mode (positional log) also warns once and stays exit 0
 ag9 AGENT_GATE_SINK_DIR=/tmp/ag9-leak bash "$SCRIPT" "$SAMPLE" >/dev/null 2>"$TMP_DIR/ag9.err"; RC=$?
 [[ $RC -eq 0 && "$(cat "$TMP_DIR/ag9.err")" == *"AGENT_GATE_SINK_DIR=/tmp/ag9-leak"* ]]; check "sink-polluted-default-mode-warn" $?

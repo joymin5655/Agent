@@ -1007,7 +1007,11 @@ GS_HOME="$(safe_mktemp_d)" || { echo "FAIL: mktemp -d failed (gate-sink fixture)
 track_fixture "$GS_HOME"
 mkdir -p "$GS_HOME/.claude"
 gs_doc() { # $1 = extra env assignments are passed as args; runs doctor with a clean, isolated env
-  env -u AGENT_GATE_SINK_DIR -u AGENT_GATE_SINK_TEST_RUN HOME="$GS_HOME" "$@" bash "$SETUP" --doctor 2>&1
+  # cwd outside any checkout: doctor also scans <repo>/.claude/settings*.json, which a
+  # developer checkout may carry untracked; CODEX_CONFIG/GEMINI_SETTINGS/CLAUDE_CONFIG_DIR
+  # would redirect the scanned files away from the isolated HOME
+  (cd "$GS_HOME" && env -u AGENT_GATE_SINK_DIR -u AGENT_GATE_SINK_TEST_RUN -u CODEX_CONFIG \
+    -u GEMINI_SETTINGS -u CLAUDE_CONFIG_DIR HOME="$GS_HOME" "$@" bash "$SETUP" --doctor 2>&1)
 }
 # none -> PASS, no warning
 OUT_GS0="$(gs_doc)"
@@ -1054,6 +1058,26 @@ printf '[1,2]' > "$GS_HOME/.claude/settings.json"
 OUT_GS7B="$(gs_doc)"
 [[ "$OUT_GS7B" == *"[PASS"*"gate sink pollution"* && "$OUT_GS7B" != *"unparseable"* ]]
 check "gate-sink-nonobject-json-pass" $?
+# BOM-prefixed settings are still parsed (not "unparseable")
+printf '\xef\xbb\xbf{"env":{"AGENT_GATE_SINK_DIR":"/tmp/gs-leak"}}' > "$GS_HOME/.claude/settings.json"
+OUT_GS7C="$(gs_doc)"
+[[ "$OUT_GS7C" == *"[WARN"*"settings.json: AGENT_GATE_SINK_DIR"* && "$OUT_GS7C" != *"unparseable"* ]]
+check "gate-sink-bom-json-parsed" $?
+# CLAUDE_CONFIG_DIR (separate profile) is scanned instead of ~/.claude
+rm -f "$GS_HOME/.claude/settings.json"
+mkdir -p "$GS_HOME/alt-claude"
+printf '{"env":{"AGENT_GATE_SINK_DIR":"/tmp/gs-leak"}}' > "$GS_HOME/alt-claude/settings.json"
+OUT_GS7D="$(gs_doc CLAUDE_CONFIG_DIR="$GS_HOME/alt-claude")"
+[[ "$OUT_GS7D" == *"[WARN"*"gate sink pollution"*"alt-claude/settings.json: AGENT_GATE_SINK_DIR"* ]]
+check "gate-sink-claude-config-dir-scanned" $?
+OUT_GS7E="$(gs_doc)"
+[[ "$OUT_GS7E" == *"[PASS"*"gate sink pollution"* ]]
+check "gate-sink-default-dir-ignores-alt-profile" $?
+rm -rf "$GS_HOME/alt-claude"
+# stale runner marker alone (no matching sink dir) -> WARN
+OUT_GS7F="$(gs_doc AGENT_GATE_SINK_TEST_RUN=/tmp/gs-stale)"
+[[ "$OUT_GS7F" == *"[WARN"*"gate sink pollution"*"AGENT_GATE_SINK_TEST_RUN=/tmp/gs-stale"* ]]
+check "gate-sink-marker-alone-warn" $?
 # codex config mention -> WARN
 rm -f "$GS_HOME/.claude/settings.json"
 mkdir -p "$GS_HOME/.codex"
@@ -1061,6 +1085,17 @@ printf '[shell_environment_policy.set]\nAGENT_GATE_SINK_DIR = "/tmp/gs-leak"\n' 
 OUT_GS8="$(gs_doc)"
 [[ "$OUT_GS8" == *"[WARN"*"gate sink pollution"*"config.toml"* ]]
 check "gate-sink-codex-config-warn" $?
+# unreadable codex config must not read as "no match" (skipped as root: chmod 000 does not bind)
+if [[ "$(id -u)" -ne 0 ]]; then
+  printf '# nothing here\n' > "$GS_HOME/.codex/config.toml"
+  chmod 000 "$GS_HOME/.codex/config.toml"
+  OUT_GS8B="$(gs_doc)"
+  chmod 644 "$GS_HOME/.codex/config.toml"
+  [[ "$OUT_GS8B" == *"[WARN"*"gate sink pollution"*"scan failed"* ]]
+  check "gate-sink-unreadable-config-warn" $?
+else
+  echo "  skip [gate-sink-unreadable-config-warn] running as root"
+fi
 # missing files only -> PASS (skipped silently)
 rm -rf "$GS_HOME/.codex"
 OUT_GS9="$(gs_doc)"
