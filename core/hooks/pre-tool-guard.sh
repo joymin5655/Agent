@@ -64,7 +64,8 @@ log_violation() {
   local log_dir="${AGENT_GATE_SINK_DIR:-$repo_root/.agent/logs}"
   local log_file="$log_dir/security-violations.jsonl"
   mkdir -p "$log_dir" 2>/dev/null || return 0
-  local ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  local ts
+  ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
   local sid="${AGENT_SESSION_ID:-main}"
   local repro="false"
   case "${AGENT_REPRODUCE_TEST:-}" in 1|true|TRUE|True) repro="true" ;; esac

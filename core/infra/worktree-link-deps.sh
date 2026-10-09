@@ -40,7 +40,8 @@ if [[ "$TARGET" != *"/.worktrees/"* ]]; then
 fi
 
 # Default list — override via env var for monorepo layouts
-LINK_DIRS=( ${AGENT_LINK_DIRS:-node_modules .venv} )
+# -d '' reads the whole value so newlines split like spaces/tabs; it returns 1 at EOF.
+read -r -d '' -a LINK_DIRS <<<"${AGENT_LINK_DIRS:-node_modules .venv}" || true
 
 link_dir() {
   local rel="$1"

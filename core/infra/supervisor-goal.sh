@@ -65,7 +65,8 @@ cmd_init() {
     fi
 
     init_db
-    local goal_id="goal_$(uuidgen 2>/dev/null | tr 'A-Z' 'a-z' | tr -d '-' | head -c 16 || date +%s)"
+    local goal_id
+    goal_id="goal_$(uuidgen 2>/dev/null | tr 'A-Z' 'a-z' | tr -d '-' | head -c 16 || date +%s)"
     local ts; ts="$(now_ms)"
 
     local budget_sql="NULL"

@@ -38,7 +38,8 @@ if ! command -v gemini >/dev/null 2>&1; then
 fi
 
 export AGENT=gemini
-export AGENT_SESSION_ID="gemini-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+AGENT_SESSION_ID="gemini-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+export AGENT_SESSION_ID
 export AGENT_SESSION_PID="$$"
 "$SESSION_SH" start "$SLUG"
 WORKTREE="$REPO_ROOT/.worktrees/gemini-${SLUG}"

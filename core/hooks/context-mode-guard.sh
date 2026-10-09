@@ -81,7 +81,8 @@ log_violation() {
   mkdir -p "$log_dir" 2>/dev/null || return 0
   local origin="${AGENT_LOG_ORIGIN:-session}"
   origin="${origin//[^A-Za-z0-9_.-]/}"
-  local ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  local ts
+  ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
   local sid="${AGENT_SESSION_ID:-main}"
   local repro="false"
   case "${AGENT_REPRODUCE_TEST:-}" in 1|true|TRUE|True) repro="true" ;; esac

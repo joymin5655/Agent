@@ -8,6 +8,7 @@
 # (e) refuses main checkout (exit 1), (f) non-directory target (exit 2),
 # (g) AGENT_LINK_DIRS override incl. nested dir, (h) AGENT_WORKSPACE_SCOPE rewrites
 # relative workspace symlinks to absolute, (i) warning when not under .worktrees/.
+# (j) newline/tab/space-separated AGENT_LINK_DIRS all split.
 #
 # Usage: bash core/tests/worktree-link-deps-test.sh
 # Exit 0: all pass. Exit 1: one or more failures.
@@ -96,6 +97,13 @@ OUT_WT="$TMP_DIR/plain"
 mkdir -p "$OUT_WT"
 out="$(cd "$MAIN" && AGENT_LINK_DIRS="node_modules" bash "$SCRIPT" "$OUT_WT" 2>&1)"
 [[ "$out" == *"not under .worktrees/"* && -L "$OUT_WT/node_modules" ]]; check "warns but proceeds outside .worktrees/" $?
+
+# (j) AGENT_LINK_DIRS split on newline, tab and space alike
+J_WT="$MAIN/.worktrees/wt-j"
+git -C "$MAIN" worktree add -q "$J_WT" -b wt-j-branch
+mkdir -p "$MAIN/d1" "$MAIN/d2" "$MAIN/d3" "$MAIN/d4"
+(cd "$MAIN" && AGENT_LINK_DIRS=$'d1\nd2\td3 d4\n' bash "$SCRIPT" "$J_WT" >/dev/null 2>&1)
+[[ -L "$J_WT/d1" && -L "$J_WT/d2" && -L "$J_WT/d3" && -L "$J_WT/d4" ]]; check "AGENT_LINK_DIRS splits on newline/tab/space" $?
 
 echo "worktree-link-deps-test: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]

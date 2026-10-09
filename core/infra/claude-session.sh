@@ -42,7 +42,8 @@ if ! command -v claude >/dev/null 2>&1; then
 fi
 
 export AGENT=claude
-export AGENT_SESSION_ID="claude-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+AGENT_SESSION_ID="claude-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+export AGENT_SESSION_ID
 export AGENT_SESSION_PID="$$"
 "$SESSION_SH" start "$SLUG"
 WORKTREE="$REPO_ROOT/.worktrees/claude-${SLUG}"
