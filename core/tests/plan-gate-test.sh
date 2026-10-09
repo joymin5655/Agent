@@ -16,6 +16,8 @@
 #   W-8 source-first: ExitPlanMode plan that cites only memory (no file:line /
 #   command-output evidence) -> flag withheld + re-verify notice; with evidence,
 #   or with no memory citation (incl. "memory leak" prose) -> flag written
+#   AG10: per-session withheld markers (<flag>.withheld.d/<sid>) - isolation, unsafe
+#   session ids, legacy single-marker compat, stale pruning
 #
 # Usage: bash core/tests/plan-gate-test.sh
 set -u
@@ -124,7 +126,7 @@ done
 
 # session scoping: B's withhold keeps A's flag; same-session withhold clears own
 FLAG_S="$TMP_DIR/flag-sess"
-rm -f "$FLAG_S" "$FLAG_S.withheld"
+rm -rf "$FLAG_S" "$FLAG_S.withheld" "$FLAG_S.withheld.d"
 plan_event_sid sessA "$OK_PLAN" | AGENT_PLAN_FLAG="$FLAG_S" python3 "$HOOK" >/dev/null
 OUT_B="$(plan_event_sid sessB "$MEM_ONLY" | AGENT_PLAN_FLAG="$FLAG_S" python3 "$HOOK")"
 [[ -f "$FLAG_S" && "$OUT_B" == *"another session"* ]]
@@ -147,6 +149,75 @@ rm -f "$FLAG_S"
 agent_ev sessA | AGENT_PLAN_FLAG="$FLAG_S" python3 "$HOOK" >/dev/null
 [[ -f "$FLAG_S" ]]
 check "w8-agent-path-reopened-after-good-plan" $?
+
+# --- AG10: per-session withheld markers (<flag>.withheld.d/<sid>) ---
+FLAG_W="$TMP_DIR/flag-w"
+rm -rf "$FLAG_W" "$FLAG_W.withheld" "$FLAG_W.withheld.d"
+hook_w() { AGENT_PLAN_FLAG="$FLAG_W" python3 "$HOOK"; }
+plan_event_sid wsA "$MEM_ONLY" | hook_w >/dev/null
+plan_event_sid wsB "$MEM_ONLY" | hook_w >/dev/null
+[[ -f "$FLAG_W.withheld.d/wsA" && -f "$FLAG_W.withheld.d/wsB" && ! -e "$FLAG_W.withheld" ]]
+check "ag10-two-sessions-two-markers" $?
+agent_ev wsA | hook_w >/dev/null
+[[ ! -f "$FLAG_W" ]]
+check "ag10-A-agent-path-blocked-after-B-withheld" $?
+# B passes a good plan: only B's marker goes; A stays shut
+plan_event_sid wsB "$OK_PLAN" | hook_w >/dev/null
+[[ ! -e "$FLAG_W.withheld.d/wsB" && -f "$FLAG_W.withheld.d/wsA" ]]
+check "ag10-clear-B-keeps-A-marker" $?
+rm -f "$FLAG_W"
+agent_ev wsA | hook_w >/dev/null
+[[ ! -f "$FLAG_W" ]]
+check "ag10-A-still-blocked-after-B-cleared" $?
+agent_ev wsB | hook_w >/dev/null
+[[ -f "$FLAG_W" ]]
+check "ag10-B-agent-path-open-after-clear" $?
+
+# unsafe session ids: no path escape, legacy single marker + notice, still blocks
+rm -rf "$FLAG_W" "$FLAG_W.withheld" "$FLAG_W.withheld.d" "$TMP_DIR/escape"
+for bad in '../escape' 'a/b' '..' '.hidden' 'a b'; do
+  OUT_U="$(plan_event_sid "$bad" "$MEM_ONLY" | hook_w)"
+  [[ "$OUT_U" == *"not filename-safe"* && "$(cat "$FLAG_W.withheld")" == "$bad" \
+     && ! -e "$TMP_DIR/escape" && ! -e "$FLAG_W.withheld.d/$bad" ]]
+  check "ag10-unsafe-sid-rejected-$(printf '%s' "$bad" | tr -c 'A-Za-z0-9' '-')" $?
+  agent_ev "$bad" | hook_w >/dev/null
+  [[ ! -f "$FLAG_W" ]]
+  check "ag10-unsafe-sid-still-blocked-$(printf '%s' "$bad" | tr -c 'A-Za-z0-9' '-')" $?
+  plan_event_sid "$bad" "$OK_PLAN" | hook_w >/dev/null
+  [[ ! -e "$FLAG_W.withheld" ]]
+  check "ag10-unsafe-sid-cleared-$(printf '%s' "$bad" | tr -c 'A-Za-z0-9' '-')" $?
+  rm -f "$FLAG_W"
+done
+
+# legacy single marker is honoured, cleared by its own session, and migrated
+rm -rf "$FLAG_W" "$FLAG_W.withheld" "$FLAG_W.withheld.d"
+printf 'oldA' > "$FLAG_W.withheld"
+agent_ev oldA | hook_w >/dev/null
+[[ ! -f "$FLAG_W" ]]
+check "ag10-legacy-marker-blocks-its-session" $?
+agent_ev oldC | hook_w >/dev/null
+[[ -f "$FLAG_W" ]]
+check "ag10-legacy-marker-ignores-other-session" $?
+rm -f "$FLAG_W"
+plan_event_sid newB "$MEM_ONLY" | hook_w >/dev/null
+[[ -f "$FLAG_W.withheld.d/oldA" && -f "$FLAG_W.withheld.d/newB" && ! -e "$FLAG_W.withheld" ]]
+check "ag10-legacy-migrated-not-overwritten" $?
+agent_ev oldA | hook_w >/dev/null
+[[ ! -f "$FLAG_W" ]]
+check "ag10-migrated-session-still-blocked" $?
+printf 'oldD' > "$FLAG_W.withheld"
+plan_event_sid oldD "$OK_PLAN" | hook_w >/dev/null
+[[ ! -e "$FLAG_W.withheld" ]]
+check "ag10-legacy-cleared-by-good-plan" $?
+
+# stale pruning: idle >24h markers go on the next withhold, fresh ones stay
+rm -rf "$FLAG_W" "$FLAG_W.withheld.d"
+mkdir -p "$FLAG_W.withheld.d"
+printf 'old' > "$FLAG_W.withheld.d/staleS"; touch -d '3 days ago' "$FLAG_W.withheld.d/staleS"
+printf 'new' > "$FLAG_W.withheld.d/freshS"
+plan_event_sid wsN "$MEM_ONLY" | hook_w >/dev/null
+[[ ! -e "$FLAG_W.withheld.d/staleS" && -f "$FLAG_W.withheld.d/freshS" && -f "$FLAG_W.withheld.d/wsN" ]]
+check "ag10-stale-pruned-fresh-kept" $?
 
 # flag content carries session id; consumers only test existence
 plan_event_sid sessZ "$OK_PLAN" | AGENT_PLAN_FLAG="$FLAG_S" python3 "$HOOK" >/dev/null
