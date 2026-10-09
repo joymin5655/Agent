@@ -1049,6 +1049,11 @@ rm -f "$GS_HOME/.claude/settings.local.json"
 OUT_GS7="$(gs_doc)"
 [[ "$OUT_GS7" == *"[WARN"*"gate sink pollution"*"unparseable"* && "$OUT_GS7" != *"Traceback"* ]]
 check "gate-sink-broken-json-warn" $?
+# valid JSON whose top level is not an object -> PASS (nothing to read), never "unparseable"
+printf '[1,2]' > "$GS_HOME/.claude/settings.json"
+OUT_GS7B="$(gs_doc)"
+[[ "$OUT_GS7B" == *"[PASS"*"gate sink pollution"* && "$OUT_GS7B" != *"unparseable"* ]]
+check "gate-sink-nonobject-json-pass" $?
 # codex config mention -> WARN
 rm -f "$GS_HOME/.claude/settings.json"
 mkdir -p "$GS_HOME/.codex"

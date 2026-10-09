@@ -1292,10 +1292,10 @@ print("main=%s reviewers=%s" % (m, ",".join(r) or "-"))' "$profile_file" 2>/dev/
     #     (`env` block); codex/gemini configs are text-scanned for the names.
     local gs_root gs_hits="" gs_checked=0 gs_f gs_out gs_rc
     gs_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-    local -a gs_claude=(
-        "$HOME/.claude/settings.json" "$HOME/.claude/settings.local.json"
-        "$gs_root/.claude/settings.json" "$gs_root/.claude/settings.local.json"
-    )
+    local -a gs_claude=("$HOME/.claude/settings.json" "$HOME/.claude/settings.local.json")
+    # repo == HOME would list the same two files again (duplicate rows)
+    [[ "$(cd "$gs_root" 2>/dev/null && pwd -P)" == "$(cd "$HOME" 2>/dev/null && pwd -P)" ]] ||
+        gs_claude+=("$gs_root/.claude/settings.json" "$gs_root/.claude/settings.local.json")
     local -a gs_other=(
         "${CODEX_CONFIG:-$HOME/.codex/config.toml}" "${GEMINI_SETTINGS:-$HOME/.gemini/settings.json}"
     )
@@ -1309,10 +1309,11 @@ print("main=%s reviewers=%s" % (m, ",".join(r) or "-"))' "$profile_file" 2>/dev/
 import json, os, sys
 names = ("AGENT_GATE_SINK_DIR", "AGENT_GATE_SINK_TEST_RUN", "AGENT_REPRODUCE_TEST")
 try:
-    env = (json.load(open(os.environ["GS_FILE"], encoding="utf-8")) or {}).get("env")
+    doc = json.load(open(os.environ["GS_FILE"], encoding="utf-8"))
 except Exception as e:
     print("unparseable (%s)" % type(e).__name__)
     sys.exit(2)
+env = doc.get("env") if isinstance(doc, dict) else None
 if not isinstance(env, dict):
     sys.exit(0)
 hit = [n for n in names if n in env]
@@ -1325,7 +1326,8 @@ PY
         )"; then gs_rc=0; else gs_rc=$?; fi
         case $gs_rc in
             0) ;;
-            *) gs_hits="${gs_hits:+$gs_hits; }$(sanitize_display "${gs_f/#$HOME/~}"): $(sanitize_display "$gs_out")" ;;
+            1|2) gs_hits="${gs_hits:+$gs_hits; }$(sanitize_display "${gs_f/#$HOME/~}"): $(sanitize_display "$gs_out")" ;;
+            *) gs_hits="${gs_hits:+$gs_hits; }$(sanitize_display "${gs_f/#$HOME/~}"): scan failed (python3 exit $gs_rc)" ;;
         esac
     done
     for gs_f in "${gs_other[@]}"; do
