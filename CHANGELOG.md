@@ -31,6 +31,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `r4-mutex-check`, `context-mode-guard`, `secret-content-scan` and `council-escalation-gate`
   records now carry `origin` like `pre-tool-guard`.
 
+### Removed
+- **Direct Gemini CLI adapter** (retired 2026-10-09). Individual Gemini CLI access ended
+  upstream on 2026-06-18 and the google lane runs through the Antigravity CLI (`agy`), which
+  stays. The adapter held no council or gate vote (the `gemini` backend in
+  `core/infra/backends.json` dispatches through `antigravity-worker`), so review and gate
+  outcomes do not change. `adapters/gemini/` (shell wrap, hook translator,
+  `gemini-worker`/`gemini-preflight`, settings and tiers templates, tests),
+  `core/infra/gemini-session.sh` and `core/tests/gemini-preflight-test.sh` move to
+  `legacy/lanes-2026-10/` (README there explains how to restore it). `setup.sh` drops
+  `--gemini`, its installer and the gemini wiring doctor check; a plain `setup.sh` (or
+  `--all`) now installs Claude Code and Codex, and Antigravity stays opt-in (`--antigravity`).
+  `docs/runtime-registry.json` drops the `gemini-cli` runtime; `templates/GEMINI.md.template`
+  stays (agy reads `GEMINI.md`) and now describes the Antigravity CLI; the clean-install CI
+  job no longer asserts `~/.gemini/settings.json`; README (en/ko), AGENTS.md and the adapter,
+  architecture, getting-started and model-routing docs follow. The brain MCP server was
+  registered for Gemini only through the retired settings template, so agy needs it added to
+  its own MCP configuration. Earlier installs may leave `~/bin/gemini-bash`,
+  `~/bin/gemini-worker` and `~/bin/gemini-preflight` symlinks, `~/.gemini/agent-tiers.json`
+  and a `~/.gemini/settings.json` whose hooks point at the moved `adapters/gemini/adapter.sh`;
+  nothing in the harness maintains them any more, so delete or edit them by hand.
+
 ### Fixed
 - `session-indexer.py -q` no longer crashes on FTS5 syntax characters (`-`, `:`, `"`, `*`, `NOT`, ...):
   each query token is quoted as a literal (implicit AND), blank queries return `[]`. `OR`/`NEAR`

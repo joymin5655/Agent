@@ -2,15 +2,14 @@
 # setup.sh — install the framework into an AI runtime and/or a project.
 #
 # Usage:
-#   bash setup.sh                  # all 3 AIs (claude + codex + gemini)
+#   bash setup.sh                  # default set: claude + codex (antigravity is opt-in)
 #   bash setup.sh --claude         # claude only
 #   bash setup.sh --codex          # codex only
-#   bash setup.sh --gemini         # gemini only
 #   bash setup.sh --antigravity    # antigravity (agy) worker lane + native-hook plugin (opt-in)
 #   bash setup.sh --launchers      # purpose launchers (claude-build/quick/research) only
 #   bash setup.sh --project        # +current project scaffold (CLAUDE.md, hook-config.yml, etc.)
 #   bash setup.sh --hooks-only     # install git-hooks (pre-commit, pre-push) only
-#   bash setup.sh --all            # alias for default (all 3 AIs)
+#   bash setup.sh --all            # alias for default (claude + codex)
 #   bash setup.sh --instructions-only  # sync common Claude/Codex policy; preserve personal text
 #   bash setup.sh --doctor         # environment diagnosis only — no installs, read-only
 #   bash setup.sh --bootstrap      # install MISSING deps (gitleaks/sqlite3/jq/gh) via
@@ -19,7 +18,7 @@
 #
 # Combinations OK:
 #   bash setup.sh --claude --project
-#   bash setup.sh --codex --gemini --hooks-only
+#   bash setup.sh --codex --hooks-only
 
 set -euo pipefail
 
@@ -27,7 +26,6 @@ FRAMEWORK_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 DO_CLAUDE=0
 DO_CODEX=0
-DO_GEMINI=0
 DO_PROJECT=0
 DO_HOOKS=0
 DO_DOCTOR=0
@@ -38,7 +36,6 @@ BOOTSTRAP_DRY_RUN=0
 if [[ $# -eq 0 ]]; then
     DO_CLAUDE=1
     DO_CODEX=1
-    DO_GEMINI=1
 fi
 DO_ANTIGRAVITY=${DO_ANTIGRAVITY:-0}
 DO_LAUNCHERS=${DO_LAUNCHERS:-0}
@@ -47,7 +44,6 @@ for arg in "$@"; do
     case "$arg" in
         --claude)      DO_CLAUDE=1 ;;
         --codex)       DO_CODEX=1 ;;
-        --gemini)      DO_GEMINI=1 ;;
         --antigravity) DO_ANTIGRAVITY=1 ;;
         --launchers)   DO_LAUNCHERS=1 ;;
         --project)     DO_PROJECT=1 ;;
@@ -56,14 +52,14 @@ for arg in "$@"; do
         --doctor)      DO_DOCTOR=1 ;;
         --bootstrap)   DO_BOOTSTRAP=1 ;;
         --dry-run)     BOOTSTRAP_DRY_RUN=1 ;;
-        --all)         DO_CLAUDE=1; DO_CODEX=1; DO_GEMINI=1 ;;
+        --all)         DO_CLAUDE=1; DO_CODEX=1 ;;
         -h|--help)
-            sed -n '3,10p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '3,9p' "$0" | sed 's/^# \{0,1\}//'
             exit 0
             ;;
         *)
             echo "ERROR: unknown arg: $arg" >&2
-            sed -n '3,10p' "$0" | sed 's/^# \{0,1\}//' >&2
+            sed -n '3,9p' "$0" | sed 's/^# \{0,1\}//' >&2
             exit 2
             ;;
     esac
@@ -156,7 +152,7 @@ install_claude() {
 
     # Agent-brain MCP server. Claude reads MCP from .mcp.json / user config (NOT
     # settings.json), so register it user-scoped — every Claude session then sees
-    # the brain, matching the global codex/gemini registrations. Best-effort:
+    # the brain, matching the global codex registration. Best-effort:
     # only if the claude CLI is present and 'brain' isn't already registered;
     # AGENT_SKIP_CLAUDE_MCP=1 opts out (tests set this so setup never mutates the
     # real user MCP config). Guarded so a failure never aborts setup under set -e.
@@ -257,39 +253,10 @@ install_codex() {
 }
 
 # ---------------------------------------------------------------------------
-# Gemini CLI
-# ---------------------------------------------------------------------------
-install_gemini() {
-    echo "=== Gemini CLI ==="
-    local target="${GEMINI_SETTINGS:-$HOME/.gemini/settings.json}"
-    local template="$FRAMEWORK_ROOT/adapters/gemini/gemini-settings.json.template"
-    apply_template "$template" "$target"
-    chmod +x "$FRAMEWORK_ROOT/adapters/gemini/adapter.sh" \
-             "$FRAMEWORK_ROOT/adapters/gemini/adapter.py" \
-             "$FRAMEWORK_ROOT/adapters/gemini/gemini-shell-wrap.sh"
-
-    ensure_home_bin
-    ln -sf "$FRAMEWORK_ROOT/adapters/gemini/gemini-shell-wrap.sh" "$HOME/bin/gemini-bash"
-    echo "  symlink: ~/bin/gemini-bash -> gemini-shell-wrap.sh"
-
-    # Worker lane (cross-vendor second opinions — core/infra/backends.json).
-    chmod +x "$FRAMEWORK_ROOT/adapters/gemini/gemini-worker.sh" \
-             "$FRAMEWORK_ROOT/adapters/gemini/gemini-preflight.sh"
-    ln -sf "$FRAMEWORK_ROOT/adapters/gemini/gemini-worker.sh" "$HOME/bin/gemini-worker"
-    ln -sf "$FRAMEWORK_ROOT/adapters/gemini/gemini-preflight.sh" "$HOME/bin/gemini-preflight"
-    echo "  symlink: ~/bin/gemini-worker, ~/bin/gemini-preflight"
-    if [[ -d "$HOME/.gemini" && ! -f "$HOME/.gemini/agent-tiers.json" ]]; then
-        cp "$FRAMEWORK_ROOT/adapters/gemini/gemini-tiers.json.template" "$HOME/.gemini/agent-tiers.json"
-        echo "  installed: ~/.gemini/agent-tiers.json (edit to pin a TOP-tier model)"
-    elif [[ ! -d "$HOME/.gemini" ]]; then
-        echo "  NOTE: gemini CLI not initialized yet (~/.gemini missing) — run the gemini CLI once, then re-run 'setup.sh --gemini' to seed agent-tiers.json"
-    fi
-}
-
-# ---------------------------------------------------------------------------
 # Antigravity (agy) CLI — worker lane + native-hook plugin folder
-# (adapters/antigravity/README.md). Successor to the retired gemini CLI review
-# lane; default auth lives in the OS keyring, API-key auth is opt-in guidance.
+# (adapters/antigravity/README.md). Successor to the retired gemini CLI adapter
+# (legacy/lanes-2026-10/gemini/); default auth lives in the OS keyring, API-key
+# auth is opt-in guidance.
 # ---------------------------------------------------------------------------
 install_antigravity() {
     echo "=== Antigravity CLI (worker lane + native-hook plugin) ==="
@@ -305,9 +272,10 @@ install_antigravity() {
     # Tiers file lives under ~/.agent (not the vendor CLI's own config dir) so
     # it does not depend on ~/.gemini/antigravity-cli existing. If only the old
     # path (pre-2026-09) has a file, the worker migrates it on first dispatch —
-    # this install step never needs the old dir to be present. (~/.gemini/agent-tiers.json
-    # seeded by --gemini belongs to the gemini adapter, not this lane.) The old file is
-    # never deleted; --doctor WARNs when both exist and differ.
+    # this install step never needs the old dir to be present. (~/.gemini/agent-tiers.json,
+    # which the retired --gemini installer seeded, belonged to the gemini adapter under
+    # legacy/lanes-2026-10/gemini/, not this lane.) The old file is never deleted;
+    # --doctor WARNs when both exist and differ.
     mkdir -p "$HOME/.agent"
     if [[ ! -f "$HOME/.agent/antigravity-tiers.json" ]]; then
         OLD_ANTIGRAVITY_TIERS="$HOME/.gemini/antigravity-cli/agent-tiers.json"
@@ -965,102 +933,6 @@ PY
         fi
     fi
 
-    # 16. gemini wiring — same declared-vs-actual family for the gemini
-    #     settings (previously doctor had NO gemini checks at all). Same
-    #     policy as 15: skipped / WARN not-wired / FAIL wired-but-missing.
-    local gemini_settings="${GEMINI_SETTINGS:-$HOME/.gemini/settings.json}"
-    if [[ ! -f "$gemini_settings" ]]; then
-        add_row PASS "gemini wiring — no gemini settings at ${gemini_settings/#$HOME/~} (check skipped)"
-    else
-        local gm_out gm_rc
-        if gm_out="$(GEMINI_SETTINGS_FILE="$gemini_settings" AGENT_FRAMEWORK_ROOT="$FRAMEWORK_ROOT" python3 - <<'PY' 2>&1
-import json, os, re, sys
-
-def clean(s):
-    # strip terminal-active chars before echoing settings-derived strings back to
-    # a terminal (display spoofing — same hardening as check 12); JSON
-    # \u-escapes can decode to a live ESC, to U+009B (a one-character "ESC[") or
-    # to a bidi override that reverses the rest of the row.
-    return re.sub(r"[\x00-\x1f\x7f-\x9f\u200e\u200f\u202a-\u202e\u2066-\u2069]", "?", s)
-
-def resolved(p):
-    # canonical, symlink-resolved form; realpath raises on an embedded NUL
-    # (a crafted config can carry \u0000) and an unresolvable arg is simply
-    # not the framework server.
-    #
-    # NOT a security boundary: this resolution (and the isfile() below) is
-    # inherently TOCTOU — a path validated here can be retargeted before the MCP
-    # client ever launches it. Doctor is an observational check, not an
-    # enforcement point; do not build locking or re-validation on top of it.
-    try:
-        return os.path.realpath(os.path.expanduser(p))
-    except (OSError, ValueError):
-        return ""
-
-try:
-    s = json.load(open(os.environ["GEMINI_SETTINGS_FILE"], encoding="utf-8"))
-except Exception as e:
-    print(clean(f"settings parse failed: {e}"))
-    sys.exit(2)
-missing, broken, foreign, relative = [], [], [], []
-brain = (s.get("mcpServers") or {}).get("brain") or {}
-# a suffix test (a.endswith("brain-mcp.py")) accepted any string merely ENDING
-# in the filename — "--payload=brain-mcp.py", "/tmp/evil/brain-mcp.py" — as the
-# framework server. Select by path shape, then require the RESOLVED path to equal
-# the FRAMEWORK_ROOT core/brain/brain-mcp.py.
-brain_mcp = resolved(os.path.join(os.environ["AGENT_FRAMEWORK_ROOT"], "core/brain/brain-mcp.py"))
-mcp = next((a for a in (brain.get("args") or [])
-            if isinstance(a, str)
-            and os.path.basename(os.path.expanduser(a)) == "brain-mcp.py"), None)
-if mcp is None:
-    missing.append("brain MCP (mcpServers.brain -> brain-mcp.py)")
-elif not os.path.isabs(os.path.expanduser(mcp)):
-    # a RELATIVE arg gets resolved against whatever directory doctor happens to
-    # run in — never the runtime CWD of the MCP client, so blessing it would bless
-    # a file the client may not even have. setup.sh writes absolute paths.
-    # (no apostrophes in this heredoc: bash 3.2 mis-parses them here — see check 12)
-    relative.append(clean(f"brain-mcp.py -> {mcp}"))
-elif not os.path.isfile(os.path.expanduser(mcp)):
-    broken.append(clean(f"brain-mcp.py -> {mcp}"))
-elif resolved(mcp) != brain_mcp:
-    foreign.append(clean(f"brain-mcp.py -> {mcp}"))
-wrap = ((s.get("tools") or {}).get("shell") or {}).get("command") or ""
-if "gemini-shell-wrap.sh" not in wrap:
-    missing.append("shell wrapper (gemini-shell-wrap.sh)")
-elif not os.path.isfile(os.path.expanduser(wrap)):
-    broken.append(clean(f"shell wrapper -> {wrap}"))
-if relative:
-    print("wired to a non-absolute path (resolved against the CWD of doctor, not "
-          "of the MCP client): " + "; ".join(relative))
-    sys.exit(1)
-if broken:
-    print("wired path missing on disk: " + "; ".join(broken))
-    sys.exit(1)
-if foreign:
-    print("wired to a brain-mcp.py outside this framework: " + "; ".join(foreign))
-    sys.exit(1)
-if missing:
-    print("not wired: " + ", ".join(missing))
-    sys.exit(3)
-print("brain MCP + shell wrapper wired")
-PY
-        )"; then
-            gm_rc=0
-        else
-            gm_rc=$?
-        fi
-        # $gm_out is python output derived from a user-controlled settings.json;
-        # clean() covers the strings this block interpolates itself, but an
-        # unexpected python traceback reaches this row unfiltered — strip at the
-        # boundary too (same treatment as $bm_out in check 20).
-        gm_out="$(sanitize_display "$gm_out")"
-        case $gm_rc in
-            0) add_row PASS "gemini wiring — $gm_out in ${gemini_settings/#$HOME/~}" ;;
-            1) add_row FAIL "gemini wiring — $gm_out" ;;
-            *) add_row WARN "gemini wiring — $gm_out; see adapters/gemini/gemini-settings.json.template (bash setup.sh --gemini installs it)" ;;
-        esac
-    fi
-
     # 17. claude install path — which of the two install paths is live here:
     #     the plugin (a cached agent-harness under the plugin cache) or the
     #     shell install (global settings wiring adapters/claude-code/
@@ -1145,7 +1017,7 @@ PY
     # (line ~120) already quotes its own brain_mcp path for the same reason.
     local brain_reg_cmd="claude mcp add brain --scope user -- python3 $(printf '%q' "$FRAMEWORK_ROOT")/core/brain/brain-mcp.py"
     # strip terminal-active chars before echoing a config-derived path back to a
-    # terminal (display spoofing — same hardening as checks 12/15/16).
+    # terminal (display spoofing — same hardening as checks 12/15).
     local claude_user_cfg_shown
     claude_user_cfg_shown="$(sanitize_display "${claude_user_cfg/#$HOME/~}")"
     if [[ $plugin_active -ne 1 || $shell_active -eq 1 ]]; then
@@ -1214,7 +1086,7 @@ PY
         fi
         # $bm_out carries python stderr derived from user-controlled ~/.claude.json
         # content — strip terminal-active chars before it reaches a terminal row
-        # (same hardening as $claude_user_cfg_shown above and checks 12/15/16).
+        # (same hardening as $claude_user_cfg_shown above and checks 12/15).
         bm_out="$(sanitize_display "$bm_out")"
         case $bm_rc in
             0) add_row PASS "brain MCP (plugin path) — registered in $claude_user_cfg_shown" ;;
@@ -1257,7 +1129,7 @@ PY
                         | .key as $l | ((.value.cmd // [])[0] // ""), ((.value.preflight // [])[0] // "")
                         | [$l, .] | @tsv' "$FRAMEWORK_ROOT/core/infra/backends.json" 2>/dev/null)
         if [[ -n "$wl_missing" ]]; then
-            add_row WARN "worker lanes — enabled backend(s) whose cmd[0]/preflight[0] is not resolvable on PATH: $wl_missing; call-worker.sh execs the registry argv verbatim, so the lane reports UNAVAILABLE (exit 127). Install the symlinks (setup.sh --codex/--gemini/--antigravity, or ln -sf by hand — see the adapter README), and note a lane also needs its vendor CLI installed and authenticated — /worker-setup walks that per lane"
+            add_row WARN "worker lanes — enabled backend(s) whose cmd[0]/preflight[0] is not resolvable on PATH: $wl_missing; call-worker.sh execs the registry argv verbatim, so the lane reports UNAVAILABLE (exit 127). Install the symlinks (setup.sh --codex/--antigravity, or ln -sf by hand — see the adapter README), and note a lane also needs its vendor CLI installed and authenticated — /worker-setup walks that per lane"
         elif [[ -n "$wl_lanes" ]]; then
             add_row PASS "worker lanes — enabled backend(s) resolvable on PATH: $wl_lanes"
         fi
@@ -1291,7 +1163,9 @@ print("main=%s reviewers=%s" % (m, ",".join(r) or "-"))' "$profile_file" 2>/dev/
     #     matching marker" = pollution. Read-only; WARN only. Claude files are parsed as JSON
     #     (`env` block; base dir honors CLAUDE_CONFIG_DIR like CODEX_CONFIG/GEMINI_SETTINGS
     #     do); codex/gemini configs are text-scanned for the names (a mention inside a
-    #     comment also warns). Limit: sink dir + marker leaked together with the SAME path
+    #     comment also warns). The gemini file is what the retired --gemini installer
+    #     wrote (legacy/lanes-2026-10/gemini/); old installs keep it, so it is still scanned.
+    #     Limit: sink dir + marker leaked together with the SAME path
     #     (e.g. both in one settings env block) look like a runner to the process-env test —
     #     the settings-file scan is what catches that case.
     local gs_root gs_hits="" gs_checked=0 gs_f gs_out gs_rc
@@ -1582,7 +1456,7 @@ echo "Framework root: $FRAMEWORK_ROOT"
 echo
 
 if [[ $DO_INSTRUCTIONS -eq 1 ]]; then
-    if [[ $DO_CLAUDE -eq 1 || $DO_CODEX -eq 1 || $DO_GEMINI -eq 1 ||
+    if [[ $DO_CLAUDE -eq 1 || $DO_CODEX -eq 1 ||
           $DO_PROJECT -eq 1 || $DO_HOOKS -eq 1 || $DO_BOOTSTRAP -eq 1 ||
           $DO_DOCTOR -eq 1 || $DO_ANTIGRAVITY -eq 1 || $DO_LAUNCHERS -eq 1 ]]; then
         echo "--instructions-only cannot be combined with other install modes" >&2
@@ -1612,7 +1486,6 @@ fi
 [[ $DO_HOOKS -eq 1 ]]  && install_git_hooks
 [[ $DO_CLAUDE -eq 1 ]] && install_claude
 [[ $DO_CODEX -eq 1 ]]  && install_codex
-[[ $DO_GEMINI -eq 1 ]] && install_gemini
 [[ $DO_ANTIGRAVITY -eq 1 ]] && install_antigravity
 [[ $DO_LAUNCHERS -eq 1 ]] && install_launchers
 [[ $DO_PROJECT -eq 1 ]] && install_project

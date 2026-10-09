@@ -122,11 +122,12 @@ Wrapper-based (preferred):
 ```bash
 core/infra/claude-session.sh feat-auth-mfa       # claude
 core/infra/codex-session.sh refactor-models      # codex
-core/infra/gemini-session.sh docs-update          # gemini
 ```
 
 These wrap the AI binary, register the session, run a 5-min heartbeat
-loop, and clean up on exit.
+loop, and clean up on exit. There is no wrapper for Antigravity (`agy`;
+the retired Gemini CLI wrapper lives in `legacy/lanes-2026-10/gemini/`):
+use the manual form above with `AGENT=gemini`.
 
 ## R8 — User-explicit override
 

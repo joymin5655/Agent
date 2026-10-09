@@ -16,7 +16,7 @@
 #                             command against an EMPTY brain under a fresh home —
 #                             the runtime side of "install once, use everywhere".
 #
-# Stdlib only; no claude/codex/gemini CLI, no MCP client dependency. Usage:
+# Stdlib only; no claude/codex CLI, no MCP client dependency. Usage:
 #   bash core/tests/brain-portability-smoke-test.sh
 # Exit 0: all pass. Exit 1: one or more failures.
 set -u
@@ -62,22 +62,20 @@ claude_reg = json.loads(render("adapters/claude-code/mcp.json.template"))
 launch = claude_reg["mcpServers"]["brain"]           # {"command": ..., "args": [...]}
 cmd = [launch["command"], *launch["args"]]
 
-print("=== (a) all three runtime templates render to the SAME launch command ===")
-# claude + gemini are JSON — parse fully into [command, *args] and require an
-# EXACT match with what we launch. codex is TOML (no stdlib parser on 3.9), so
-# assert its rendered text contains BOTH the same interpreter (command = "<cmd>")
-# and the same server path. This is a format-TOLERANT containment check: it
-# catches a wrong codex interpreter or path, yet does not false-red on valid TOML
-# reformatting (multi-line array, whitespace/comment on the table header) the way
-# a hand-rolled line scanner would. brain-mcp-test covers the section header.
-gem = json.loads(render("adapters/gemini/gemini-settings.json.template"))
-gem_cmd = [gem["mcpServers"]["brain"]["command"], *gem["mcpServers"]["brain"]["args"]]
+print("=== (a) both runtime templates render to the SAME launch command ===")
+# claude is JSON — parse fully into [command, *args] and launch exactly that.
+# codex is TOML (no stdlib parser on 3.9), so assert its rendered text contains
+# BOTH the same interpreter (command = "<cmd>") and the same server path. This is
+# a format-TOLERANT containment check: it catches a wrong codex interpreter or
+# path, yet does not false-red on valid TOML reformatting (multi-line array,
+# whitespace/comment on the table header) the way a hand-rolled line scanner
+# would. brain-mcp-test covers the section header.
 codex_txt = render("adapters/codex/codex-config.toml.template")
 codex_cmd_ok = bool(re.search(r'command\s*=\s*"' + re.escape(launch["command"]) + r'"', codex_txt))
 codex_path_ok = launch["args"][0] in codex_txt
 check("template-parity",
-      gem_cmd == cmd and codex_cmd_ok and codex_path_ok,
-      f"claude={cmd} gemini={gem_cmd} codex_cmd_ok={codex_cmd_ok} codex_path_ok={codex_path_ok}")
+      codex_cmd_ok and codex_path_ok,
+      f"claude={cmd} codex_cmd_ok={codex_cmd_ok} codex_path_ok={codex_path_ok}")
 
 print("=== (b) the registered command exists and is a readable file ===")
 server_path = Path(launch["args"][0])

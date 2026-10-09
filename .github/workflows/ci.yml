@@ -172,22 +172,21 @@ jobs:
       # one. A scratch $HOME stands in for a machine that has never seen the
       # harness; AGENT_SETUP_YES=1 answers the overwrite prompts so the run is
       # non-interactive.
-      - name: Install all three runtimes into a scratch config home
+      - name: Install the default runtimes (claude + codex) into a scratch config home
         run: |
           SCRATCH="$(mktemp -d)"
           echo "SCRATCH=$SCRATCH" >> "$GITHUB_ENV"
           HOME="$SCRATCH" AGENT_SETUP_YES=1 bash setup.sh --all
-      # Anti-vacuous: prove the install wrote all three runtime configs and
+      # Anti-vacuous: prove the install wrote both runtime configs and
       # actually templated them (an install that silently no-ops — or writes
       # files with the {{FRAMEWORK_ROOT}} placeholder unexpanded — would
       # otherwise pass this job on the doctor's absence-tolerant checks alone).
       # This step, not the doctor, is what verifies the fresh install: the
       # doctor's checks are repo/env-scoped and tolerate an empty home.
-      - name: Assert the install produced and templated all three runtime configs
+      - name: Assert the install produced and templated both runtime configs
         run: |
           test -f "$SCRATCH/.claude/settings.json"
           test -f "$SCRATCH/.codex/config.toml"
-          test -f "$SCRATCH/.gemini/settings.json"
           grep -q "$GITHUB_WORKSPACE" "$SCRATCH/.claude/settings.json"
           ! grep -q '{{FRAMEWORK_ROOT}}' "$SCRATCH/.claude/settings.json"
       # The doctor then diagnoses env + repo health from a machine that has

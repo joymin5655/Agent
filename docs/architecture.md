@@ -15,7 +15,7 @@ The framework has 4 layers. Higher layers depend on lower; lower layers don't kn
                               ↑ depends on
 ┌─────────────────────────────────────────────────────────────────┐
 │ Layer 2: AI adapters                                            │
-│ (adapters/claude-code/, adapters/codex/, adapters/gemini/)      │
+│ (adapters/claude-code/, adapters/codex/, adapters/antigravity/) │
 └─────────────────────────────────────────────────────────────────┘
                               ↑ depends on
 ┌─────────────────────────────────────────────────────────────────┐
@@ -38,7 +38,7 @@ A hook here is testable in isolation: `echo '{...event JSON...}' | bash core/hoo
 
 ## Layer 2: AI adapters (the translators)
 
-`adapters/claude-code/`, `adapters/codex/`, `adapters/gemini/`.
+`adapters/claude-code/`, `adapters/codex/`, `adapters/antigravity/`.
 
 Each adapter:
 1. Receives a native hook event or an event from an exclusive controlled wrapper.
@@ -49,10 +49,10 @@ Each adapter:
 
 For Claude Code, the native event JSON ≈ canonical event JSON, so the adapter is a thin pass-through.
 
-The shipped Codex and Gemini adapters currently translate events from shell
-wrappers. Their upstream runtimes now expose native hooks, but Agent has not yet
-wired those paths. File-write tools outside the wrappers are therefore not
-covered. See [`ai-adapters.md`](ai-adapters.md) for current versus target support.
+The shipped Codex and Antigravity adapters register their runtimes' native
+hooks, which cover only the tools their matchers name. File-write and other
+tools outside those matchers are therefore not covered. See
+[`ai-adapters.md`](ai-adapters.md) for current versus target support.
 
 Each adapter also provides a `settings.template` or `config.template` showing how a user registers hooks in that AI's config file.
 

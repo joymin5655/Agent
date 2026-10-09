@@ -47,11 +47,10 @@ evaluation source, not either one.
 |---|---|---|
 | Claude Code | native plugin hooks | Tier A for configured tools |
 | Codex | native hooks (fixtures + live `codex exec` e2e, 2026-09-27) | Tier A for Bash, `apply_patch`, MCP |
-| Gemini CLI | exclusive shell wrapper | Tier B shell; Tier C uncovered writes |
 | Antigravity | native hooks via a plugin folder (agy 1.2.12; fixtures + workspace-plugin probe, global folder unmeasured) | Tier A for configured tools; see `adapters/antigravity/README.md` |
 
 The current parity test feeds logically identical synthetic events through the
-four shipped adapters (Antigravity's vocabulary is compared after normalization) and
+three shipped adapters (Antigravity's vocabulary is compared after normalization) and
 compares their core decisions. It does not launch each vendor runtime or prove that
 every native tool is intercepted.
 
@@ -162,57 +161,30 @@ See `adapters/codex/README.md` for the shipped adapter and the
 [official Codex hook reference](https://learn.chatgpt.com/docs/hooks) for the
 native contract.
 
-## Gemini CLI
+## Gemini CLI (retired)
 
-### Distribution boundary
+The direct Gemini CLI adapter is retired (2026-10-09): the shell wrapper
+(`gemini-shell-wrap.sh`) with its translator, the `gemini-worker.sh` /
+`gemini-preflight.sh` worker lane and the `gemini-session.sh` session wrapper
+now live in `legacy/lanes-2026-10/gemini/` (its README has the reasons), and
+`setup.sh --gemini` no longer exists. Individual Google AI Pro, Ultra, and
+free-tier CLI access moved to Antigravity in June 2026, and the google worker
+lane has run through the Antigravity CLI since August 2026, so review and gate
+outcomes did not change.
 
-Gemini CLI for enterprise, Google Cloud, and paid API-key use remains distinct
-from Antigravity. Individual Google AI Pro, Ultra, and free-tier CLI access
-moved to Antigravity in June 2026.
-
+Gemini CLI for enterprise, Google Cloud, and paid API-key use remains a
+distinct upstream distribution from Antigravity; no adapter for it ships here.
 Do not label an enterprise/API capability as available to an unauthenticated
 individual installation.
 
-### Current path
-
-The shipped Gemini adapter is also a compatibility wrapper:
-
-- `gemini-shell-wrap.sh` intercepts the configured shell route;
-- the translator constructs canonical events;
-- core `deny` and `ask` both block at the wrapper;
-- a session wrapper simulates lifecycle events;
-- native file-write and replacement tools are not covered.
-
-The external Gemini worker is disabled by default until a working credential
-path is verified on the machine. Since 2026-08-19 the worker contract itself
-ships ready: `gemini-worker.sh` (tier bridge, OS-sandboxed dispatch) and
-`gemini-preflight.sh` (fail-closed exact-token probe). The registry's
-`disabled_reason` names the re-enable condition — a fresh login after which
-`gemini-preflight` exits 0.
-
-### Upstream native path
-
-Current Gemini CLI extensions can bundle:
-
-- `gemini-extension.json`;
-- `hooks/hooks.json`;
-- Agent Skills;
-- MCP servers;
-- subagents;
-- policy-engine rules.
-
-Native `BeforeTool` and `AfterTool` events remove the need for a shell-only
-bridge. XRH-03 creates that extension for supported distributions.
-
-### Decision mapping
-
-Gemini hooks document dynamic `allow` and `deny`. The policy engine separately
-supports static `ask_user` rules. Until an interactive policy-backed mapping is
-installed and tested, canonical dynamic `ask` fails closed as `deny`.
-
-See `adapters/gemini/README.md` for shipped wrapper behavior and the
-[Gemini hook reference](https://geminicli.com/docs/hooks/reference/) for the
-native target.
+If an adapter for that distribution is ever added, its native path is an
+extension bundling `gemini-extension.json`, `hooks/hooks.json`, Agent Skills,
+MCP servers, subagents and policy-engine rules, with `BeforeTool` and
+`AfterTool` events replacing a shell-only bridge. Gemini hooks document
+dynamic `allow` and `deny`; the policy engine separately supports static
+`ask_user` rules, so a canonical dynamic `ask` would fail closed as `deny`
+until an interactive policy-backed mapping is installed and tested. See the
+[Gemini hook reference](https://geminicli.com/docs/hooks/reference/).
 
 ## Antigravity
 
@@ -243,11 +215,11 @@ See the
 ## Decision degradation policy
 
 This table is the **target contract** (XRH-02/03 acceptance criteria), not a
-description of shipped behavior. The shipped adapters currently fail **open**
-on a crashed or empty-output hook: the Codex/Gemini shell wraps discard a
-failed hook's output and execute the command, and the Claude adapter passes
-silently when a named core hook is missing (`hook-protocol.md` § 4, exit
-code 1). Until the native paths land, rule 5 above ("empty output =
+description of shipped behavior. The shipped Claude adapter still fails **open**
+on a crashed or empty-output hook: it passes silently when a named core hook is
+missing (`hook-protocol.md` § 4, exit code 1). The retired Codex and Gemini shell
+wraps (now under `legacy/`) also discarded a failed hook's output and executed
+the command. Until the native paths land, rule 5 above ("empty output =
 pass-through") is what actually happens on error.
 
 | Condition | Mutating pre-effect event | Observation event |

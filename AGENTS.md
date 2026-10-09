@@ -4,16 +4,16 @@ This file follows the [agents.md spec](https://agents.md) so any AI coding agent
 
 For Claude Code, see also [`CLAUDE.md`](CLAUDE.md) (if present) or use this file as the primary instructions.
 
-For Gemini CLI, see also [`GEMINI.md`](GEMINI.md) (if present) or use this file.
+For Antigravity CLI (`agy`), see also [`GEMINI.md`](GEMINI.md) (if present) or use this file.
 
 ---
 
 ## What this repo is
 
-An **AI-agnostic agent framework**: rules, hooks, agents, skills, and automation with shared policy across Claude Code / Codex CLI / Gemini CLI.
+An **AI-agnostic agent framework**: rules, hooks, agents, skills, and automation with shared policy across Claude Code / Codex CLI / Antigravity CLI.
 Runtime enforcement coverage differs; see `docs/cross-runtime-harness-design.md`.
 
-The repo itself is the framework. Consumers `git clone` it and run `setup.sh` to install configs into their AI runtime (`~/.claude/`, `~/.codex/`, `~/.gemini/`) and optionally scaffold a target project.
+The repo itself is the framework. Consumers `git clone` it and run `setup.sh` to install configs into their AI runtime (`~/.claude/`, `~/.codex/`, and with `--antigravity` `~/.gemini/config/plugins/`) and optionally scaffold a target project.
 
 ---
 
@@ -52,7 +52,7 @@ After any core hook change, run:
 bash core/tests/adapter-parity.sh
 ```
 
-All 4 adapters (claude-code, codex, gemini, antigravity after normalization) must return the same
+All 3 adapters (claude-code, codex, antigravity after normalization) must return the same
 decision for the same input event.
 
 ### 4. Test discipline (TDD)
@@ -82,7 +82,7 @@ For any new hook in `core/hooks/`, write a reproduce test in `core/tests/<name>-
 Key entry points:
 - `setup.sh` — installer (4-mode)
 - `core/hooks/` — the truth (AI-agnostic hook implementations)
-- `adapters/{claude-code,codex,gemini}/` — AI-specific bridges
+- `adapters/{claude-code,codex,antigravity}/` — AI-specific bridges
 - `docs/hook-protocol.md` — canonical event schema
 - `rules/` — generic policy docs (sanitized from prior project work)
 - `templates/` — project scaffolds
@@ -104,10 +104,11 @@ See [`rules/multi-agent-worktree.md`](rules/multi-agent-worktree.md) for the ful
 
 ## Agent brain (shared cross-AI knowledge)
 
-The framework ships a **shared knowledge store** — the "agent brain" — that every
-runtime queries through one MCP server (`brain`, registered identically for Claude
-/ Codex / Gemini; `core/brain/brain-mcp.py`, stdlib-only). It lets a Codex session
-retrieve what a Claude session learned, and vice-versa. Location:
+The framework ships a **shared knowledge store** — the "agent brain" — that the
+runtimes query through one MCP server (`brain`, `core/brain/brain-mcp.py`, stdlib-only;
+`setup.sh` registers it for Claude and Codex, and agy can be pointed at it through its own
+MCP configuration). It lets a Codex session retrieve what a Claude session learned, and
+vice-versa. Location:
 `$AGENT_BRAIN_DIR` (default `~/.agent/brain`), local-only.
 
 **Read before you re-derive.** Query the brain first — it may already hold the
@@ -142,7 +143,7 @@ distill/promotion workflow: [`skills/brain-ingest/SKILL.md`](skills/brain-ingest
 # Linting / type-check (Python hooks)
 python3 -m ruff check core/
 
-# Cross-AI parity (same event → same decision across all 4 adapters)
+# Cross-AI parity (same event → same decision across all 3 adapters)
 bash core/tests/adapter-parity.sh
 
 # Sanitize audit

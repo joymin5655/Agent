@@ -1,5 +1,15 @@
 # Gemini CLI Adapter
 
+> **Retired 2026-10-09 — kept for reference only.** Individual Gemini CLI access ended
+> upstream on 2026-06-18, so only enterprise, Google Cloud and paid API-key users could still
+> run this adapter. The harness's google lane has run through the Antigravity CLI
+> ([`adapters/antigravity/`](../../../adapters/antigravity/README.md)) since 2026-08-20. This
+> adapter held no council or gate vote: the `gemini` backend in `core/infra/backends.json`
+> dispatches through `antigravity-worker`. `setup.sh --gemini` is gone, and the paths below
+> (`adapters/gemini/`, `core/infra/gemini-session.sh`) now live in this directory; its test
+> battery is `../tests/gemini-preflight-test.sh`. See [`../README.md`](../README.md) for what
+> restoring a lane takes.
+
 Bridge for [Gemini CLI](https://github.com/google-gemini/gemini-cli).
 
 ## How it works
@@ -15,8 +25,9 @@ Architecturally identical to the Codex adapter — see that README for the
 rationale.
 
 The native Gemini extension is specified in
-[`docs/cross-runtime-harness-design.md`](../../docs/cross-runtime-harness-design.md); the
-Antigravity plugin has shipped, see [`adapters/antigravity/README.md`](../antigravity/README.md).
+[`docs/cross-runtime-harness-design.md`](../../../docs/cross-runtime-harness-design.md); the
+Antigravity plugin has shipped, see
+[`adapters/antigravity/README.md`](../../../adapters/antigravity/README.md).
 
 ## Files
 

@@ -4,15 +4,14 @@
 # The "same core hook, same decision under all AIs" promise (README §Cross-AI
 # parity; docs/ai-adapters.md §Cross-AI parity guarantee) is only real if it is
 # tested. For each logically-identical event this feeds the adapters —
-# claude-code (native = canonical JSON on stdin), codex and gemini (native =
-# --tool/--command/--file flags, translated to canonical), and antigravity (agy
-# camelCase stdin; its own section below, decisions normalized) — through the SAME
-# core hook and asserts, per scenario:
+# claude-code (native = canonical JSON on stdin), codex (native = --tool/--command/--file
+# flags, translated to canonical), and antigravity (agy camelCase stdin; its own section
+# below, decisions normalized) — through the SAME core hook and asserts, per scenario:
 #   (a) parity  — the adapters return the SAME normalized decision
 #                 (allow/ask/deny). A drift where one adapter alone diverges fails.
 #   (b) decision — that agreed decision matches the expected one (correctness).
 #   (c) strict  — the FULL decision JSON (incl. reason) is byte-identical across
-#                 the three, so a reason/field drift is caught, not just the verb.
+#                 claude-code and codex, so a reason/field drift is caught, not just the verb.
 # Unlike the prior version (which only checked a "deny" substring per adapter,
 # independently — two adapters could both contain "deny" yet disagree on the rest),
 # this compares the decisions to each other. Exit 1 on any mismatch.
@@ -38,7 +37,6 @@ export AGENT_GATE_SINK_DIR
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CLAUDE_ADAPTER="$REPO_ROOT/adapters/claude-code/adapter.sh"
 CODEX_ADAPTER="$REPO_ROOT/adapters/codex/adapter.sh"
-GEMINI_ADAPTER="$REPO_ROOT/adapters/gemini/adapter.sh"
 
 PASS=0
 FAIL=0
@@ -87,7 +85,7 @@ else:
 # parity_case <label> <hook> <expected> <tool> <command> <file> <content>
 # Builds each adapter's NATIVE input from one logical (tool, command, file, content)
 # tuple — claude gets canonical JSON (constructed safely, via env, not string
-# interpolation), codex/gemini get their native flags — then runs <hook> and
+# interpolation), codex gets its native flags — then runs <hook> and
 # compares decisions. Hook stderr is discarded; only the decision JSON on stdout is
 # compared.
 parity_case() {
@@ -107,21 +105,19 @@ print(json.dumps({"event": "PreToolUse", "tool_name": os.environ["_T"], "tool_in
     [[ -n "$file" ]]    && flags+=(--file "$file")
     [[ -n "$content" ]] && flags+=(--content "$content")
 
-    local c_raw co_raw g_raw c_dec co_dec g_dec
+    local c_raw co_raw c_dec co_dec
     c_raw=$(printf '%s' "$cjson" | bash "$CLAUDE_ADAPTER" "$hook" 2>/dev/null)
     co_raw=$(bash "$CODEX_ADAPTER" "$hook" "${flags[@]}" 2>/dev/null)
-    g_raw=$(bash "$GEMINI_ADAPTER" "$hook" "${flags[@]}" 2>/dev/null)
     c_dec=$(printf '%s' "$c_raw" | norm)
     co_dec=$(printf '%s' "$co_raw" | norm)
-    g_dec=$(printf '%s' "$g_raw" | norm)
 
-    printf '  %-22s claude=%-9s codex=%-9s gemini=%-9s (want %s)\n' \
-        "$label" "$c_dec" "$co_dec" "$g_dec" "$expected"
+    printf '  %-22s claude=%-9s codex=%-9s (want %s)\n' \
+        "$label" "$c_dec" "$co_dec" "$expected"
 
-    if [[ "$c_dec" == "$co_dec" && "$co_dec" == "$g_dec" && "$c_dec" != "MALFORMED" ]]; then
+    if [[ "$c_dec" == "$co_dec" && "$c_dec" != "MALFORMED" ]]; then
         _ok "parity:$label"
     else
-        _no "parity:$label — adapters disagree or malformed (claude=$c_dec codex=$co_dec gemini=$g_dec)"
+        _no "parity:$label — adapters disagree or malformed (claude=$c_dec codex=$co_dec)"
     fi
 
     if [[ "$c_dec" == "$expected" ]]; then
@@ -130,18 +126,17 @@ print(json.dumps({"event": "PreToolUse", "tool_name": os.environ["_T"], "tool_in
         _no "decision:$label — got '$c_dec', want '$expected'"
     fi
 
-    local c_n co_n g_n
+    local c_n co_n
     c_n=$(printf '%s' "$c_raw" | njson)
     co_n=$(printf '%s' "$co_raw" | njson)
-    g_n=$(printf '%s' "$g_raw" | njson)
-    if [[ "$c_n" == "$co_n" && "$co_n" == "$g_n" ]]; then
+    if [[ "$c_n" == "$co_n" ]]; then
         _ok "strict:$label"
     else
         _no "strict:$label — full decision JSON differs across adapters"
     fi
 }
 
-echo "=== Cross-AI parity: same event -> same decision across claude-code / codex / gemini ==="
+echo "=== Cross-AI parity: same event -> same decision across claude-code / codex ==="
 echo "--- command shape (pre-tool-guard.sh reads tool_input.command) ---"
 #            label                  hook                 expect  tool   command                         file  content
 parity_case "deny-secrets-bash"     pre-tool-guard.sh    deny    Bash   "cat secrets/foo.env"           ""    ""
@@ -153,8 +148,8 @@ parity_case "deny-quoted-secrets"   pre-tool-guard.sh    deny    Bash   "cat sec
 parity_case "deny-review-override-bash" pre-tool-guard.sh deny Bash "export AGENT_REVIEW_OVERRIDE=reason-long-enough" "" ""
 echo "--- file/content shape (check-hardcoding.py reads tool_input.file_path + .content) ---"
 # 2026-07-27 guard-trim: check-hardcoding defaults to dryrun (advisory); the
-# deny path is opt-in via AGENT_HARDCODING_MODE=block. Cover both across all
-# three adapters. Firings are sunk to a scratch file + marked reproduce_test
+# deny path is opt-in via AGENT_HARDCODING_MODE=block. Cover both across both
+# adapters. Firings are sunk to a scratch file + marked reproduce_test
 # so parity runs never pollute the live fire-rate log. Fixture content is
 # runtime-assembled via an empty ${Z} splice so no literal hardcoding pattern
 # appears in this source (same precedent as check-hardcoding-test.sh).
@@ -253,19 +248,18 @@ else:
 print(json.dumps({"toolCall": call, "stepIdx": 1, "conversationId": "parity-1",
                   "workspacePaths": [os.environ["_W"]], "transcriptPath": os.environ["_W"] + "/transcript_full.jsonl",
                   "artifactDirectoryPath": os.environ["_W"], "modelName": "parity"}))')
-    local c_dec co_dec g_dec a_dec a_raw want
+    local c_dec co_dec a_dec a_raw want
     c_dec=$(pnorm "$(printf '%s' "$cjson" | bash "$CLAUDE_ADAPTER" "$hook" 2>/dev/null | norm)")
     co_dec=$(pnorm "$(bash "$CODEX_ADAPTER" "$hook" "${flags[@]}" 2>/dev/null | norm)")
-    g_dec=$(pnorm "$(bash "$GEMINI_ADAPTER" "$hook" "${flags[@]}" 2>/dev/null | norm)")
     a_raw=$(printf '%s' "$agy_in" | (cd "$_AGY_WS" && HOME="$_AGY_SCRATCH/home" AGENT_STATE_DIR="$_AGY_SCRATCH/state" \
         bash "$AGY_ADAPTER" PreToolUse 2>/dev/null))
     a_dec=$(printf '%s' "$a_raw" | agy_norm)
     want=$(pnorm "$expected")
-    printf '  %-26s claude=%-5s codex=%-5s gemini=%-5s agy=%-5s (want %s)\n' "$label" "$c_dec" "$co_dec" "$g_dec" "$a_dec" "$want"
-    if [[ "$a_dec" == "$c_dec" && "$a_dec" == "$co_dec" && "$a_dec" == "$g_dec" && "$a_dec" != "MALFORMED" && "$a_dec" == "$want" ]]; then
+    printf '  %-26s claude=%-5s codex=%-5s agy=%-5s (want %s)\n' "$label" "$c_dec" "$co_dec" "$a_dec" "$want"
+    if [[ "$a_dec" == "$c_dec" && "$a_dec" == "$co_dec" && "$a_dec" != "MALFORMED" && "$a_dec" == "$want" ]]; then
         _ok "agy:$label"
     else
-        _no "agy:$label — agy=$a_dec vs claude=$c_dec codex=$co_dec gemini=$g_dec want=$want :: ${a_raw:0:160}"
+        _no "agy:$label — agy=$a_dec vs claude=$c_dec codex=$co_dec want=$want :: ${a_raw:0:160}"
     fi
 }
 

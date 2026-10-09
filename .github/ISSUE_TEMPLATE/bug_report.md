@@ -25,7 +25,7 @@ assignees: ''
 
 ## Environment
 
-- AI runtime + version (Claude Code / Codex CLI / Gemini CLI):
+- AI runtime + version (Claude Code / Codex CLI / Antigravity CLI):
 - Install path (plugin or `setup.sh` flags):
 - OS / bash version (`bash --version`):
 - `bash setup.sh --doctor` output (redact anything personal):

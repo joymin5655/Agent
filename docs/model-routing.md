@@ -1,7 +1,7 @@
 # Model routing — cross-runtime tier policy
 
 One canonical mapping from **work class → model tier**, applied across the
-three supported runtimes (Claude Code, Codex CLI, Gemini CLI). In the Claude
+three supported runtimes (Claude Code, Codex CLI, Antigravity CLI). In the Claude
 column, **specialist pins are enforced** (agent frontmatter + the
 `validate-plugin` CI drift guard — see `skills/supervise/SKILL.md` → Model
 policy); the judgment-unpinned rule and per-call MID/LOW dispatch overrides
@@ -40,11 +40,11 @@ Example IDs are a 2026-07 snapshot — model names drift; the tier semantics do
 not. Prices are deliberately kept out of this document (they change faster
 than any doc review cycle).
 
-| Work class | Tier | Claude Code | Codex CLI | Gemini CLI |
+| Work class | Tier | Claude Code | Codex CLI | Gemini (agy) |
 |---|---|---|---|---|
-| Planning / architecture | TOP | Session's top model — agents **unpinned** (frontmatter absence = inherit) | `--profile deep` | top-tier model, caller-explicit `-m` |
-| Orchestration judgment — work distribution, gate verdicts, result synthesis | TOP | Session's top model, main loop (never dispatched below the session model) | `--profile deep` | top-tier model, caller-explicit `-m` |
-| Security review | **TOP-F** | `security-reviewer` pin — see the `model:` pin in `agents/security-reviewer.md` | `--profile deep` | top-tier model, caller-explicit `-m` |
+| Planning / architecture | TOP | Session's top model — agents **unpinned** (frontmatter absence = inherit) | `--profile deep` | top-tier model (tiers file TOP `--model`) |
+| Orchestration judgment — work distribution, gate verdicts, result synthesis | TOP | Session's top model, main loop (never dispatched below the session model) | `--profile deep` | top-tier model (tiers file TOP `--model`) |
+| Security review | **TOP-F** | `security-reviewer` pin — see the `model:` pin in `agents/security-reviewer.md` | `--profile deep` | top-tier model (tiers file TOP `--model`) |
 | Code review | MID | `code-reviewer` pin (sonnet-class) | mid model, caller-explicit `-m` + high effort | workhorse model |
 | Persona/citizen review | MID | `persona-review-orchestrator` pin (sonnet-class) | mid model, caller-explicit `-m` + high effort | workhorse model |
 | Implementation | MID | Dispatched at workhorse tier — explicit `model` override on the Agent dispatch; the session keeps judgment and dispatches hands | config default (unprefixed) | workhorse model |
@@ -232,7 +232,6 @@ just what this doc recommends.
 | Claude Code — decision-time reminder | `model-routing-advisor.py` (PreToolUse Task/Agent), advisory: one-line `additionalContext` nudge, never blocks, decision stays with the dispatcher | `core/hooks/model-routing-advisor.py`, `docs/gate-registry.md` GATE model-routing-advisor |
 | Claude Code — accumulation-time reminder | `top-edit-advisor.py` (PostToolUse Write/Edit/MultiEdit), advisory: `systemMessage` every +15 measured main-loop edits, never blocks | `core/hooks/top-edit-advisor.py`, `docs/gate-registry.md` GATE top-edit-advisor |
 | Codex CLI | GPT-6 named profiles (per-profile config files): `quick` = LOW (`gpt-6-luna` @ low effort), default = MID (`gpt-6-sol` @ medium effort), `deep` = TOP (`gpt-6-astra` @ xhigh effort); `model_reasoning_effort` is the effort dial | `adapters/codex/codex-config.toml.template` + `quick.config.toml.template` / `deep.config.toml.template` |
-| Gemini CLI (direct `oauth-personal`) | `settings.json` default model = workhorse; callers escalate with explicit `-m`. Retired for individuals (2026-07-17) — see the Cross-vendor lane note below; kept here only as the adapter-template record | `adapters/gemini/gemini-settings.json.template` |
 | Antigravity (the live gemini lane) | Tiers keyed by model ID in a single tiers file the antigravity-worker resolves per call — MID/TOP entries, moved from the vendor-owned directory to a harness-owned path so an agy CLI reinstall can't silently reset the pin; `--effort` flag optional alongside the tier's own baked-in reasoning level | `~/.agent/antigravity-tiers.json` (installed from `adapters/antigravity/antigravity-tiers.json.template`), `adapters/antigravity/antigravity-worker.sh` |
 | Claude Code — purpose launchers | Session-start human choice of tier (`claude-build`/`claude-quick`/`claude-research`); a launcher presets the model before the session exists — the allowed side of the no-runtime-switching line | `adapters/claude-code/launchers/`, `docs/launchers.md` |
 
@@ -285,14 +284,19 @@ shared blind spot doesn't survive review.
   live. `third-opinion-review` still carries `fallback: null` on purpose —
   falling back to an openai-vendor lane would duplicate the codex lane's vendor and
   fake the council's independence signal; an absent lane is reported absent
-  instead of silently substituted.
+  instead of silently substituted. The direct Gemini CLI adapter (shell wrap,
+  `gemini-worker`, session wrapper, settings template) was retired on 2026-10-09
+  and moved to `legacy/lanes-2026-10/gemini/`; no backend references it (the
+  `gemini` backend dispatches through `antigravity-worker`), so it held no
+  council or gate vote.
 - **Retired lanes (2026-10-08).** The grok advisor lane (`advisor-third`,
   `/council-review --with-grok`), the kiro gateway lanes (`kiro-openai`,
   `kiro-zhipu`, `kiro-anthropic`), the openrouter free advisor lane
   (`advisor-free`, `--with-free`) and the `claude-ox` launcher were retired by
   the maintainer. None held a council or gate vote, so review and gate outcomes
   are unchanged. The files stay under `legacy/lanes-2026-10/` for reference;
-  its `README.md` has the reasons and what restoring a lane takes.
+  its `README.md` has the reasons and what restoring a lane takes. The direct
+  Gemini CLI adapter followed on 2026-10-09 (see the Gemini backend note above).
 - **Dispatcher: `core/infra/call-worker.sh <role> < prompt.md`** — captures
   the reply to `~/.agent/workers/<project-key>/<ts>-<role>.md` (key = sha256 of the
   caller's project root, first 12 hex; override with `AGENT_WORKERS_DIR`), appends

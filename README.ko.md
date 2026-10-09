@@ -117,7 +117,7 @@ flowchart LR
   낮은 확신도는 물론 저지 크래시조차 전부 REFUTED로 수렴합니다(fail-closed) —
   [검증 다이어그램](#실행-흐름-심화) 참고.
 - Cross-AI 동일성은 약속이 아니라 기계 증명입니다: `core/tests/adapter-parity.sh`가
-  같은 이벤트를 4개 어댑터에 흘려 동일한 결정을 assert합니다. 이것이 증명하는 것은
+  같은 이벤트를 3개 어댑터에 흘려 동일한 결정을 assert합니다. 이것이 증명하는 것은
   *결정* 동일성입니다. 런타임별 *이벤트 커버리지*는 다릅니다 —
   [런타임 커버리지](#런타임-커버리지) 참고.
 
@@ -150,7 +150,7 @@ flowchart LR
 |---|---|
 | **하네스(harness)** | 에이전트 + 훅 + 스킬 + 규칙을 묶어 AI를 감싸는 안전 계층 전체. |
 | **훅(hook)** | AI 런타임이 어떤 행동 전/후에 자동으로 실행하는 작은 스크립트. **allow**, **ask**, **deny** 중 하나로 답합니다. [`core/hooks/`](core/hooks/)에 `hooks/hooks.json`으로 배선된 스크립트 27개(공유 모듈 포함 31개)가 있습니다. |
-| **어댑터(adapter)** | 각 AI CLI의 고유 이벤트 형식과 하네스의 표준 JSON 사이를 번역하는 얇은 계층. 런타임 어댑터 4개(claude-code, codex, gemini, antigravity)가 [`adapters/`](adapters/)에 있습니다. |
+| **어댑터(adapter)** | 각 AI CLI의 고유 이벤트 형식과 하네스의 표준 JSON 사이를 번역하는 얇은 계층. 런타임 어댑터 3개(claude-code, codex, antigravity)가 [`adapters/`](adapters/)에 있습니다. |
 | **에이전트(agent)** | AI가 일을 위임하는 전문가 — 예: 리뷰만 하고 절대 코드를 쓰지 않는 보안 리뷰어. 3종이 포함됩니다([`agents/`](agents/)). |
 | **스킬(skill)** | AI가 따라가는 재사용 가능한 단계별 워크플로우 — 예: 커밋+PR 자동화 흐름. 14종이 포함됩니다([`skills/`](skills/)). |
 | **게이트(gate)** | 훅의 결정 지점(deny / ask / block). 모든 게이트는 자신이 가정하는 모델 약점과 함께 등록됩니다 — [`docs/gate-registry.md`](docs/gate-registry.md). |
@@ -180,13 +180,13 @@ Codex 훅은 기본적으로 fail-open입니다: 지원되지 않는 `ask` 판�
 `hooks.json`을 설치하는 것만으로는 아직 아무것도 강제되지 않습니다.
 
 Antigravity(agy 1.2.12)는 훅의 `{}`를 deny로 처리하므로 통과는 `ask`로, 코어의 `ask`는
-`force_ask`로 내보냅니다. view·MCP·브라우저 도구는 매칭되지 않습니다. 엔터프라이즈 Gemini CLI
-사용자는 gemini 어댑터를 그대로 씁니다(셸 래퍼, 네이티브 파일 쓰기 가로채기 없음).
+`force_ask`로 내보냅니다. view·MCP·브라우저 도구는 매칭되지 않습니다. 직접 쓰는 Gemini CLI
+어댑터(셸 래퍼, 네이티브 파일 쓰기 가로채기 없음)는 2026-10-09에 퇴역해
+[`legacy/lanes-2026-10/gemini/`](legacy/lanes-2026-10/gemini/README.md)로 옮겼습니다.
 
 런타임별 상세와 우회 방법:
 [`adapters/codex/README.md`](adapters/codex/README.md) ·
-[`adapters/antigravity/README.md`](adapters/antigravity/README.md) ·
-[`adapters/gemini/README.md`](adapters/gemini/README.md).
+[`adapters/antigravity/README.md`](adapters/antigravity/README.md).
 
 ## 사전 준비물
 
@@ -241,7 +241,7 @@ Antigravity(agy 1.2.12)는 훅의 `{}`를 deny로 처리하므로 통과는 `ask
 
 ```bash
 gh repo clone joymin5655/Agent ~/agent   # 또는: git clone https://github.com/joymin5655/Agent ~/agent
-bash ~/agent/setup.sh                    # 플래그 없음 = Claude + Codex + Gemini (Antigravity는 옵트인)
+bash ~/agent/setup.sh                    # 플래그 없음 = Claude + Codex (Antigravity는 옵트인)
 bash ~/agent/setup.sh --antigravity     # Antigravity(agy) 워커 레인 + 네이티브 훅 플러그인 추가
 ```
 
@@ -249,7 +249,6 @@ bash ~/agent/setup.sh --antigravity     # Antigravity(agy) 워커 레인 + 네�
 |---|---|
 | `--claude` | Claude Code만 (`~/.claude/settings.json`) |
 | `--codex` | Codex CLI만 (`~/.codex/config.toml`) |
-| `--gemini` | Gemini CLI만 (`~/.gemini/settings.json`) |
 | `--project` | 현재 저장소 스캐폴드: `CLAUDE.md` / `AGENTS.md` / `GEMINI.md` / `gitleaks.toml` / `hook-config.yml` / git pre-commit + pre-push 훅 |
 | `--hooks-only` | git-hooks만, AI 설정 없음 |
 | `--all` | 위 전부 |
@@ -298,7 +297,7 @@ flowchart TB
     subgraph CORE["Layer 1 — core/ (단일 진실 원천)"]
         H["hooks/ — 배선된 스크립트 27개: 시크릿 스캔 · 뮤텍스 ·<br/>spec-gate · tdd-guard · supervisor …"]
         I["infra/ — 세션 · goal 모드 ·<br/>감사 · auto-ship"]
-        T["tests/ — 자가검증 스크립트 95개"]
+        T["tests/ — 자가검증 스크립트 100개"]
     end
     R["rules/ — 정책<br/>원문(SOT)"]
     PLUG[".claude-plugin/ + hooks/hooks.json<br/>플러그인 배포"]
@@ -317,7 +316,7 @@ flowchart TB
 4개 계층, 가장 아래가 이깁니다:
 
 - **L1 `core/`** — AI 무관(agnostic) 훅과 인프라. 단일 진실 원천.
-- **L2 `adapters/`** — AI별 번역기 (claude-code는 얇은 통과, codex/gemini/antigravity는 실제 번역).
+- **L2 `adapters/`** — AI별 번역기 (claude-code는 얇은 통과, codex/antigravity는 실제 번역).
 - **L3 `templates/`** — `setup.sh --project` / `/project-init`이 복사하는 프로젝트 스캐폴드.
 - **L4 당신의 프로젝트** — `hook-config.yml`과 선택적 `.agent/` 파일로 오버라이드. 코어 수정 불필요.
 
@@ -447,7 +446,7 @@ manager-audit의 발견은 절대 스스로 적용되지 않습니다 — `PROPO
 Agent/
 ├── .claude-plugin/     # Claude Code 플러그인 + 마켓플레이스 매니페스트
 ├── .github/            # CI 워크플로 · 이슈 템플릿 · PR 템플릿
-├── setup.sh            # 셸 설치기 — 조합 가능한 플래그 6개
+├── setup.sh            # 셸 설치기 — 조합 가능한 플래그 5개
 ├── gitleaks.toml       # 기본 시크릿 스캔 설정
 ├── AGENTS.md           # 이 저장소를 작업하는 AI의 운영 규칙
 ├── CHANGELOG.md
@@ -461,9 +460,9 @@ Agent/
 │   ├── hooks/          #   이식 가능한 훅 스크립트 31개 (배선 27 + 공유 모듈)
 │   ├── infra/          #   세션 조정 · goal 모드 · 감사 · auto-ship
 │   ├── git-hooks/      #   pre-commit · pre-push
-│   └── tests/          #   테스트 스크립트 95개 (verify-all.sh가 전부 실행)
+│   └── tests/          #   테스트 스크립트 100개 (verify-all.sh가 전부 실행)
 │
-├── adapters/           # claude-code (얇음) · codex · gemini · antigravity
+├── adapters/           # claude-code (얇음) · codex · antigravity
 ├── rules/              # 범용 정책 문서
 ├── templates/          # 프로젝트 스캐폴드 템플릿
 ├── evals/              # 저지 + 검증기 평가 데이터셋과 러너
@@ -510,7 +509,7 @@ gitleaks detect --no-git --source . --config gitleaks.toml
 # 2) 도메인 중립성 게이트 (CI에서도 실행)
 bash core/tests/sanitize-audit.sh
 
-# 3) cross-AI 동일성: 같은 이벤트 → 4개 어댑터 모두 같은 결정
+# 3) cross-AI 동일성: 같은 이벤트 → 3개 어댑터 모두 같은 결정
 bash core/tests/adapter-parity.sh
 # → === Parity: 52 passed, 0 failed ===
 
