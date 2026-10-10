@@ -23,7 +23,8 @@ actual code (not to the reviewers) drops what was hallucinated.
 | `third-opinion-review` | google (gemini, via antigravity) | architecture & consistency | `core/infra/call-worker.sh` | yes (when lane enabled) |
 
 Lane SSOT is `core/infra/backends.json`. A disabled lane (e.g. one whose CLI
-or preflight is missing) refuses loudly at dispatch; report it as absent —
+or preflight is missing, or one the caller's env lists in `AGENT_WORKER_DISABLE`)
+refuses loudly at dispatch; report it as absent —
 never substitute another vendor for it (a fallback that shares a seated
 vendor would fake the independence signal).
 
