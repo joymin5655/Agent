@@ -26,6 +26,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--gates` report/JSON carry `sink-override`/`sink_override`. `setup.sh --doctor` check 22 WARNs
   on the process env and on `env` blocks in `~/.claude` (or `CLAUDE_CONFIG_DIR`) and repo
   `.claude` `settings{,.local}.json`, plus text mentions in the codex/gemini configs.
+- **Env-scoped lane opt-out.** `call-worker.sh` honors `AGENT_WORKER_DISABLE=<name>[,...]`, where
+  a name is a backend (`gemini`) or a vendor (`google`, every backend with that vendor — survives
+  a lane rename). A matching backend refuses like a registry `enabled: false` (exit 127,
+  `status: unavailable`, fallback chain unchanged) before its preflight runs, but only for callers
+  whose env carries it — e.g. one login profile on a shared machine that must not bill a vendor
+  CLI signed in to another person's account. A name matching no backend or vendor warns on
+  stderr. Tests in `call-worker-test.sh`.
 
 ### Changed
 - `r4-mutex-check`, `context-mode-guard`, `secret-content-scan` and `council-escalation-gate`

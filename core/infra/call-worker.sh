@@ -41,6 +41,14 @@
 #     refuses (exit 3) and says how to approve. The gate is env-only by design:
 #     a dispatched/headless caller cannot answer an interactive confirm — the
 #     session that owns the user relationship asks, then sets the env.
+#   - AGENT_WORKER_DISABLE="<name>[,<name>...]" (comma/whitespace/newline
+#     separated) refuses the named backends —
+#     a name is a backend ("gemini") or a vendor ("google" = every backend with
+#     that vendor, which survives a lane rename) — exactly like a registry
+#     enabled:false, before their preflight (itself possibly a billable probe),
+#     but only for callers whose environment carries it: e.g. a shared machine
+#     where one login profile must not bill a vendor CLI signed in to another
+#     person's account. A name matching no backend or vendor is reported.
 #   - A missing CLI names the missing tool (exit 127 when no backend remains).
 #   - Fallback records WHY the primary was skipped (header + stderr).
 #   - A hung worker is killed at timeout_s (exit 124 when no fallback remains).
@@ -97,6 +105,17 @@ if [[ "${AGENT_WORKER_YES:-0}" != "1" ]]; then
     exit 3
 fi
 
+# Env-scoped lane opt-out (header). An unknown name would silently disable
+# nothing — the exact failure this switch exists to prevent — so say so.
+# Newlines count as separators too: `read` stops at the first one.
+WORKER_DISABLE_RAW="${AGENT_WORKER_DISABLE:-}"
+IFS=$', \t' read -r -a WORKER_DISABLE <<< "${WORKER_DISABLE_RAW//$'\n'/,}"
+for off in ${WORKER_DISABLE[@]+"${WORKER_DISABLE[@]}"}; do
+    [[ -n "$off" ]] || continue
+    jq -e --arg n "$off" '.backends[$n] or any(.backends[]; .vendor == $n)' "$BACKENDS_FILE" >/dev/null 2>&1 \
+        || echo "call-worker: AGENT_WORKER_DISABLE names no backend or vendor '$off' — it disables nothing" >&2
+done
+
 # The prompt is consumed once so both primary and fallback can replay it.
 PROMPT_TMP="$(mktemp)"
 OUT_TMP="$(mktemp)"
@@ -133,6 +152,25 @@ run_backend() {
         echo "call-worker: $UNAVAILABLE_REASON" >&2
         return 125
     fi
+    local off vendor=""
+    for off in ${WORKER_DISABLE[@]+"${WORKER_DISABLE[@]}"}; do
+        [[ -n "$off" ]] || continue
+        # A space stands in for a vendor-less backend: the lookup runs once, and no
+        # list item can equal it (spaces separate items). An unreadable vendor
+        # refuses: guessing "no match" would fail open on an opt-out switch.
+        if [[ -z "$vendor" ]]; then
+            vendor="$(jq -r --arg b "$name" '.backends[$b].vendor // " "' "$BACKENDS_FILE")" || {
+                UNAVAILABLE_REASON="backend '$name': AGENT_WORKER_DISABLE is set but the vendor could not be read — refusing"
+                echo "call-worker: $UNAVAILABLE_REASON" >&2
+                return 125
+            }
+        fi
+        if [[ "$off" == "$name" || "$off" == "$vendor" ]]; then
+            UNAVAILABLE_REASON="backend '$name' disabled by AGENT_WORKER_DISABLE ('$off') in the caller's environment"
+            echo "call-worker: $UNAVAILABLE_REASON" >&2
+            return 125
+        fi
+    done
     local cmd=()
     while IFS= read -r line; do cmd+=("$line"); done \
         < <(jq -r --arg b "$name" '.backends[$b].cmd[]' "$BACKENDS_FILE")

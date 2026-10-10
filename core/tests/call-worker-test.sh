@@ -20,6 +20,10 @@
 #   disabled      <- enabled:false -> loud refusal citing disabled_reason,
 #                    exit 127, status: unavailable capture on disk
 #   disabled-fb   <- disabled primary -> fallback runs, reason names disable
+#   env-off       <- AGENT_WORKER_DISABLE=<backend|vendor,...> refuses like
+#                    enabled:false before the preflight runs; a listed fallback
+#                    is refused too; a vendor name covers its backends; an
+#                    unknown name warns and disables nothing
 #   preflight     <- failing preflight -> unavailable; passing preflight -> ok
 #   gateway-cwd   <- a backend carrying "gateway" is dispatched from a NEUTRAL
 #                    harness-owned directory, so a ./.kiro/agents/kiro-*.json
@@ -340,6 +344,110 @@ if [[ $rc -eq 0 && -f "$out" ]] && grep -q "CODEX-STUB-REPLY" "$out" \
     ok "v2 disabled-fb — fallback ran, reason names the disable"
 else
     bad "v2 disabled-fb" "rc=$rc out=$out err=$(head -1 "$WORK/err8b" 2>/dev/null)"
+fi
+
+# --- 8c. env opt-out: AGENT_WORKER_DISABLE refuses like enabled:false ----
+# Before the preflight (a vendor probe can itself be billable), and only for
+# callers whose environment carries it.
+
+REG3E="$WORK/backends-v2-envoff.json"
+cat > "$REG3E" <<JSON
+{
+  "version": 2,
+  "roles": {
+    "solo": { "backend": "gemini", "tier": "TOP", "fallback": null },
+    "duo":  { "backend": "gemini", "tier": "TOP", "fallback": "codex" }
+  },
+  "backends": {
+    "gemini": { "vendor": "google", "connection": "cli", "enabled": true,
+                "cmd": ["gemini", "-p", ""], "tier_args": {},
+                "preflight": ["touch", "$MARKERS/gemini-preflight.called"], "timeout_s": 30 },
+    "codex":  { "vendor": "openai", "connection": "cli", "enabled": true,
+                "cmd": ["codex", "exec"],
+                "tier_args": { "TOP": ["--profile", "deep"] }, "timeout_s": 30 }
+  }
+}
+JSON
+
+rm -f "$MARKERS/gemini.called" "$MARKERS/gemini-preflight.called"
+ENV_WORKERS="$WORK/workers-envoff"
+env PATH="$BOTH:/usr/bin:/bin" AGENT_BACKENDS_FILE="$REG3E" \
+    AGENT_WORKERS_DIR="$ENV_WORKERS" AGENT_WORKER_YES=1 AGENT_WORKER_DISABLE=gemini \
+    bash "$DISPATCHER" solo <<< "p" >"$WORK/out8c" 2>"$WORK/err8c"; rc=$?
+cap8c="$(ls "$ENV_WORKERS" 2>/dev/null | head -1)"
+if [[ $rc -eq 127 ]] && grep -q "disabled by AGENT_WORKER_DISABLE" "$WORK/err8c" \
+   && [[ -n "$cap8c" ]] && grep -q "^status: unavailable$" "$ENV_WORKERS/$cap8c" \
+   && [[ ! -f "$MARKERS/gemini.called" && ! -f "$MARKERS/gemini-preflight.called" ]]; then
+    ok "env-off — exit 127, unavailable capture, neither preflight nor backend ran"
+else
+    bad "env-off" "rc=$rc (want 127) err=$(head -1 "$WORK/err8c" 2>/dev/null) cap=$cap8c pf=$([[ -f "$MARKERS/gemini-preflight.called" ]] && echo ran)"
+fi
+
+out="$(env PATH="$BOTH:/usr/bin:/bin" AGENT_BACKENDS_FILE="$REG3E" \
+    AGENT_WORKERS_DIR="$WORK/workers" AGENT_WORKER_YES=1 AGENT_WORKER_DISABLE=gemini \
+    bash "$DISPATCHER" duo <<< "p" 2>"$WORK/err8d")"; rc=$?
+if [[ $rc -eq 0 && -f "$out" ]] && grep -q "CODEX-STUB-REPLY" "$out" \
+   && grep -q "fallback_reason: primary 'gemini' unavailable (backend 'gemini' disabled by AGENT_WORKER_DISABLE" "$out"; then
+    ok "env-off-fb — fallback ran, reason names the env opt-out"
+else
+    bad "env-off-fb" "rc=$rc out=$out err=$(head -1 "$WORK/err8d" 2>/dev/null)"
+fi
+
+rm -f "$MARKERS/codex.called"
+env PATH="$BOTH:/usr/bin:/bin" AGENT_BACKENDS_FILE="$REG3E" \
+    AGENT_WORKERS_DIR="$WORK/workers" AGENT_WORKER_YES=1 AGENT_WORKER_DISABLE=" codex, gemini " \
+    bash "$DISPATCHER" duo <<< "p" >"$WORK/out8e" 2>"$WORK/err8e"; rc=$?
+if [[ $rc -eq 127 && ! -f "$MARKERS/codex.called" ]] \
+   && grep -q "fallback 'codex' is unavailable too" "$WORK/err8e"; then
+    ok "env-off-list — comma/space list refuses primary and fallback"
+else
+    bad "env-off-list" "rc=$rc (want 127) err=$(tail -1 "$WORK/err8e" 2>/dev/null)"
+fi
+
+rm -f "$MARKERS/codex.called"
+env PATH="$BOTH:/usr/bin:/bin" AGENT_BACKENDS_FILE="$REG3E" \
+    AGENT_WORKERS_DIR="$WORK/workers" AGENT_WORKER_YES=1 AGENT_WORKER_DISABLE=$'codex\ngemini' \
+    bash "$DISPATCHER" duo <<< "p" >/dev/null 2>"$WORK/err8g"; rc=$?
+if [[ $rc -eq 127 && ! -f "$MARKERS/codex.called" ]]; then
+    ok "env-off-newline — a newline separates names too (read stops at the first)"
+else
+    bad "env-off-newline" "rc=$rc (want 127) err=$(tail -1 "$WORK/err8g" 2>/dev/null)"
+fi
+
+rm -f "$MARKERS/gemini.called" "$MARKERS/gemini-preflight.called"
+out="$(env PATH="$BOTH:/usr/bin:/bin" AGENT_BACKENDS_FILE="$REG3E" \
+    AGENT_WORKERS_DIR="$WORK/workers" AGENT_WORKER_YES=1 AGENT_WORKER_DISABLE=google \
+    bash "$DISPATCHER" duo <<< "p" 2>"$WORK/err8h")"; rc=$?
+if [[ $rc -eq 0 && -f "$out" && ! -f "$MARKERS/gemini.called" && ! -f "$MARKERS/gemini-preflight.called" ]] \
+   && grep -q "CODEX-STUB-REPLY" "$out" \
+   && grep -q "fallback_reason: .*disabled by AGENT_WORKER_DISABLE ('google')" "$out" \
+   && ! grep -q "names no backend or vendor" "$WORK/err8h"; then
+    ok "env-off-vendor — a vendor name refuses its backends only (openai fallback still runs)"
+else
+    bad "env-off-vendor" "rc=$rc out=$out err=$(head -1 "$WORK/err8h" 2>/dev/null)"
+fi
+
+# Vendor-less (v1) registry: a vendor name matches nothing and says so; the
+# backend name still matches.
+out="$(run_dispatch "$BOTH" verify 1 AGENT_WORKER_DISABLE=openai 2>"$WORK/err8i")"; rc=$?
+if [[ $rc -eq 0 && -f "$out" ]] && grep -q "CODEX-STUB-REPLY" "$out" \
+   && grep -q "names no backend or vendor 'openai'" "$WORK/err8i"; then
+    ok "env-off-novendor — vendor name on a vendor-less registry disables nothing, warns"
+else
+    bad "env-off-novendor" "rc=$rc out=$out err=$(head -1 "$WORK/err8i" 2>/dev/null)"
+fi
+
+rm -f "$MARKERS/gemini.called" "$MARKERS/gemini-preflight.called"
+out="$(env PATH="$BOTH:/usr/bin:/bin" AGENT_BACKENDS_FILE="$REG3E" \
+    AGENT_WORKERS_DIR="$WORK/workers" AGENT_WORKER_YES=1 AGENT_WORKER_DISABLE=gemeni \
+    bash "$DISPATCHER" solo <<< "p" 2>"$WORK/err8f")"; rc=$?
+# Positive control: here the preflight marker MUST appear, so its absence in the
+# refusal cases above is meaningful.
+if [[ $rc -eq 0 && -f "$out" && -f "$MARKERS/gemini-preflight.called" ]] && grep -q "GEMINI-STUB-REPLY" "$out" \
+   && grep -q "AGENT_WORKER_DISABLE names no backend or vendor 'gemeni'" "$WORK/err8f"; then
+    ok "env-off-unknown — typo warns on stderr and disables nothing"
+else
+    bad "env-off-unknown" "rc=$rc out=$out err=$(head -1 "$WORK/err8f" 2>/dev/null)"
 fi
 
 # --- 9. v2 preflight: failing probe -> unavailable; passing probe -> ok ---

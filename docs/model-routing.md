@@ -311,7 +311,11 @@ shared blind spot doesn't survive review.
   confirm; the session that owns the user relationship asks first, then sets
   the env per invocation. A missing CLI names the missing tool (exit 127), a
   fallback records why the primary was skipped, a hung worker is killed at
-  `timeout_s` (exit 124).
+  `timeout_s` (exit 124). `AGENT_WORKER_DISABLE=<name>[,<name>...]` in the caller's
+  env — a name is a backend (`gemini`) or a vendor (`google`, every backend with that
+  vendor, so it survives a lane rename) — refuses those backends like `enabled: false`
+  (before the preflight), for a shared machine where one login profile must not bill a
+  vendor CLI signed in to someone else's account; an unknown name is warned about.
 - **Consumption**: `/verify-completion --second-opinion` attaches the capture
   as evidence input to the semantic judge; the gate logic itself is unchanged
   (a second opinion informs the verdict, it never replaces the judge).
