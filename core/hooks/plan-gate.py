@@ -18,6 +18,7 @@ import os
 import pathlib
 import re
 import sys
+import time
 from datetime import datetime
 
 # Approval flag path. Overridable via AGENT_PLAN_FLAG so tests can exercise the
@@ -88,15 +89,106 @@ def flag_session(flag: pathlib.Path) -> str:
     return m.group(1) if m else ""
 
 
-def withheld_marker() -> pathlib.Path:
+# Per-session withheld markers live at <flag>.withheld.d/<session_id>, so a second
+# withheld session cannot overwrite the first one's record. The pre-split single
+# file <flag>.withheld (content = one session id) is still honoured and migrated.
+SAFE_SID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
+# Idle markers are pruned on the next withhold; a block refreshes mtime, so only a
+# session that neither withholds nor dispatches for this long loses its marker.
+STALE_SECONDS = 24 * 3600
+
+
+def safe_sid(sid: str) -> bool:
+    return bool(SAFE_SID.fullmatch(sid)) and ".." not in sid
+
+
+def legacy_marker() -> pathlib.Path:
     return PLAN_FLAG.with_name(PLAN_FLAG.name + ".withheld")
 
 
-def marker_session() -> str:
+def marker_dir() -> pathlib.Path:
+    return PLAN_FLAG.with_name(PLAN_FLAG.name + ".withheld.d")
+
+
+def legacy_session() -> str:
     try:
-        return withheld_marker().read_text(encoding="utf-8").strip()
+        return legacy_marker().read_text(encoding="utf-8").strip()
     except OSError:
         return ""
+
+
+def is_withheld(sid: str) -> bool:
+    """True if this session has a withheld marker (per-session or legacy)."""
+    if not sid:
+        return False
+    if safe_sid(sid):
+        marker = marker_dir() / sid
+        if marker.is_file():
+            try:
+                os.utime(marker)
+            except OSError:
+                pass
+            return True
+    return legacy_session() == sid
+
+
+def migrate_legacy() -> None:
+    """Move the old single marker into the per-session dir (unsafe ids stay put)."""
+    old = legacy_session()
+    if not old or not safe_sid(old):
+        return
+    try:
+        marker_dir().mkdir(parents=True, exist_ok=True)
+        (marker_dir() / old).write_text(old, encoding="utf-8")
+        legacy_marker().unlink()
+    except OSError:
+        pass
+
+
+def prune_stale() -> None:
+    cutoff = time.time() - STALE_SECONDS
+    try:
+        entries = list(marker_dir().iterdir())
+    except OSError:
+        return
+    for entry in entries:
+        try:
+            if entry.is_file() and entry.stat().st_mtime < cutoff:
+                entry.unlink()
+        except OSError:
+            pass
+
+
+def set_withheld(sid: str) -> bool:
+    """Record the marker; False when the id is unsafe and the legacy file was used."""
+    migrate_legacy()
+    if safe_sid(sid):
+        try:
+            marker_dir().mkdir(parents=True, exist_ok=True)
+            (marker_dir() / sid).write_text(sid, encoding="utf-8")
+        except OSError:
+            pass
+        prune_stale()
+        return True
+    try:
+        legacy_marker().write_text(sid, encoding="utf-8")
+    except OSError:
+        pass
+    return False
+
+
+def clear_withheld(sid: str) -> None:
+    """Drop only this session's marker; other sessions' markers stay."""
+    if safe_sid(sid):
+        try:
+            (marker_dir() / sid).unlink()
+        except OSError:
+            pass
+    if legacy_session() == sid:
+        try:
+            legacy_marker().unlink()
+        except OSError:
+            pass
 
 
 def write_flag(sid: str) -> None:
@@ -116,11 +208,7 @@ def notice(message: str) -> None:
 
 def withhold(sid: str) -> None:
     """Memory-only plan: no flag for this session, and Agent path stays shut."""
-    if sid:
-        try:
-            withheld_marker().write_text(sid, encoding="utf-8")
-        except OSError:
-            pass
+    unsafe = bool(sid) and not set_withheld(sid)
     cleared = False
     if PLAN_FLAG.exists() and sid and flag_session(PLAN_FLAG) == sid:
         try:
@@ -134,6 +222,11 @@ def withhold(sid: str) -> None:
         "trigger, not proof - re-verify each factual claim against the source "
         "(file:line or command output) and re-submit the plan. "
     )
+    if unsafe:
+        base += (
+            "Session id is not filename-safe, so the shared (single-slot) withheld "
+            "marker was used; another withheld session may overwrite it. "
+        )
     if cleared:
         notice(base + "This session's approval flag is not set.")
     else:
@@ -184,11 +277,8 @@ def run() -> None:
         if isinstance(plan, str) and memory_only_plan(plan):
             withhold(sid)
             return
-        if sid and marker_session() == sid:
-            try:
-                withheld_marker().unlink()
-            except OSError:
-                pass
+        if sid:
+            clear_withheld(sid)
         write_flag(sid)
         return
 
@@ -198,7 +288,7 @@ def run() -> None:
 
     # A memory-only plan was withheld in this session: a plan-class dispatch must
     # not re-open the gate until an ExitPlanMode with live evidence passes.
-    if sid and marker_session() == sid:
+    if is_withheld(sid):
         return
 
     if is_plan_agent(data):

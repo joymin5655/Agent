@@ -55,10 +55,16 @@ For interactive and autonomous tiers touching 3+ files:
    - Source-first (W-8): a plan that cites memory but has no `file:line` / fenced
      command-output evidence gets no flag (only this session's own flag is cleared; the flag
      records `session=<id>`, consumers only test existence) and a re-verify notice. A
-     same-session `.withheld` marker keeps plan-class `Agent`/`Task` dispatches from re-opening
-     the gate until a passing `ExitPlanMode`.
+     per-session marker `<flag>.withheld.d/<session_id>` keeps that session's plan-class
+     `Agent`/`Task` dispatches from re-opening the gate until a passing `ExitPlanMode`, which
+     removes only its own marker; consecutive withheld sessions no longer overwrite each other.
+     Session ids must be filename-safe (`[A-Za-z0-9][A-Za-z0-9._-]*`, max 128, no `..`); an
+     unsafe id falls back to the legacy single-slot `<flag>.withheld` file plus a notice. A
+     legacy single marker is still honoured and is migrated into the directory on the next
+     withhold. Markers idle for 24h are pruned on the next withhold (a blocked dispatch
+     refreshes mtime); `session-close` does not clear them.
    - W-8 limits: Claude-only (needs `ExitPlanMode` + `additionalContext`); regex heuristic that
-     misses paraphrases ("my notes", "earlier session"); the flag file is still global, so a
+     misses paraphrases ("my notes", "earlier session"); the approval flag file is still global, so a
      flag from another session is left in place and edits may pass; `spec-gate.py` only asks
      when its mode is `block` (default `dryrun`); plan-class detection still substring-matches
      "plan" in Agent descriptions (e.g. "explanation").
