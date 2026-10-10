@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-10
+
+Ships #163–#171, #173 and #174. Gemini runs through the Antigravity CLI (`agy`) only, test runs
+no longer write gate firings into the live sinks, and a caller can switch a worker lane off for
+its own environment (`AGENT_WORKER_DISABLE`). Breaking for Gemini CLI users: `setup.sh --gemini`
+and `adapters/gemini/` are gone; see Removed for the leftovers to clean up by hand. Two gate
+changes merged without an entry: plan-gate withholds the approval flag for a plan that cites
+memory without file:line or command-output evidence (#168), and tdd-guard extends its secret
+whitelist with hook-config `risk_areas.secrets.paths` (#166).
+
 ### Added
 - **Gate telemetry isolation (X-5).** The five `security-violations.jsonl` writers honor
   `AGENT_GATE_SINK_DIR` (test runners only — in a real session it hides every firing from the
