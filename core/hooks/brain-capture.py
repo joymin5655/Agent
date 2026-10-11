@@ -25,6 +25,10 @@ MCP brain_capture call, not here.
 Claude fires Stop at the end of every turn, not once per session, so a repeat of
 the same session's last-captured working-tree status is skipped as well.
 
+Opt-out: AGENT_BRAIN_CAPTURE=off|0|false (any case) makes the hook exit 0 at once
+— no stdin read, no git call, no write. Unset or any other value keeps the default
+(capture on). Explicit MCP `brain_capture` calls are not affected.
+
 Hook protocol: reads stdin (canonical JSON, optional), writes ZERO bytes to
 stdout (pass-through observation), exits 0. Fail-open: every error is swallowed —
 a capture must never block, delay, or fail a session's end.
@@ -47,6 +51,7 @@ except Exception:  # pragma: no cover - import failure must not break the sessio
 _AI_ALIAS = {"claude-code": "claude"}
 _GIT_TIMEOUT = 5
 _DEDUPE_SCAN = 50  # newest same-slug captures checked for this session
+_OPT_OUT = {"off", "0", "false"}  # AGENT_BRAIN_CAPTURE values that disable the capture
 
 
 def _git(cwd: str, *args: str) -> str:
@@ -120,6 +125,8 @@ def _already_captured(ai: str, session: str, slug: str, porcelain: str) -> bool:
 
 
 def main() -> int:
+    if os.environ.get("AGENT_BRAIN_CAPTURE", "").strip().lower() in _OPT_OUT:
+        return 0
     if store is None:
         return 0
     data = _read_event()

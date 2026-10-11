@@ -19,13 +19,17 @@
 #
 # See docs/hook-protocol.md for the canonical contract.
 
+# python3 runs with -I here: a json.py (or re.py) in the working directory would otherwise be
+# imported in place of the standard module, and a stub that exits quietly blanks the parsed command
+# so that every guard sees nothing. (The PyYAML probe further down keeps the user site on purpose
+# and removes the working directory from sys.path itself.)
 INPUT=$(cat)
-TOOL_INPUT=$(echo "$INPUT" | python3 -c "import sys,json; print(json.dumps(json.load(sys.stdin).get('tool_input',{})))" 2>/dev/null || echo "{}")
-COMMAND=$(echo "$TOOL_INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('command',''))" 2>/dev/null || echo "")
+TOOL_INPUT=$(echo "$INPUT" | python3 -I -c "import sys,json; print(json.dumps(json.load(sys.stdin).get('tool_input',{})))" 2>/dev/null || echo "{}")
+COMMAND=$(echo "$TOOL_INPUT" | python3 -I -c "import sys,json; print(json.load(sys.stdin).get('command',''))" 2>/dev/null || echo "")
 
 emit_deny() {
   local reason="$1"
-  python3 - "$reason" <<'PY'
+  python3 -I - "$reason" <<'PY'
 import json
 import sys
 reason = sys.argv[1]
@@ -41,7 +45,7 @@ PY
 
 emit_ask() {
   local reason="$1"
-  python3 - "$reason" <<'PY'
+  python3 -I - "$reason" <<'PY'
 import json
 import sys
 reason = sys.argv[1]
@@ -75,7 +79,7 @@ log_violation() {
   local origin="${AGENT_LOG_ORIGIN:-session}"
   origin="${origin//[^A-Za-z0-9_.-]/}"   # keep the JSON well-formed whatever the env holds
   printf '{"ts":"%s","guard":"%s","hook":"pre-tool-guard.sh","reason":%s,"session_id":"%s","decision":"%s","reproduce_test":%s,"origin":"%s","schema_version":"2.0.0"}\n' \
-    "$ts" "$guard" "$(printf '%s' "$reason" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))' 2>/dev/null || echo "\"$reason\"")" "$sid" "$decision" "$repro" "$origin" \
+    "$ts" "$guard" "$(printf '%s' "$reason" | python3 -I -c 'import sys,json; print(json.dumps(sys.stdin.read()))' 2>/dev/null || echo "\"$reason\"")" "$sid" "$decision" "$repro" "$origin" \
     >> "$log_file" 2>/dev/null || true
   [[ -x "$repo_root/core/infra/agent-session.sh" ]] && \
     "$repo_root/core/infra/agent-session.sh" broadcast blocked \
@@ -98,7 +102,7 @@ log_violation() {
 # Secrets guards (5+) keep scanning the FULL command: -m "$(cat secrets/key)"
 # is a real read, not a mention. Python failure falls back to the full command
 # (fail-safe = scan more, never less).
-SCAN_CMD=$(SCAN_INPUT="$COMMAND" python3 - <<'PY'
+SCAN_CMD=$(SCAN_INPUT="$COMMAND" python3 -I - <<'PY'
 import os, re, sys
 cmd = os.environ.get("SCAN_INPUT", "")
 # \x22/\x27/\x60 = dquote/quote/backtick as regex escapes: bash 3.2 mis-parses
@@ -211,9 +215,1763 @@ fi
 # case-insensitive filesystem (macOS APFS default) `cat SECRETS/key` reads the
 # SAME file as `cat secrets/key`, so a case-sensitive match would be a trivial
 # bypass. The command verbs are lowercase, so -i adds no meaningful false positives.
+#
+# Two stages, to stop false positives without opening a hole. Stage 1 is the regex below,
+# unchanged: it only NOMINATES a command (no word boundary, no notion of command position, so
+# it also fires on a grep PATTERN, a commit message or `head -n 2; ls x/secrets/`). Stage 2
+# (_secrets_verdict) lexes the command like a shell and prints one word: `reader` (a guard verb
+# is the command word and a `secrets/` operand is read), `doubt` (no such operand, but the path
+# can still reach a reader through a $variable, a loop, a substitution, a cd or a program stage 2
+# does not know), `inert` (parsed, provably neither), `unparseable` (a construct it does not
+# model, or one on which bash and zsh disagree), `limit` (its work or nesting budget ran out)
+# or `error`. A nominated command is denied unless stage 2 says exactly `inert`, so a lexer
+# limit, an unbalanced quote, a crash, a missing python3, a non-zero exit, a killed process and
+# an empty, garbled or truncated answer can only keep the old deny.
+# Stage 1 never nominated `git show|blame|cat-file REV:secrets/x`, `git config -f secrets/x -l`
+# nor `git tag|commit|merge -F secrets/x` (git stores the file as a message, which a later `git
+# tag -n` or `git log` prints), and 0.8.0 allowed every `git log ... secrets/`. A second,
+# additive candidate regex catches those. It denies a parsed `reader` and anything that is not an
+# answer; `inert`, `doubt` and `unparseable` (a finished scan that found no read) are allowed, as
+# before: a path that comes out of an expansion is a known gap, pinned in the test. A `git
+# log|show` whose options all print commits, names or counts (--oneline, --name-only, --stat ...)
+# only selects commits by the path and is inert; -p anywhere, -c, -L, --word-diff, a pickaxe, an
+# option the scan does not know and REV:path are not.
+# A secrets/ path inside a quoted word that has blanks (' secrets/k', 'x secrets/k') is no path of
+# its own, but an unquoted $( ), $var, ${x#y}, xargs or read splits or reshapes it into one: stage 2
+# notes such a mention (`loose`) and denies when a splitting consumer exists too. Prose next to a
+# quoted "$f" or a heredoc inside "$( )" stays allowed.
+# Stage 1 only sees a literal secrets/, so a path spelled otherwise is judged by its shape. An
+# operand (also a cd target, a git pathspec or -C directory, a launcher's directory option) with a
+# component that can read as the word secrets is a read: written out, with a glob (secre[t]s, s*),
+# a brace group ({secrets,x}) or pieces ("$A"rets, $A$B, $(echo sec)rets, printf 'secrets\057k').
+# Before a slash it may also end in the word, as the written-out x-secrets/ does (data_*/k). A name
+# that an assignment (value or [key]), an array literal, a for list, the arguments of another
+# command, a here-string, an alias or a launcher option carries on to a later $var, ${!m[@]} or cd
+# is doubt: the word, a spelling of it, a name that ends in it (x-secrets) or holds it (secretsX,
+# for ${D%X}), the pieces of consecutive echo or printf commands side by side, and an item after
+# the first of a list that a splitting consumer hands on (D="x secrets"). A component that is one
+# bare expansion ("$D"/k) is not judged: its value is unknown here.
+# The value of an option that picks the files a reader reads is an operand too (rg -g, --glob,
+# --iglob; ag -G, --file-search-regex; grep --include; rsync and tar --include): a glob that can
+# spell the directory selects it. An exclusion (rg -g '!GLOB', --exclude-dir) picks nothing. A
+# reader that walks into directories (grep -r, rg, ag, git grep, tar c, zip -r, cp -r, rsync -a,
+# scp -r, 7z a, diff -r, gunzip -r) starts at its roots (no operand: the working directory). When
+# the line also names a secrets/ path as a path elsewhere (ls secrets/), a root that is, holds or
+# may hold it makes the line doubt. A root is cleared only when it provably lies apart from the
+# path: both relative (or both absolute) with a different name at the same depth. ~, .., a
+# variable, a pattern, a cd, a launcher's -C or -D, tar -C or -T and git -C leave it doubt.
+# A command that never names the directory (find . -exec cat {} +, xargs cat, grep -r PATTERN .)
+# is no read of it, with or without a mention that is only a pattern or prose.
+# Where bash and zsh read the same text differently, a hand-written lexer cannot tell which text is
+# code, so stage 2 says `unparseable` and the nominating deny stands: an expansion as a heredoc
+# delimiter, $[ ], a quote inside a double-quoted ${ }, <<( ), a ( glued to a word, a line
+# continuation inside a token or in a heredoc end, a subscript or array literal that holds a blank
+# or an operator, a << or a # inside [[ ]], a } that closes nothing, a $'...' escape that the
+# shells turn into different bytes (\c, \u, a code of 0 or from 128 up, an unknown escape: bash
+# ends a word at a NUL, and so a heredoc delimiter), a $"..." heredoc delimiter (zsh keeps the
+# dollar sign), and a shell or `source` that reads its script from stdin (sh -, bash -s,
+# /dev/stdin); core/hooks/README.md lists them all.
+# `git -c name=value` with the path in the value, written out or spelled, runs as a command
+# (alias.x=!cmd, core.pager), and so do the program of --upload-pack and --receive-pack, the
+# argument of difftool -x and the code string of an interpreter; rsync/tar --include selects what
+# they read.
+# Stage 2 spends a bounded amount of work (MAX_WORK word visits, MAX_DEPTH levels of nesting:
+# `limit`) and arms a 2 s wall-clock alarm. hooks.json sets no timeout for this hook, so the
+# host's default applies, and a hook the host kills prints no decision, which lets the call
+# through: the deny has to be decided inside our own budget. The alarm kills stage 2 without an
+# answer, which is a deny, so the worst case is 2 s plus the interpreter start-up.
+# AGENT_SECRETS_SCAN_BUDGET=<seconds> can only shorten the alarm (a test seam).
+# Not covered by stage 2, by design: text handed to an interpreter (python/perl/ruby/... bodies
+# and -e strings: guard 11 still covers python/node -c|-e), script files, aliases defined
+# elsewhere, a code string that reaches a program only through a variable (python3 -c "$X"),
+# a name assembled from data the command line does not spell out (decoded text, a file's content,
+# the environment), and a program that runs a quoted string but is not a code carrier stage 2 knows
+# (shell -c, eval, ssh, su, watch and the terminal multiplexers are known; another tool with a
+# command-line option of its own is not): its strings read as prose. Stage 2 is a speed bump
+# against careless reads, like the rest of this file.
+_secrets_verdict() {
+  # a python3 that is missing, exits non-zero or is killed leaves `error` behind, never an allow
+  SCAN_INPUT="$1" python3 -I - <<'PY' 2>/dev/null || printf 'error'
+import fnmatch
+import os
+import re
+import signal
+import sys
+
+# Stage 2 of guard 5 (secrets/ read). Prints one word: `reader` (a guard verb reads a
+# secrets/ operand), `doubt` (no such operand, but the secrets/ path can still reach a reader
+# through a variable, loop, substitution, cd or a program this scan does not know), `inert`
+# (parsed, and provably neither), `unparseable` (a construct this scan does not model, or one that
+# bash and zsh read differently), `limit` (the work or nesting budget ran out) or `error` (a bug).
+# The caller denies on anything but `inert` (stage-1 candidates), so a lexer limit, an
+# unbalanced quote, a crash, a spent work budget or a killed process (no output at all) can
+# only ever keep the old deny, never open a hole.
+# A path need not be written out: `spells` also reads an operand by its shape (a glob, a brace group, or
+# pieces such as "$A"rets), and `carries` a word that hands a name on (D=secrets, for d in s*, echo secrets).
+MAX_DEPTH = 8
+MAX_WORK = 400000  # word visits per command line: a launcher chain re-searches its own tail (2^n)
+BUDGET_SECONDS = 2.0  # wall clock; a hook that outlives its own timeout lets the call through
+PH = "\x00"  # stands for an expansion whose value is unknown
+DYN = "\x01"  # marks a plain $name / $1 / $@ expansion inside a word
+SPL = "\x02"  # marks an unquoted expansion: its result is split into words
+RSH = "\x03"  # marks a value a command or a ${x#y} may have reshaped, quoted or not: $(echo ' a' | cut -d' ' -f2)
+IN = "\x04"  # leads a redirect target that is read from (< and <>)
+END = "\x05"  # closes the expansion that DYN or PH opened: $name, ${...}, $(...), `...`, <(...)
+UNK = "\x06"  # stands for a whole expansion while the shape of a word is compared with a directory name
+SEC = re.compile((END + "*").join("secrets") + END + "*/", re.I)  # END may sit anywhere in it: ${A:-secrets}/k
+PATHY = re.compile(r"(?:^|\n)\S*" + SEC.pattern, re.I)  # secrets/ in the first token of a word: a path, not prose
+# ${name}, ${name:-word}, ${#name}: the value itself (or a default / alternate word, which is part of the text)
+PLAIN_PARAM = re.compile(r"(?:[A-Za-z_][A-Za-z0-9_]*|[0-9]+|[@*#?$!-])(?:\[[^\]]*\])?(?:\}|:?[-=+?])"
+                         r"|#[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?\}")
+FLAGS = {}  # per verdict(): mention, loose, dyn, split, cwd, verb, doubt, chdir
+NAMED = []  # per verdict(): the secrets/ paths the line names outside any reader's operands (None: a name only)
+ROOTS = []  # per verdict(): where the readers that walk into directories start (None: a root not placed)
+WORK = [0]  # per verdict(): units spent against MAX_WORK
+RPAREN = re.compile(r"[ \t]*\)")
+ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\[[^\]]*\])?\+?=")
+IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*$")
+SUBSCRIPT_ODD = re.compile(r"[\s;|&<>()#'\"`\\]|\$\(")
+EXCL_PATHSPEC = re.compile(r"^:(!|\^|\([^)]*\bexclude\b[^)]*\))")
+ANSI_ESC = re.compile(r"x[0-9a-fA-F]{1,2}|[0-7]{1,3}|u[0-9a-fA-F]{1,4}|U[0-9a-fA-F]{1,8}")
+# the $'...' escapes that bash 3.2, bash 5 and zsh turn into the same single byte (checked byte for byte)
+ANSI_PLAIN = {"n": "\n", "t": "\t", "r": "\r", "a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "v": "\v",
+              "\\": "\\", "'": "'", '"': '"', "?": "?"}
+
+VERBS = frozenset(
+    "cat tac nl head tail less more awk sed grep egrep fgrep rg ag bat hexdump xxd od strings "
+    "dd fold rev tee cp mv ln md5sum shasum sha256sum sha512sum wc diff cmp gunzip bunzip2 "
+    "bzip2 bzcat xz xzcat unxz lzma lz4cat tar unzip 7z zip gpg openssl age rsync scp".split())
+SHELLS = frozenset("sh bash zsh dash ksh ash".split())
+BACKGROUNDERS = {"nohup", "setsid"}  # supply-chain-scan: allow-literal wrapper names, not a spawn
+LAUNCHERS = frozenset(
+    "sudo doas env command builtin exec time nice ionice timeout gtimeout stdbuf rtk xargs "
+    "watch flock chrt taskset caffeinate unbuffer script arch su runuser busybox fakeroot "
+    "parallel ssh tmux screen byobu byobu-tmux byobu-screen zellij".split()) | BACKGROUNDERS
+# quoted args are code: ssh joins them into the remote command line, a multiplexer types or runs them
+# (the tmux command names cover a tmux command string handed to tmux itself: `if-shell c 'run-shell ...'`)
+CARRIERS = frozenset(
+    "ssh su watch script flock runuser parallel tmux screen byobu byobu-tmux byobu-screen zellij "
+    "send-keys run-shell if-shell "
+    "new-session new-window split-window respawn-pane respawn-window pipe-pane display-popup "
+    "display-message".split())
+# Inside a command string handed to tmux or screen (`tmux if true 'run "..."'`, `screen -X eval 'stuff "..."'`)
+# the abbreviated command names and the rest of the family run or type their own quoted argument too.
+# Scoped to such strings, so an unrelated program called run or display is not touched elsewhere.
+MUXHOSTS = frozenset("tmux screen byobu byobu-tmux byobu-screen".split())
+MUXCMDS = frozenset(
+    "if send run new neww splitw respawnp respawnw pipep popup display confirm confirm-before "
+    "command-prompt bind bind-key set-hook stuff".split())
+MUX = [0]  # per verdict(): how many multiplexer command strings enclose the text being scanned
+HEADS = VERBS | SHELLS | LAUNCHERS | {"git", "eval", "find"}
+# a heredoc/here-string fed to these is code (tmux source-file - reads tmux commands, run-shell among them)
+SHELLISH = SHELLS | {"ssh", "su", "source", ".", "tmux", "screen", "byobu", "byobu-tmux", "byobu-screen"}
+INERT = frozenset("echo printf print true false : cd pwd test [ [[ export unset set".split())
+SAFE = frozenset(  # name a path (or its metadata) without printing what is inside it
+    "ls stat file du tree mkdir rmdir touch chmod chown chgrp rm realpath readlink basename dirname "
+    "which type whereis open".split())
+LISTFILE = {  # the exceptions among SAFE: an option that reads its file as a list and prints what it finds
+    "file": re.compile(r"-[A-Za-z]*[fmMD]|--(files-from|magic-file)(=|$)"),
+    "tree": re.compile(r"--fromfile(=|$)"),
+    "du": re.compile(r"--files0-from(=|$)"),
+}
+CALM = INERT | SAFE | {"git", "find"}  # a secrets/ operand of these is no read by itself
+CWD = frozenset(["cd", "pushd", "chdir"])
+INTERP = re.compile(  # inline code (-e/-c/-r strings) can open the path itself
+    r"^(python|pypy|perl|ruby|node|nodejs|deno|bun|php|lua|luajit|julia|tclsh|wish|pwsh|osascript|"
+    r"sqlite3|psql|mysql|rscript)[0-9.]*$", re.I)
+RESERVED = frozenset("! { } if then elif else fi while until do done in esac function coproc always".split())
+LEAD = RESERVED | {"for"}  # words that may precede an arithmetic (( ))
+PAREN_KEYWORDS = frozenset("if elif while until for select then do else time".split())  # may touch a `(`
+PAREN_OK = LEAD | PAREN_KEYWORDS  # words after which a blank and a `(` still open a subshell
+GREPS = frozenset("grep egrep fgrep rg ag".split())
+GIT_READ = frozenset("show diff log blame annotate grep cat-file archive format-patch "
+                     "diff-tree diff-index interpret-trailers".split())
+# -F FILE / --file FILE: git stores the file as a message (commit, tag, merge, commit-tree, notes) or prints its
+# first bad line (fmt-merge-msg), and a later git log / tag -n / notes show prints it
+GIT_FILE_MSG = frozenset("commit tag merge commit-tree notes fmt-merge-msg".split())
+GIT_RUN_OPTS = ("--upload-pack", "--receive-pack", "--exec")  # a command line that fetch, push, clone ... run
+GIT_QUIET = frozenset(  # subcommands that name paths without printing their content
+    "add rm mv status commit checkout restore reset clean check-ignore check-attr ls-files ls-tree "
+    "rev-parse rev-list hash-object update-index config branch tag remote fetch push pull clone init "
+    "worktree submodule switch merge rebase cherry-pick revert apply am gc prune count-objects "
+    "help version".split())
+GIT_RUNNERS = frozenset("difftool mergetool filter-branch bisect".split())  # subcommands that run a command line
+GIT_PATTERN_OPTS = frozenset(["--grep", "-S", "-G", "--author", "--committer"])
+GIT_META_OPT = re.compile(  # options of `git log|show` that print commits, names or counts, never file content
+    r"-[0-9]+|-n[0-9]*|--max-count(=.*)?|--skip(=.*)?|--oneline|--abbrev-commit|--no-abbrev-commit|--abbrev(=.*)?"
+    r"|--graph|--decorate(=.*)?|--no-decorate|--decorate-refs(-exclude)?=.*|--clear-decorations"
+    r"|--all|--branches(=.*)?|--tags(=.*)?|--remotes(=.*)?|--glob=.*|--exclude=.*|--first-parent|--no-merges"
+    r"|--merges|--reverse|--follow|--pretty(=.*)?|--format(=.*)?|--date(=.*)?|--relative-date|--since(=.*)?"
+    r"|--until(=.*)?|--after(=.*)?|--before(=.*)?|--since-as-filter=.*|--author(=.*)?|--committer(=.*)?"
+    r"|--grep(=.*)?|-i|--regexp-ignore-case|-E|--extended-regexp|-F|--fixed-strings|--basic-regexp|-P"
+    r"|--perl-regexp|--all-match|--invert-grep|--no-color|--color(=.*)?|--source|--left-right"
+    r"|--topo-order|--date-order|--author-date-order|--ancestry-path(=.*)?|--simplify-by-decoration"
+    r"|--simplify-merges|--full-history|--sparse|--dense|--show-pulls|--children|--parents|--boundary"
+    r"|--cherry|--cherry-pick|--cherry-mark|--no-walk(=.*)?|--do-walk|--merge|--min-parents=.*"
+    r"|--max-parents=.*|--no-min-parents|--no-max-parents|--diff-filter=.*|--use-mailmap|--no-use-mailmap"
+    r"|--mailmap|--no-mailmap|--encoding=.*|--expand-tabs(=.*)?|--no-expand-tabs|--relative(=.*)?"
+    r"|--no-relative|-z|--log-size|--full-diff|-M[0-9%]*|--find-renames(=.*)?|-C[0-9%]*|--find-copies(=.*)?"
+    r"|--find-copies-harder|--no-renames|--stat(=.*)?|--stat-[a-z-]+(=.*)?|--shortstat|--numstat"
+    r"|--dirstat(=.*)?|--cumulative|--compact-summary|--name-only|--name-status|--summary|--raw|-s|--no-patch")
+GIT_NO_PATCH = frozenset(  # `git show` prints the patch unless one of these replaces it
+    "--stat --shortstat --numstat --name-only --name-status --summary --raw -s --no-patch".split())
+EXCL_LONG = frozenset(["--exclude", "--exclude-dir"])  # --include SELECTS what rsync/tar read: not in this list
+STDIN_SCRIPT = re.compile(  # script text read from stdin or an fd
+    r"^(-|/dev/stdin|/dev/fd/[0-9]+|/proc/(self|[0-9]+)/fd/[0-9]+)$")
+SHORT_VAL = {"grep": "efmABCdD", "egrep": "efmABCdD", "fgrep": "efmABCdD", "rg": "efgtTmjMrEABCd",
+             "ag": "GgmpW"}  # ag: -G/-g PATTERN, -m/-W NUM, -p FILE; its -A/-B/-C take an optional number
+READ_VAL = frozenset(["file", "exclude-from", "ignore-file", "pre", "pre-glob", "pager", "path-to-ignore"])
+NONREAD_VAL = frozenset(  # pager: ag runs it
+    "regexp include include-dir exclude exclude-dir glob iglob type type-not type-add type-clear "
+    "label group-separator replace encoding max-count context after-context before-context "
+    "binary-files devices directories colors engine path-separator sort sortr threads "
+    "max-depth max-filesize max-columns".split())
+# valued for one tool only (--color is a flag for GNU grep, whose value is attached): rg from `rg --help`, ag from its manual
+TOOL_VAL = {
+    "rg": frozenset("color context-separator dfa-size-limit field-context-separator field-match-separator generate "
+                    "hostname-bin hyperlink-format regex-size-limit".split()),
+    "ag": frozenset("depth file-search-regex ignore ignore-dir max-count path-to-ignore pager workers width".split()),
+}
+# The values of these options pick the files that are read (GNU grep sees a base name, BSD grep the whole path, rg
+# and ag a path below the working directory): a glob or regex that can spell the directory selects it, like an operand
+SELECT_LONG = frozenset(["include", "include-dir", "glob", "iglob", "type-add", "file-search-regex"])
+SELECT_SHORT = {"rg": "g", "ag": "Gg"}  # rg -g GLOB, ag -G REGEX and -g REGEX (ag -g takes no other pattern)
+# ag is not installed here: only the options of its manual (doc/ag.1.md) count as checked. -A -B -C take an optional
+# number and so cannot be told from a pattern; the file-type options (--html) are generated. Both make the line doubt
+AG_SHORT = frozenset("acDfFHilLnoQrsStuUvVwz0")
+AG_LONG = frozenset(
+    "ackmate affinity noaffinity all-types break nobreak count color nocolor column debug filename nofilename "
+    "follow nofollow fixed-strings group nogroup heading noheading hidden ignore-case files-with-matches "
+    "files-without-matches list-file-types mmap nommap multiline nomultiline norecurse numbers nonumbers "
+    "only-matching one-device nopager parallel print-long-lines passthrough passthru literal recurse "
+    "case-sensitive smart-case search-binary silent stats stats-only all-text unrestricted skip-vcs-ignores "
+    "invert-match version vimgrep word-regexp search-zip null print0".split())
+
+
+class Fail(Exception):
+    pass
+
+
+class Limit(Exception):
+    """The scan ran out of work or nesting depth: no verdict (not the same as a construct it declined to model)."""
+
+
+def mark(buf, q, reshaped):
+    """Tell the consumers what an expansion's result is: split into words unless it sits in double quotes,
+    and possibly reshaped (then a text that names no path yet can end up as one)."""
+    if not q:
+        buf.append(SPL)
+    if reshaped:
+        buf.append(RSH)
+
+
+def spend(units):
+    """Charge work to this command line; a scan that cannot finish within budget has no verdict."""
+    WORK[0] += units
+    if WORK[0] > MAX_WORK:
+        raise Limit("work budget")
+
+
+def odd_subscript(s, i):
+    """s[i - 1] is a `[` that starts name[...]= or an array literal's [sub]=. Bash reads such a subscript up to
+    its matching `]` as part of one word, operators and blanks included, where zsh cuts it at them.
+    True when the span holds such a character, so the two shells disagree about where code goes on."""
+    depth = 0
+    for j in range(i, len(s)):
+        if s[j] == "[":
+            depth += 1
+        elif s[j] == "]":
+            if not depth:
+                spend(j - i)
+                return bool(SUBSCRIPT_ODD.search(s, i, j))
+            depth -= 1
+    spend(len(s) - i)
+    return False
+
+
+def norm(text):
+    return text.rsplit("/", 1)[-1].lower()
+
+
+VERBS_LONGEST_FIRST = sorted(VERBS, key=len, reverse=True)
+
+
+def verb_of(name):
+    """The guard verb a command word stands for: itself or any word ending in one (gcat, zgrep, gzip)."""
+    return next((v for v in VERBS_LONGEST_FIRST if name.endswith(v)), None)
+
+
+class Lexer:
+    """Splits a command line into simple commands: (words, redirect-targets, bodies).
+
+    words = [(text, bare)] with quotes removed; bare = no quoting/expansion was involved.
+    Substitutions are lexed recursively and their commands land in the same flat list."""
+
+    def __init__(self, s, depth):
+        if depth > MAX_DEPTH:
+            raise Limit("depth")
+        self.s, self.n, self.i, self.depth = s, len(s), 0, depth
+        self.cmds = []
+        self.locale = False  # a $"..." sits in the word being read: bash drops the dollar sign, zsh keeps it
+        spend(self.n // 16 + 1)
+
+    def single(self, buf):
+        j = self.s.find("'", self.i)
+        if j < 0:
+            raise Fail("quote")
+        buf.append(self.s[self.i:j])
+        self.i = j + 1
+
+    def ansi(self, buf):  # $'...'
+        """The shells read an escape that is not one of ANSI_PLAIN or a one- to three-digit octal or one- or
+        two-digit hex code from 7 to 127 in ways of their own: \\c, \\u and \\U (bash 3.2 has no \\u), a code of
+        0 (bash ends the word there, zsh keeps a NUL), a code from 128 up (a byte, not a character), and an
+        unknown escape (bash keeps the backslash, zsh drops it). Which word, and which heredoc delimiter, they
+        see is then not known here."""
+        s = self.s
+        while True:
+            if self.i >= self.n:
+                raise Fail("quote")
+            c = s[self.i]
+            if c == "'":
+                self.i += 1
+                return
+            if c == "\\" and self.i + 1 < self.n:
+                m = ANSI_ESC.match(s, self.i + 1)
+                if m and m.group(0)[0] not in "uU":
+                    tok = m.group(0)
+                    code = int(tok[1:], 16) if tok[0] == "x" else int(tok, 8)
+                    if not 7 <= code <= 127:
+                        raise Fail("$'...' code the shells read differently")
+                    buf.append(chr(code))
+                    self.i += 1 + len(tok)
+                elif not m and s[self.i + 1] in ANSI_PLAIN:
+                    buf.append(ANSI_PLAIN[s[self.i + 1]])
+                    self.i += 2
+                else:
+                    raise Fail("$'...' escape the shells read differently")
+            else:
+                buf.append(c)
+                self.i += 1
+
+    def dquote(self, buf, closing=True):  # "..." ; closing=False scans a heredoc body
+        s = self.s
+        while True:
+            if self.i >= self.n:
+                if closing:
+                    raise Fail("quote")
+                return
+            c = s[self.i]
+            if closing and c == '"':
+                self.i += 1
+                return
+            if c == "\\":
+                nxt = s[self.i + 1] if self.i + 1 < self.n else ""
+                if nxt in ('"', "\\", "$", "`"):
+                    buf.append(nxt)
+                    self.i += 2
+                elif nxt == "\n":
+                    self.i += 2
+                else:
+                    buf.append(c)
+                    self.i += 1
+            elif c == "$":
+                self.dollar(buf, True)
+            elif c == "`":
+                self.backtick(buf, True)
+            else:
+                buf.append(c)
+                self.i += 1
+
+    def dollar(self, buf, q=False):  # self.i is on a '$'; q = inside double quotes
+        j, joined = self.i + 1, 0
+        while self.s.startswith("\\\n", j):  # `$\<newline>((`: the shell joins the lines before it reads the token
+            j += 2
+            joined += 1
+        if joined > 1:
+            raise Fail("several line continuations after a dollar")  # zsh then reads the `$` as a plain character
+        self.i = j - 1  # as if the `$` sat right in front of what it introduces
+        nxt = self.s[self.i + 1] if self.i + 1 < self.n else ""
+        if nxt == "(" and self.s.startswith("((", self.i + 1):
+            self.i += 3
+            self.arith(buf)
+        elif nxt == "(":
+            self.i += 2
+            self.depth += 1
+            if self.depth > MAX_DEPTH:
+                raise Limit("depth")
+            start = len(self.cmds)
+            self.commands(True)
+            self.depth -= 1
+            buf.append(PH)
+            mark(buf, q, reshapes(self.cmds[start:]))
+            buf.append(END)
+        elif nxt == "{":
+            self.i += 2
+            buf.append(PH)
+            mark(buf, q, not PLAIN_PARAM.match(self.s, self.i))
+            self.param(buf, q)
+            buf.append(END)
+        elif nxt == "[":
+            raise Fail("legacy $[ ] arithmetic")  # its `<<` is a shift, not a heredoc; shells differ on the rest
+        elif nxt == "'" and not q:  # inside double quotes `$'` is just a dollar sign and a quote
+            self.i += 2
+            self.ansi(buf)
+        elif nxt == '"' and not q:  # ... and `$"` ends the string after a literal dollar sign
+            self.i += 2
+            self.locale = True
+            self.dquote(buf)
+        else:
+            if nxt == "$":  # `$$` is the process id; a brace or quote after it is read differently by the shells
+                k = self.i + 2
+                while self.s.startswith("\\\n", k):
+                    k += 2
+                if self.s[k:k + 1] == "{" or (self.s[k:k + 1] == "'" and not q):
+                    raise Fail("$$ before a brace or quote")
+            named = bool(nxt) and (nxt.isalnum() or nxt in "_@*#?$!-")
+            if named:
+                buf.append(DYN)
+                mark(buf, q, False)
+            buf.append("$")
+            self.i += 1
+            if named:  # take the name here, so that text glued on after a quote is not read as a part of it
+                j = self.i
+                if nxt.isascii() and (nxt.isalpha() or nxt == "_"):
+                    while j < self.n and self.s[j].isascii() and (self.s[j].isalnum() or self.s[j] == "_"):
+                        j += 1
+                elif nxt != "$":  # the second $ of $$ starts an expansion of its own, which is checked below
+                    j += 1
+                buf.append(self.s[self.i:j])
+                self.i = j
+                buf.append(END)
+
+    def arith(self, buf):  # after $(( or ((: `<<` is a shift here, not a heredoc
+        s, depth = self.s, 0
+        while True:
+            if self.i >= self.n:
+                raise Fail("arith")
+            c = s[self.i]
+            if c == "(":
+                depth += 1
+                self.i += 1
+            elif c == ")":
+                if not depth:
+                    if s[self.i + 1:self.i + 2] != ")":
+                        raise Fail("arith")  # $( (list) ... ) rather than arithmetic
+                    self.i += 2
+                    break
+                depth -= 1
+                self.i += 1
+            elif c in "'\"`" or s.startswith("$(", self.i):
+                # bash and zsh tokenise a quote or substitution inside (( )) differently, and zsh may
+                # re-read the whole span as $( (list) ): not provable, so the nominating deny stands
+                raise Fail("arith")
+            else:
+                self.i += 1
+        buf.append(PH)
+        buf.append(END)
+
+    def param(self, buf, q=False):  # ${...}: keep the inner text, it may be a default value
+        s = self.s
+        while True:
+            if self.i >= self.n:
+                raise Fail("param")
+            c = s[self.i]
+            if c == "}":
+                self.i += 1
+                return
+            if c == "\\" and self.i + 1 < self.n:
+                buf.append(s[self.i + 1])
+                self.i += 2
+            elif c == "'":
+                if q:
+                    raise Fail("quote inside a double-quoted ${ }")  # literal in some shells, a quote in others
+                self.i += 1
+                self.single(buf)
+            elif c == '"':
+                self.i += 1
+                self.dquote(buf)
+            elif c == "$":
+                if q and s[self.i + 1:self.i + 2] in ("'", '"'):
+                    raise Fail("$' or $\" inside a double-quoted ${ }")  # bash and zsh differ here
+                self.dollar(buf, q)
+            elif c == "`":
+                self.backtick(buf, q)
+            elif c == "{":
+                raise Fail("brace inside ${ }")  # bash ends the expansion at the first }, zsh counts nested braces
+            else:
+                buf.append(c)
+                self.i += 1
+
+    def backtick(self, buf, q=False):
+        s, j, inner = self.s, self.i + 1, []
+        while True:
+            if j >= self.n:
+                raise Fail("backtick")
+            c = s[j]
+            if c == "`":
+                break
+            if c == "\\" and j + 1 < self.n and s[j + 1] in "`\\$":
+                inner.append(s[j + 1])
+                j += 2
+            else:
+                inner.append(c)
+                j += 1
+        sub = Lexer("".join(inner), self.depth + 1)
+        sub.commands(False)
+        self.cmds.extend(sub.cmds)
+        self.i = j + 1
+        buf.append(PH)
+        mark(buf, q, reshapes(sub.cmds))
+        buf.append(END)
+
+    def heredocs(self, pending):  # self.i is at the first line of the bodies
+        for delim, quoted, strip, target in pending:
+            if strip and delim[:1] == "\t":  # <<-'\tEOF': bash needs the tab on the end line, zsh strips it from both
+                raise Fail("<<- delimiter that begins with a tab")
+            lines, joined, zjoined, cont = [], "", "", False
+            while self.i < self.n:
+                j = self.s.find("\n", self.i)
+                j = self.n if j < 0 else j
+                line = self.s[self.i:j]
+                self.i = min(j + 1, self.n)
+                # bash and zsh join `EO\<newline>F` into the delimiter of an unquoted heredoc. Where the joined
+                # line and the physical line disagree about the end, the body may run on or stop: unprovable
+                # (reading it as code would also be wrong, since it can open a heredoc of its own). For `<<-`
+                # bash strips the tabs of the joined line, zsh those of its first physical line only (zjoined).
+                hit = (line.lstrip("\t") if strip else line) == delim
+                if cont and (hit != (((joined + line).lstrip("\t") if strip else joined + line) == delim)
+                             or hit != (zjoined + line == delim)):
+                    raise Fail("heredoc terminator depends on a line continuation")
+                if hit:
+                    break
+                lines.append(line)
+                first = line.lstrip("\t") if strip and not cont else line
+                cont = not quoted and (len(line) - len(line.rstrip("\\"))) % 2 == 1
+                joined = (joined + line)[:-1] if cont else ""
+                zjoined = (zjoined + first)[:-1] if cont else ""
+            body = "\n".join(lines)
+            target.append(body)
+            if not quoted:  # an unquoted delimiter still expands $( ) and backticks
+                sub = Lexer(body, self.depth + 1)
+                sub.dquote([], closing=False)
+                self.cmds.extend(sub.cmds)
+        del pending[:]
+
+    def commands(self, in_paren):
+        s, n = self.s, self.n
+        words, redirs, bodies, pending = [], [], [], []
+        buf, bare, inword, expect, par = [], True, False, None, 0
+        arrays = []  # the paren depths that are NAME=( ... ) array literals
+        cond = False  # between a command's [[ and its ]]
+        rx = False  # after the =~ of such a test: bash reads the regex operand by rules of its own
+        braces = 0  # `{` opened inside the current word and not yet closed: a brace expansion, `{}`, `stash@{0}`
+
+        def flush():
+            nonlocal buf, bare, inword, expect, cond, rx, braces
+            if not inword:
+                return
+            text = "".join(buf)
+            if expect is None:
+                if in_paren and bare and text == "case":
+                    raise Fail("case inside a substitution")  # its pattern `)` would end the $( ) early
+                words.append((text, bare))
+                if arrays and arrays[-1] == par:
+                    note_element(text)  # NAME=(secrets x): a later "${NAME[@]}"/k can name the directory
+                if bare and text == "]]":
+                    cond = rx = False
+                elif bare and text == "[[" and all(w[0] in LEAD for w in words[:-1]):
+                    cond = True
+                elif bare and text == "=~" and cond:
+                    rx = True
+            elif expect in ("<<", "<<-"):
+                if any(m in text for m in (DYN, PH, SPL, RSH)):
+                    raise Fail("heredoc delimiter comes from an expansion")  # the shell takes `$X` literally here
+                if self.locale:
+                    raise Fail('heredoc delimiter with a $"..." string')  # EOF for bash, $EOF for zsh
+                pending.append((text, not bare, expect == "<<-", bodies))
+            elif expect == "<<<":
+                bodies.append(text)
+                if PATHY.search(text) or carries(text):
+                    note_mention()  # a here-string can hand `read` or xargs a path
+            else:
+                redirs.append(IN + text if expect in ("<", "<>") else text)
+            expect = None
+            buf, bare, inword, braces = [], True, False, 0
+            self.locale = False
+
+        def end():
+            nonlocal words, redirs, bodies, expect
+            flush()
+            expect = None
+            if words or redirs or bodies:
+                self.cmds.append((words, redirs, bodies))
+            words, redirs, bodies = [], [], []
+
+        while True:
+            if self.i >= n:
+                if in_paren:
+                    raise Fail("paren")
+                end()
+                return
+            c = s[self.i]
+            if c in " \t":
+                flush()
+                self.i += 1
+            elif c == "\n":
+                end()
+                self.i += 1
+                if pending:
+                    self.heredocs(pending)
+            elif c == "\\":
+                nxt = s[self.i + 1] if self.i + 1 < n else ""
+                if nxt == "\n":
+                    if self.i and s[self.i - 1] not in " \t\n|&;":
+                        raise Fail("line continuation inside a token")  # `(\<nl>(`: the shell joins the halves
+                    self.i += 2
+                elif nxt:
+                    buf.append(nxt)
+                    bare, inword = False, True
+                    self.i += 2
+                else:
+                    self.i += 1
+            elif c == "'":
+                self.i += 1
+                self.single(buf)
+                bare, inword = False, True
+            elif c == '"':
+                self.i += 1
+                self.dquote(buf)
+                bare, inword = False, True
+            elif c == "$":
+                if rx and s[self.i + 1:self.i + 2] == "{" and not PLAIN_PARAM.match(s, self.i + 2):
+                    raise Fail("malformed ${ in the regex operand of [[ ]]")  # bash takes `(${)` as regex text
+                size = len(buf)
+                self.dollar(buf)
+                bare, inword = bare and buf[size:] == ["$"], True  # a lone `$` is a plain character
+            elif c == "`":
+                self.backtick(buf)
+                bare, inword = False, True
+            elif c == "#" and not inword:
+                if cond:
+                    raise Fail("# inside [[ ]]: a comment for bash, part of a pattern for zsh")
+                j = s.find("\n", self.i)
+                self.i = n if j < 0 else j
+            elif c in "<>" and s[self.i + 1:self.i + 2] == "(":  # process substitution
+                self.i += 2
+                self.depth += 1
+                if self.depth > MAX_DEPTH:
+                    raise Limit("depth")
+                self.commands(True)
+                self.depth -= 1
+                buf.append(PH)
+                buf.append(END)
+                bare, inword = False, True
+            elif c in "<>" or (c == "&" and s[self.i + 1:self.i + 2] == ">"):
+                if inword and bare and "".join(buf).isdigit():
+                    buf, inword = [], False  # a leading fd number: 2>file
+                else:
+                    flush()
+                op = next((o for o in ("<<<", "<<-", "<<", ">>", ">|", ">&", "<&", "<>", "&>>", "&>")
+                           if s.startswith(o, self.i)), c)
+                self.i += len(op)
+                if op in ("<<", "<<-", "<<<") and s[self.i:self.i + 1] == "(":
+                    raise Fail("heredoc operator against a parenthesis")  # zsh: `<` + `<( )`; bash: a syntax error
+                if (arrays and arrays[-1] == par) or rx or (op in ("<<", "<<-") and cond):
+                    # inside NAME=( ) or a [[ ]] regex bash keeps the operator as text; zsh may open a here-document
+                    # or refuse the line, and a quote after it then ends in a different place
+                    raise Fail("redirection operator inside an array literal or [[ ]]")
+                expect = op
+            elif c in ";&|":
+                end()
+                self.i += 1
+            elif c == "(":
+                if (inword or words) and RPAREN.match(s, self.i + 1):
+                    raise Fail("function definition")  # name() { ...; }: the body runs later
+                glued = inword and bare and not words and "".join(buf) in PAREN_KEYWORDS
+                at_arith = s.startswith("((", self.i) and (glued or not inword)
+                if at_arith and all(w[0] in LEAD for w in words):
+                    if glued:
+                        flush()  # `for((i=0;i<1<<2;i++))`: the keyword, then an arithmetic list
+                    self.i += 2  # (( expr )) command
+                    self.arith([])
+                    end()  # zsh: `for ((;;)) cmd`, `if (( x )) cmd` run what follows as their body
+                    continue
+                if not inword and not cond and (redirs or any(w[0] not in PAREN_OK for w in words)):
+                    if not (words and words[0][0] == "case"):  # `case x in (pat)` is a pattern in both shells
+                        raise Fail("parenthesis after a command word")  # bash: syntax error; zsh: a glob across lines
+                literal = False
+                if inword:  # NAME=( is an array literal, while(( a keyword; any other word + ( is a zsh glob
+                    head = "".join(buf)
+                    named = ASSIGN.match(head)
+                    literal = bool(named and named.end() == len(head))
+                    if not (literal or (bare and not words and head in PAREN_KEYWORDS)):
+                        raise Fail("parenthesis attached to a word")
+                end()
+                self.i += 1
+                par += 1
+                if literal:
+                    arrays.append(par)
+            elif c == ")":
+                end()
+                self.i += 1
+                if par:
+                    if arrays and arrays[-1] == par:
+                        arrays.pop()
+                    par -= 1
+                elif in_paren:
+                    return
+            else:
+                if c == "[":
+                    after_name = inword and bare and IDENT.match("".join(buf))
+                    element = not inword and arrays and arrays[-1] == par
+                    if (after_name or element) and odd_subscript(s, self.i + 1):
+                        raise Fail("operator or blank inside a subscript")  # bash: one word; zsh: cut at it
+                elif c == "{":
+                    braces += 1
+                elif c == "}":
+                    if braces:
+                        braces -= 1
+                    elif inword:  # `<<EOF}`, `echo a}`: bash keeps it in the word, zsh ends the word and closes a group
+                        raise Fail("unmatched } inside a word")
+                buf.append(c)
+                inword = True
+                self.i += 1
+
+
+def shape(t):
+    """t with every expansion folded into one UNK: $A, ${A:-x}y and $(cmd) each count as a single unknown piece."""
+    out, depth = [], 0
+    for ch in t:
+        if ch == DYN or ch == PH:
+            if not depth:
+                out.append(UNK)
+            depth += 1
+        elif ch == END:
+            depth = max(depth - 1, 0)
+        elif not depth and ch not in (SPL, RSH, IN):
+            out.append(ch)
+    return "".join(out)
+
+
+BRACE_WORDS = 64  # a brace expansion that makes more words than this is not enumerated
+BRACE_SEQ = re.compile(r"\{[^{},]*\.\.[^{},]*\}")  # {1..9}, {a..e}: any word
+BRACE_ALT = re.compile(r"\{([^{}]*,[^{}]*)\}")  # {a,b}: an innermost group with a comma
+FORMATTED = re.compile(r"\\(?:[0-7]{1,3}|x[0-9A-Fa-f]{1,2}|u[0-9A-Fa-f]{1,4}|U[0-9A-Fa-f]{1,8})"
+                       r"|%[-+ #0-9.*']*[A-Za-z]")  # \057 \x2f / %s %b: printf and echo -e make text of these
+
+
+def brace_words(s):
+    """The words a brace expansion makes of s ({a,b}c -> ac bc; a {1..9} sequence stands as one `*`), or None
+    when there would be more than BRACE_WORDS of them. A lone {}, {a} or an unclosed { stays as it is."""
+    out, todo = [], [BRACE_SEQ.sub("*", s)]
+    while todo:
+        w = todo.pop()
+        spend(len(w) // 16 + 1)
+        m = BRACE_ALT.search(w)
+        if m is None:
+            out.append(w)
+        else:
+            todo.extend(w[:m.start()] + alt + w[m.end():] for alt in m.group(1).split(","))
+        if len(out) + len(todo) > BRACE_WORDS:
+            return None
+    return out
+
+
+STAR, ANY1 = object(), object()  # pattern tokens: `*` (also an expansion) and `?`
+SECRETS = "secrets"
+
+
+def glob_set(body):
+    """The letters of `secrets` that the bracket expression [body] can match: [t], [!x], [a-f], [[:alpha:]]."""
+    neg = body[:1] in ("!", "^")
+    body = body[1:] if neg else body
+    if "[:" in body:
+        return frozenset(SECRETS)  # a character class: any letter may do
+    hit, i = set(), 0
+    while i < len(body):
+        if i + 2 < len(body) and body[i + 1] == "-":
+            hit.update(c for c in SECRETS if body[i].lower() <= c <= body[i + 2].lower())
+            i += 3
+        else:
+            hit.add(body[i].lower())
+            i += 1
+    return frozenset(c for c in SECRETS if (c in hit) != neg)
+
+
+def bracket_end(comp, k):
+    """The index of the ] that closes the bracket expression whose members begin at k, or -1."""
+    if comp[k:k + 1] == "]":
+        k += 1  # a ] right after the [ or [! is a member
+    while k < len(comp):
+        if comp.startswith("[:", k) and ":]" in comp[k + 2:]:
+            k = comp.index(":]", k + 2) + 2  # [:alpha:]
+        elif comp[k] == "]":
+            return k
+        else:
+            k += 1
+    return -1
+
+
+def glob_tokens(comp):
+    """One path component as pattern tokens: a lower-case character, STAR, ANY1 or the set a [..] can match."""
+    toks, i, n = [], 0, len(comp)
+    while i < n:
+        c = comp[i]
+        if c == "*" or c == UNK:
+            toks.append(STAR)
+        elif c == "?":
+            toks.append(ANY1)
+        elif c == "[":
+            j = i + 1 + (comp[i + 1:i + 2] in ("!", "^"))
+            k = bracket_end(comp, j)
+            if k < 0:
+                toks.append("[")
+            else:
+                toks.append(glob_set(comp[i + 1:k]))
+                i = k
+        else:
+            toks.append(c.lower())
+        i += 1
+    return toks
+
+
+def can_be_secrets(toks, tail=False, solid=False, within=False):
+    """Can the tokens read as the word `secrets`, all of it and nothing else? With `tail`: or as a name that ends
+    in it, and with `solid` that ending has a character of its own, not only stars and expansions. With `within`
+    the name may also have more behind it (secretsX), and it has a character of its own."""
+    states = {(0, False)}  # (letters of `secrets` matched, one of them came from a character and not from a star)
+    for t in toks:
+        nxt = set()
+        for s, own in states:
+            if t is STAR:
+                nxt.update((j, own) for j in range(s, 8))
+            elif s < 7:
+                want = SECRETS[s]
+                if t is ANY1 or t == want or (type(t) is frozenset and want in t):
+                    nxt.add((s + 1, True))
+        states = nxt | {(0, False)} if tail else nxt  # tail: whatever came before the word may be anything
+        if within and any(s == 7 and own for s, own in states):
+            return True
+        if not states:
+            return False
+    return any(s == 7 and (own or not solid) for s, own in states)
+
+
+def reads_as_secrets(comp, before_slash=False, carried=False):
+    """A path component that can read as `secrets`, also behind an `=` or a `:` (if=NAME, host:NAME). Before a
+    slash it may also be a name that ends in it, as the written-out x-secrets/ is. So may a last component that ends
+    in an expansion (x-secre"$A": the value can finish the name and add the slash), if it has a character of that
+    ending of its own (not fire=$?, not data_*). A name that is handed on to a later $A/k (carried) may have the
+    directory name anywhere in it, for ${A%X} or ${A:0:7} to cut it out (secretsX, Xsecrets)."""
+    for part in (comp, comp.rpartition("=")[2], comp.rpartition(":")[2]):
+        toks = glob_tokens(part) if part != UNK else []
+        if (can_be_secrets(toks, before_slash) or (part.endswith(UNK) and can_be_secrets(toks, True, True))
+                or (carried and can_be_secrets(toks, True, True, True))):
+            return True
+    return False
+
+
+def spells(t, final=True, carried=False):
+    """t, taken as a path, may run through a directory called secrets or ending in it (with `final`: or the last
+    component is called secrets): written out, or spelled with a glob (secre[t]s, s*), a brace group ({secrets,x})
+    or an expansion beside the rest of the name ($A$B, "$A"rets). A component that is one expansion and nothing else
+    stays unjudged: its value is not known here."""
+    if SEC.search(t):
+        return True
+    t = FORMATTED.sub(UNK, shape(t))  # a character code or a conversion can stand for a letter or the slash
+    spend(len(t) // 8 + 1)
+    words = brace_words(t)
+    if words is None:
+        return True
+    for w in words:
+        for v in (w, w.replace(UNK, "/" + UNK + "/")) if UNK in w else (w,):  # an expansion may bring a slash
+            comps = v.split("/")
+            for n, comp in enumerate(comps):
+                if (final or n < len(comps) - 1) and reads_as_secrets(comp, n < len(comps) - 1, carried):
+                    return True
+    return False
+
+
+TOKEN = re.compile(r"\S+")
+GLOBBY = re.compile("[*?\\[{" + DYN + PH + "]")
+
+
+CODE_PIECE = re.compile(r"[^\s\"'`()<>;,|&]+")  # a path-like piece of code: the blanks, quotes and brackets of the
+#                                                 language cut it out, the glob characters stay in it
+CODE_BRACE = re.compile(r"[^\s\"'`()<>;|&]+")  # the same, with the commas of a brace group: secret{s,}/k
+UNQUOTE = re.compile(r"['\"\\]")  # a shell reads secr\ets, sec''rets and "sec"rets as one word
+BRACKET_CLASS = re.compile(r"\[[^\]]*\]?")
+
+
+def may_spell(p):
+    """A piece of code that can be the name: a path (a slash) or a word with a letter of its own. The `*` of `2 * 3`
+    and the `[a-z]*` of a regex are wildcards only."""
+    return "/" in p or re.search(r"[A-Za-z]", BRACKET_CLASS.sub("", p)) is not None
+
+
+def names_dir(t):
+    """Text that a program runs or reads as code (a git -c value, a runner's command, an interpreter's code string,
+    a tmux format) names the directory: written out, or a piece of it spelled with a glob, a brace group, a quote
+    or an expansion (secre[t]s/k in Dir["secre[t]s/*"], <secre[t]s/*>, alias.x=!cat s*/k, !cat secrets''/k)."""
+    for text in (t, UNQUOTE.sub("", t)):
+        if SEC.search(text):
+            return True
+        for rx in (CODE_PIECE, CODE_BRACE):
+            if any(GLOBBY.search(p) and may_spell(p) and spells(p) for p in rx.findall(text)):
+                return True
+    return False
+
+
+def named_word(t, final, plain):
+    """A word of a command that is no reader: does the first token of one of its lines (the rest is prose) run
+    through a secrets directory? `plain`: a name written out counts; otherwise only a glob, a brace group or an
+    expansion that spells it does. A name handed on (`plain`) may also have it inside: x-secrets, secretsX."""
+    for line in t.split("\n"):
+        m = TOKEN.match(line)
+        if m and (plain or GLOBBY.search(m.group(0))) and spells(m.group(0), final, plain):
+            return True
+    return False
+
+
+def carries(t):
+    """A word that a later $var, loop or cd can take the directory name from: `secrets`, ./secrets, secre[t]s ..."""
+    return named_word(t, True, True)
+
+
+def carries_only(t):
+    """A word that hands the name on without being a path to it (secrets, ./secrets, x-secrets), where a path word
+    (x/secrets/k) says where the directory is."""
+    for line in t.split("\n"):
+        m = TOKEN.match(line)
+        if m:
+            tok = m.group(0)
+            if spells(tok, True, True) and not (SEC.search(tok) or (GLOBBY.search(tok) and spells(tok, False, False))):
+                return True
+    return False
+
+
+def note_assign(t):
+    """NAME=value or NAME[key]=value: the value, or the key of an associative array, is a name for a later $NAME,
+    ${!NAME[@]} or cd (CDPATH, OLDPWD) to use."""
+    m = ASSIGN.match(t)
+    if m and any(carries(x) for x in (t[m.end():], (m.group(1) or "")[1:-1])):
+        note_mention()
+        if t.startswith(("CDPATH=", "OLDPWD=")):
+            FLAGS["cwd"] = True
+
+
+def note_element(t):
+    """An element of an array literal NAME=( ... ), or its [key]=value: a name for a later "${NAME[@]}" to use."""
+    key = re.match(r"\[([^\]]*)\]=", t)
+    if carries(t) or (key and carries(key.group(1))):
+        note_mention()
+
+
+LISTED = re.compile(r"[^\s,;:|&()<>]+")  # one item of a list: blanks and the usual separators cut it
+
+
+def later_names(t):
+    """Does a text carry the directory name in an item that is not its first (D="x secrets", a,secrets,b)? A
+    consumer that splits the text (an unquoted expansion, read, xargs, set --) hands each item on as a word."""
+    for line in t.split("\n"):
+        for i, word in enumerate(line.split()):
+            items = LISTED.findall(word)
+            if (i or len(items) > 1) and any(spells(item, True, True) for item in items):
+                return True
+    return False
+
+
+REWRITERS = frozenset(["sed", "awk"])  # readers whose program text can print a name of its own
+
+
+def is_program(name):
+    """A command whose argument is code that can print a name of its own: sed, awk, jq, an interpreter."""
+    return name in REWRITERS or name in ("jq", "yq", "gojq") or bool(INTERP.match(name))
+
+PRINTERS = frozenset("echo printf print".split())
+OPTION = re.compile(r"--?[A-Za-z]*$")
+PIECES = 24  # the words of a row of printers that are put side by side
+
+
+def note_pieces(words, run):
+    """Consecutive printers print their words side by side: `echo -n secr; echo -n ets/k`, `printf %s secr ets/k`.
+    `run` holds the words of the printers in a row (a bare assignment, : or true does not break it, any other
+    command does). A word that names the directory by itself is judged on its own and ends the row; when the
+    last few of the others could spell it together, the line hands a name on."""
+    k = 0
+    while k < len(words) and (words[k][0] in RESERVED or ASSIGN.match(words[k][0])):
+        k += 1
+    rest = words[k:]
+    name = norm(rest[0][0]) if rest else ""
+    if name in PRINTERS:
+        new = [t for t, _ in rest[1:] if not OPTION.match(t)]
+        if any(spells(t, True, True) for t in new):
+            del run[:]
+            return
+        run.extend(new)
+        del run[:-PIECES]
+        joined = "".join(run)
+        letters = any(c in SECRETS for c in shape(joined).lower())
+        if len(run) > 1 and letters and (carries(joined) or later_names(joined)):
+            note_mention()
+    elif rest and name not in (":", "true", "false"):
+        del run[:]
+
+
+def note_mention(*paths):
+    """The line names a secrets/ path in a command that reads nothing, or hands a name on (then no path: None)."""
+    FLAGS["mention"] = True
+    NAMED.extend(paths or (None,))
+
+
+def path_words(words, redirs):
+    """The words of a command that run through a secrets directory as a path (the first token of a line, the rest is
+    prose): written out, or spelled by a glob, a brace group or an expansion."""
+    out = []
+    for t in [w for w, _ in words] + redirs:
+        for line in t.split("\n"):
+            m = TOKEN.match(line)
+            if m and (SEC.search(m.group(0)) or (GLOBBY.search(m.group(0)) and spells(m.group(0), False, False))):
+                out.append(m.group(0))
+    return out
+
+
+def note_roots(paths, matches=False):
+    """Where a reader that walks into directories starts. A path this scan cannot place is None: host:dir, :(glob)x,
+    an @listfile, and with `matches` (zip, 7z) a pattern, which the program itself matches across directories."""
+    for t in paths:
+        ROOTS.append(None if re.match(r"[^/]*:|@", t) or (matches and re.search(r"[*?\[]", t)) else t)
+
+
+def option_walk(args, short_val="", long_val=(), list_val=()):
+    """(flags, words) of a command line: the option letters and long names it holds, and the words that are no option
+    and no option's value. The letters in short_val and the long names in long_val take a value; those in list_val
+    (zip -x, -i) take every word up to the next option."""
+    flags, words, k, listed = set(), [], 0, False
+    while k < len(args):
+        a = args[k]
+        if a == "--":
+            words += args[k + 1:]
+            break
+        listed = False
+        if a[:2] == "--":
+            opt, eq, _ = a[2:].partition("=")
+            flags.add(opt)
+            listed = opt in list_val
+            if opt in long_val and not eq:
+                k += 1
+        elif a[:1] == "-" and len(a) > 1:
+            for m in range(1, len(a)):
+                flags.add(a[m])
+                if a[m] in short_val:
+                    if m + 1 == len(a):
+                        k += 1
+                    break
+            else:
+                listed = a[-1] in list_val
+        else:
+            words.append(a)
+            k += 1
+            continue
+        k += 1
+        while listed and k < len(args) and not (args[k][:1] == "-" and len(args[k]) > 1):
+            k += 1  # the words of the list are patterns, no files
+    return flags, words
+
+
+TAR_VAL = "fCTXbIN"  # the letters of tar that take a value (-s -H -L mean different things to GNU and BSD tar: not here)
+TAR_LONG = frozenset(
+    "file directory files-from exclude exclude-from exclude-tag newer newer-mtime after-date transform xform "
+    "use-compress-program owner group mode mtime suffix index-file label rsh-command blocking-factor strip-components "
+    "format listed-incremental level checkpoint-action warning add-file pax-option to-command include options "
+    "older newer-than older-than uid gid uname gname".split())
+WALKS = {  # verb: letters with a value, long names with a value, letters and long names that make it walk into directories
+    "cp": ("tS", frozenset(["target-directory", "suffix"]), "rRa", ("recursive", "archive")),
+    "scp": ("cDFiJloPSX", frozenset(), "r", ()),
+    "rsync": ("efBMT", frozenset(
+        "exclude include exclude-from include-from files-from filter rsh rsync-path partial-dir temp-dir compare-dest "
+        "copy-dest link-dest backup-dir suffix bwlimit port timeout contimeout log-file out-format info debug chmod "
+        "chown usermap groupmap max-size min-size modify-window block-size address sockopts remote-option read-batch "
+        "write-batch only-write-batch protocol iconv checksum-choice checksum-seed compress-choice compress-level "
+        "compress-threads skip-compress max-delete max-alloc outbuf password-file stop-after stop-at confine-root "
+        "copy-as early-input log-file-format stderr".split()), "ra", ("recursive", "archive")),
+    "diff": ("xXIUCWDFLSA", frozenset(  # --unified and --context take no word of their own
+        "exclude exclude-from ignore-matching-lines show-function-line label starting-file ifdef width tabsize "
+        "from-file to-file horizon-lines algorithm changed-group-format unchanged-group-format old-group-format "
+        "new-group-format line-format old-line-format new-line-format unchanged-line-format".split()),
+             "r", ("recursive",)),
+    "zip": ("bnOPtsZ", frozenset(), "rR", ("recurse-paths",)),  # -T is a flag (-TT takes a command)
+    "gunzip": ("", frozenset(["suffix"]), "r", ("recursive",)),
+}
+
+
+def has_flag(flags, letters, names):
+    """Is one of the option letters or long names among the flags, or an abbreviation of a long name (getopt_long
+    takes any unique prefix: `cp --recurs`, `tar --creat`)?"""
+    return bool(flags & set(letters)) or any(n.startswith(f) for f in flags if len(f) > 1 for n in names)
+
+
+def walk_roots(verb, cmd, args):
+    """Readers that go through every file below the paths they are given (tar c, cp -r, rsync -a, scp -r, zip -r,
+    7z a, diff -r, gunzip -r): where they start, for note_roots. cmd is the word that was run: gzip ends in the
+    guard verb zip, but its first word is a file, not an archive."""
+    if verb == "tar":
+        flags, rest = set(), args
+        if args and args[0][:1] != "-" and args[0].isalpha():  # `tar czf a.tgz dir`: the first word holds the letters
+            flags, rest = set(args[0]), args[1 + sum(c in TAR_VAL for c in args[0]):]
+        more, words = option_walk(rest, TAR_VAL, TAR_LONG)
+        flags |= more  # `tar czf a.tgz -T list` mixes the two forms
+        if has_flag(flags, "cru", ("create", "append", "update")):  # a mode that reads the files it is given
+            if has_flag(flags, "CT", ("directory", "files-from", "add-file")):
+                ROOTS.append(None)  # another directory, or a list of paths in a file: not placed
+            note_roots(words)
+    elif verb == "7z":
+        words = option_walk(args)[1]
+        if words[:1] in (["a"], ["u"]):
+            note_roots(words[2:], True)
+    elif verb in WALKS:
+        sv, lv, letters, names = WALKS[verb]
+        flags, words = option_walk(args, sv, lv, ("x", "i", "exclude", "include") if verb == "zip" else ())
+        if has_flag(flags, letters, names):
+            if verb == "zip" and "@" in flags:
+                ROOTS.append(None)  # the names come from stdin
+            if verb == "zip":
+                roots = words[1:] if cmd == "zip" else words  # zip ARCHIVE FILE...; gzip FILE...
+            elif verb in ("gunzip", "diff") or (verb == "cp" and has_flag(flags, "t", ("target-directory",))):
+                roots = words
+            else:
+                roots = words[:-1] or words  # cp, scp, rsync: the last word is where it all goes
+            note_roots(roots, verb == "zip")
+
+
+# a pattern (also a zsh or ksh glob operator), an unclosed brace group or an expansion: not a fixed name
+UNSURE = re.compile("[*?\\[{^~#<>()|@+!" + UNK + "]")
+UNPLAIN = re.compile(r"[()|^~#<>@+]|(?<!\[)!|\[[:=.]")  # glob operators that fnmatch does not read as the shell does
+
+
+def differ(a, b):
+    """Two path components that can never name the same entry: two fixed names, or a fixed name and a pattern that
+    cannot match it. Case is ignored, as on a case-insensitive disk."""
+    a, b = a.lower(), b.lower()
+    pa, pb = bool(UNSURE.search(a)), bool(UNSURE.search(b))
+    if pa and pb:
+        return False
+    if not pa and not pb:
+        return a != b
+    fixed, pat = (b, a) if pa else (a, b)
+    return UNK not in pat and "{" not in pat and not UNPLAIN.search(pat) and not fnmatch.fnmatchcase(fixed, pat)
+
+
+def apart1(r, p):
+    """Do the root r and the path p lie side by side, neither one inside the other? Only plain paths that part ways
+    at a name: not `..`, `~`, an absolute path against a relative one, or anything a pattern or expansion may match."""
+    if r[:1] == "~" or p[:1] == "~" or (r[:1] == "/") != (p[:1] == "/"):
+        return False
+    rc = [c for c in r.split("/") if c not in ("", ".")]
+    pc = [c for c in p.split("/") if c not in ("", ".")]
+    return ".." not in rc and ".." not in pc and any(differ(a, b) for a, b in zip(rc, pc))
+
+
+def apart(root, path):
+    if root is None or path is None:
+        return False
+    rs, ps = brace_words(shape(root)), brace_words(shape(path))
+    if rs is None or ps is None:
+        return False
+    spend(len(rs) * len(ps))
+    return all(apart1(r, p) for r in rs for p in ps)
+
+
+def walked_over():
+    """A reader that walks into directories starts at (or above) a secrets/ path that the line names elsewhere. A cd
+    on the line, or a root or a path this scan cannot place, counts as walking over it."""
+    if not (ROOTS and NAMED):
+        return False
+    spend(len(ROOTS) * len(NAMED))
+    return FLAGS["chdir"] or any(not apart(r, p) for r in ROOTS for p in NAMED)
+
+
+def grep_operands(name, args):
+    """What a grep-like command reads, as (ops, files, walks). ops: the operands read as files, also the values of
+    options that name a file or pick the files to read (-f FILE, --include GLOB, rg -g GLOB, ag -G REGEX). files:
+    the paths it searches, walks: it searches directories. The PATTERN (first non-option word, or the -e/--regexp
+    value, none with rg --files or ag -g) is no operand, and an exclusion (--exclude-dir, rg -g '!GLOB') picks nothing."""
+    sv, tv, ops, positional, pat, k = SHORT_VAL[name], TOOL_VAL.get(name, ()), [], [], False, 0
+    walks = name in ("rg", "ag")
+    while k < len(args):
+        a = args[k]
+        if a == "--":
+            positional += args[k + 1:]
+            break
+        if a.startswith("--"):
+            opt, eq, val = a[2:].partition("=")
+            if name == "ag" and opt not in AG_LONG and opt not in tv:
+                FLAGS["doubt"] = True  # an option of ag that nothing checked: it may take the next word
+            walks = walks or (opt != "" and ("recursive".startswith(opt) or "dereference-recursive".startswith(opt)))
+            pat = pat or (name == "rg" and opt == "files")
+            dirs = len(opt) > 2 and "directories".startswith(opt)  # --dir=recurse: getopt_long takes a unique prefix
+            if not eq and (opt in NONREAD_VAL or opt in READ_VAL or opt in tv or dirs):  # --opt VALUE
+                eq, val = "=", args[k + 1] if k + 1 < len(args) else ""
+                k += 1
+            if eq:
+                pat = pat or opt in ("regexp", "file")
+                walks = walks or (dirs and val == "recurse")
+                if (opt in READ_VAL or opt in SELECT_LONG and not (opt in ("glob", "iglob") and val[:1] == "!")
+                        or opt not in NONREAD_VAL and opt not in tv):
+                    ops.append(val)  # a file to read or pick, or an unknown --opt=VALUE: stay conservative
+        elif len(a) > 1 and a[0] == "-":
+            for m in range(1, len(a)):
+                c = a[m]
+                if name == "ag" and c not in AG_SHORT and c not in sv:
+                    FLAGS["doubt"] = True  # -A -B -C take an optional number: not told from a pattern
+                walks = walks or (c in "rR" and c not in sv)
+                if c in sv:
+                    if m + 1 < len(a):
+                        val = a[m + 1:]
+                    else:
+                        val = args[k + 1] if k + 1 < len(args) else ""
+                        k += 1
+                    pat = pat or c in "ef" or (name == "ag" and c == "g")
+                    walks = walks or (c == "d" and name != "rg" and val == "recurse")
+                    if (c == "f" or (c == "p" and name == "ag")
+                            or (c in SELECT_SHORT.get(name, "") and not (name == "rg" and val[:1] == "!"))):
+                        ops.append(val)
+                    break
+        else:
+            positional.append(a)
+        k += 1
+    files = positional if pat else positional[1:]
+    return ops + files, files, walks
+
+
+def verb_reads(name, words, redirs):
+    args = [t for t, _ in words[1:]]
+    if name in GREPS and name in SHORT_VAL:
+        ops, files, walks = grep_operands(name, args)
+        if walks or norm(words[0][0]).endswith("rgrep"):  # rgrep is grep -r
+            note_roots(files or ["."])  # no operand: the working directory
+    else:
+        ops, k = [], 0
+        while k < len(args):
+            a = args[k]
+            if a == "--":
+                ops += args[k + 1:]  # after -- every argument is an operand, an --exclude too
+                break
+            if a in EXCL_LONG:
+                k += 2
+            elif a.partition("=")[0] in EXCL_LONG and "=" in a:
+                k += 1
+            else:
+                ops.append(a)
+                k += 1
+        walk_roots(name, norm(words[0][0]), args)
+    FLAGS["verb"] = True
+    if name in REWRITERS and any(carries(a) or later_names(a) for a in args):
+        note_mention()  # sed 's|x|secrets|', awk '{print "secrets"}': the program can hand the name on
+    note_dyn(ops + redirs)  # the path may come from a variable, a loop, a substitution or xargs
+    return any(spells(t) for t in ops + redirs)
+
+
+def dynamic(texts):
+    return any(DYN in t or PH in t or "{}" in t or (t[:1] == "~" and t[1:2] not in ("", "/", "+", "-"))
+               for t in texts)  # ~name: a named directory (zsh hash -d, a home) is a value this scan does not know
+
+
+def splitting(texts):
+    return any(SPL in t or RSH in t for t in texts)
+
+
+def reshapes(cmds):
+    """Does a substitution inside double quotes hand on anything but one unchanged word? Not when every
+    command only prints its own words (echo, printf, a heredoc through cat), and not when no command
+    touches a secrets/ path, a variable or another substitution: nothing it could reshape reaches it."""
+    literal, linked = True, False
+    for words, redirs, bodies in cmds:
+        name = words[0][0] if words and words[0][1] else ""
+        if name not in ("echo", "printf", "print") and not (name == "cat" and len(words) == 1 and bodies):
+            literal = False
+        linked = linked or any(SEC.search(t) or DYN in t or PH in t
+                               for t in [w for w, _ in words] + redirs + bodies)
+    return not literal and linked
+
+
+def note_dyn(texts):
+    """Operands of a reader (or of a program that may be one) that a variable, loop, substitution or xargs
+    fills in. `split`: the filled-in text is also split into words or reshaped on its way."""
+    if dynamic(texts):
+        FLAGS["dyn"] = True
+        if splitting(texts):
+            FLAGS["split"] = True
+
+
+def note_loose(texts):
+    """A secrets/ path named anywhere in a text, also in a later token of a quoted one (' secrets/k'), or the
+    directory name in a later item of a list (D="x secrets"). A splitting consumer (an unquoted expansion, xargs,
+    read) turns such text into path words of its own."""
+    if any(SEC.search(t) or later_names(t) for t in texts):
+        FLAGS["loose"] = True
+
+
+def pathy(words, redirs):
+    return bool(path_words(words, redirs))
+
+
+def note_leaf(name, words, redirs):
+    """A command that is no guard verb names a secrets/ path. It reads nothing here, but it is where a
+    later $var, loop, substitution or cd can pick the path up -- or a program this scan knows nothing about."""
+    args = [t for t, _ in words[1:]]
+    note_loose([t for t, _ in words] + redirs)
+    if any(RSH in t for t in args + redirs):
+        FLAGS["split"] = True  # printf -v P "$(echo ' x' | cut ...)": a variable can capture reshaped text
+    if INTERP.match(name) and any(names_dir(t) for t in args):
+        FLAGS["doubt"] = True  # an interpreter whose code string names the path: not prose
+    if name not in CALM:
+        note_dyn(args + redirs)  # a program the verb list does not know may read what $var / $( ) names
+    if name in CWD and any(spells(a) for a in args):
+        note_mention()  # cd secre[t]s, cd secrets: what follows is relative to it
+        FLAGS["cwd"] = True
+    if any(carries_only(a) for a in args) or (is_program(name) and any(later_names(a) for a in args)):
+        note_mention()  # echo secrets | xargs ..., export D=secrets, perl -e 'print "secrets"': a name to use
+    for a in args:
+        note_assign(a)  # export m[secrets]=1, export CDPATH=secrets
+    named = path_words(words, redirs)
+    if not named:
+        return
+    note_mention(*named)
+    if name in CWD:
+        FLAGS["cwd"] = True
+    if name not in CALM:
+        FLAGS["doubt"] = True
+
+
+def named_files(rest, short, longs):
+    """The values of git options that name a file: `short` (a letter: -f FILE, -fFILE, bundles such as
+    -lf FILE) and `longs` (--file FILE, --file=FILE). git takes a unique prefix of a long option for it (--fil,
+    --pathspec-from); every prefix after the dashes of a listed option counts here, unique or not, which can only
+    deny more. The bare `--` ends the options and is no prefix."""
+    out, j = [], 0
+    while j < len(rest):
+        a, nxt = rest[j], rest[j + 1] if j + 1 < len(rest) else ""
+        name, eq, val = a.partition("=")
+        if name in longs or (name[:2] == "--" and len(name) > 2 and any(x.startswith(name) for x in longs)):
+            out.append(val if eq else nxt)
+            j += 0 if eq else 1
+        elif short and a[:1] == "-" and a[:2] != "--" and short in a:
+            tail = a.partition(short)[2]
+            out.append(tail or nxt)
+            j += 0 if tail else 1
+        j += 1
+    return out
+
+
+def git_command_lines(sub, rest):
+    """The command lines git hands to a shell: `rebase -x CMD` / `--exec CMD`, `submodule foreach CMD`, and the
+    program that fetch, pull, push, clone, ls-remote and archive start on the other side (--upload-pack, clone's
+    -u, --receive-pack, --exec)."""
+    if sub == "rebase":
+        return named_files(rest, "x", ("--exec",))
+    if sub == "submodule" and "foreach" in rest:
+        return [" ".join(rest[rest.index("foreach") + 1:])]
+    if sub in ("fetch", "pull", "push", "clone", "ls-remote", "archive"):
+        return named_files(rest, "u" if sub == "clone" else "", GIT_RUN_OPTS)
+    return []
+
+
+def git_meta_only(sub, rest):
+    """True for a `git log|show` none of whose options prints file content: a secrets/ path among its
+    operands then only selects commits. An option, a value or an expansion this does not know keeps the
+    answer a read (an unquoted expansion may split into options of its own). -p, -u and --patch are not
+    among the listed options and keep the read wherever they stand: git lets the last of -p and
+    -s/--no-patch win, and this does not try to say which one that is."""
+    quiet = sub == "log"
+    for a in rest:
+        if PH in a or DYN in a or SPL in a or RSH in a:
+            return False
+        if a == "--":
+            break
+        if a[:1] == "-" and len(a) > 1:
+            if not GIT_META_OPT.fullmatch(a):
+                return False
+            quiet = quiet or a.partition("=")[0] in GIT_NO_PATCH
+        elif ":" in a and spells(a):
+            return False  # REV:path names a blob, and `git show` prints a blob whatever the options say
+    return quiet
+
+
+def git_reads(words, redirs, depth):
+    args, k, pre = [t for t, _ in words[1:]], 0, []
+    while k < len(args) and args[k].startswith("-"):
+        if args[k] in ("-C", "--git-dir", "--work-tree", "--namespace", "--super-prefix"):
+            pre.append(args[k + 1] if k + 1 < len(args) else "")
+            k += 2
+        elif args[k] in ("-c", "--config-env", "--attr-source"):
+            if k + 1 < len(args) and names_dir(args[k + 1]):
+                FLAGS["doubt"] = True  # -c alias.x='!cat ...' / core.pager=...: git runs a configured command line
+            k += 2
+        else:
+            pre.append(args[k])
+            k += 1
+    sub, rest = (args[k], args[k + 1:]) if k < len(args) else ("", [])
+    srcs = named_files(rest, "", ("--pathspec-from-file",))  # git prints the pathspecs it cannot match
+    if sub == "config":
+        srcs += named_files(rest, "f", ("--file", "--blob"))
+    elif sub in GIT_FILE_MSG:
+        srcs += named_files(rest, "F", ("--file",))  # commit prints the subject line of the message file
+        if sub == "commit":
+            srcs += named_files(rest, "t", ("--template",))
+    elif sub == "credential-store":
+        srcs += named_files(rest, "", ("--file",))  # `get` prints the credentials the file holds
+    elif sub in ("fast-export", "fast-import"):  # the marks file: git prints the line it cannot parse
+        srcs += named_files(rest, "", ("--import-marks", "--import-marks-if-exists", "--export-marks"))
+    if srcs:  # config -f FILE -l prints that file: the quiet subcommand becomes a reader
+        FLAGS["verb"] = True
+        note_dyn(srcs + pre + redirs)
+        if any(spells(t) for t in srcs + pre + redirs):
+            return True
+    for line in git_command_lines(sub, rest):
+        if scan(line, depth + 1):
+            return True
+    if sub not in GIT_READ:
+        # any other subcommand (stash show, reflog, whatchanged ...) is calm only if known not to print content
+        calm = not sub or sub in GIT_QUIET
+        if sub in GIT_RUNNERS and any(names_dir(t) for t in rest):
+            FLAGS["doubt"] = True  # difftool -x CMD, filter-branch --tree-filter CMD, bisect run CMD
+        note_leaf("git" if calm else "git " + sub, words, redirs)
+        return False
+    if sub in ("log", "show") and not any(spells(t) for t in pre + redirs) and git_meta_only(sub, rest):
+        FLAGS["verb"] = True  # a cd into the directory still counts: `git show --stat HEAD:./k` prints a blob
+        note_dyn(rest + pre + redirs)
+        note_leaf("git", words, redirs)
+        return False
+    if sub == "grep":
+        ops, files, _ = grep_operands("grep", rest)
+        note_roots([t for t in files if not EXCL_PATHSPEC.match(t)] or ["."])  # no pathspec: the whole work tree
+        if any(p[:1] != "-" for p in pre):
+            ROOTS.append(None)  # -C DIR, --git-dir=...: another tree
+    else:
+        ops, j = [], 0
+        blamer = sub in ("blame", "annotate")  # blame -S FILE reads revisions from a file; log's -S is a string
+        patterns = GIT_PATTERN_OPTS - {"-S"} if blamer else GIT_PATTERN_OPTS
+        while j < len(rest):
+            a = rest[j]
+            if a == "--":
+                ops += rest[j + 1:]  # after -- every argument is a pathspec, --author and -S included
+                break
+            if a in patterns:
+                j += 2
+            elif a.partition("=")[0] in patterns or (a[:2] in ("-S", "-G") and len(a) > 2
+                                                     and not (blamer and a[:2] == "-S")):
+                j += 1
+            else:
+                ops.append(a)
+                j += 1
+    ops = [t for t in ops if not EXCL_PATHSPEC.match(t)]
+    FLAGS["verb"] = True
+    note_dyn(ops + pre + redirs)
+    return any(spells(t) for t in ops + pre + redirs)
+
+
+def shell_reads(name, words, redirs, bodies, depth):
+    args, k, has_c, has_s = [t for t, _ in words[1:]], 0, False, False
+    while k < len(args):
+        if args[k] in ("-o", "+o", "-O", "+O"):
+            k += 2
+        elif args[k] == "--":
+            k += 1
+            break
+        elif args[k][:1] in "-+" and len(args[k]) > 1:
+            short = args[k][0] == "-" and not args[k].startswith("--")
+            has_c = has_c or (short and "c" in args[k])
+            has_s = has_s or (short and "s" in args[k])  # -s: read the script from stdin, the rest are $1 $2
+            k += 1
+        else:
+            break
+    if k >= len(args) or (not has_c and (has_s or STDIN_SCRIPT.match(args[k]))):
+        if bodies and not has_c:
+            return False  # the heredoc / here-string body was scanned as code by check()
+        raise Fail("shell script comes from stdin")
+    if not has_c:
+        if PH in args[k]:
+            raise Fail("script comes from an expansion")
+        # a script FILE is opaque, like any other program; its arguments may still name a reader
+        return tail_reads(name, words, redirs, bodies, depth)
+    return scan(args[k], depth + 1) or any(spells(t) for t in args[k + 1:])
+
+
+def eval_reads(words, depth):
+    args = [t for t, _ in words[1:]]
+    if any("$" in t or PH in t for t in args):
+        raise Fail("eval of an expansion")
+    return scan(" ".join(args), depth + 1)
+
+
+def find_reads(words, depth):
+    args, k = words[1:], 0
+    while k < len(args):
+        if args[k][0] in ("-exec", "-execdir", "-ok", "-okdir"):
+            if splitting([t for t, _ in args]):
+                FLAGS["split"] = True  # find $DIR -exec cat {} +: the start points are what the reader opens
+            sub, k = [], k + 1
+            while k < len(args) and args[k][0] not in (";", "+"):
+                sub.append(args[k])
+                k += 1
+            if sub and check(sub, [], [], depth):
+                return True
+        k += 1
+    return False
+
+
+CHDIR_OPT = re.compile(r"-[A-Za-z]*[CD]|--(chdir|cwd|directory)")  # a launcher option that may change directory
+
+
+def tail_reads(name, words, redirs, bodies, depth):
+    """A launcher or an unknown program: its own arguments may carry the real command."""
+    found = False
+    if name in ("xargs", "parallel"):
+        FLAGS["dyn"] = True  # the operands of the wrapped command arrive on stdin, split into words
+        FLAGS["split"] = True
+    for j in range(1, len(words)):
+        text, bare = words[j]
+        head = norm(text)
+        if (head in HEADS and (bare or name in LAUNCHERS)) or (name in LAUNCHERS and verb_of(head)):
+            found = True
+            if pathy(words[1:j], []) or any(carries(t) for t, _ in words[1:j]):
+                FLAGS["doubt"] = True  # env -C DIR cat x: an option of the launcher names the path
+            if any(CHDIR_OPT.match(t) for t, _ in words[1:j]):
+                FLAGS["chdir"] = True  # env -C DIR, sudo -D DIR: the command runs somewhere else
+            if check(words[j:], redirs, bodies, depth):
+                return True
+    if name in CARRIERS or (MUX[0] and name in MUXCMDS):
+        host = int(name in MUXHOSTS)
+        for text, bare in words[1:]:
+            if not bare and re.search(r"\s", text):
+                found = True
+                MUX[0] += host
+                try:
+                    if scan(text, depth + 1):
+                        return True
+                finally:
+                    MUX[0] -= host
+        if dynamic([t for t, _ in words[1:]]):
+            FLAGS["doubt"] = True  # the code string itself may sit in a variable or a substitution
+        if any("#(" in t and names_dir(t) for t, _ in words[1:]):
+            FLAGS["doubt"] = True  # tmux runs the command inside a #( ) format expansion
+        if name in MUXHOSTS and any(t == "-" for t, _ in words[1:]):
+            FLAGS["doubt"] = True  # load-buffer - / source-file -: text from stdin ends up typed or run
+        note_leaf(name, words, redirs)  # a bare path operand still joins the command line it runs
+    code = shell_string(name, words)
+    if code is not None:
+        found = True
+        if scan(code, depth + 1):
+            return True
+    if not found:
+        note_leaf(name, words, redirs)
+    return False
+
+
+def shell_string(name, words):
+    """The command line a launcher hands to a shell: `env -S 'cmd args'`, `sudo -s|-i 'cmd args'`."""
+    args = [t for t, _ in words[1:]]
+    if name == "env":
+        for k, a in enumerate(args):
+            if a == "-S" or a == "--split-string":
+                return args[k + 1] if k + 1 < len(args) else ""
+            if a.startswith("--split-string="):
+                return a.partition("=")[2]
+            if a.startswith("-S") and len(a) > 2:
+                return a[2:]
+    elif name in ("sudo", "doas"):
+        for k, a in enumerate(args):
+            if a in ("-s", "-i", "--shell", "--login"):
+                return " ".join(args[k + 1:])
+    return None
+
+
+def check(words, redirs, bodies, depth):
+    spend(len(words) + 1)
+    k = 0
+    # inside a tmux command string `if` is the abbreviated if-shell, not the shell keyword
+    while k < len(words) and ((words[k][0] in RESERVED and not (MUX[0] and words[k][0] == "if"))
+                              or ASSIGN.match(words[k][0])):
+        if words[k][0] == "function":
+            raise Fail("function definition")  # the body runs later, under another name
+        k += 1
+    note_loose([t for t, _ in words[:k]] + bodies)
+    if any(RSH in t for t, _ in words[:k]):
+        FLAGS["split"] = True  # NAME=$(echo ' x' | cut ...): the variable holds reshaped text
+    if pathy(words[:k], []):
+        note_mention()  # NAME=...secrets/...: a later $NAME may read it
+    for t, _ in words[:k]:
+        note_assign(t)  # NAME=secrets, NAME[secrets]=1: a later $NAME or ${!NAME[@]} may name it
+    words = words[k:]
+    if not words and any(t[:1] == IN and spells(t) for t in redirs):
+        return True  # zsh runs $READNULLCMD for `< file`, and a loop or group fed by it reads the file
+    for j in range(1, len(words) - 1):
+        if words[j][1] and words[j][0] in ("]]", "}"):  # zsh: `if [[ t ]] cmd`, `if { t } cmd` end the test here
+            if check(words[j + 1:], redirs, bodies, depth):
+                return True  # bash keeps the longer reading (`}` is an operand), which is checked below
+            break  # a later closer is found by the call above
+    if not words or words[0][0] in ("for", "case", "select"):
+        # their operands are loop words / patterns; the body commands are lexed apart
+        note_loose([t for t, _ in words] + redirs)
+        if words and words[0][0] != "case" and splitting([t for t, _ in words[1:]]):
+            FLAGS["split"] = True  # for f in $(...): the loop variable holds the split words
+        if (pathy(words, redirs) or any(PATHY.search(b) or carries(b) for b in bodies)
+                or (words and words[0][0] != "case" and any(carries(t) for t, _ in words[1:]))):
+            note_mention()  # for f in secrets/*; do ... "$f"; a heredoc fed to `done`
+        return False
+    name = norm(words[0][0])
+    if "$" in name or PH in name or "{}" in name:
+        raise Fail("command word comes from an expansion")
+    if words[0][0] not in ("[", "[[") and re.search(r"[*?\[{]", words[0][0]):
+        raise Fail("command word is a glob or brace pattern")
+    if name in CWD or name == "popd":
+        FLAGS["chdir"] = True  # relative paths after it start elsewhere: no root can be told from a path by its name
+    verb = None if name in CALM else verb_of(name)  # chmod ends in "od", but it is no octal dump
+    # a heredoc / here-string is code when a shell-like word runs it; a guard verb, echo or ls only takes it as text
+    if (bodies and not verb and name not in INERT and name not in SAFE
+            and any(norm(t) in SHELLISH for t, _ in words) and any(scan(b, depth + 1) for b in bodies)):
+        return True
+    if verb:
+        return verb_reads(verb, words, redirs)
+    if name in SHELLS:
+        return shell_reads(name, words, redirs, bodies, depth)
+    if name == "eval":
+        return eval_reads(words, depth)
+    if name == "zmodload" and any("mapfile" in t for t, _ in words[1:]):
+        raise Fail("zsh/mapfile: ${mapfile[path]} reads a file")
+    if name in ("setopt", "unsetopt", "set", "shopt", "emulate") and any(
+            re.search("extendedglob|extglob", t.lower().replace("_", "").replace("-", "")) for t, _ in words[1:]):
+        raise Fail("extended glob: ^x, a~b and a# match in ways this scan does not model")
+    if name == "trap":  # the handler string is code
+        return any(scan(t, depth + 1) for t, _ in words[1:2])
+    if name == "alias":  # name='cmd args': the value is code
+        if any(carries(t.partition("=")[2]) for t, _ in words[1:]):
+            FLAGS["doubt"] = True  # alias -g P=secrets (zsh): P stands for the name wherever it is written
+        return any(scan(t.partition("=")[2], depth + 1) for t, _ in words[1:])
+    if name in ("source", "."):
+        if any(PH in t for t, _ in words[1:]):
+            raise Fail("sourced text comes from an expansion")
+        if words[1:2] and STDIN_SCRIPT.match(words[1][0]):
+            if bodies:
+                return False  # the heredoc / here-string body was scanned as code above
+            raise Fail("sourced text comes from stdin")
+        note_leaf(name, words, redirs)
+        return False
+    if name == "git":
+        return git_reads(words, redirs, depth)
+    if name == "find":
+        note_leaf(name, words, redirs)
+        return find_reads(words, depth)
+    if name in ("read", "mapfile", "readarray"):
+        FLAGS["split"] = True  # stdin is cut into variables, whatever later quotes them
+        if any(PATHY.search(b) or carries(b) for b in bodies):
+            note_mention()  # the variable takes its value from a body that names a path
+    if name in INERT or name in SAFE:
+        args = [t for t, _ in words[1:]]
+        if name in CWD:
+            note_dyn(args)  # cd "$D": the directory may be a secrets/ one
+        elif name == "set" and splitting(args):
+            FLAGS["split"] = True  # set -- $(...): the positional parameters hold the split words
+        elif name in LISTFILE and any(LISTFILE[name].match(t) for t in args):
+            FLAGS["verb"] = True
+            note_dyn(args + redirs)
+            if any(spells(t) for t in args + redirs):
+                return True  # file -f secrets/k: the names it cannot open are the lines of the file
+        note_leaf(name, words, redirs)
+        return False
+    return tail_reads(name, words, redirs, bodies, depth)
+
+
+def scan(text, depth):
+    lx = Lexer(text, depth)
+    lx.commands(False)
+    failed, run = False, []
+    for words, redirs, bodies in lx.cmds:
+        note_pieces(words, run)
+        try:
+            if check(words, redirs, bodies, depth):
+                return True
+        except Fail:
+            failed = True
+    if failed:
+        raise Fail("unprovable")
+    return False
+
+
+def verdict(cmd):
+    FLAGS.update(mention=False, loose=False, dyn=False, split=False, cwd=False, verb=False, doubt=False, chdir=False)
+    del NAMED[:], ROOTS[:]
+    WORK[0] = 0
+    MUX[0] = 0
+    try:
+        if scan(cmd, 0):
+            return "reader"
+        walked = walked_over()
+    except Fail:
+        return "unparseable"
+    except Limit:
+        return "limit"
+    except Exception:  # a bug, or an interpreter limit (RecursionError, MemoryError): the scan did not finish
+        return "error"
+    # No guard verb names a secrets/ operand. Stage 1 still saw `verb ... secrets/` on one line, so the
+    # path may reach a reader without being its operand: stay denied unless that is ruled out.
+    if (FLAGS["doubt"] or (FLAGS["mention"] and FLAGS["dyn"]) or (FLAGS["loose"] and FLAGS["split"])
+            or (FLAGS["cwd"] and FLAGS["verb"]) or walked or "mapfile[" in cmd):  # zsh/mapfile: ${mapfile[path]}
+        return "doubt"
+    return "inert"
+
+
+def arm_alarm():
+    """End this process, printing nothing, after BUDGET_SECONDS of wall clock. SIGALRM is left at its
+    default action so that not even a long C-level call can delay it; the caller reads a missing
+    answer as a deny. AGENT_SECRETS_SCAN_BUDGET (seconds) can only shorten the budget."""
+    if not hasattr(signal, "setitimer"):
+        return
+    try:
+        asked = float(os.environ.get("AGENT_SECRETS_SCAN_BUDGET", ""))
+    except ValueError:
+        asked = BUDGET_SECONDS
+    signal.signal(signal.SIGALRM, signal.SIG_DFL)  # an inherited SIG_IGN would disarm the alarm
+    signal.setitimer(signal.ITIMER_REAL, min(BUDGET_SECONDS, max(asked, 0.001)))
+
+
+if __name__ == "__main__":
+    arm_alarm()
+    sys.stdout.write(verdict(os.environ.get("SCAN_INPUT", "")))
+PY
+}
+_S5_BLOCK=""
+_S5_WHY=""
 if echo "$COMMAND" | grep -qiE '(cat|tac|nl|head|tail|less|more|awk|sed|grep|egrep|fgrep|rg|ag|bat|hexdump|xxd|od|strings|dd|fold|rev|tee|cp|mv|ln|md5sum|shasum|sha256sum|sha512sum|wc|diff|cmp|gunzip|bunzip2|bzip2|bzcat|xz|xzcat|unxz|lzma|lz4cat|tar|unzip|7z|zip|gpg|openssl|age|rsync|scp)\s+.*secrets/'; then
-  log_violation secrets "direct secrets/ access blocked"
-  emit_deny "Direct secrets/ access blocked (Risk Area #2: secrets).
+  _S5_V=$(_secrets_verdict "$COMMAND")
+  case "$_S5_V" in
+    inert) ;;
+    reader) _S5_BLOCK="direct secrets/ access blocked" ;;
+    doubt)
+      _S5_BLOCK="direct secrets/ access blocked (path may reach a reader)"
+      _S5_WHY="The scan could not rule out that the path reaches a reader (a variable, loop, substitution, cd or an unknown program) or that a recursive reader on the line (grep -r, rg, tar c, cp -r, rsync -a) walks into it." ;;
+    unparseable)
+      _S5_BLOCK="direct secrets/ access blocked (command not parseable)"
+      _S5_WHY="The scan cannot tell what this command does (an unbalanced quote, or a construct bash and zsh read differently)." ;;
+    *)  # limit, error, empty, garbled or truncated: no usable answer
+      _S5_BLOCK="direct secrets/ access blocked (scan did not finish)"
+      _S5_WHY="The scan gave no usable answer (time or work budget, or an internal error), so the old deny stands." ;;
+  esac
+elif echo "$COMMAND" | grep -qiE 'git\s+.*(show|log|blame|annotate|cat-file|archive|format-patch|diff-tree|diff-index|config|interpret-trailers|commit|commit-tree|tag|merge|notes|fmt-merge-msg|credential-store|fast-export|fast-import|add|stage|rm|reset|restore|checkout|stash)\s+.*secrets/'; then
+  _S5_V=$(_secrets_verdict "$COMMAND")
+  case "$_S5_V" in
+    inert | doubt | unparseable) ;;  # a scan that finished and found no read: allowed, as in 0.8.0
+    reader) _S5_BLOCK="direct secrets/ access blocked (git history or config read)" ;;
+    *)  # limit, error, empty, garbled or truncated: no usable answer
+      _S5_BLOCK="direct secrets/ access blocked (git history or config read, scan did not finish)"
+      _S5_WHY="The scan gave no usable answer (time or work budget, or an internal error), so the old deny stands." ;;
+  esac
+fi
+if [[ -n "$_S5_BLOCK" ]]; then
+  log_violation secrets "$_S5_BLOCK"
+  emit_deny "Direct secrets/ access blocked (Risk Area #2: secrets).${_S5_WHY:+ $_S5_WHY}
 WHY: reading secret files into a session exposes plaintext credentials to logs and transcripts.
 FIX: use environment variables read by your server-side code; for inventory, list key NAMES only (awk -F= on the env file, first field)."
   exit 0

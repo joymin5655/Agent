@@ -174,3 +174,9 @@ persistent loop, and are therefore out of scope by design:
 
 Adding a new background primitive to an auto-fired hook (rather than to this
 explicitly-invoked plumbing) will — and should — fail the scan.
+
+A hook that only has to **name** those words as data (a wrapper-name list in a command guard,
+for example) is not spawning anything. Mark that one line
+`supply-chain-scan: allow-literal <reason>`. The opt-out is per line, never per file or per
+class, the reason is mandatory, and a real spawn on any other line of the same hook still
+fails the scan.

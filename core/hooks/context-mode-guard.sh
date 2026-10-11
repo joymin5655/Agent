@@ -11,7 +11,11 @@
 # These plugin tools run in a permissive sandbox that bypasses Bash matchers,
 # so a separate guard is required.
 #
-# Wire under PreToolUse "*" matcher, AFTER r4-mutex-check.sh. See adapters/<ai>/settings.template.
+# Wire under its OWN PreToolUse entry (not "*": that spawned bash + jq on every tool call), with
+# matcher mcp__.*context[-_]mode__ctx_(batch_)?execute(_file)?  — an unanchored regex over the MCP
+# tool name, so plugin-prefixed names (mcp__plugin_<plugin>_<server>__<tool>) match too. The case
+# below stays the authoritative filter; the matcher only decides whether this script is spawned.
+# See hooks/hooks.json and adapters/claude-code/settings.json.template (kept identical).
 
 set -e
 
