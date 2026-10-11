@@ -58,14 +58,25 @@ For interactive and autonomous tiers touching 3+ files:
      per-session marker `<flag>.withheld.d/<session_id>` keeps that session's plan-class
      `Agent`/`Task` dispatches from re-opening the gate until a passing `ExitPlanMode`, which
      removes only its own marker; consecutive withheld sessions no longer overwrite each other.
-     Session ids must be filename-safe (`[A-Za-z0-9][A-Za-z0-9._-]*`, max 128, no `..`); an
-     unsafe id falls back to the legacy single-slot `<flag>.withheld` file plus a notice. A
-     legacy single marker is still honoured and is migrated into the directory on the next
-     withhold. Markers idle for 24h are pruned on the next withhold (a blocked dispatch
-     refreshes mtime); `session-close` does not clear them.
+     Session ids must be filename-safe (`[A-Za-z0-9][A-Za-z0-9._-]*`, max 128, no `..`).
+     - /tmp hardening: markers are opened `O_NOFOLLOW`; the marker dir must be a real directory
+       owned by the hook's user and not group/world-writable (created `0700`), and markers and
+       the legacy slot must be regular files owned by that user. Otherwise the hook emits a
+       notice and falls back to the legacy single slot `<flag>.withheld`.
+     - No silent fail-open: every write is read back. If neither the per-session marker nor
+       the legacy slot can be recorded the notice says "Withheld marker not recorded"; an
+       event without `session_id` says so too.
+     - Legacy slot: still read with the same meaning. Migration only copies it into the
+       per-session dir (older plugin scopes still read it) and never deletes it; the owning
+       session's passing `ExitPlanMode` removes it through an atomic rename-claim.
+     - Retention: a marker idle for 7 days is pruned on the next withhold (7d so a weekend or
+       overnight pause does not re-open the Agent path). Every plan-gate event for the session
+       (withhold, `Agent`/`Task`, `ExitPlanMode`) refreshes its mtime; prune re-stats before
+       unlinking, skips symlinks and non-owned entries, and reports the count in the notice.
+       `session-close` does not clear markers.
    - W-8 limits: Claude-only (needs `ExitPlanMode` + `additionalContext`); regex heuristic that
-     misses paraphrases ("my notes", "earlier session"); the approval flag file is still global, so a
-     flag from another session is left in place and edits may pass; `spec-gate.py` only asks
+     misses paraphrases ("my notes", "earlier session"); the approval flag file is still global, so
+     a flag from another session is left in place and edits may pass; `spec-gate.py` only asks
      when its mode is `block` (default `dryrun`); plan-class detection still substring-matches
      "plan" in Agent descriptions (e.g. "explanation").
 
