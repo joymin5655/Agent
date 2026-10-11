@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-10-11
+
+Ships #176. The secrets guard (#5) denies reads of the secrets path instead of every command that
+mentions it: 23 of the 27 false positives found in local session transcripts now pass, and git
+reads that 0.8.0 never caught (`git show REV:path`, `git log` with a patch option, `git config
+--file`, message files) are denied. `pre-tool-guard.sh` keeps the working directory out of its
+python3 helpers. Also: an `AGENT_BRAIN_CAPTURE` opt-out, a dedicated PreToolUse matcher for
+`context-mode-guard.sh`, and a per-line `allow-literal` marker for `supply-chain-scan.sh` class 4.
+
 ### Added
 - **`AGENT_BRAIN_CAPTURE` opt-out for `brain-capture.py`.** `off`, `0` or `false` (any case)
   makes the Stop hook exit before it reads stdin, runs git or writes anything; unset or any other
