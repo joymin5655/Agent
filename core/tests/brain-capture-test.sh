@@ -5,8 +5,10 @@
 # Covers: a Stop event on a DIRTY tree writes exactly one raw capture with
 # provenance (kind=generated), never notes/; a non-Stop event is a no-op; a CLEAN
 # tree is gated out (no noise); the env-driven path (no stdin — the codex/gemini
-# wrappers' call shape) also captures; stdout is always empty (pass-through); and
-# malformed stdin is fail-open (exit 0, no crash).
+# wrappers' call shape) also captures; stdout is always empty (pass-through);
+# malformed stdin is fail-open (exit 0, no crash); and AGENT_BRAIN_CAPTURE=off|0|false
+# (any case) opts out — exit 0, empty stdout, nothing written — while unset or any
+# other value keeps the default (capture on).
 #
 # Uses mktemp -d fixtures for AGENT_BRAIN_DIR and throwaway git repos — never the
 # real brain or repo. Usage: bash core/tests/brain-capture-test.sh
@@ -159,6 +161,35 @@ for _ in 1 2; do
     | python3 "$HOOK" >/dev/null 2>&1
 done
 if [[ "$((`raw_count` - BEFORE))" -eq 2 ]]; then ok "no-session-not-deduped"; else no "no-session-not-deduped" "delta=$((`raw_count` - BEFORE))"; fi
+
+# AGENT_BRAIN_CAPTURE is the opt-out: off|0|false in any case → exit 0 before anything runs.
+# Every session id below is new, so the dedupe can never be what produced a "no capture".
+echo "=== (o) AGENT_BRAIN_CAPTURE=off|0|false (any case) → exit 0, empty stdout, nothing written ==="
+for v in off OFF Off 0 false FALSE False; do
+  BEFORE=$(raw_count)
+  STDOUT=$(printf '%s' "{\"ai\":\"codex\",\"session_id\":\"s-off-$v\",\"event\":\"Stop\",\"cwd\":\"$DIRTY\"}" \
+    | AGENT_BRAIN_CAPTURE="$v" python3 "$HOOK" 2>/dev/null); RC=$?
+  if [[ "$RC" -eq 0 && -z "$STDOUT" && "$(( $(raw_count) - BEFORE ))" -eq 0 && "$(notes_count)" -eq 0 ]]; then
+    ok "optout-$v"
+  else
+    no "optout-$v" "rc=$RC stdout='$STDOUT' delta=$(( $(raw_count) - BEFORE ))"
+  fi
+done
+BEFORE=$(raw_count)
+( cd "$DIRTY" && AGENT_BRAIN_CAPTURE=off AGENT=gemini AGENT_SESSION_ID="g-off" python3 "$HOOK" </dev/null >/dev/null 2>&1 ); RC=$?
+if [[ "$RC" -eq 0 && "$(( $(raw_count) - BEFORE ))" -eq 0 ]]; then ok "optout-env-driven-path"; else no "optout-env-driven-path" "rc=$RC delta=$(( $(raw_count) - BEFORE ))"; fi
+
+echo "=== (p) unset, empty or any other value keeps the default (capture ON) ==="
+for v in on ON 1 true yes ""; do
+  BEFORE=$(raw_count)
+  printf '%s' "{\"ai\":\"codex\",\"session_id\":\"s-on-$v\",\"event\":\"Stop\",\"cwd\":\"$DIRTY\"}" \
+    | AGENT_BRAIN_CAPTURE="$v" python3 "$HOOK" >/dev/null 2>&1; RC=$?
+  if [[ "$RC" -eq 0 && "$(( $(raw_count) - BEFORE ))" -eq 1 ]]; then
+    ok "default-on-with-value-'$v'"
+  else
+    no "default-on-with-value-'$v'" "rc=$RC delta=$(( $(raw_count) - BEFORE ))"
+  fi
+done
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="

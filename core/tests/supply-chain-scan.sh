@@ -26,7 +26,9 @@
 #                                    rule like "do not ask for a phantom agent"
 #                                    is NOT matched)   [classes 1-3 = prose]
 #   4. background-daemon spawn    — nohup / setsid / disown / `crontab -`, scanned
-#                                    in the AUTO-FIRED hooks only (see scope note)
+#                                    in the AUTO-FIRED hooks only (see scope note);
+#                                    a LINE that only names them as data can opt out
+#                                    with `supply-chain-scan: allow-literal <reason>`
 #   5. fetch-and-execute          — a fetch piped/substituted/eval'd into an
 #                                    interpreter. Always a hit in hooks and
 #                                    hook/MCP manifests; in prose only tolerated
@@ -120,10 +122,15 @@ while IFS= read -r f; do
   [[ -n "$w" ]] && [[ -z "$m" ]] && HITS+="$f (wrapped): $w"$'\n'
 done < <(collect_prose)
 
-# class 4 — background-daemon spawn in the auto-fired hooks
+# class 4 — background-daemon spawn in the auto-fired hooks.
+# A hit LINE can opt out with `supply-chain-scan: allow-literal <reason>` when the word is data (a
+# wrapper-name list in a command guard), not a spawn. Per line only: never per file or per class,
+# the reason is mandatory, and the marker is matched on the line text (not on the file name) so a
+# real spawn anywhere else in the same hook still fails.
+ALLOW_LITERAL='supply-chain-scan: allow-literal[[:space:]]+[^[:space:]]'
 while IFS= read -r f; do
   [[ -z "$f" ]] && continue
-  m=$(grep -nHiE "$P_DAEMON" "$f" 2>/dev/null || true)
+  m=$(grep -niE "$P_DAEMON" "$f" 2>/dev/null | grep -vE "$ALLOW_LITERAL" | awk -v f="$f" '{ print f ":" $0 }' || true)
   [[ -n "$m" ]] && HITS+="$m"$'\n'
 done < <(collect_hooks)
 
@@ -168,7 +175,9 @@ if [[ -n "${HITS//[$'\n']/}" ]]; then
   echo "A shipped, auto-loaded file must not instruct an agent to bypass human"
   echo "confirmation, self-perpetuate (observer-loop), or daemonize. Remove the"
   echo "directive, or if it is a legitimate documented example, move it out of the"
-  echo "auto-loaded instruction scope. Remote code (classes 5-7): pin the version,"
+  echo "auto-loaded instruction scope. A daemon word that is only data in a hook"
+  echo "(class 4) can be marked on its own line: supply-chain-scan: allow-literal <reason>."
+  echo "Remote code (classes 5-7): pin the version,"
   echo "or add the host to core/tests/supply-chain-allowlist.txt with a reason."
   echo "See rules/policy/security-guards.md."
   exit 1

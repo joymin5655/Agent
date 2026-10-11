@@ -7,6 +7,150 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`AGENT_BRAIN_CAPTURE` opt-out for `brain-capture.py`.** `off`, `0` or `false` (any case)
+  makes the Stop hook exit before it reads stdin, runs git or writes anything; unset or any other
+  value keeps the capture on. Explicit MCP `brain_capture` calls are not affected. Documented in
+  `docs/customization.md`; `brain-capture-test.sh` covers both the opt-out and the default.
+- `core/tests/context-mode-guard-test.sh` (the guard had no test): pins the wiring below and the
+  guard's allow / ask / deny decisions through the Claude adapter.
+- **`supply-chain-scan.sh` class 4 line-level opt-out.** A hit line that carries
+  `supply-chain-scan: allow-literal <reason>` is skipped, for a hook that only names a daemon
+  word as data (the secrets guard's wrapper-name list). It is per line, never per file or per
+  class, the reason is required, the marker is read from the line (not the file name), and a real
+  spawn on any other line of the same hook still fails. `supply-chain-scan-test.sh` pins each of
+  those; the policy is in `rules/policy/security-guards.md`.
+
+### Changed
+- **`context-mode-guard.sh` has its own PreToolUse matcher.** It was registered under `*` next to
+  `r4-mutex-check.sh`, so bash + jq started on every tool call only to exit 0 for anything that is
+  not a Context-Mode sandbox tool. `hooks/hooks.json` and
+  `adapters/claude-code/settings.json.template` now give it a dedicated entry,
+  `mcp__.*context[-_]mode__ctx_(batch_)?execute(_file)?` (an unanchored regex: both spellings and
+  plugin-prefixed names such as `mcp__plugin_<plugin>_<server>__<tool>` match), and keep
+  `r4-mutex-check.sh` under `*`. The guard's own tool-name `case` stays the authoritative filter,
+  so a matcher that is too wide only costs a spawn. Docs that stated the `*` matcher
+  (`core/hooks/README.md`, `adapters/claude-code/README.md`, `docs/hook-protocol.md` §12,
+  `docs/claude-plugin-install-lifecycle.md`) follow.
+
+### Fixed
+- **Secrets guard (#5) no longer blocks commands that only mention the path.** The old single
+  regex had no word boundary and no notion of command position, so it denied grep/rg search
+  patterns, commit and PR text, heredoc bodies fed to python or `cat >`, `head -n 2; ls x/<dir>/`
+  (verb and path in different commands) and `method`/`start`-style words that contain a verb. In
+  local session transcripts 25 of 27 guard-5 denials were such false positives. The regex now only
+  nominates a command; a stdlib shell lexer (`_secrets_verdict` in `pre-tool-guard.sh`) then
+  denies it only when a guard verb is the command word (after `sudo`/`env`/`nohup`/`timeout`/...
+  and assignments) and an operand contains the path, recursing into `$( )`, backticks, `<( )`,
+  `bash|sh|zsh -c`, `eval`, `ssh`/`su -c`, the quoted arguments of `tmux`/`screen`/`byobu`/
+  `byobu-tmux`/`byobu-screen`/`zellij` (`send-keys`, `new-session`, `run-shell`,
+  `screen -X stuff`, `#( )` formats, and the abbreviated names inside a tmux or screen command
+  string such as `tmux if true 'run "..."'`), `find -exec`, `xargs` and heredocs that feed a
+  shell (`tmux source-file -` included; text piped to `tmux load-buffer -` stays denied).
+  A grep/rg PATTERN does not count (`-f <file>` does) and neither do `--exclude` values or `:!`
+  pathspecs. A path that reaches a reader without being its operand also keeps the deny: a
+  `$( )`, `$var`, loop or `xargs` operand while the path is named elsewhere on the line, any guard
+  verb after a `cd` into the directory, an interpreter or program the verb list does not know, a
+  launcher option such as `env -C <dir>`, a `$var` or `$( )` handed to `ssh`/`tmux`-style code
+  carriers. Anything the lexer cannot prove inert (unbalanced quote, `case` inside `$( )`, command
+  word from an expansion or glob, function definition, depth limit, crash, a spent work budget, a
+  2 s wall-clock alarm) keeps the old deny, so the worst case is the previous behaviour. The
+  alarm and the work cap matter because a launcher chain re-searched its own tail at every level
+  (about 25 `env` words held the scan for half a minute), and a hook that outlives its timeout
+  lets the call through; `AGENT_SECRETS_SCAN_BUDGET=<seconds>` is a test seam that can only
+  shorten the alarm. Guards 6-11b are unchanged.
+  New coverage: `git show|blame|annotate|cat-file|archive|format-patch|diff-tree|diff-index
+  REV:<path>` and `git log` with a patch option were never denied before and now are, on a parsed
+  read only (a path produced by an expansion, `git show "HEAD:$(echo secrets/x)"`, is a known gap,
+  pinned in the test and listed in `core/hooks/README.md`), and so is `git config -f|--file|--blob
+  <path>` (`--list`/`--get` print the file), and so are the options by which git stores a file as
+  a message that a later `git tag -n999` or `git log` prints (`git
+  tag|commit|merge|commit-tree|notes -F|--file <path>`, `git commit -t`), `git fmt-merge-msg -F`,
+  `git interpret-trailers <path>`, `git credential-store --file`, `git blame -S` and `git
+  fast-export --import-marks`. `pre-tool-guard-test.sh` grows from 119 to about 1400 fixtures
+  (measured false positives, the bypass set, lexer-confusion decoys, data-flow carriers,
+  multiplexers, git readers, pathological input).
+  Not weaker than the old deny where a quoted word is split: a path in a later token or after
+  leading blanks of a quoted word (`cat $(echo ' secrets/k')`, `P='x secrets/k'; cat $P`, a `for`
+  list, `set --`, a pipeline that reshapes the text before `"$(...)"` or `${x#...}`) counts as
+  named once an unquoted or reshaping consumer, `xargs` or `read` exists. The same text used as one
+  word, prose beside a quoted `"$f"`, and a heredoc inside `"$( )"` stay allowed; prose next to an
+  unquoted `$var` operand is denied again. After `--` every word is an operand
+  (`git diff -- --author <path>`, `cat -- --exclude <path>`, `rsync -a -- --exclude <path> d/`),
+  and a heredoc is code only when a shell-like word is the command or a launcher's command
+  (`printf '%s\n' bash <<'EOF'` is text).
+  A shell or `source` that reads its script from stdin (`| sh -`, `| bash -s`, `/dev/stdin`) is
+  unparseable, so the nominating deny stands, and so is every construct on which bash and zsh read
+  the same text differently (an expansion or a `$"..."` string as a heredoc delimiter, `$[ ]`, a
+  quote or `$"` inside a double-quoted `${ }`, `<<(`, a `(` glued to a word, a `(` after a blank
+  that follows a command word, `$$` before a brace or a quote, a `$` followed by two line
+  continuations, a line continuation inside a token, a heredoc end that depends on a line
+  continuation, a blank or operator inside a `name[...]` or array-literal `[sub]=` subscript, a
+  redirection operator inside a `name=( )` literal, a `<<` anywhere in `[[ ]]`, an angle bracket
+  or malformed `${` in a `=~` regex, a brace inside `${ }`, a `#` inside `[[ ]]`, an unmatched `}`
+  inside a word). A keyword glued to `((` (`for((i=0;i<1<<2;i++))`, `while((`, `if((`) is an
+  arithmetic list, not two subshells around a heredoc: the earlier scan read its `<<` as a heredoc
+  and took the next line for data, so a reader on that line was allowed. The words zsh runs after
+  a test (`if [[ t ]] cmd`, `if (( n )) cmd`, `if { t } cmd`, `for ((;;)) cmd`, `{ ... } always {
+  ... }`) are scanned as a command, and the programs that print what they read from a file they
+  are given (`file -f`, `tree --fromfile`, `du --files0-from`, `git commit -F`, `git add
+  --pathspec-from-file`) count as readers. A lexer-confusion fuzzer that runs the text in bash and
+  zsh found the first group. A `git -c name=value` whose value names the path (`alias.x=!cmd`,
+  `core.pager`) and rsync/tar `--include` count as reads, and the command line of `git rebase -x`
+  and `git submodule foreach` is scanned like `sh -c`. A git history or config read is denied on a
+  parsed read and on anything that is not an answer (the 2 s alarm, a crash, a spent budget, a
+  missing python3, a non-zero exit, a killed process, an empty, garbled or truncated answer): a
+  starved scan used to let `git show REV:secrets/k` through, and `pre-tool-guard-test.sh` now runs
+  each of those failures against a stand-in python3. `git log --oneline -- secrets/` and the other
+  history queries that print no file content (`--name-only`, `--stat`, ordering and selection
+  options such as `--topo-order` and `--diff-filter=`, `git show --stat REV -- path`) stay
+  allowed, as in 0.8.0: only an option that prints a patch (`-p`, `-U`, `-c`, `--cc`, `-L`,
+  `--word-diff`), a pickaxe, `--check`, `--output`, a `REV:path` blob, an option this scan does
+  not know, or an expansion before `--` is denied (an allowlist: an option nobody listed cannot
+  make a read pass). A real-git probe over about 230 option sets and a fuzzer over random `git
+  log|show` command lines found none that this rule allows and that printed the file. `ag` takes
+  its pattern like grep and rg. Stage 2 answers `limit` when its work or nesting budget runs out
+  and `error` on a bug; both deny. Stage 2 also judges how an operand is spelled, since stage 1
+  only sees a literal `secrets/`: a glob (`secre[t]s/k`, `s*/k`), a brace group (`{secrets,x}/k`)
+  or a name built from pieces (`"$A"rets/k`, `$(echo sec)rets/k`, `printf 'secrets\057k'`, `echo
+  -n secr; echo -n ets/k`) that can read as the directory (before a slash also as a name that ends
+  in it, like the written-out `x-secrets/k`: `data_*/k`), a `cd` into such a name, and a name that
+  an assignment, an array literal, a `for` list, the arguments of another command, a here-string,
+  an alias or a launcher option hands on to a later `$var` (also as one item of a list, or with
+  more text around it for `${D%X}` to cut off) all keep the deny, where an operand that merely
+  resembles it (`src*`, `docs/*.md`, `"$f".bak` as the last component) does not. A fuzzer for
+  these families (glob, brace, tilde, piece-built and carried names, `cd`, aliases) runs each text
+  in bash and zsh and found nothing the scan lets through. The values of options that pick files
+  (`rg -g`, `--glob`, `--iglob`, `ag -G`, `grep --include`) are operands, so `rg -n PASSWORD -g
+  'secrets/**' .` and `grep -rn --include='secrets/*' KEY .` are denied (an exclusion such as `rg
+  -g '!secrets/**'` is not). A reader that walks into directories (`grep -r`, `rg`, `ag`, `git
+  grep`, `tar c`, `zip -r`, `cp -r`, `rsync -a`, `scp -r`, `7z a`, `diff -r`) whose root is, holds
+  or may hold a `secrets/` path that the same line names as a path (`grep -rn PASSWORD . ; ls
+  secrets/`, `tar czf a.tgz . ; ls secrets/`) is denied too; roots that provably lie side by side
+  (`src/` and `secrets/`) and mentions that are only a pattern or prose still pass. Two fuzzers
+  that run the readers for real in bash and zsh (about 580000 walker lines and 35000 option lines
+  that stage 1 nominates) found none that this rule allows and that printed or copied the file. A
+  `$'...'` escape that bash and zsh turn into different bytes (`\c`, `\u`, `\U`, a NUL, a code
+  from 128 up, an unknown escape) is unparseable too: bash ends a word at a NUL, so `cat <<$'\c@'`
+  followed by an empty line ended the here-document there and ran the next line, which the earlier
+  scan had swallowed as data. A `git -c` value, the program of `--upload-pack`, `--receive-pack`
+  and `--exec`, the argument of `difftool -x` and the code string of an interpreter count when
+  they spell the directory with a glob, a brace group or quotes (`alias.x=!cat secre[t]s/k`), not
+  only when they write it out. git stores the file of `-F` or `--file` (`git tag`, `commit`,
+  `merge`, `commit-tree`, `notes`) as a message that a later `git tag -n999` or `git log` prints,
+  so `git tag -a v1 -F secrets/k; git tag -n999 v1` is denied like `cat secrets/k`, and so are
+  `git commit -t`, `fmt-merge-msg -F`, `credential-store --file`, `interpret-trailers`, `blame
+  -S`, `fast-export --import-marks` and every `--pathspec-from-file` (also under any prefix of the
+  long option, such as `--f=` or `--fil=`). The git regex of stage 1 nominates these commands too.
+  Two more fuzzers run the lines for real in bash and zsh (about 3300 git option lines and 75000
+  escape lines) and found none that this rule allows and that printed the file.
+- `pre-tool-guard.sh` keeps the working directory out of its python3 helpers (`-I`; the PyYAML
+  helper prunes `sys.path` instead). A `json.py` in the working directory was imported in place of
+  the standard module; a stub that exits quietly turned the parsed command into an empty string,
+  and every guard (not only guard 5) then allowed `rm -rf /` and `cat secrets/...`.
+  `pre-tool-guard-test.sh` runs the hook from a directory holding such a stub. The sibling hooks
+  that start a plain `python3` are listed in `core/hooks/README.md`.
+
 ## [0.8.0] - 2026-10-10
 
 Ships #163–#171, #173 and #174. Gemini runs through the Antigravity CLI (`agy`) only, test runs

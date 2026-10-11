@@ -323,9 +323,18 @@ is not an array and does not apply to lifecycle events. Decisions in this pass:
    now fires on every `Bash` call, like the hooks in item 3, and the script exits 0 within
    milliseconds for a non-commit.
 3. Every other wired hook keeps `matcher`-only filtering: `pre-tool-guard.sh`,
-   `context-mode-guard.sh`, and the rest fire on every `Bash`/`Write|Edit`/`*` call
+   `r4-mutex-check.sh`, and the rest fire on every `Bash`/`Write|Edit`/`*` call
    in their group and make their own internal decision — adding an `if` there would
    duplicate logic the hook already owns without narrowing anything real.
+4. **`context-mode-guard.sh`'s own matcher** — it used to share the `*` group with
+   `r4-mutex-check.sh`, which spawned bash + jq on every tool call only for the script to
+   exit 0 for any tool that is not a Context-Mode sandbox tool. It now has its own entry,
+   `mcp__.*context[-_]mode__ctx_(batch_)?execute(_file)?`: an unanchored regex over the MCP
+   tool name. The leading `.*` covers plugin-bundled servers
+   (`mcp__plugin_<plugin>_<server>__<tool>`) and the class covers both the `context-mode` and
+   `context_mode` spellings the script accepts.
+   The script keeps its own tool-name `case` as the authoritative filter, so a matcher that is
+   too wide costs a spawn, never a decision.
 
 ---
 

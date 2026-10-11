@@ -139,7 +139,8 @@ run a specialist merely because the plugin was installed.
 | Matcher | Registered core hooks |
 |---|---|
 | `Bash` | `pre-tool-guard.sh` |
-| all tools | `r4-mutex-check.sh`, `context-mode-guard.sh` |
+| all tools | `r4-mutex-check.sh` |
+| Context-Mode `ctx_execute*` tools | `context-mode-guard.sh` |
 | `Write`, `Edit`, `MultiEdit` | hardcoding, secret, mutex, TDD, spec, supervisor, plan-scope hooks |
 | selected WebFetch and MCP tools | `secret-content-scan.py` |
 
