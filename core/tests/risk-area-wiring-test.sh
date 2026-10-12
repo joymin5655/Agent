@@ -370,6 +370,14 @@ _W255=$(printf 'a%.0s' $(seq 1 255)); _W256=$(printf 'a%.0s' $(seq 1 256))
 run_case "i-cap-255-dur-deny"          "$PROOT" "timeout \$$_W255 install vault/k /tmp/y"  deny
 PYTHONPATH="$NOYAML" run_case "i-noyaml-cap-255-dur-deny" "$PROOT" "timeout \$$_W255 install vault/k /tmp/y" deny
 run_case "i-known-cap-256-dur-allow"   "$PROOT" "timeout \$$_W256 install vault/k /tmp/y"  allow
+# r1: the duration slot takes a duration-shaped word only, so a program name there never makes the
+# `install` after it a command (timeout rejects these before running anything; a number-less word is no wrapper)
+for c in 'timeout pip install x' 'timeout -s KILL pip install x' 'timeout --signal KILL brew install jq' \
+         'gtimeout make install' 'timeout --foreground npm install -g x'; do
+  run_case "i-ctl-slot-[$c]-allow"             "$PROOT" "$c" allow
+  PYTHONPATH="$NOYAML" run_case "i-noyaml-ctl-slot-[$c]-allow" "$PROOT" "$c" allow
+done
+run_case "i-ctl-slot-declared-allow" "$PROOT" 'timeout -s KILL pip install vault/k' allow
 # with a declared path named, the program is not install either: only PyYAML-present route can tell
 run_case "i-ctl-opt-pip-declared-allow" "$PROOT" 'timeout --preserve-status 10 pip install vault/k' allow
 for c in 'timeout 5 make install' 'timeout infinity make install' 'timeout 5 pip install x' \
