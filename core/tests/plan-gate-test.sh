@@ -373,7 +373,7 @@ check "ag10-unencodable-sid-notice-and-slot-intact" $?
 
 # direct unit tests of the claim/restore paths and the owner / mode checks
 cat > "$TMP_DIR/unit.py" <<'PY'
-import glob, importlib.util, os, pathlib, stat, sys
+import contextlib, fnmatch, glob, importlib.util, io, os, pathlib, stat, sys
 
 hook, tmp = sys.argv[1], pathlib.Path(sys.argv[2])
 n = 0
@@ -408,12 +408,26 @@ def patched(attr_owner, attr, fake):
     return lambda: setattr(attr_owner, attr, real)
 
 
-# sanity: the leftover glob really matches a claim-shaped name
+# sanity: the leftover glob matches the claim name the hook REALLY generates (captured at rename)
 mod, flag = load("glob")
-probe = pathlib.Path(str(flag) + ".withheld.claim.1.ab")
-probe.write_text("x")
-report("claim-glob-matches-real-claim-names", claims(flag) == [str(probe)])
-probe.unlink()
+slot(flag).write_text("ownerX")
+seen = []
+real_rename0 = os.rename
+
+
+def spy_rename(a, b, *args, **kw):
+    if ".claim." in str(b):
+        seen.append(str(b))
+    return real_rename0(a, b, *args, **kw)
+
+
+os.rename = spy_rename
+try:
+    mod._claim_remove_legacy("other")
+finally:
+    os.rename = real_rename0
+report("claim-glob-matches-real-claim-names",
+       len(seen) == 1 and fnmatch.fnmatch(seen[0], str(flag) + ".withheld.claim.*"))
 
 # claim of a slot that is not ours is restored: same inode, content, no leftover
 mod, flag = load("restore")
@@ -538,6 +552,98 @@ slot(flag).write_text("ownerX")
 wrote = mod._write_verified(str(slot(flag)), "x\ud800y")
 report("unencodable-write-false-slot-intact",
        wrote is False and slot(flag).read_text() == "ownerX")
+
+# clear_withheld must go through the atomic claim (a plain unlink would eat a newer slot)
+mod, flag = load("wiring")
+slot(flag).write_text("ownerX")
+called = []
+real_claim = mod._claim_remove_legacy
+mod._claim_remove_legacy = lambda sid: called.append(sid)
+try:
+    mod.clear_withheld("ownerX")
+finally:
+    mod._claim_remove_legacy = real_claim
+report("clear-withheld-goes-through-atomic-claim", called == ["ownerX"])
+
+# rewriting a longer marker with a shorter id leaves no stale tail
+mod, flag = load("shrink")
+slot(flag).write_text("ownerXXXXXX")
+report("write-truncates-no-stale-tail",
+       mod._write_verified(str(slot(flag)), "ab") is True and slot(flag).read_text() == "ab")
+
+# claim kept (not deleted) when the old session cannot be preserved per-session
+mod, flag = load("keepclaim")
+slot(flag).write_text("ownerX")
+dd = pathlib.Path(str(flag) + ".withheld.d")
+dd.mkdir(mode=0o700)
+(dd / "ownerX").mkdir()
+undo = patched(os, "rename", racing_rename)
+try:
+    mod._claim_remove_legacy("other")
+finally:
+    undo()
+report("claim-kept-when-preserve-fails", slot(flag).read_text() == "newZ" and len(claims(flag)) == 1)
+
+# an unexpected exception in the marker code still yields a "not recorded" notice (withhold wrapper)
+mod, flag = load("inject")
+
+
+def boom(create):
+    raise RuntimeError("boom")
+
+
+mod.open_marker_dir = boom
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    mod.withhold("sidI")
+report("withhold-unexpected-exception-notice", "not recorded" in buf.getvalue())
+
+# AG15 L2: the approval flag is written like the withheld marker - no symlink / hard-link follow
+mod, flag = load("flag-hl")
+victim = tmp / "unit-flag-hl-victim"
+victim.write_text("precious")
+os.link(victim, flag)
+mod.write_flag("sidF")
+report("flag-hardlink-victim-not-truncated", victim.read_text() == "precious")
+
+mod, flag = load("flag-sym")
+victim = tmp / "unit-flag-sym-victim"
+victim.write_text("precious")
+os.symlink(victim, flag)
+mod.write_flag("sidF")
+report("flag-symlink-not-followed", victim.read_text() == "precious" and flag.is_symlink())
+
+mod, flag = load("flag-ok")
+mod.write_flag("sidF")
+first = flag.read_text()
+mod.write_flag("sidLongerSession")
+report("flag-normal-write-and-overwrite",
+       first.startswith("approved at ") and first.endswith("session=sidF")
+       and flag.read_text().endswith("session=sidLongerSession")
+       and flag.read_text().count("approved at") == 1 and mod.flag_session(flag) == "sidLongerSession")
+# AG15 N1: restore without link uses exclusive create; losing the race preserves per-session
+mod, flag = load("excl")
+slot(flag).write_text("ownerX")
+undo1 = patched(os, "link", no_link)
+real_open = os.open
+
+
+def racing_open(path, flags, *a, **kw):
+    if str(path) == str(slot(flag)) and flags & os.O_EXCL:
+        slot(flag).write_text("newZ")  # a newer slot lands just before our exclusive create
+    return real_open(path, flags, *a, **kw)
+
+
+os.open = racing_open
+try:
+    mod._claim_remove_legacy("other")
+finally:
+    os.open = real_open
+    undo1()
+kept = pathlib.Path(str(flag) + ".withheld.d") / "ownerX"
+report("restore-excl-create-loses-race-old-session-preserved",
+       slot(flag).read_text() == "newZ" and kept.is_file() and kept.read_text() == "ownerX"
+       and not claims(flag))
 PY
 while read -r verdict name; do
   [[ -z "${verdict:-}" ]] && continue

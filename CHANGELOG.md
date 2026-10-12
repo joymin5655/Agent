@@ -27,6 +27,7 @@ Planning and verification discipline borrowed from a decision-coverage / plan-ch
   agents at 8000 and rules at 12000 bytes.
 
 ### Fixed
+- **plan-gate: approval flag write and legacy restore hardened (#182).** `write_flag` no longer follows a symlink or truncates a hard-linked file (same `O_NOFOLLOW` / single-link / truncate-after-validate path as the withheld marker); the claim-restore fallback creates the slot with `O_EXCL` instead of `lexists`+`rename`. New tests pin the claim wiring, those two paths and previously surviving mutants; the codex-models and goal-record tests count root-only skips.
 - **plan-gate withheld markers are per session (#172).** Two sessions withheld back to back no
   longer overwrite each other's marker and unblock the first session's Agent/Task paths.
 - **verify-all green on a root VM without sqlite3.** `codex-models-test.sh` skips only its

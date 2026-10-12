@@ -287,22 +287,41 @@ def set_withheld(sid: str) -> "tuple[str, list[str], str]":
     return "none", [], "; ".join(problems)
 
 
+def _create_exclusive(path: str, content: str) -> bool:
+    """Create path only if absent (EEXIST = a newer slot, left alone) and fill it."""
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW, 0o600)
+    except OSError:
+        return False
+    try:
+        os.write(fd, content.encode("utf-8"))
+    except (OSError, UnicodeError):
+        os.close(fd)
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        return False
+    os.close(fd)
+    return _read(path) == content
+
+
 def _restore_claim(claim: str, legacy: str, content: "str | None") -> None:
     """Put a claimed slot that is not ours back without losing it or clobbering a
-    newer slot: link, else rename when the slot is still free (FS without hard
-    links), else keep that session as a per-session marker."""
+    newer slot: link, else exclusive create when the slot is still free (FS without
+    hard links), else keep that session as a per-session marker."""
     try:
         os.link(claim, legacy)
         os.unlink(claim)
         return
     except OSError:
         pass
-    if not os.path.lexists(legacy):
+    if content and _create_exclusive(legacy, content):
         try:
-            os.rename(claim, legacy)
-            return
+            os.unlink(claim)
         except OSError:
             pass
+        return
     if content and safe_sid(content):
         dfd, _ = open_marker_dir(True)
         if dfd is not None:
@@ -352,11 +371,16 @@ def clear_withheld(sid: str) -> None:
 
 
 def write_flag(sid: str) -> None:
+    # Same discipline as the withheld marker: no symlink follow, single link only,
+    # truncate after validation (a planted link must not get a victim file rewritten).
     try:
-        PLAN_FLAG.write_text(
-            f"approved at {datetime.now().isoformat()} session={sid}", encoding="utf-8"
-        )
-    except OSError:
+        data = f"approved at {datetime.now().isoformat()} session={sid}".encode("utf-8")
+        fd = _open_regular(str(PLAN_FLAG), os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
+        try:
+            os.write(fd, data)
+        finally:
+            os.close(fd)
+    except (OSError, UnicodeError):
         pass
 
 
