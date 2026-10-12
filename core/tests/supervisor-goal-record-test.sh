@@ -27,6 +27,7 @@ fi
 
 PASS=0
 FAIL=0
+SKIP=0
 check() {
   local name="$1" cond="$2"
   if [[ "$cond" -eq 0 ]]; then echo "  ok   [$name]"; PASS=$((PASS + 1))
@@ -98,7 +99,13 @@ chmod -w "$RO_DIR"
 )
 RC_D=$?
 chmod +w "$RO_DIR"
-[[ $RC_D -eq 0 ]]; check "ledger-failure-does-not-block-complete" $?
+if [[ "$(id -u)" -eq 0 ]]; then
+  # root ignores the missing write bit, so the plans dir never fails and this would pass vacuously
+  echo "  skip [ledger-failure-does-not-block-complete] running as root (chmod -w does not bind)"
+  SKIP=$((SKIP + 1))
+else
+  [[ $RC_D -eq 0 ]]; check "ledger-failure-does-not-block-complete" $?
+fi
 
 echo
 echo "=== (e) AGENT_PLANS_DIR seam is honored ==="
@@ -142,5 +149,5 @@ FOUND_G="$(find "$GW_DIR" "$TMP_ROOT" -maxdepth 1 -name '*escape*' 2>/dev/null |
 [[ "$FOUND_G" -eq 0 ]]; check "traversal-slug-graceful-writes-nothing" $?
 
 echo
-echo "=== Results: $PASS passed, $FAIL failed ==="
+echo "=== Results: $PASS passed, $FAIL failed, $SKIP skipped ==="
 [[ "$FAIL" -eq 0 ]]
