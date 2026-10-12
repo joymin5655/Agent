@@ -8,8 +8,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
-- **plan-gate: approval-flag readers and cleanup paths hardened (AG16).** `spec-gate` and `plan-scope-allow` accept the flag only as a regular, own, single-link file (`lstat`); `_restore_claim` keeps a claim it cannot preserve and `is_withheld` reads it; failed-write cleanup unlinks only the file it created (same dev/ino); short writes are completed.
-- **plan-gate: approval flag write and legacy restore hardened (AG15).** `write_flag` no longer follows a symlink or truncates a hard-linked file (same `O_NOFOLLOW` / single-link / truncate-after-validate path as the withheld marker); the claim-restore fallback creates the slot with `O_EXCL` instead of `lexists`+`rename`. New tests pin the claim wiring, those two paths and previously surviving mutants; the codex-models and goal-record tests count root-only skips.
+- **plan-gate: approval-flag readers and cleanup paths hardened (AG16).** `spec-gate` and `plan-scope-allow` accept the flag only as a regular, own, single-link file (`lstat`); `_restore_claim` keeps a claim it cannot preserve, `is_withheld` reads it and `clear_withheld` drops it; failed-write cleanup unlinks only the file it created (same dev/ino, fd still open); short writes are completed; `flag_session` cannot block on a FIFO flag. The reader tests now run a copy of the hooks against a throwaway flag path instead of the real `/tmp/agent-plan-approved`.
+
+## [0.9.0] - 2026-10-12
+
+Planning and verification discipline borrowed from a decision-coverage / plan-checker workflow.
+
+### Added
+- **Decision coverage (#181).** Every `/spec` spec carries `## Decisions` (stable D-IDs or
+  `- none`). A claim may cite `decisions: [{id, evidence}]`; `completion-verify.py` reports spec
+  D-IDs the claim leaves uncovered under a non-gating `advisories` key (dryrun) — verdict, score,
+  refutations and exit code never change.
+- **Plan check before approval (#181).** `core/infra/plan-lint.sh` lints plan.md (Wave headers, a
+  `→ verify:` per step, prose verify needs `reason:`, success-criterion terms reach a Wave step,
+  spec has `## Decisions`); the new read-only `plan-checker` agent reviews spec+plan semantically.
+  `/spec` Step 3.5 revises the plan at most 3 rounds. registry-drift's read-only rule now covers
+  `checker` agents.
+- **`skills` field in the delegation contract (#179).** `/supervise` names the skills each worker
+  loads; registry-drift requires the field.
+- **Instruction byte budget (#180).** `core/tests/instruction-budget.sh` caps SKILL.md at 20000,
+  agents at 8000 and rules at 12000 bytes.
+
+### Fixed
+- **plan-gate: approval flag write and legacy restore hardened (#182).** `write_flag` no longer follows a symlink or truncates a hard-linked file (same `O_NOFOLLOW` / single-link / truncate-after-validate path as the withheld marker); the claim-restore fallback creates the slot with `O_EXCL` instead of `lexists`+`rename`. New tests pin the claim wiring, those two paths and previously surviving mutants; the codex-models and goal-record tests count root-only skips.
+- **plan-gate withheld markers are per session (#172).** Two sessions withheld back to back no
+  longer overwrite each other's marker and unblock the first session's Agent/Task paths.
 - **verify-all green on a root VM without sqlite3.** `codex-models-test.sh` skips only its
   `chmod 000` OSError case when running as root; `supervisor-goal-record-test.sh` emits the
   `SKIP:` line and exits 2 when sqlite3 or jq is missing; two E702 statements in
