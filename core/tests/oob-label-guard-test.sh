@@ -548,6 +548,35 @@ jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
 SH
 
 echo
+echo "=== B19. a << that is not a heredoc must not hide later definitions (r7) ==="
+# shell_lt_case <name> <line placed before the real definition>
+shell_lt_case() {
+  local pre="$2"
+  shell_case "$1" caught <<SH
+#!/usr/bin/env bash
+$pre
+build() { echo "holdout arm"; }
+CTX="\$(build)"
+jq -nc --arg ctx "\$CTX" '{hookSpecificOutput: {additionalContext: \$ctx}}'
+SH
+}
+shell_lt_case "shell-arith-shift-spaced"  'n=$((1 << 2))'
+shell_lt_case "shell-arith-shift-tight"   'n=$((1<<2))'
+shell_lt_case "shell-let-shift"           "let 'n = 1 << 3'"
+shell_lt_case "shell-quoted-heredoc-text" 'echo "usage: cat <<EOF"'
+shell_lt_case "shell-single-quoted-marker" "msg='see <<END marker'"
+shell_lt_case "shell-unterminated-heredoc" 'cat <<EOF'
+shell_case "shell-real-heredoc-then-def" caught <<'SH'
+#!/usr/bin/env bash
+cat <<EOF >/dev/null
+just text
+EOF
+build() { echo "holdout arm"; }
+CTX="$(build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+
+echo
 echo "=== C2. vocabulary regressions (word boundary) ==="
 py_case "identity-prose"    '"experiment identity check failed"'        clean
 py_case "bucket-names-prose" '"bucket names must be lowercase"'          clean
@@ -814,14 +843,29 @@ CTX="$(build)"
 jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
 SH
 # r6 probes
-shprobe shell-heredoc-skip-outer 'if outer_tag is not None:' 'if False:' clean <<'SH'
+# restoring a heredoc skip at definition level swallows everything after `$((1<<2))`
+shprobe shell-outer-heredoc-skip '        m = _SH_FUNC.match(ln)' '        if globals().get("_T") is not None:
+            if ln.strip() == globals()["_T"]:
+                globals()["_T"] = None
+            continue
+        _hd = _HEREDOC.search(ln)
+        if _hd:
+            globals()["_T"] = _hd.group(2)
+        m = _SH_FUNC.match(ln)' caught <<'SH'
+#!/usr/bin/env bash
+n=$((1<<2))
+build() { echo "holdout arm"; }
+CTX="$(build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+# replacing (instead of merging) lets a heredoc look-alike hide the real definition
+shprobe shell-replace-redefinition 'funcs[name] = (old_body + body, old_ok and ok)' 'funcs[name] = (body, ok)' caught <<'SH'
 #!/usr/bin/env bash
 build() {
-  echo "change your approach"
+  echo "holdout arm"
 }
 cat <<EOF >/dev/null
-build()
-echo look-alike text
+build() {}
 EOF
 CTX="$(build)"
 jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'

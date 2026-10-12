@@ -44,7 +44,7 @@ Deliberate exemptions — not "unresolved", stated so the claim stays true:
     applied, other format specs only add spaces and are ignored.
   * Shell hooks: the guard follows `jq --arg` variables to their assignment lines
     and to same-file shell functions they call (3 levels; same-named definitions are
-    merged; heredoc text is not code). A function whose body is not a `{ }` group
+    merged, so look-alikes in heredoc text cannot hide a real definition). A function whose body is not a `{ }` group
     (`f() ( ... )`, `f() if ...`) is not parsed, and calling it is UNRESOLVED. Output of
     external commands is runtime data.
 
@@ -715,20 +715,14 @@ def _next_line(code, i):
 def _shell_functions(code):
     """name -> (body lines, followable). A `{ }` body is brace-counted outside
     quotes, escapes and heredoc bodies, so a `}` printed by the function does not end
-    it early. Heredoc bodies are skipped here too (a look-alike `build()` inside a
-    heredoc is text, not a definition). Same-named definitions are merged, never
-    replaced. A definition whose body is not a `{ }` group (`( ... )`, `if`, ...) is
+    it early. Same-named definitions are merged, never replaced, so a look-alike
+    `build()` in heredoc text cannot hide the real one. A definition whose body is not a `{ }` group (`( ... )`, `if`, ...) is
     not parsed: it is marked unfollowable, which fails any site that calls it."""
     funcs = {}
-    outer_tag = None
     for i, (_, ln) in enumerate(code):
-        if outer_tag is not None:
-            if ln.strip() == outer_tag:
-                outer_tag = None
-            continue
-        hd = _HEREDOC.search(ln)
-        if hd:
-            outer_tag = hd.group(2)
+        # No heredoc skipping at this level: a `<<` is not always a heredoc ($((1<<2)),
+        # let, quoted text) and a wrong guess would swallow every later definition.
+        # A look-alike inside a real heredoc only adds text or an empty body to the merge.
         m = _SH_FUNC.match(ln)
         if not m:
             continue
