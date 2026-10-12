@@ -28,6 +28,9 @@ set -u
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SCRIPT="$REPO_ROOT/core/infra/telemetry-digest.sh"
+# An inherited sink seam without its marker makes the digest print a WARN line that mixes
+# into every `2>&1` JSON capture below. Cases that need the seam set it themselves (ag9).
+unset AGENT_GATE_SINK_DIR AGENT_GATE_SINK_TEST_RUN
 
 PASS=0
 FAIL=0

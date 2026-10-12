@@ -162,7 +162,7 @@ SEQ_STATE="$STATE_DIR/seq-same.json"; rm -f "$SEQ_STATE"
 SAME=$(ev_text 'Traceback (most recent call last): boom in handler')
 LAST=""
 for _ in 1 2 3; do
-  LAST=$(printf '%s' "$SAME" | AGENT_CIRCUIT_BREAKER_STATE="$SEQ_STATE" python3 "$HOOK" 2>/dev/null || true)
+  LAST=$(printf '%s' "$SAME" | AGENT_CIRCUIT_BREAKER_STATE="$SEQ_STATE" AGENT_CIRCUIT_BREAKER_THRESHOLD=3 AGENT_CIRCUIT_BREAKER_WINDOW=60 python3 "$HOOK" 2>/dev/null || true)
 done
 if [[ "$LAST" == *"same error repeated"* ]]; then
   ok "same-signature-x3-fires" "repeat wording"
@@ -176,7 +176,7 @@ for msg in 'Traceback (most recent call last): alpha failure here' \
            'bash: bravo: command not found in this shell' \
            "error: pathspec 'charlie' did not match any file"; do
   LAST=$(printf '%s' "$(ev_text "$msg")" | AGENT_CIRCUIT_BREAKER_STATE="$SEQ_STATE" \
-    python3 "$HOOK" 2>/dev/null || true)
+    AGENT_CIRCUIT_BREAKER_THRESHOLD=3 AGENT_CIRCUIT_BREAKER_WINDOW=60 python3 "$HOOK" 2>/dev/null || true)
 done
 if [[ "$LAST" == *"Multiple failures detected"* ]]; then
   ok "distinct-signatures-x3-fires" "multiple-failures wording"
@@ -193,7 +193,7 @@ json.dump([{"ts": old, "sig": "stale one"}, {"ts": old, "sig": "stale two"}],
 if [[ "$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$SEQ_STATE" 2>/dev/null)" != 2 ]]; then
   bad "stale-fixture-built" "stale state file was not created (env must reach python, not be an argv)"
 fi
-OUT=$(printf '%s' "$SAME" | AGENT_CIRCUIT_BREAKER_STATE="$SEQ_STATE" python3 "$HOOK" 2>/dev/null || true)
+OUT=$(printf '%s' "$SAME" | AGENT_CIRCUIT_BREAKER_STATE="$SEQ_STATE" AGENT_CIRCUIT_BREAKER_THRESHOLD=3 AGENT_CIRCUIT_BREAKER_WINDOW=60 python3 "$HOOK" 2>/dev/null || true)
 if [[ -z "$OUT" ]]; then
   ok "stale-records-expire" "beyond window, no fire on 1 fresh failure"
 else
@@ -248,7 +248,7 @@ else
 import json, os, time
 old = time.time() - 600
 json.dump([{"ts": old, "sig": "stale one"}, {"ts": old, "sig": "stale two"}], open(os.environ["S"], "w"))'
-  MW_OUT=$(printf '%s' "$SAME" | AGENT_CIRCUIT_BREAKER_STATE="$MW_STATE" AGENT_CIRCUIT_BREAKER_THRESHOLD=3 python3 "$MW" 2>/dev/null || true)
+  MW_OUT=$(printf '%s' "$SAME" | AGENT_CIRCUIT_BREAKER_STATE="$MW_STATE" AGENT_CIRCUIT_BREAKER_THRESHOLD=3 AGENT_CIRCUIT_BREAKER_WINDOW=60 python3 "$MW" 2>/dev/null || true)
   if [[ -n "$MW_OUT" ]]; then ok "mutation/window-prune" "without the prune, stale records fire"; else bad "mutation/window-prune" "mutant still silent — stale-records-expire is vacuous"; fi
 fi
 
@@ -270,7 +270,7 @@ echo "=== E. concurrent failures do not lose updates (state lock) ==="
 PAR_STATE="$STATE_DIR/par.json"; rm -f "$PAR_STATE"
 for i in $(seq 1 20); do
   printf '%s' "$(ev_text "Traceback: parallel failure $i")" \
-    | AGENT_CIRCUIT_BREAKER_STATE="$PAR_STATE" AGENT_CIRCUIT_BREAKER_THRESHOLD=100 \
+    | AGENT_CIRCUIT_BREAKER_STATE="$PAR_STATE" AGENT_CIRCUIT_BREAKER_THRESHOLD=100 AGENT_CIRCUIT_BREAKER_WINDOW=60 \
       python3 "$HOOK" >/dev/null 2>&1 &
 done
 wait

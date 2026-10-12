@@ -54,7 +54,7 @@ print(json.dumps({
     "tool_name": "Bash", "tool_input": {"command": "false"}, "tool_use_id": "tu-1",
     "error": "bash: false: command failed", "cwd": "/tmp",
 }))')
-OUT=$(printf '%s' "$EVENT" | AGENT_CIRCUIT_BREAKER_STATE="$CB_STATE" AGENT_CIRCUIT_BREAKER_THRESHOLD=3 \
+OUT=$(printf '%s' "$EVENT" | AGENT_CIRCUIT_BREAKER_STATE="$CB_STATE" AGENT_CIRCUIT_BREAKER_THRESHOLD=3 AGENT_CIRCUIT_BREAKER_WINDOW=60 \
   bash "$ADAPTER" circuit-breaker.py 2>/dev/null); RC=$?
 check "posttoolusefailure-exit-0" $((RC == 0 ? 0 : 1)) "rc=$RC"
 check "posttoolusefailure-empty-stdout-below-threshold" $((${#OUT} == 0 ? 0 : 1)) "out=$OUT"
@@ -74,7 +74,7 @@ print(json.dumps({
     "tool_name": "Bash", "tool_input": {"command": "false"}, "tool_use_id": "tu-" + os.environ["I"],
     "error": "Traceback (most recent call last): boom", "cwd": "/tmp",
 }))')
-  LAST=$(printf '%s' "$EV" | AGENT_CIRCUIT_BREAKER_STATE="$CB_STATE2" AGENT_CIRCUIT_BREAKER_THRESHOLD=3 \
+  LAST=$(printf '%s' "$EV" | AGENT_CIRCUIT_BREAKER_STATE="$CB_STATE2" AGENT_CIRCUIT_BREAKER_THRESHOLD=3 AGENT_CIRCUIT_BREAKER_WINDOW=60 \
     bash "$ADAPTER" circuit-breaker.py 2>/dev/null)
 done
 [[ "$LAST" == *"Circuit Breaker"* ]]
