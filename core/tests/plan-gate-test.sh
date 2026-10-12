@@ -644,6 +644,54 @@ kept = pathlib.Path(str(flag) + ".withheld.d") / "ownerX"
 report("restore-excl-create-loses-race-old-session-preserved",
        slot(flag).read_text() == "newZ" and kept.is_file() and kept.read_text() == "ownerX"
        and not claims(flag))
+
+# AG16 (2): an old session's record is never deleted when it cannot be preserved; the
+# kept claim still counts as that session's withheld marker
+def newer_slot_race(flag):
+    def racing(a, b, *args, **kw):
+        real_rename(a, b, *args, **kw)
+        if a == str(slot(flag)) and ".claim." in str(b):
+            slot(flag).write_text("newZ")
+    return racing
+
+
+# (a) marker dir unusable (a plain file sits there), link and exclusive create both lose
+mod, flag = load("keep-a")
+slot(flag).write_text("ownerX")
+pathlib.Path(str(flag) + ".withheld.d").write_text("not a dir")
+undo = patched(os, "rename", newer_slot_race(flag))
+try:
+    mod._claim_remove_legacy("other")
+finally:
+    undo()
+report("ag16-keep-claim-marker-dir-unusable",
+       len(claims(flag)) == 1 and pathlib.Path(claims(flag)[0]).read_text() == "ownerX"
+       and slot(flag).read_text() == "newZ")
+report("ag16-kept-claim-reads-as-withheld", mod.is_withheld("ownerX") is True)
+report("ag16-kept-claim-other-session-not-withheld", mod.is_withheld("someoneElse") is False)
+
+# (b) claim content empty / unreadable
+mod, flag = load("keep-b")
+slot(flag).write_text("")
+undo = patched(os, "rename", newer_slot_race(flag))
+try:
+    mod._claim_remove_legacy("other")
+finally:
+    undo()
+report("ag16-keep-claim-empty-content", len(claims(flag)) == 1 and slot(flag).read_text() == "newZ")
+
+# (c) content is not a filename-safe session id
+mod, flag = load("keep-c")
+slot(flag).write_text("odd id/x")
+undo = patched(os, "rename", newer_slot_race(flag))
+try:
+    mod._claim_remove_legacy("other")
+finally:
+    undo()
+report("ag16-keep-claim-unsafe-sid",
+       len(claims(flag)) == 1 and slot(flag).read_text() == "newZ" and mod.is_withheld("odd id/x") is True)
+
+
 PY
 while read -r verdict name; do
   [[ -z "${verdict:-}" ]] && continue

@@ -216,7 +216,21 @@ def is_withheld(sid: str) -> bool:
                     pass
                 os.close(fd)
                 return True
-    return legacy_session() == sid
+    return legacy_session() == sid or _claim_holds(sid)
+
+
+def _claim_holds(sid: str) -> bool:
+    """A claim left behind by _restore_claim still records its session as withheld."""
+    prefix = legacy_marker().name + ".claim."
+    try:
+        with os.scandir(str(PLAN_FLAG.parent)) as it:
+            names = [e.name for e in it if e.name.startswith(prefix)]
+    except OSError:
+        return False
+    for name in names:
+        if _read(str(PLAN_FLAG.parent / name)) == sid:
+            return True
+    return False
 
 
 def migrate_legacy() -> None:
@@ -309,7 +323,8 @@ def _create_exclusive(path: str, content: str) -> bool:
 def _restore_claim(claim: str, legacy: str, content: "str | None") -> None:
     """Put a claimed slot that is not ours back without losing it or clobbering a
     newer slot: link, else exclusive create when the slot is still free (FS without
-    hard links), else keep that session as a per-session marker."""
+    hard links), else keep that session as a per-session marker. When none of those
+    can hold the record the claim file stays: is_withheld() reads leftover claims."""
     try:
         os.link(claim, legacy)
         os.unlink(claim)
@@ -326,14 +341,15 @@ def _restore_claim(claim: str, legacy: str, content: "str | None") -> None:
         dfd, _ = open_marker_dir(True)
         if dfd is not None:
             try:
-                if not _write_verified(content, content, dfd):
-                    return  # keep the claim file rather than lose the record
+                if _write_verified(content, content, dfd):
+                    try:
+                        os.unlink(claim)
+                    except OSError:
+                        pass
             finally:
                 os.close(dfd)
-    try:
-        os.unlink(claim)
-    except OSError:
-        pass
+    # Anything else (marker dir unusable, empty/unreadable/unsafe content): keep the
+    # claim rather than lose that session's withheld record.
 
 
 def _claim_remove_legacy(sid: str) -> None:
