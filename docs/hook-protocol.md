@@ -189,6 +189,54 @@ in handler order or shared side effects between parallel hooks.
 6. Document expected `tool_name` matchers in the file's header comment.
 7. Add to `adapters/claude-code/settings.json.template` hook registration if appropriate.
 8. Run the cross-AI parity test: `bash core/tests/adapter-parity.sh`.
+9. Keep measurement labels out of model-visible text (next subsection);
+   `bash core/tests/oob-label-guard-test.sh` enforces it.
+
+### Out-of-band labels
+
+Measurement labels travel **out of band**: they go to the jsonl sink under
+`.agent/logs/` and nowhere the model reads. A hook must not put one into
+`additionalContext`, `systemMessage` or a system prompt. Logging inside the context
+changes the behavior being measured — in a comparable harness the control group was
+observed quoting the rule that had been injected for labeling only.
+
+A **measurement label** is, narrowly, a value that exists only to group or aggregate
+observations:
+
+- an experiment, holdout, cohort, variant or arm assignment (or its id);
+- a sink-record field written for aggregation: `guard`, `gate_id`, `reproduce_test`,
+  `schema_version`, a signature digest.
+
+Ordinary guidance is **not** a label. A message that tells the model what happened or
+what to do next ("change your approach", "write the failing test first") is the
+point of an advisory hook and stays in context. The test is whether the text would
+read the same if the hook were not being measured.
+
+**Guard scope.** The principle covers every channel the model reads: `additionalContext`,
+`systemMessage`, a system prompt, a deny/ask `permissionDecisionReason`, a Stop
+`decision: block` `reason`, and plain SessionStart stdout. The mechanical guard checks
+only the first two. `core/tests/oob-label-guard-test.sh` finds each place a hook writes
+them (dict key, subscript store, keyword argument, JSON string, key built by
+concatenation), follows the text that can flow in (templates filled with their
+arguments, `json.dumps(dict)` as the JSON it produces, same-file functions, one level
+of caller arguments or parameter defaults, shell functions), and fails on label
+vocabulary and on any site it cannot follow (unless listed in the guard's `ALLOW`
+with a reason).
+
+Stated limits, so the claim stays true:
+
+- A value interpolated into an f-string, `.format` or `%` is treated as runtime data
+  (counts, paths, tool output) — its literal fragments are checked, the value is not —
+  except (a) a name rooted at an imported, non-stdlib module and (b) a value placed right
+  after a label word or sink field (`f"arm={arm}"`, `"cohort {}".format(assign())`), where
+  the literal already names the label. Both fail as unresolved.
+- A key computed from a runtime or imported value, rather than from string constants,
+  is invisible to the guard.
+- Shell hooks are checked through `jq --arg` variables, their assignment lines and
+  same-file shell functions; the output of external commands is runtime data.
+
+The other channels are follow-up candidates for the same guard; until then, review them
+by hand.
 
 ---
 

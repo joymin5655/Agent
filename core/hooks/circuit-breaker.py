@@ -12,6 +12,17 @@ via <state>.lock, atomic rename on write)
 Hook protocol: reads canonical event JSON from stdin. Writes additionalContext JSON to
 stdout when threshold crossed. Empty stdout otherwise. Exit always 0.
 
+Firing log (X-3): every fire also appends one jsonl line to
+<project>/.agent/logs/circuit-breaker.jsonl (guard `circuit-breaker`) so
+docs/gate-registry.md can count it. The record is out-of-band measurement only — it is
+never echoed into `additionalContext` (docs/hook-protocol.md § Out-of-band labels). A
+failed write is swallowed: the sink must never change what the hook does. Env seams:
+  AGENT_CIRCUIT_BREAKER_SINK  override the sink path (confined to the project's
+                              .agent/logs or the system temp dir; an escaping value
+                              falls back to the default)
+  AGENT_GATE_SINK_DIR         test-runner diversion of the default log directory
+  AGENT_REPRODUCE_TEST=1      mark records reproduce_test:true (battery-fed events)
+
 Failure classification — what the runtime actually gives us
 -----------------------------------------------------------
 MEASURED 2026-07-30 against the live installed hook: Claude Code's PostToolUse
@@ -32,18 +43,22 @@ failure. So two things follow:
 Known limitation, stated rather than papered over: with no exit status, a
 failure that prints nothing recognisable is invisible here. This hook is an
 advisory nudge and never a gate, so a miss costs a missing hint — not a wrong
-block. Closing it properly needs an exit status from the runtime (backlog X-3
-adds a sink so the residual false-positive/negative rate can be measured).
+block. Closing it properly needs an exit status from the runtime (the firing
+sink above (X-3) is what lets the residual false-positive rate be measured).
 """
 
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import os
 import re
+import stat
 import sys
+import tempfile
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 try:
@@ -54,6 +69,11 @@ except ImportError:  # non-POSIX: run unlocked
 STATE_FILE = Path(os.environ.get("AGENT_CIRCUIT_BREAKER_STATE", "/tmp/agent-circuit-breaker.json"))
 WINDOW_SECONDS = int(os.environ.get("AGENT_CIRCUIT_BREAKER_WINDOW", "60"))
 THRESHOLD = int(os.environ.get("AGENT_CIRCUIT_BREAKER_THRESHOLD", "3"))
+
+GUARD = "circuit-breaker"
+HOOK_NAME = "circuit-breaker.py"
+SINK_NAME = "circuit-breaker.jsonl"
+SCHEMA_VERSION = "1.0.0"
 
 
 def load_state() -> list:
@@ -75,6 +95,107 @@ def save_state(records: list) -> None:
     except OSError:
         with contextlib.suppress(OSError):
             tmp.unlink()
+
+
+def resolve_sink(root: str) -> str:
+    """Sink path; an override is confined (on its REALPATH) to the project's
+    .agent/logs or the system temp dir, else the default is used."""
+    # AGENT_GATE_SINK_DIR (X-5): test runners divert gate records off the live sink.
+    default = os.path.join(
+        os.environ.get("AGENT_GATE_SINK_DIR") or os.path.join(root, ".agent", "logs"),
+        SINK_NAME,
+    )
+    override = os.environ.get("AGENT_CIRCUIT_BREAKER_SINK")
+    if not override:
+        return default
+    try:
+        candidate = os.path.realpath(override)
+        allowed = [
+            os.path.realpath(os.path.join(root, ".agent", "logs")),
+            os.path.realpath(tempfile.gettempdir()),
+        ]
+    except OSError:
+        return default
+    for base in allowed:
+        if candidate == base or candidate.startswith(base + os.sep):
+            return candidate
+    return default
+
+
+def _log_origin() -> str:
+    return os.environ.get("AGENT_LOG_ORIGIN") or "session"
+
+
+# Fire records are queued under the machine-wide state lock and written after it
+# is released, so a slow project volume cannot stall other sessions' hooks.
+_PENDING: list = []
+
+
+def flush_pending() -> None:
+    while _PENDING:
+        data, record = _PENDING.pop(0)
+        append_fire_record(data, record)
+
+
+def sink_root(data: dict) -> str:
+    cwd = data.get("cwd")
+    if isinstance(cwd, str) and cwd:
+        return cwd
+    return os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+
+
+def append_fire_record(data: dict, record: dict) -> None:
+    """Append one JSON line; never raises, never blocks, never changes the exit code.
+
+    Regular files only (a FIFO at the sink path would otherwise hang the tool
+    call; O_NONBLOCK makes that open fail fast) and O_NOFOLLOW (a symlinked sink
+    must not redirect the write to a file outside the project). The project root
+    must already exist: only `.agent/logs` below it is created, never a missing
+    root tree. `.agent` and `.agent/logs` must not be symlinks at all — even one
+    that stays inside the root — so the record is skipped rather than written
+    below a link.
+
+    Root resolution is inside the try because `os.getcwd()` raises when the
+    process cwd was deleted.
+
+    Limits, by design: the link check and the open are not atomic (a TOCTOU), which
+    is fine for a checkout whose links are committed ahead of time; and
+    AGENT_GATE_SINK_DIR / AGENT_CIRCUIT_BREAKER_SINK are operator-chosen paths whose
+    parents are not link-checked (the override is confined by realpath instead).
+    """
+    fd = -1
+    try:
+        root = sink_root(data)
+        if not os.path.isdir(root):
+            return
+        sink = resolve_sink(root)
+        # A committed symlink at <root>/.agent or <root>/.agent/logs would send the
+        # write below the link's target; O_NOFOLLOW only covers the last component.
+        project_logs = os.path.join(root, ".agent", "logs")
+        if os.path.dirname(sink) == project_logs:
+            real_root = os.path.realpath(root)
+            for rel in (".agent", os.path.join(".agent", "logs")):
+                p = os.path.join(root, rel)
+                want = os.path.join(real_root, rel)
+                if os.path.lexists(p) and os.path.realpath(p) != want:
+                    return
+        os.makedirs(os.path.dirname(sink), exist_ok=True)
+        flags = (
+            os.O_WRONLY | os.O_APPEND | os.O_CREAT
+            | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+        )
+        fd = os.open(sink, flags, 0o600)
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return
+        with os.fdopen(fd, "a", encoding="utf-8") as fh:
+            fd = -1
+            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    finally:
+        if fd != -1:
+            with contextlib.suppress(OSError):
+                os.close(fd)
 
 
 @contextlib.contextmanager
@@ -185,7 +306,7 @@ def _record_failure(signature: str, tool_use_id, now: float) -> list:
     return records
 
 
-def _maybe_fire(records: list, hook_event_name: str) -> None:
+def _maybe_fire(records: list, hook_event_name: str, data: dict, signal: str) -> None:
     if len(records) < THRESHOLD:
         return
     signature = records[-1].get("sig", "")
@@ -213,6 +334,28 @@ def _maybe_fire(records: list, hook_event_name: str) -> None:
     print(json.dumps(output))
     save_state([])
 
+    # Raw error text is not stored (it can carry tokens); a short digest still
+    # lets repeats be grouped when judging the heuristic's false-positive rate.
+    record = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "guard": GUARD,
+        "hook": HOOK_NAME,
+        "schema_version": SCHEMA_VERSION,
+        "session_id": str(data.get("session_id") or "no-session"),
+        "decision": "advise",
+        "origin": _log_origin(),
+        "event": hook_event_name,
+        "kind": "repeat" if similar >= THRESHOLD else "multi",
+        "signal": signal,
+        "failures": len(records),
+        "similar": similar,
+        "window_s": WINDOW_SECONDS,
+        "sig_sha": hashlib.sha1(short_sig.encode("utf-8", "replace")).hexdigest()[:12],
+    }
+    if os.environ.get("AGENT_REPRODUCE_TEST") == "1":
+        record["reproduce_test"] = True
+    _PENDING.append((data, record))
+
 
 def main() -> None:
     try:
@@ -236,7 +379,7 @@ def main() -> None:
         tool_use_id = data.get("tool_use_id")
         now = time.time()
         records = _record_failure(signature, tool_use_id, now)
-        _maybe_fire(records, "PostToolUseFailure")
+        _maybe_fire(records, "PostToolUseFailure", data, "failure_event")
         return
 
     result = data.get("tool_result") or data.get("tool_response") or {}
@@ -265,9 +408,10 @@ def main() -> None:
     signature = extract_error_signature(result_text)
     tool_use_id = data.get("tool_use_id")
     records = _record_failure(signature, tool_use_id, now)
-    _maybe_fire(records, "PostToolUse")
+    _maybe_fire(records, "PostToolUse", data, "exit_status" if exit_status is not None else "text")
 
 
 if __name__ == "__main__":
     with state_lock():
         main()
+    flush_pending()
