@@ -151,7 +151,7 @@ flowchart LR
 | **하네스(harness)** | 에이전트 + 훅 + 스킬 + 규칙을 묶어 AI를 감싸는 안전 계층 전체. |
 | **훅(hook)** | AI 런타임이 어떤 행동 전/후에 자동으로 실행하는 작은 스크립트. **allow**, **ask**, **deny** 중 하나로 답합니다. [`core/hooks/`](core/hooks/)에 `hooks/hooks.json`으로 배선된 스크립트 27개(공유 모듈 포함 31개)가 있습니다. |
 | **어댑터(adapter)** | 각 AI CLI의 고유 이벤트 형식과 하네스의 표준 JSON 사이를 번역하는 얇은 계층. 런타임 어댑터 3개(claude-code, codex, antigravity)가 [`adapters/`](adapters/)에 있습니다. |
-| **에이전트(agent)** | AI가 일을 위임하는 전문가 — 예: 리뷰만 하고 절대 코드를 쓰지 않는 보안 리뷰어. 3종이 포함됩니다([`agents/`](agents/)). |
+| **에이전트(agent)** | AI가 일을 위임하는 전문가 — 예: 리뷰만 하고 절대 코드를 쓰지 않는 보안 리뷰어. 4종이 포함됩니다([`agents/`](agents/)). |
 | **스킬(skill)** | AI가 따라가는 재사용 가능한 단계별 워크플로우 — 예: 커밋+PR 자동화 흐름. 14종이 포함됩니다([`skills/`](skills/)). |
 | **게이트(gate)** | 훅의 결정 지점(deny / ask / block). 모든 게이트는 자신이 가정하는 모델 약점과 함께 등록됩니다 — [`docs/gate-registry.md`](docs/gate-registry.md). |
 | **웨이브(wave)** | `/supervise` 플랜 안의 작업 묶음 하나 — 디스패치·실행·감사를 마쳐야 다음 웨이브가 시작됩니다. |
@@ -235,7 +235,7 @@ Antigravity(agy 1.2.12)는 훅의 `{}`를 deny로 처리하므로 통과는 `ask
 4. *(선택)* 훅이 많은 다른 플러그인을 쓰는 저장소에서는 `/plugin`으로 agent-harness를 꺼도 됩니다 — 에이전트는 `agent-harness:*` 네임스페이스라 어느 쪽이든 충돌하지 않습니다.
 5. *(선택)* 크로스벤더 워커 레인(codex/antigravity 세컨드 오피니언)을 쓰려면 `/agent-harness:worker-setup`을 실행하세요 — 설치→인증→검증을 비용 안내와 함께 안내합니다.
 
-플러그인에 포함: **에이전트 3종**, **스킬 14종**, 훅 세트, `/project-init` 커맨드.
+플러그인에 포함: **에이전트 4종**, **스킬 14종**, 훅 세트, `/project-init` 커맨드.
 
 ### Path B — 셸 설치 (Codex CLI / Antigravity CLI / 전부)
 
@@ -411,6 +411,7 @@ manager-audit의 발견은 절대 스스로 적용되지 않습니다 — `PROPO
 |---|---|---|---|
 | `code-reviewer` | sonnet | 읽기 전용 | diff 리뷰; 보안 사안은 security-reviewer에 위임 |
 | `security-reviewer` | opus | 읽기 전용 | OWASP Top 10, 시크릿, 인증, 인젝션 — 보안 발견 전담 |
+| `plan-checker` | sonnet | 읽기 전용 | 승인 전에 plan.md가 spec.md를 충족하는지 점검; 판정 객체 1개 출력 |
 | `persona-review-orchestrator` | sonnet | 읽기 전용 + 디스패치 | UX·카피에 시민 페르소나 패널을 돌려 사용자 반응을 종합; 코드가 아니라 사용자 경험만 판정 |
 
 모델은 작업 등급별 비용 티어를 따릅니다([`docs/model-routing.md`](docs/model-routing.md)가 크로스 런타임 정책): 판단(judgment) — 계획, 오케스트레이션 결정, 결과 종합 — 은 세션 최상위 모델을 상속하고(`model:` 핀 없음), 위 두 리뷰어의 핀은 CI 드리프트 가드가 `agents/master-registry.json`과 동기화합니다(기계 강제되는 유일한 부분). 구현 디스패치는 워크호스 티어, 기계적 작업은 로우 티어로 — 호출별 `model` 오버라이드를 쓰는 문서화된 컨벤션입니다. 읽기 전용 에이전트는 실제로 읽기 전용으로 강제됩니다(`Write`/`Edit`/`Bash` 없음). `.agent/` 파일로 프로젝트별 특화 가능 — [`docs/specializing-agents.md`](docs/specializing-agents.md) 참고.
@@ -451,7 +452,7 @@ Agent/
 ├── AGENTS.md           # 이 저장소를 작업하는 AI의 운영 규칙
 ├── CHANGELOG.md
 │
-├── agents/             # 에이전트 정의 3종 + master-registry.json
+├── agents/             # 에이전트 정의 4종 + master-registry.json
 ├── skills/             # 스킬 14종 (spec · supervise · verify-completion · wrap · brain-ingest · harness-audit · manager-audit · persona-review · harness-help · loop · harness-loop · council-review · worker-setup · reorg-sync)
 ├── commands/           # 슬래시 커맨드 1개 (/project-init)
 ├── hooks/              # 플러그인 훅 배선 (hooks.json)

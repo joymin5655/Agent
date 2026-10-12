@@ -33,6 +33,10 @@ same way.
 - **`refutations`** — the actionable part: every specific way the target fell
   short, most load-bearing first. An empty list is the only thing that earns
   `CONFIRMED`.
+- **`advisories`** *(optional, non-gating)* — notes that never affect `verdict`,
+  `score`, `dimensions`, or the exit code; the key is omitted when empty. The
+  completion verifier uses it for decision coverage (spec D-IDs the claim's
+  `decisions` field does not cover), which stays dryrun until promoted to a gate.
 
 ## Gate semantics — refute-by-default
 

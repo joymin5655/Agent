@@ -30,6 +30,12 @@ Usage:
                          New `trajectory` dimension.
   Exit 0 iff CONFIRMED; exit 1 otherwise — usable as a CI / wave GATE.
 
+Decision coverage (advisory, dryrun): when `.agent/plans/<slug>/spec.md` has a
+`## Decisions` section, each `- D<n>:` not listed in the claim's optional
+`decisions: [{id, evidence}]` (non-empty evidence) is reported under the
+top-level `advisories` key. <slug> = claim `slug`, else the claim file name minus
+extension and `-w<N>`. Never affects verdict, score, dimensions, or exit code.
+
 Both flags are opt-in and additive: omitted, verify() behaves exactly as before
 (same dimensions, same output) — see docs/scoring-convention.md "additive" rule.
 
@@ -258,7 +264,88 @@ def _claimed_scope(claim):
     return paths, globs
 
 
-def verify(claim, root, require_evidence=False, diff_base=None):
+# --- decision coverage (advisory, dryrun) -----------------------------------
+# A spec's `## Decisions` bullets (`- D<n>: ...`) vs the claim's optional
+# `decisions: [{id, evidence}]`. Reported ONLY under the top-level `advisories`
+# key: never a refutation, never a verdict/score/exit change.
+_SLUG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+_DECISION_RE = re.compile(r"^[-*]\s+(?:\*\*)?(D\d+)\b")  # top-level bullets only
+_DECISIONS_HEAD_RE = re.compile(r"^##\s+Decisions\b", re.IGNORECASE)
+_WAVE_SUFFIX_RE = re.compile(r"-w\d+$")
+
+
+def _slug_ok(slug):
+    return bool(_SLUG_RE.match(slug)) and ".." not in slug
+
+
+def _spec_lines(root, slug):
+    """Lines of `.agent/plans/<slug>/spec.md`, or None when unreadable."""
+    if not _slug_ok(slug):
+        return None
+    path = os.path.join(root or "", ".agent", "plans", slug, "spec.md")
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            return fh.read(_MAX_CONTAINS_BYTES).splitlines()
+    except OSError:
+        return None
+
+
+def _find_spec(claim, claim_path, root):
+    """Spec lines for the claim: its `slug` field verbatim (no trimming — a slug
+    that is not a plain name is rejected, never normalized into a match), else
+    the claim file stem, falling back to the stem minus a `-w<N>` wave suffix
+    only when the exact stem has no spec."""
+    slug = claim.get("slug")
+    if isinstance(slug, str) and slug:
+        return _spec_lines(root, slug)
+    if not claim_path:
+        return None
+    stem = os.path.splitext(os.path.basename(claim_path))[0]
+    lines = _spec_lines(root, stem)
+    if lines is None and _WAVE_SUFFIX_RE.search(stem):
+        lines = _spec_lines(root, _WAVE_SUFFIX_RE.sub("", stem))
+    return lines
+
+
+def _spec_decision_ids(lines):
+    """D-IDs from top-level bullets under the `## Decisions` heading, skipping
+    fenced blocks; [] when the section or any D-ID bullet is absent (`- none ...`
+    yields no IDs)."""
+    ids, in_section, in_fence = [], False, False
+    for line in lines:
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+        elif in_fence:
+            continue
+        elif line.startswith("## "):
+            in_section = bool(_DECISIONS_HEAD_RE.match(line))
+        elif in_section:
+            m = _DECISION_RE.match(line)
+            if m and m.group(1) not in ids:
+                ids.append(m.group(1))
+    return ids
+
+
+def _decision_advisories(claim, root, claim_path):
+    lines = _find_spec(claim, claim_path, root)
+    spec_ids = _spec_decision_ids(lines) if lines else []
+    if not spec_ids:
+        return []
+    raw = claim.get("decisions")
+    if raw is None:
+        covered = set()
+    elif not isinstance(raw, list):
+        return ["`decisions` must be a list of {id, evidence} (dryrun, ignored)"]
+    else:
+        covered = {
+            d["id"] for d in raw
+            if isinstance(d, dict) and isinstance(d.get("id"), str)
+            and isinstance(d.get("evidence"), str) and d["evidence"].strip()
+        }
+    return ["decision %s not covered by claim (dryrun)" % i for i in spec_ids if i not in covered]
+
+
+def verify(claim, root, require_evidence=False, diff_base=None, claim_path=None):
     """Deterministically check the claim against `root`; return a verdict dict.
     Refute-by-default: any unmet cited fact appends a refutation, and a claim is
     CONFIRMED only when there is something to verify and nothing was refuted."""
@@ -384,7 +471,7 @@ def verify(claim, root, require_evidence=False, diff_base=None):
     passed = sum(d["passed"] for d in dims.values())
     score = round(passed / total, 4) if total else 0.0
     confirmed = total > 0 and not refutations
-    return {
+    verdict = {
         "verdict": "CONFIRMED" if confirmed else "REFUTED",
         "score": score,
         "target": str(claim.get("summary") or claim.get("slug") or "(unnamed claim)")[:200],
@@ -392,6 +479,10 @@ def verify(claim, root, require_evidence=False, diff_base=None):
         "refutations": refutations[:50],
         "schema_version": SCHEMA_VERSION,
     }
+    advisories = _decision_advisories(claim, root, claim_path)
+    if advisories:
+        verdict["advisories"] = advisories[:50]
+    return verdict
 
 
 def main(argv=None):
@@ -421,7 +512,8 @@ def main(argv=None):
         print(json.dumps(verdict, ensure_ascii=False))
         return 1
 
-    verdict = verify(claim, root, require_evidence=args.require_evidence, diff_base=args.diff_base)
+    verdict = verify(claim, root, require_evidence=args.require_evidence,
+                     diff_base=args.diff_base, claim_path=args.claim)
     print(json.dumps(verdict, ensure_ascii=False))
     return 0 if verdict["verdict"] == "CONFIRMED" else 1
 

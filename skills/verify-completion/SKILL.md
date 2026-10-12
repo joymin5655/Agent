@@ -53,7 +53,15 @@ claim:
     - "bash core/tests/x-test.sh"
   assertions:                  # mechanical claim<->artifact checks (each exits 0)
     - "grep -q start_new_session core/hooks/x.py"
+  decisions:                   # optional: one entry per spec D-ID the work settles
+    - { id: D1, evidence: "core/hooks/x.py implements the chosen approach" }
 ```
+
+`decisions` is optional and advisory (dryrun): the verifier reads
+`.agent/plans/<slug>/spec.md` (`slug` = claim `slug`, else the claim file name
+minus extension and `-w<N>`) and lists each `## Decisions` D-ID the claim does
+not cover (non-empty `evidence`) under `advisories` in the verdict. It never
+changes the verdict or exit code.
 
 If no claim file exists, **build one** from the builder's own words before
 verifying — turning a vague "I added X and the tests pass" into a checkable list
