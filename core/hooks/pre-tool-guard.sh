@@ -289,9 +289,17 @@ fi
 # (shell -c, eval, ssh, su, watch and the terminal multiplexers are known; another tool with a
 # command-line option of its own is not): its strings read as prose. Stage 2 is a speed bump
 # against careless reads, like the rest of this file.
+# Readers beyond the original list. One source for stage 1 (nominates a line), stage 2 (a VERBS
+# member is a reader of its secrets/ operands; handed over as SCAN_READERS) and guard 11b. A line
+# whose only reader is missing here is never nominated, so it never reaches stage 2. Stage 2 keeps
+# precision: `ls secrets/ | sort` and a commit message that names the path stay allowed.
+# Not listed on purpose: gzip, zcat, zless, zmore, batcat ... already end in a listed verb and stage 2
+# denies them as unknown programs; as VERBS members they would count as known non-walking readers
+# and let `gzip -r . ; ls secrets/` through. (zgrep, bzgrep and xzgrep need the list: stage 2 allowed them.)
+_SECRET_MORE_READERS='base64|base32|basenc|sort|uniq|cut|paste|column|join|comm|expand|unexpand|fmt|shuf|cksum|b2sum|sha1sum|sha224sum|sha384sum|zgrep|bzgrep|xzgrep|vim|nano|emacs|jq|yq'
 _secrets_verdict() {
   # a python3 that is missing, exits non-zero or is killed leaves `error` behind, never an allow
-  SCAN_INPUT="$1" python3 -I - <<'PY' 2>/dev/null || printf 'error'
+  SCAN_INPUT="$1" SCAN_READERS="$_SECRET_MORE_READERS" python3 -I - <<'PY' 2>/dev/null || printf 'error'
 import fnmatch
 import os
 import re
@@ -340,7 +348,8 @@ ANSI_PLAIN = {"n": "\n", "t": "\t", "r": "\r", "a": "\a", "b": "\b", "e": "\x1b"
 VERBS = frozenset(
     "cat tac nl head tail less more awk sed grep egrep fgrep rg ag bat hexdump xxd od strings "
     "dd fold rev tee cp mv ln md5sum shasum sha256sum sha512sum wc diff cmp gunzip bunzip2 "
-    "bzip2 bzcat xz xzcat unxz lzma lz4cat tar unzip 7z zip gpg openssl age rsync scp".split())
+    "bzip2 bzcat xz xzcat unxz lzma lz4cat tar unzip 7z zip gpg openssl age rsync scp".split()
+) | frozenset(os.environ.get("SCAN_READERS", "").split("|")) - {""}  # the list in _SECRET_MORE_READERS
 SHELLS = frozenset("sh bash zsh dash ksh ash".split())
 BACKGROUNDERS = {"nohup", "setsid"}  # supply-chain-scan: allow-literal wrapper names, not a spawn
 LAUNCHERS = frozenset(
@@ -1944,7 +1953,7 @@ PY
 }
 _S5_BLOCK=""
 _S5_WHY=""
-if echo "$COMMAND" | grep -qiE '(cat|tac|nl|head|tail|less|more|awk|sed|grep|egrep|fgrep|rg|ag|bat|hexdump|xxd|od|strings|dd|fold|rev|tee|cp|mv|ln|md5sum|shasum|sha256sum|sha512sum|wc|diff|cmp|gunzip|bunzip2|bzip2|bzcat|xz|xzcat|unxz|lzma|lz4cat|tar|unzip|7z|zip|gpg|openssl|age|rsync|scp)\s+.*secrets/'; then
+if echo "$COMMAND" | grep -qiE "(cat|tac|nl|head|tail|less|more|awk|sed|grep|egrep|fgrep|rg|ag|bat|hexdump|xxd|od|strings|dd|fold|rev|tee|cp|mv|ln|md5sum|shasum|sha256sum|sha512sum|wc|diff|cmp|gunzip|bunzip2|bzip2|bzcat|xz|xzcat|unxz|lzma|lz4cat|tar|unzip|7z|zip|gpg|openssl|age|rsync|scp|$_SECRET_MORE_READERS)\s+.*secrets/"; then
   _S5_V=$(_secrets_verdict "$COMMAND")
   case "$_S5_V" in
     inert) ;;
@@ -2067,14 +2076,17 @@ except Exception:
 print("|".join(t.replace(".", "[.]") for t in toks))
 PY
 )
-  _SECRET_READ_VERBS='cat|tac|nl|head|tail|less|more|awk|sed|grep|egrep|fgrep|rg|ag|bat|hexdump|xxd|od|strings|dd|fold|rev|tee|cp|mv|ln|md5sum|shasum|sha256sum|sha512sum|diff|cmp|gunzip|bunzip2|bzip2|bzcat|xz|xzcat|unxz|lzma|lz4cat|tar|unzip|7z|zip|gpg|openssl|age|rsync|scp|curl|wget|source|\.'
+  _SECRET_READ_VERBS='cat|tac|nl|head|tail|less|more|awk|sed|grep|egrep|fgrep|rg|ag|bat|hexdump|xxd|od|strings|dd|fold|rev|tee|cp|mv|ln|md5sum|shasum|sha256sum|sha512sum|diff|cmp|gunzip|bunzip2|bzip2|bzcat|xz|xzcat|unxz|lzma|lz4cat|tar|unzip|7z|zip|gpg|openssl|age|rsync|scp|curl|wget|source|\.|'"$_SECRET_MORE_READERS"
+  _SECRET_INLINE_CODE='(python[0-9.]*|pypy[0-9]*|node|nodejs|deno|bun|perl|ruby|php)[[:space:]]+(-c|-e|-E|-r|--eval)[[:space:]]+["'"'"']'
   # P1-9: risk_areas declared but PyYAML absent -> the declared paths are unknown,
   # so deny anything the token match below could deny for SOME path: the same
   # unanchored verb match minus the path clause. That keeps fail-closed a strict
   # superset of the token path (incl. JSON-declared paths) and over-blocks
   # deliberately until PyYAML is installed.
   if [[ "$_EXTRA_SECRET_ALT" == "!UNPARSEABLE" ]]; then
-    if echo "$COMMAND" | grep -qiE "($_SECRET_READ_VERBS)\s+"; then
+    if echo "$COMMAND" | grep -qiE "($_SECRET_READ_VERBS)\s+" \
+       || echo "$COMMAND" | grep -qiE "$_SECRET_INLINE_CODE" \
+       || echo "$COMMAND" | grep -qiE "(^|[^<])<\s*[\"']?[^ ;|&<>(]"; then
       log_violation secrets "risk_areas declared but unparseable (PyYAML missing)"
       emit_deny "Read/copy/upload command blocked: project secret paths cannot be checked (Risk Area #2: secrets).
 WHY: .agent/hook-config.yml declares risk_areas, but PyYAML is not installed, so the declared secret paths are unknown and the guard fails closed.
@@ -2084,7 +2096,13 @@ FIX: install PyYAML (bash setup.sh --bootstrap asks first; or python3 -m pip ins
     _EXTRA_SECRET_ALT=""
   fi
   if [[ -n "$_EXTRA_SECRET_ALT" ]]; then
-    if echo "$COMMAND" | grep -qiE "($_SECRET_READ_VERBS)\s+.*($_EXTRA_SECRET_ALT)"; then
+    # P1-12: besides a reader verb followed by blank + path, a declared path is read through a
+    # redirect (cat<p, `< p cat`, $(<p): no blank after any verb) and through inline interpreter
+    # code (python3 -c "open('p')"), as guards 8 and 11 already catch for the built-in path.
+    # The redirect operand is a word that holds the token, so `wc -c < README.md` stays allowed.
+    if echo "$COMMAND" | grep -qiE "($_SECRET_READ_VERBS)\s+.*($_EXTRA_SECRET_ALT)" \
+       || echo "$COMMAND" | grep -qiE "<\s*[\"']?[^ ;|&<>]*($_EXTRA_SECRET_ALT)" \
+       || echo "$COMMAND" | grep -qiE "${_SECRET_INLINE_CODE}.*($_EXTRA_SECRET_ALT)"; then
       log_violation secrets "project secrets path access blocked"
       emit_deny "Access to a project-declared secret path blocked (Risk Area #2: secrets).
 WHY: hook-config.yml risk_areas.secrets.paths marks this path as secret; reading/copying/uploading it exposes credentials.

@@ -146,6 +146,12 @@ run_case "noyaml-sh-c-deny"              "$PROOT" "sh -c 'cat vault/prod.key'" d
 run_case "noyaml-backtick-deny"          "$PROOT" 'echo `cat vault/prod.key`' deny
 run_case "noyaml-backslash-deny"         "$PROOT" '\cat vault/prod.key'     deny
 run_case "noyaml-gcat-deny"              "$PROOT" 'gcat vault/prod.key'     deny
+# P1-12: the forms the token path now denies without a blank after a verb stay a subset
+run_case "noyaml-redirect-deny"          "$PROOT" 'cat<vault/prod.key'      deny
+run_case "noyaml-redirect-subst-deny"    "$PROOT" 'echo $(<vault/prod.key)' deny
+run_case "noyaml-python-c-deny"          "$PROOT" "python3 -c \"open('vault/k')\"" deny
+run_case "noyaml-more-reader-deny"       "$PROOT" 'base64 vault/prod.key'   deny
+run_case "noyaml-redirect-out-allow"     "$PROOT" 'echo hi > out.txt'       allow
 # commands outside that family keep working, including the remediation itself
 run_case "noyaml-ls-allow"               "$PROOT" 'ls -la'                  allow
 run_case "noyaml-pip-fix-allow"          "$PROOT" 'python3 -m pip install --user pyyaml' allow
@@ -176,6 +182,44 @@ unset PYTHONPATH
 if python3 -c 'import yaml' 2>/dev/null; then
   RUN_CWD="$CWD_FAKE" run_case "cwd-fake-yaml-real-pyyaml-deny" "$PROOT" 'cat vault/prod.key' deny
 fi
+
+echo
+echo "=== (f) P1-12: declared path read through redirects, more readers, inline code ==="
+# Same project as (a): vault/** declared. Each deny form has no verb from the original list
+# next to the path (cat<file and `< file cat` have no blank after the verb; base64 etc. were
+# not on the list). The controls only mention the path or list its name.
+for rd in base64 base32 sort uniq cut paste column join comm fmt shuf cksum b2sum sha1sum zcat gzip zgrep bzgrep xzgrep vim nano emacs jq yq; do
+  run_case "f-$rd-deny"             "$PROOT" "$rd vault/prod.key"          deny
+done
+run_case "f-xargs-cat-deny"         "$PROOT" 'xargs cat vault/prod.key'    deny
+run_case "f-xargs-base64-deny"      "$PROOT" 'xargs base64 vault/prod.key' deny
+run_case "f-redir-nospace-deny"     "$PROOT" 'cat<vault/prod.key'          deny
+run_case "f-redir-heredoc-deny"     "$PROOT" 'cat<<vault/prod.key'         deny
+run_case "f-redir-leading-deny"     "$PROOT" '< vault/prod.key cat'        deny
+run_case "f-redir-leading-nsp-deny" "$PROOT" '<vault/prod.key cat'         deny
+run_case "f-redir-subst-deny"       "$PROOT" 'echo $(<vault/prod.key)'     deny
+run_case "f-redir-subst-sp-deny"    "$PROOT" 'echo $(< vault/prod.key)'    deny
+run_case "f-redir-dotslash-deny"    "$PROOT" 'wc -c < ./vault/prod.key'    deny
+run_case "f-redir-UPPER-deny"       "$PROOT" '< VAULT/prod.key cat'        deny
+run_case "f-python-c-deny"          "$PROOT" "python3 -c \"open('vault/prod.key')\"" deny
+run_case "f-python311-c-deny"       "$PROOT" "python3.11 -c \"print(open('vault/k').read())\"" deny
+run_case "f-node-e-deny"            "$PROOT" "node -e \"require('fs').readFileSync('vault/k')\"" deny
+run_case "f-perl-e-deny"            "$PROOT" "perl -e 'open(F,\"vault/k\")'"  deny
+run_case "f-ruby-e-deny"            "$PROOT" "ruby -e 'File.read(\"vault/k\")'" deny
+# controls: only the NAME is listed, or the path is mentioned in prose / a commit message
+run_case "f-ctl-ls-allow"           "$PROOT" 'ls vault/'                   allow
+run_case "f-ctl-ls-sort-allow"      "$PROOT" 'ls vault/ | sort'            allow
+run_case "f-ctl-commit-msg-allow"   "$PROOT" 'git commit -m "docs: mention vault/ handling"' allow
+run_case "f-ctl-echo-allow"         "$PROOT" 'echo "see the vault/ docs"'  allow
+# known over-block, same as guard 8 for the built-in path: a "<" right before the path inside
+# quoted prose cannot be told from a shell redirect without parsing the quotes
+run_case "f-known-quoted-redir-deny" "$PROOT" 'echo "cat<vault/k is blocked"' deny
+run_case "f-ctl-compare-allow"      "$PROOT" 'test 1 -lt 2 && echo ok'     allow
+run_case "f-ctl-redir-other-allow"  "$PROOT" 'wc -c < README.md'           allow
+run_case "f-ctl-redir-out-allow"    "$PROOT" 'echo x > out.txt'            allow
+run_case "f-ctl-python-other-allow" "$PROOT" "python3 -c \"print(1)\""     allow
+run_case "f-ctl-sibling-allow"      "$PROOT" 'sort myvault2/x'             allow
+run_case "f-ctl-heredoc-allow"      "$PROOT" $'cat <<\'EOF\'\nhello\nEOF' allow
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
