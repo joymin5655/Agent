@@ -25,22 +25,49 @@
 set -u
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-HOOK="$REPO_ROOT/core/hooks/plan-scope-allow.py"
 
 PASS=0
 FAIL=0
 
 WORK="$(mktemp -d)"
 SINK="$WORK/plan-scope-allow.jsonl"
-FLAG="/tmp/agent-plan-approved"
+# The hook hardcodes the shared flag path, and the reader must stay coupled to plan-gate.py's
+# writer, so run a COPY of core/hooks whose PLAN_FLAG points inside $WORK. The real
+# /tmp/agent-plan-approved (another live session may own it) is never touched; the battery
+# asserts its state is identical before and after.
+REAL_FLAG="/tmp/agent-plan-approved"
+real_state() {
+  python3 - "$REAL_FLAG" <<'PY'
+import hashlib, os, stat, sys
+p = sys.argv[1]
+try:
+    st = os.lstat(p)
+except OSError:
+    print("absent")
+    raise SystemExit
+body = ""
+if stat.S_ISREG(st.st_mode):
+    with open(p, "rb") as fh:
+        body = hashlib.sha256(fh.read()).hexdigest()
+print(st.st_ino, stat.S_IFMT(st.st_mode), st.st_nlink, st.st_uid, body)
+PY
+}
+REAL_BEFORE="$(real_state)"
+FLAG="$WORK/plan-flag"
+HOOKS_COPY="$WORK/hooks-copy"
+cp -R "$REPO_ROOT/core/hooks" "$HOOKS_COPY"
+python3 - "$HOOKS_COPY/plan-scope-allow.py" "$FLAG" <<'PY' || { echo "FAIL: PLAN_FLAG substitution did not match exactly once"; exit 1; }
+import sys
+path, flag = sys.argv[1:]
+src = open(path).read()
+old = 'PLAN_FLAG = "/tmp/agent-plan-approved"'
+if src.count(old) != 1:
+    raise SystemExit(1)
+open(path, "w").write(src.replace(old, 'PLAN_FLAG = "%s"' % flag))
+PY
+HOOK="$HOOKS_COPY/plan-scope-allow.py"
 TRUST_FILE="$WORK/no-trust.list"   # default: nonexistent -> tier fails closed
-
-# Save any live session's real flag; restore on exit.
-FLAG_BACKUP="$WORK/flag.bak"; HAD_FLAG=0
-[[ -e "$FLAG" ]] && { cp "$FLAG" "$FLAG_BACKUP" && HAD_FLAG=1; }
 cleanup() {
-  rm -rf "$FLAG"
-  [[ "$HAD_FLAG" -eq 1 ]] && mv "$FLAG_BACKUP" "$FLAG"
   [[ -n "$WORK" && -d "$WORK" ]] && rm -rf "$WORK"
 }
 trap cleanup EXIT
@@ -229,6 +256,10 @@ expect "ag16-regular-flag-allows"  on present  Write "$WORK/src/x.ts" allow
 if [[ "$(id -u)" -eq 0 ]]; then
   expect "ag16-foreign-uid-flag-silent" on foreign Write "$WORK/src/x.ts" silent
 fi
+
+echo
+echo "=== real shared flag untouched ==="
+if [[ "$(real_state)" == "$REAL_BEFORE" ]]; then ok "real-flag-state-unchanged"; else bad "real-flag-state-unchanged" "$REAL_BEFORE -> $(real_state)"; fi
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
