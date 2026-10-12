@@ -407,6 +407,35 @@ else
   bad "gate-sink-dir-seam" "diverted=$(lines "$GS/diverted/circuit-breaker.jsonl") proj=$(ls -A "$GS/proj") $R"
 fi
 
+# Probe used by the lock-order case below and by its mutation probe.
+LOCK_PROBE_PY='
+import fcntl, io, json, os, runpy, sys
+st = os.path.join(os.environ["STATE_DIR"], "lockprobe.json")
+os.environ.update(AGENT_CIRCUIT_BREAKER_STATE=st, AGENT_CIRCUIT_BREAKER_THRESHOLD="1")
+proj = os.path.join(os.environ["STATE_DIR"], "lockprobe-proj"); os.makedirs(proj, exist_ok=True)
+os.environ.pop("AGENT_CIRCUIT_BREAKER_SINK", None); os.environ.pop("AGENT_GATE_SINK_DIR", None)
+held = []
+real_open = os.open
+def spy(path, *a, **k):
+    if str(path).endswith("circuit-breaker.jsonl"):
+        fh = open(st + ".lock", "a")
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB); held.append(False)
+        except OSError:
+            held.append(True)
+        finally:
+            fh.close()
+    return real_open(path, *a, **k)
+os.open = spy
+ev = {"event": "PostToolUse", "tool_name": "Bash", "cwd": proj, "session_id": "lk",
+      "tool_response": {"stdout": "Traceback (most recent call last): lock probe"}}
+real_out = sys.stdout
+sys.stdin = io.StringIO(json.dumps(ev)); sys.stdout = io.StringIO()
+runpy.run_path(os.environ["HOOK"], run_name="__main__")
+sys.stdout = real_out
+print("held" if any(held) else ("free" if held else "no-write"))
+'
+
 # Mutation probes for the sink protections: each reverts ONE guard in a COPY of the
 # hook and the matching case above must then flip. An anchor miss is a hard FAIL.
 sink_probe() {  # sink_probe <name> <find> <repl> <scenario>
@@ -432,6 +461,20 @@ sink_probe() {  # sink_probe <name> <find> <repl> <scenario>
       ln -s "$d/victim.jsonl" "$d/proj/.agent/logs/circuit-breaker.jsonl"
       CB_HOOK="$m" run_cb "$d/proj" AGENT_CIRCUIT_BREAKER_THRESHOLD=1 "AGENT_CIRCUIT_BREAKER_STATE=$d/st.json" >/dev/null
       [[ "$(lines "$d/victim.jsonl")" -gt 1 ]] && flipped=1 ;;
+    reader-fifo)
+      mkfifo "$d/proj/.agent/logs/circuit-breaker.jsonl"
+      exec 4<>"$d/proj/.agent/logs/circuit-breaker.jsonl"
+      CB_HOOK="$m" run_cb "$d/proj" AGENT_CIRCUIT_BREAKER_THRESHOLD=1 "AGENT_CIRCUIT_BREAKER_STATE=$d/st.json" >/dev/null
+      local got=""; read -r -t 1 -u 4 got || true; exec 4>&-
+      [[ -n "$got" ]] && flipped=1 ;;
+    parent-symlink)
+      rm -rf "$d/proj/.agent"; mkdir -p "$d/outside/logs"; ln -s "$d/outside" "$d/proj/.agent"
+      CB_HOOK="$m" run_cb "$d/proj" AGENT_CIRCUIT_BREAKER_THRESHOLD=1 "AGENT_CIRCUIT_BREAKER_STATE=$d/st.json" >/dev/null
+      [[ -e "$d/outside/logs/circuit-breaker.jsonl" ]] && flipped=1 ;;
+    lock-held)
+      local lk
+      lk=$(HOOK="$m" STATE_DIR="$d" python3 -c "$LOCK_PROBE_PY" 2>&1 | tail -1)
+      [[ "$lk" == held ]] && flipped=1 ;;
     ghost)
       CB_HOOK="$m" run_cb "$d/ghost/zzz" AGENT_CIRCUIT_BREAKER_THRESHOLD=1 "AGENT_CIRCUIT_BREAKER_STATE=$d/st.json" >/dev/null
       [[ -e "$d/ghost" ]] && flipped=1 ;;
@@ -442,7 +485,39 @@ sink_probe confinement 'if candidate == base or candidate.startswith(base + os.s
 sink_probe nonblock '| getattr(os, "O_NONBLOCK", 0)' '' fifo
 sink_probe gate-sink-dir 'os.environ.get("AGENT_GATE_SINK_DIR") or ' '' seam
 sink_probe nofollow '| getattr(os, "O_NOFOLLOW", 0)' '' symlink
+sink_probe isreg 'if not stat.S_ISREG(os.fstat(fd).st_mode):' 'if False:' reader-fifo
+sink_probe parent-symlink 'if os.path.lexists(p) and os.path.realpath(p) != want:' 'if False:' parent-symlink
+sink_probe lock-order '        main()
+    flush_pending()' '        main()
+        flush_pending()' lock-held
 sink_probe root-exists 'if not os.path.isdir(root):' 'if False:' ghost
+
+# S_ISREG guard: an open that SUCCEEDS on a non-regular file. A FIFO with a reader
+# attached opens fine, so only the fstat check keeps the record out of it.
+RF="$STATE_DIR/reader-fifo"; mkdir -p "$RF/proj/.agent/logs"; mkfifo "$RF/proj/.agent/logs/circuit-breaker.jsonl"
+exec 3<>"$RF/proj/.agent/logs/circuit-breaker.jsonl"
+R=$(run_cb "$RF/proj" "AGENT_CIRCUIT_BREAKER_THRESHOLD=1" "AGENT_CIRCUIT_BREAKER_STATE=$RF/st.json")
+LINE=""; read -r -t 1 -u 3 LINE || true
+exec 3>&-
+if [[ -z "$LINE" && "$R" == "rc=0 out="[1-9]* ]]; then ok "nonregular-sink-not-written" "FIFO with reader got nothing ($R)"; else bad "nonregular-sink-not-written" "line=${LINE:0:60} $R"; fi
+
+# Intermediate symlinks: <root>/.agent or <root>/.agent/logs pointing outside the root.
+for variant in agent-dir logs-dir; do
+  IS="$STATE_DIR/is-$variant"; mkdir -p "$IS/proj" "$IS/outside/logs"
+  if [[ "$variant" == agent-dir ]]; then ln -s "$IS/outside" "$IS/proj/.agent"
+  else mkdir -p "$IS/proj/.agent"; ln -s "$IS/outside/logs" "$IS/proj/.agent/logs"; fi
+  R=$(run_cb "$IS/proj" "AGENT_CIRCUIT_BREAKER_THRESHOLD=1" "AGENT_CIRCUIT_BREAKER_STATE=$IS/st.json")
+  if [[ ! -e "$IS/outside/logs/circuit-breaker.jsonl" && "$R" == "rc=0 out="[1-9]* ]]; then
+    ok "symlinked-parent-$variant" "nothing written through the link ($R)"
+  else
+    bad "symlinked-parent-$variant" "$(ls -R "$IS/outside" 2>&1 | head -3) $R"
+  fi
+done
+
+# The sink write happens AFTER the machine-wide state lock is released: probe the
+# lock from the moment the hook opens the sink.
+LK=$(HOOK="$HOOK" STATE_DIR="$STATE_DIR" python3 -c "$LOCK_PROBE_PY" 2>&1 | tail -1)
+if [[ "$LK" == free ]]; then ok "sink-written-outside-state-lock" "lock was free when the sink opened"; else bad "sink-written-outside-state-lock" "$LK"; fi
 
 # Registry row is readable by the digest and counts the sink.
 DIGEST="$REPO_ROOT/core/infra/telemetry-digest.sh"

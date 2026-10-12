@@ -151,7 +151,7 @@ def append_fire_record(data: dict, record: dict) -> None:
     call; O_NONBLOCK makes that open fail fast) and O_NOFOLLOW (a symlinked sink
     must not redirect the write to a file outside the project). The project root
     must already exist: only `.agent/logs` below it is created, never a missing
-    root tree. Root resolution is inside the try because `os.getcwd()` raises
+    root tree, and `.agent` / `.agent/logs` must not be symlinks leaving the root. Root resolution is inside the try because `os.getcwd()` raises
     when the process cwd was deleted.
     """
     fd = -1
@@ -160,6 +160,16 @@ def append_fire_record(data: dict, record: dict) -> None:
         if not os.path.isdir(root):
             return
         sink = resolve_sink(root)
+        # A committed symlink at <root>/.agent or <root>/.agent/logs would send the
+        # write below the link's target; O_NOFOLLOW only covers the last component.
+        project_logs = os.path.join(root, ".agent", "logs")
+        if os.path.dirname(sink) == project_logs:
+            real_root = os.path.realpath(root)
+            for rel in (".agent", os.path.join(".agent", "logs")):
+                p = os.path.join(root, rel)
+                want = os.path.join(real_root, rel)
+                if os.path.lexists(p) and os.path.realpath(p) != want:
+                    return
         os.makedirs(os.path.dirname(sink), exist_ok=True)
         flags = (
             os.O_WRONLY | os.O_APPEND | os.O_CREAT
