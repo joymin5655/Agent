@@ -9,7 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **pre-tool-guard: secret reads through readers outside the verb list, and declared paths through redirects and inline code (P1-12).** `base64`, `sort`, `cut`, `jq`, `vim` and ~30 more readers now nominate guard 5 (one shared list, also used by stage 2 and guard 11b); guard 11b also denies `cat<p`, `< p cat`, `$(<p)` and `python3 -c`/`node -e`/`perl -e` naming a declared path. P1-11 (cwd module shadowing) was already closed by #176; its test is `shadow-json-*` in `pre-tool-guard-test.sh`.
-- **plan-gate: approval flag write and legacy restore hardened (AG15).** `write_flag` no longer follows a symlink or truncates a hard-linked file (same `O_NOFOLLOW` / single-link / truncate-after-validate path as the withheld marker); the claim-restore fallback creates the slot with `O_EXCL` instead of `lexists`+`rename`. New tests pin the claim wiring, those two paths and previously surviving mutants; the codex-models and goal-record tests count root-only skips.
+
+## [0.9.0] - 2026-10-12
+
+Planning and verification discipline borrowed from a decision-coverage / plan-checker workflow.
+
+### Added
+- **Decision coverage (#181).** Every `/spec` spec carries `## Decisions` (stable D-IDs or
+  `- none`). A claim may cite `decisions: [{id, evidence}]`; `completion-verify.py` reports spec
+  D-IDs the claim leaves uncovered under a non-gating `advisories` key (dryrun) — verdict, score,
+  refutations and exit code never change.
+- **Plan check before approval (#181).** `core/infra/plan-lint.sh` lints plan.md (Wave headers, a
+  `→ verify:` per step, prose verify needs `reason:`, success-criterion terms reach a Wave step,
+  spec has `## Decisions`); the new read-only `plan-checker` agent reviews spec+plan semantically.
+  `/spec` Step 3.5 revises the plan at most 3 rounds. registry-drift's read-only rule now covers
+  `checker` agents.
+- **`skills` field in the delegation contract (#179).** `/supervise` names the skills each worker
+  loads; registry-drift requires the field.
+- **Instruction byte budget (#180).** `core/tests/instruction-budget.sh` caps SKILL.md at 20000,
+  agents at 8000 and rules at 12000 bytes.
+
+### Fixed
+- **plan-gate: approval flag write and legacy restore hardened (#182).** `write_flag` no longer follows a symlink or truncates a hard-linked file (same `O_NOFOLLOW` / single-link / truncate-after-validate path as the withheld marker); the claim-restore fallback creates the slot with `O_EXCL` instead of `lexists`+`rename`. New tests pin the claim wiring, those two paths and previously surviving mutants; the codex-models and goal-record tests count root-only skips.
+- **plan-gate withheld markers are per session (#172).** Two sessions withheld back to back no
+  longer overwrite each other's marker and unblock the first session's Agent/Task paths.
 - **verify-all green on a root VM without sqlite3.** `codex-models-test.sh` skips only its
   `chmod 000` OSError case when running as root; `supervisor-goal-record-test.sh` emits the
   `SKIP:` line and exits 2 when sqlite3 or jq is missing; two E702 statements in
