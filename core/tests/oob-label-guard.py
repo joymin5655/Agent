@@ -25,8 +25,9 @@ Method
   3. Anything left that cannot be followed makes the site UNRESOLVED, which FAILS:
      an imported name or unknown call, a parameter nobody in the file calls, a call
      through `*args` / `**kwargs` or on a receiver that may be the method's class,
-     a state explosion past HARD_CAP in the concatenation of alternatives. ALLOW (file:function -> reason)
-     is the only way to accept one.
+     a state explosion past HARD_CAP in the concatenation of alternatives, a site or a
+     whole file past its work budget. ALLOW (file:function -> reason) is the only way to
+     accept one.
 
 Deliberate exemptions — not "unresolved", stated so the claim stays true:
   * A value interpolated into an f-string / `.format` / `%` is a runtime datum (counts,
@@ -35,18 +36,49 @@ Deliberate exemptions — not "unresolved", stated so the claim stays true:
     name (`f"{LBL}"` with `from labels import LBL`) and (b) a value placed right after a
     label word or sink field (`f"arm={arm}"`, `"cohort {}".format(assign())`,
     `f"guard={g()}"`), where the literal template already names the label and the
-    value is the assignment: both are UNRESOLVED.
+    value is the assignment: both are UNRESOLVED. "Right after" is wide on purpose: a
+    label word, any run of separators (space, `= : #`, brackets, quotes, `. / \\ -`)
+    and then a runtime value is UNRESOLVED wherever it sits — in prose
+    (`bucket {x} is full`, `session cohort {x}`), in a path (`docs/arm/{x}`,
+    `cohort_{x}.csv`), in a URL or in markdown (`[variant]({x})`).
+    This is a deliberate false-positive budget: the guard is a fail-closed CI tripwire, a
+    path or file name can carry a label as well as a sentence can (`cohort_treatment.csv`),
+    and narrowing the rule (AG18 r0 tried) let `variant "{x}" selected`, `arm=/{x}` and
+    `done.arm={x}` through. Remedy: reword so the noun and the value are apart
+    (`f"{x} is full"`). Do not ALLOW it: ALLOW is per function and blinds all of it.
   * A key computed from a runtime or imported value (not from string constants) is
-    invisible: nothing in the file says it will spell additionalContext.
+    invisible: nothing in the file says it will spell additionalContext. A key with a
+    literal piece that could still complete to an emit key (`f"additional{x}"`,
+    `f"{x}Context"`, a 45-step alias chain behind `f"{a45}Context"`) is UNRESOLVED.
+    Keys are probed in dict literals, `d[k] = v`, `d.setdefault(k, v)` and
+    `dict([(k, v)])`.
+  * Known limits, not fixed (a key or text built this way is not seen): a key made by a
+    string method (`.lower()`, `.replace()`), a list variable joined later
+    (`"".join(names)`), `dict(zip(keys, values))`, and in shell hooks quote
+    concatenation that splits a word (`echo "hold""out arm"`). The shell `self.end()`
+    false alarm (a heredoc Python call read as a definition) is the other known cost.
   * Same-named definitions are unioned: an unrelated class's `build()` can be reported
     for another class's call site (conservative — it errs toward a false alarm).
   * Numbers render as their decimal text; `.N` truncation and `0N` padding specs are
     applied, other format specs only add spaces and are ignored.
   * Shell hooks: the guard follows `jq --arg` variables to their assignment lines
     and to same-file shell functions they call (3 levels; same-named definitions are
-    merged, so look-alikes in heredoc text cannot hide a real definition). A function whose body is not a `{ }` group
-    (`f() ( ... )`, `f() if ...`) is not parsed, and calling it is UNRESOLVED. Output of
-    external commands is runtime data.
+    merged, so look-alikes in heredoc text cannot hide a real definition; names may carry
+    `:` and `.`: `lib::build`, `pkg.build`). A `name()` line is a definition only when a
+    compound command follows (`{`, `(`, `if`, `for`, ...); a bare `flush()` is not. A line
+    ending in an odd number of backslashes continues on the next one (`build() \\` then
+    `{`) and is read joined; a continued line that still is no definition is unfollowable,
+    not dropped. `name ( )` with inner spaces is a definition. Cost of the dotted-name
+    rule: a Python `self.end()` in a heredoc, followed by an `if ...:` line, reads as a
+    definition `self.end`, so a jq message that mentions `self.end` is UNRESOLVED
+    (fail-closed; reword the message).
+    A function whose body is not a `{ }` group (`f() ( ... )`, `f() if ...`) is not
+    parsed, and calling it is UNRESOLVED. Output of external commands is runtime data.
+  * Cost: each emit site has a work budget (WORK_CAP string joins and node visits);
+    past it the site is UNRESOLVED instead of enumerating every alternative. A computed
+    key (`{"additional" + "Context": ...}`, `d[k] = ...`) gets a fresh budget per probe,
+    and a key the resolver gave up on (budget, depth, state explosion) is itself an
+    UNRESOLVED site; a key that is merely a runtime value stays invisible, as above.
 
 Usage: oob-label-guard.py [--root DIR]   (exit 1 on a label hit or an unresolved site)
 """
@@ -84,6 +116,30 @@ STR_METHODS = {"join", "strip", "lstrip", "rstrip", "replace", "lower", "upper",
 MAX_COMBOS = 64      # candidates kept verbatim before compressing to hits + tail
 TAIL = 48            # chars kept after compression; label patterns are shorter
 HARD_CAP = 4096      # distinct compressed tails before a site is called unresolved
+WORK_CAP = 250000     # string joins + node visits per emit site before it is called unresolved
+KEY_GAVE_UP = "computed key not followed: the resolver gave up on it (budget or depth)"
+KEY_MAY_SPELL = "computed key may spell an emit key: it has a piece the guard cannot follow"
+FILE_CAP = 8 * WORK_CAP    # the same, summed over every site and key probe of one file
+BUDGET_MSG = "work budget exceeded (%d steps): too many alternatives to enumerate" % WORK_CAP
+FILE_MSG = ("work budget exceeded for the whole file (%d steps): too many alternatives to "
+            "enumerate" % FILE_CAP)
+
+
+def _gave_up(opq):
+    """True when the resolver stopped short (budget, depth, state explosion) instead of
+    meeting an ordinary runtime value."""
+    return any(o.startswith("work budget exceeded") or o == "too deep"
+               or o.startswith("combinatorial") for o in opq)
+
+
+def _may_spell(text):
+    """True when a computed-key candidate with pieces the guard cannot follow (SENT) could
+    still spell an emit key: `additional<?>` / `<?>Context`. A candidate with no literal
+    character (a bare runtime value) or one that can never match (`k<?>`) is not a hit."""
+    if SENT not in text or not text.replace(SENT, ""):
+        return False
+    pat = ".*".join(re.escape(p) for p in re.sub(SENT + "+", SENT, text).split(SENT))
+    return any(re.fullmatch(pat, k) for k in KEYS)
 
 _WORDS = [
     # assignment / identifier forms only — "experiment with X", "variant of the plan",
@@ -120,6 +176,8 @@ _RUNTIME = re.compile(
 
 
 def runtime_hits(text):
+    if SENT not in text:                       # every runtime form needs the sentinel
+        return []
     return [m.group(0).replace(SENT, "{…}") for m in _RUNTIME.finditer(text)]
 
 
@@ -145,8 +203,8 @@ def _apply_spec(val, spec):
 
 
 def _compress(text):
-    hits = (label_hits(text) + [m.group(0) for m in _RUNTIME.finditer(text)]
-            if len(text) > TAIL else [])
+    hits = (label_hits(text) + ([m.group(0) for m in _RUNTIME.finditer(text)]
+                                if SENT in text else []) if len(text) > TAIL else [])
     return ("\n".join(hits) + "\n" if hits else "") + text[-TAIL:]
 
 
@@ -159,6 +217,8 @@ class Resolver:
         self.calls = {}
         self.imported = {}
         self.dict_sets = {}
+        self.work = 0
+        self.total = 0
         for n in ast.walk(tree):
             for c in ast.iter_child_nodes(n):
                 self.parents[id(c)] = n
@@ -244,6 +304,15 @@ class Resolver:
                 return d
         return None
 
+    def spend(self, n):
+        """Charge n steps to the site being resolved; True once the budget is gone."""
+        self.work += n
+        self.total += n
+        return self.work > WORK_CAP or self.total > FILE_CAP
+
+    def budget_msg(self):
+        return FILE_MSG if self.total > FILE_CAP else BUDGET_MSG
+
     def cat(self, parts, opq):
         """Join fragment alternatives so a label split across fragments is seen.
 
@@ -255,8 +324,14 @@ class Resolver:
         cur = [""]
         for part in parts:
             part = part or [""]
+            if self.spend(len(cur) * len(part)):
+                opq.append(self.budget_msg())
+                return cur
             nxt = dict.fromkeys(a + b for a in cur for b in part)
             if len(nxt) > MAX_COMBOS:
+                if self.spend(4 * len(nxt)):
+                    opq.append(self.budget_msg())
+                    return cur
                 nxt = dict.fromkeys(_compress(x) for x in nxt)
             if len(nxt) > HARD_CAP:
                 opq.append("combinatorial expansion beyond %d distinct tails" % HARD_CAP)
@@ -270,6 +345,8 @@ class Resolver:
             return [], []
         if depth > 40:
             return [], ["too deep"]
+        if self.spend(1):
+            return [], [self.budget_msg()]
         r = lambda n, f=fn: self.resolve(n, f, seen, depth + 1)  # noqa: E731
         if isinstance(node, ast.Constant):
             if isinstance(node.value, str) and node.value not in PROTOCOL:
@@ -549,7 +626,8 @@ class Resolver:
 
     def _call(self, node, fn, seen, depth):
         f = node.func
-        name = f.id if isinstance(f, ast.Name) else (f.attr if isinstance(f, ast.Attribute) else None)
+        name = f.id if isinstance(f, ast.Name) else (
+            f.attr if isinstance(f, ast.Attribute) else None)
         args = list(node.args) + [k.value for k in node.keywords]
 
         def over(nodes):
@@ -661,8 +739,27 @@ def scan_python(path, rel):
 
     def add(lineno, kind, value, anchor):
         fn = rs.enclosing_fn(anchor)
+        rs.work = 0                            # the budget is per emit site
         strs, opq = rs.resolve(value, fn, frozenset())
         sites.append((lineno, kind, strs, opq, fn))
+
+    def probe(node):
+        """Texts a computed key can spell, and whether the resolver gave up on it. Each
+        probe gets a fresh budget: one expensive key must not blind the next."""
+        rs.work = 0
+        strs, opq = rs.resolve(node, rs.enclosing_fn(node), frozenset())
+        return strs, _gave_up(opq)
+
+    def key_site(k, lineno, value, kind, anchor):
+        """A computed key is a site when it spells an emit key; UNRESOLVED when it might
+        (a piece it cannot follow) or when the resolver gave up on it."""
+        texts, gave_up = probe(k)
+        if any(c in KEYS for c in texts):
+            add(lineno, kind, value, anchor)
+        elif any(_may_spell(c) for c in texts):
+            sites.append((lineno, "key", [], [KEY_MAY_SPELL], rs.enclosing_fn(anchor)))
+        elif gave_up:
+            sites.append((lineno, "key", [], [KEY_GAVE_UP], rs.enclosing_fn(anchor)))
 
     for n in ast.walk(tree):
         if isinstance(n, ast.Constant) and isinstance(n.value, str) \
@@ -680,20 +777,74 @@ def scan_python(path, rel):
         elif isinstance(n, ast.Dict):
             # keys built from string constants: {"additional" + "Context": ...}
             for k, v in zip(n.keys, n.values):
-                if k is not None and not isinstance(k, ast.Constant) \
-                        and any(c in KEYS for c in rs.resolve(k, rs.enclosing_fn(n), frozenset())[0]):
-                    add(k.lineno, "dict", v, n)
+                if k is not None and not isinstance(k, ast.Constant):
+                    key_site(k, k.lineno, v, "dict", n)
         elif isinstance(n, ast.Subscript) and isinstance(n.ctx, ast.Store) \
                 and not isinstance(n.slice, ast.Constant):
-            if any(c in KEYS for c in rs.resolve(n.slice, rs.enclosing_fn(n), frozenset())[0]):
-                add(n.lineno, "subscript", _store_value(n, rs.parents), n)
+            key_site(n.slice, n.lineno, _store_value(n, rs.parents), "subscript", n)
+        elif isinstance(n, ast.Call):
+            f = n.func
+            if isinstance(f, ast.Attribute) and f.attr == "setdefault" and len(n.args) >= 2 \
+                    and not isinstance(n.args[0], ast.Constant):
+                key_site(n.args[0], n.lineno, n.args[1], "setdefault", n)
+            elif isinstance(f, ast.Name) and f.id == "dict" and n.args \
+                    and isinstance(n.args[0], (ast.List, ast.Tuple, ast.Set)):
+                for pair in n.args[0].elts:        # dict([(K, v), ...])
+                    if isinstance(pair, (ast.Tuple, ast.List)) and len(pair.elts) == 2 \
+                            and not isinstance(pair.elts[0], ast.Constant):
+                        key_site(pair.elts[0], pair.elts[0].lineno, pair.elts[1], "dict", n)
     return sites
 
 
 _JQ_ARG = re.compile(r'--arg\s+\w+\s+"\$\{?(\w+)')
+_SH_NAME = r"[A-Za-z_][\w:.-]*"           # lib::build  pkg.build  my-fn
 _SH_FUNC = re.compile(
-    r"^\s*(?:function\s+([A-Za-z_][\w-]*)\s*(?:\(\))?|([A-Za-z_][\w-]*)\s*\(\))\s*(.*)$")
+    r"^\s*(?:function\s+(" + _SH_NAME + r")\s*(?:\(\s*\))?|(" + _SH_NAME
+    + r")\s*\(\s*\))\s*(.*)$")
+# What may follow `name()`: a compound command. A bare `flush()` line (a Python call inside
+# a heredoc, say) is no definition at all.
+_SH_BODY = re.compile(r"\{|\(|(?:if|for|while|until|case|select)\b|\[\[")
 _HEREDOC = re.compile(r"(?<!<)<<(?!<)-?\s*([\"']?)(\w+)\1")
+
+
+class _Joined(str):
+    """A logical line made of several physical lines (backslash continuation). `physical`
+    keeps the lines as written: inside single quotes and quoted heredocs bash does NOT
+    join them, so the label check reads both forms."""
+    physical = ()
+
+
+def _phys(ln):
+    return list(ln.physical) if isinstance(ln, _Joined) else []
+
+
+_CONT = re.compile(r"(\\+)$")
+
+
+def _logical_lines(lines):
+    """[(first line number, text)] with `\\`-continued lines joined, as bash reads them:
+    a line ending in an ODD number of backslashes continues on the next one (the pair
+    disappears), so `build() \\` + `{` is the definition `build() {`. A line that is, or
+    ends in, a comment does not continue. A continuation that runs into EOF keeps its
+    backslash; the definition parser treats that as unfollowable."""
+    out, i = [], 0
+    while i < len(lines):
+        no, text, joined, pieces = i + 1, lines[i], False, [lines[i]]
+        i += 1
+        while True:
+            m = _CONT.search(text)
+            commentish = text.lstrip().startswith("#") or re.search(r"\s#", text)
+            if not m or len(m.group(1)) % 2 == 0 or commentish or i >= len(lines):
+                break
+            text = text[:-1] + lines[i]
+            pieces.append(lines[i])
+            joined = True
+            i += 1
+        if joined:
+            text = _Joined(text)
+            text.physical = tuple(pieces)
+        out.append((no, text))
+    return out
 
 
 def _braces(line):
@@ -716,8 +867,12 @@ def _shell_functions(code):
     """name -> (body lines, followable). A `{ }` body is brace-counted outside
     quotes, escapes and heredoc bodies, so a `}` printed by the function does not end
     it early. Same-named definitions are merged, never replaced, so a look-alike
-    `build()` in heredoc text cannot hide the real one. A definition whose body is not a `{ }` group (`( ... )`, `if`, ...) is
-    not parsed: it is marked unfollowable, which fails any site that calls it."""
+    `build()` in heredoc text cannot hide the real one. A `name()` line counts as a
+    definition only when a compound command follows it (`{`, `(`, `if`, `for`, `while`,
+    `until`, `case`, `select`, `[[`), here or on the next non-blank line: a bare call such
+    as a Python `flush()` inside a heredoc defines nothing. A definition whose body is
+    not a `{ }` group (`( ... )`, `if`, ...) is not parsed: it is marked unfollowable,
+    which fails any site that calls it."""
     funcs = {}
     for i, (_, ln) in enumerate(code):
         # No heredoc skipping at this level: a `<<` is not always a heredoc ($((1<<2)),
@@ -728,13 +883,25 @@ def _shell_functions(code):
             continue
         name = m.group(1) or m.group(2)
         tail = m.group(3).strip()
-        rest, j = None, i + 1
+        if tail.startswith("#"):               # `build() # note` — the comment is not the body
+            tail = ""
+        rest, j, head_phys = None, i + 1, _phys(ln)
+        # A joined line that still is not a definition is not dropped: it is unfollowable.
+        unsure = isinstance(ln, _Joined) or tail == "\\"
+        if tail == "":
+            nl = _next_line(code, i)
+            if nl is None or not _SH_BODY.match(code[nl][1].strip()):
+                if unsure:
+                    tail = "\\"
+                else:
+                    continue                   # not followed by a compound command: no definition
+            else:
+                tail, j = code[nl][1].strip(), nl + 1
+                head_phys = _phys(ln) + _phys(code[nl][1])
+        elif not _SH_BODY.match(tail) and not unsure:
+            continue
         if tail.startswith("{"):
             rest = tail[1:]
-        elif tail == "":
-            nl = _next_line(code, i)
-            if nl is not None and code[nl][1].strip().startswith("{"):
-                rest, j = code[nl][1].strip()[1:], nl + 1
         if rest is None:                       # body is not a { } group
             body, ok = [], False
         else:
@@ -755,7 +922,7 @@ def _shell_functions(code):
                     tag = hd2.group(2)
             ok = depth <= 0
         old_body, old_ok = funcs.get(name, ([], True))
-        funcs[name] = (old_body + body, old_ok and ok)
+        funcs[name] = (old_body + body + head_phys, old_ok and ok)
     return funcs
 
 
@@ -764,7 +931,7 @@ def scan_shell(path, rel):
         lines = open(path, encoding="utf-8").read().splitlines()
     except OSError:
         return []
-    code = [(i + 1, ln) for i, ln in enumerate(lines) if not ln.lstrip().startswith("#")]
+    code = [(no, ln) for no, ln in _logical_lines(lines) if not ln.lstrip().startswith("#")]
     funcs = _shell_functions(code)
     sites = []
     for i, (lineno, ln) in enumerate(code):
@@ -789,6 +956,7 @@ def scan_shell(path, rel):
                 strs += funcs[f][0]
                 if not funcs[f][1]:
                     unterminated.append(f)
+        strs = [x for t in strs for x in [t] + _phys(t)]    # and the lines as written
         opq = [] if names else ["no jq --arg variable feeds the key"]
         opq += ["cannot follow shell function %s() (no { } body or no closing brace)" % f
                 for f in unterminated]

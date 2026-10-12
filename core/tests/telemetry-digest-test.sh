@@ -28,6 +28,14 @@ set -u
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SCRIPT="$REPO_ROOT/core/infra/telemetry-digest.sh"
+# Every variable telemetry-digest.sh reads from the environment is dropped first: an inherited
+# sink seam without its marker prints a WARN line that mixes into every `2>&1` JSON capture, and
+# an inherited project/registry/log path changes what the digest counts. Cases that need one
+# pass it as an argument or set it inline (the ag9 section does).
+unset AGENT_GATE_SINK_DIR AGENT_GATE_SINK_TEST_RUN AGENT_GATE_PROJECTS AGENT_TIER_ALIASES \
+  AGENT_REGISTRY_PATH AGENT_GATE_REGISTRY AGENT_GATE_LOGS_DIR AGENT_LOGS_DIR AGENT_TELEMETRY_LOG \
+  AGENT_SUPERVISOR_MODE AGENT_MODEL_ROUTING_SINK AGENT_SESSION_TIER_SINK AGENT_WORKERS_ROOT \
+  AGENT_REPRODUCE_TEST
 
 PASS=0
 FAIL=0
