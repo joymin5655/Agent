@@ -139,6 +139,26 @@ def _open_regular(name: str, flags: int, dir_fd: "int | None" = None) -> int:
     return fd
 
 
+def _write_all(fd: int, data: bytes) -> None:
+    """os.write may be short; loop until done, and treat a zero return as failure."""
+    view = memoryview(data)
+    while view:
+        n = os.write(fd, view)
+        if n <= 0:
+            raise OSError("short write")
+        view = view[n:]
+
+
+def _unlink_if_same(path: str, ident: "tuple[int, int]") -> None:
+    """Remove path only if it is still the file we created/opened (dev, ino)."""
+    try:
+        st = os.lstat(path)
+        if (st.st_dev, st.st_ino) == ident:
+            os.unlink(path)
+    except OSError:
+        pass
+
+
 def _read(name: str, dir_fd: "int | None" = None) -> "str | None":
     try:
         fd = _open_regular(name, os.O_RDONLY, dir_fd)
@@ -158,7 +178,7 @@ def _write_verified(name: str, content: str, dir_fd: "int | None" = None) -> boo
         data = content.encode("utf-8")  # before open: an unencodable id must not truncate
         fd = _open_regular(name, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, dir_fd)
         try:
-            os.write(fd, data)
+            _write_all(fd, data)
         finally:
             os.close(fd)
     except (OSError, UnicodeError):
@@ -308,13 +328,16 @@ def _create_exclusive(path: str, content: str) -> bool:
     except OSError:
         return False
     try:
-        os.write(fd, content.encode("utf-8"))
+        st = os.fstat(fd)
+    except OSError:
+        os.close(fd)
+        return False
+    try:
+        _write_all(fd, content.encode("utf-8"))
     except (OSError, UnicodeError):
         os.close(fd)
-        try:
-            os.unlink(path)
-        except OSError:
-            pass
+        # Clean up only our own half-written file: a newer session may own the slot now.
+        _unlink_if_same(path, (st.st_dev, st.st_ino))
         return False
     os.close(fd)
     return _read(path) == content
@@ -392,12 +415,19 @@ def write_flag(sid: str) -> None:
     try:
         data = f"approved at {datetime.now().isoformat()} session={sid}".encode("utf-8")
         fd = _open_regular(str(PLAN_FLAG), os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
-        try:
-            os.write(fd, data)
-        finally:
-            os.close(fd)
     except (OSError, UnicodeError):
+        return
+    try:
+        st = os.fstat(fd)
+        try:
+            _write_all(fd, data)
+        except OSError:
+            # A flag without its session tail must not stay as an approval; drop only ours.
+            _unlink_if_same(str(PLAN_FLAG), (st.st_dev, st.st_ino))
+    except OSError:
         pass
+    finally:
+        os.close(fd)
 
 
 def notice(message: str) -> None:

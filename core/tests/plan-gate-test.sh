@@ -692,6 +692,87 @@ report("ag16-keep-claim-unsafe-sid",
        len(claims(flag)) == 1 and slot(flag).read_text() == "newZ" and mod.is_withheld("odd id/x") is True)
 
 
+# AG16 (3): a failed exclusive create only removes the file it created itself
+def replace_then_fail(path):
+    def w(fd, data):
+        os.unlink(path)
+        pathlib.Path(path).write_text("newer")
+        raise OSError(28, "No space left on device")
+    return w
+
+
+mod, flag = load("excl-fail")
+target = str(slot(flag))
+undo = patched(os, "write", replace_then_fail(target))
+try:
+    ok = mod._create_exclusive(target, "ownerX")
+finally:
+    undo()
+report("ag16-excl-fail-newer-file-not-deleted", ok is False and slot(flag).read_text() == "newer")
+
+mod, flag = load("excl-fail-own")
+
+
+def fail_write(fd, data):
+    raise OSError(28, "No space left on device")
+
+
+undo = patched(os, "write", fail_write)
+try:
+    ok = mod._create_exclusive(str(slot(flag)), "ownerX")
+finally:
+    undo()
+report("ag16-excl-fail-own-file-removed", ok is False and not slot(flag).exists())
+
+# AG16 (4): short writes are completed; a failing write drops only our own flag
+real_write = os.write
+
+
+def short_write(fd, data):
+    return real_write(fd, bytes(data)[:3])
+
+
+mod, flag = load("short")
+undo = patched(os, "write", short_write)
+try:
+    mod.write_flag("sidShort")
+finally:
+    undo()
+report("ag16-short-write-completed", flag.read_text().endswith("session=sidShort")
+       and mod.flag_session(flag) == "sidShort")
+
+mod, flag = load("short-marker")
+undo = patched(os, "write", short_write)
+try:
+    wrote = mod._write_verified(str(slot(flag)), "ownerXYZ")
+finally:
+    undo()
+report("ag16-short-write-marker-completed", wrote is True and slot(flag).read_text() == "ownerXYZ")
+
+mod, flag = load("zero-write")
+undo = patched(os, "write", lambda fd, data: 0)
+try:
+    mod.write_flag("sidZero")
+finally:
+    undo()
+report("ag16-zero-write-flag-removed", not flag.exists())
+
+mod, flag = load("flagfail-own")
+flag.write_text("approved at old session=old")
+undo = patched(os, "write", fail_write)
+try:
+    mod.write_flag("sidNew")
+finally:
+    undo()
+report("ag16-write-fail-own-flag-removed", not flag.exists())
+
+mod, flag = load("flagfail-newer")
+undo = patched(os, "write", replace_then_fail(str(flag)))
+try:
+    mod.write_flag("sidNew")
+finally:
+    undo()
+report("ag16-write-fail-newer-flag-not-deleted", flag.read_text() == "newer")
 PY
 while read -r verdict name; do
   [[ -z "${verdict:-}" ]] && continue
