@@ -43,8 +43,10 @@ Deliberate exemptions — not "unresolved", stated so the claim stays true:
   * Numbers render as their decimal text; `.N` truncation and `0N` padding specs are
     applied, other format specs only add spaces and are ignored.
   * Shell hooks: the guard follows `jq --arg` variables to their assignment lines
-    and to same-file shell functions they call (3 levels). Output of external
-    commands is runtime data.
+    and to same-file shell functions they call (3 levels; same-named definitions are
+    merged; heredoc text is not code). A function whose body is not a `{ }` group
+    (`f() ( ... )`, `f() if ...`) is not parsed, and calling it is UNRESOLVED. Output of
+    external commands is runtime data.
 
 Usage: oob-label-guard.py [--root DIR]   (exit 1 on a label hit or an unresolved site)
 """
@@ -690,7 +692,7 @@ def scan_python(path, rel):
 
 _JQ_ARG = re.compile(r'--arg\s+\w+\s+"\$\{?(\w+)')
 _SH_FUNC = re.compile(
-    r"^\s*(?:function\s+([A-Za-z_][\w-]*)\s*(?:\(\))?|([A-Za-z_][\w-]*)\s*\(\))\s*(?:\{(.*))?$")
+    r"^\s*(?:function\s+([A-Za-z_][\w-]*)\s*(?:\(\))?|([A-Za-z_][\w-]*)\s*\(\))\s*(.*)$")
 _HEREDOC = re.compile(r"(?<!<)<<(?!<)-?\s*([\"']?)(\w+)\1")
 
 
@@ -702,47 +704,64 @@ def _braces(line):
     return t.count("{") - t.count("}")
 
 
-def _next_brace(code, i):
-    """Opening `{` on the next non-blank line after a definition line:
-    (text after the brace, index of the line after it), or None."""
+def _next_line(code, i):
+    """Index of the next non-blank line after i, or None."""
     j = i + 1
     while j < len(code) and not code[j][1].strip():
         j += 1
-    if j < len(code) and code[j][1].strip().startswith("{"):
-        return code[j][1].strip()[1:], j + 1
-    return None
+    return j if j < len(code) else None
 
 
 def _shell_functions(code):
-    """name -> (body lines, terminated). Brace-counted outside quotes, escapes and
-    heredoc bodies, so a `}` printed by the function does not end it early."""
+    """name -> (body lines, followable). A `{ }` body is brace-counted outside
+    quotes, escapes and heredoc bodies, so a `}` printed by the function does not end
+    it early. Heredoc bodies are skipped here too (a look-alike `build()` inside a
+    heredoc is text, not a definition). Same-named definitions are merged, never
+    replaced. A definition whose body is not a `{ }` group (`( ... )`, `if`, ...) is
+    not parsed: it is marked unfollowable, which fails any site that calls it."""
     funcs = {}
+    outer_tag = None
     for i, (_, ln) in enumerate(code):
+        if outer_tag is not None:
+            if ln.strip() == outer_tag:
+                outer_tag = None
+            continue
+        hd = _HEREDOC.search(ln)
+        if hd:
+            outer_tag = hd.group(2)
         m = _SH_FUNC.match(ln)
         if not m:
             continue
-        rest, j = m.group(3), i + 1
-        if rest is None:                      # brace on a later line
-            nb = _next_brace(code, i)
-            if nb is None:
-                continue
-            rest, j = nb
-        body = [rest]
-        depth = 1 + _braces(rest)
-        tag = None
-        while depth > 0 and j < len(code):
-            nxt = code[j][1]
-            body.append(nxt)
-            j += 1
-            if tag is not None:
-                if nxt.strip() == tag:
-                    tag = None
-                continue
-            depth += _braces(nxt)
-            hd = _HEREDOC.search(nxt)
-            if hd:
-                tag = hd.group(2)
-        funcs[m.group(1) or m.group(2)] = (body, depth <= 0)
+        name = m.group(1) or m.group(2)
+        tail = m.group(3).strip()
+        rest, j = None, i + 1
+        if tail.startswith("{"):
+            rest = tail[1:]
+        elif tail == "":
+            nl = _next_line(code, i)
+            if nl is not None and code[nl][1].strip().startswith("{"):
+                rest, j = code[nl][1].strip()[1:], nl + 1
+        if rest is None:                       # body is not a { } group
+            body, ok = [], False
+        else:
+            body = [rest]
+            depth = 1 + _braces(rest)
+            tag = None
+            while depth > 0 and j < len(code):
+                nxt = code[j][1]
+                body.append(nxt)
+                j += 1
+                if tag is not None:
+                    if nxt.strip() == tag:
+                        tag = None
+                    continue
+                depth += _braces(nxt)
+                hd2 = _HEREDOC.search(nxt)
+                if hd2:
+                    tag = hd2.group(2)
+            ok = depth <= 0
+        old_body, old_ok = funcs.get(name, ([], True))
+        funcs[name] = (old_body + body, old_ok and ok)
     return funcs
 
 
@@ -777,7 +796,8 @@ def scan_shell(path, rel):
                 if not funcs[f][1]:
                     unterminated.append(f)
         opq = [] if names else ["no jq --arg variable feeds the key"]
-        opq += ["shell function %s() has no closing brace" % f for f in unterminated]
+        opq += ["cannot follow shell function %s() (no { } body or no closing brace)" % f
+                for f in unterminated]
         sites.append((lineno, "jq", strs, opq, None))
     return sites
 

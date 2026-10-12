@@ -185,11 +185,14 @@ else
 fi
 
 SEQ_STATE="$STATE_DIR/seq-window.json"
-python3 -c '
+S="$SEQ_STATE" python3 -c '
 import json, os, time
 old = time.time() - 600
 json.dump([{"ts": old, "sig": "stale one"}, {"ts": old, "sig": "stale two"}],
-          open(os.environ["S"], "w"))' S="$SEQ_STATE" 2>/dev/null || true
+          open(os.environ["S"], "w"))' 2>/dev/null || true
+if [[ "$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$SEQ_STATE" 2>/dev/null)" != 2 ]]; then
+  bad "stale-fixture-built" "stale state file was not created (env must reach python, not be an argv)"
+fi
 OUT=$(printf '%s' "$SAME" | AGENT_CIRCUIT_BREAKER_STATE="$SEQ_STATE" python3 "$HOOK" 2>/dev/null || true)
 if [[ -z "$OUT" ]]; then
   ok "stale-records-expire" "beyond window, no fire on 1 fresh failure"
@@ -233,6 +236,20 @@ else
   else
     bad "mutation/falsy-zero-detected" "mutant still clean — battery does not cover the fix"
   fi
+fi
+
+# window expiry: with the prune disabled, the two stale records plus one fresh failure fire
+MW=$(mutate window-prune 'records = [r for r in records if now - r.get("ts", 0) < WINDOW_SECONDS]' 'records = [r for r in records if now - r.get("ts", 0) < 10 ** 9]')
+if [[ -z "$MW" ]]; then
+  bad "mutation/window-prune-anchor" "anchor not found — probe is inert"
+else
+  MW_STATE="$STATE_DIR/mw-state.json"
+  S="$MW_STATE" python3 -c '
+import json, os, time
+old = time.time() - 600
+json.dump([{"ts": old, "sig": "stale one"}, {"ts": old, "sig": "stale two"}], open(os.environ["S"], "w"))'
+  MW_OUT=$(printf '%s' "$SAME" | AGENT_CIRCUIT_BREAKER_STATE="$MW_STATE" AGENT_CIRCUIT_BREAKER_THRESHOLD=3 python3 "$MW" 2>/dev/null || true)
+  if [[ -n "$MW_OUT" ]]; then ok "mutation/window-prune" "without the prune, stale records fire"; else bad "mutation/window-prune" "mutant still silent — stale-records-expire is vacuous"; fi
 fi
 
 M2=$(mutate zero-count '_ZERO_COUNT_RE.sub(" ", head)' 'head')
@@ -546,7 +563,7 @@ python3 -c '
 import json, sys, datetime
 print(json.dumps({"ts": datetime.datetime.now(datetime.timezone.utc).isoformat(), "guard": "circuit-breaker",
   "hook": "circuit-breaker.py", "decision": "advise", "origin": "session"}))' > "$GL/circuit-breaker.jsonl"
-DOUT=$(bash "$DIGEST" --gates --logs-dir "$GL" 2>&1 || true)
+DOUT=$(bash "$DIGEST" --gates --registry "$REPO_ROOT/docs/gate-registry.md" --logs-dir "$GL" 2>&1 || true)
 if printf '%s' "$DOUT" | grep -E '^ *circuit-breaker' | grep -qv 'UNINSTRUMENTED\|DEAD'; then
   ok "digest-reads-registry-row" "$(printf '%s' "$DOUT" | grep -E '^ *circuit-breaker' | head -1)"
 else

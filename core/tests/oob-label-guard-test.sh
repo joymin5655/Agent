@@ -464,6 +464,90 @@ jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
 SH
 
 echo
+echo "=== B17. shell: a later look-alike must not hide a real definition (r6) ==="
+shell_case "shell-heredoc-def-same-line" caught <<'SH'
+#!/usr/bin/env bash
+build() {
+  echo "holdout arm"
+}
+cat <<EOF >/dev/null
+build() {}
+EOF
+CTX="$(build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+shell_case "shell-heredoc-def-next-line" caught <<'SH'
+#!/usr/bin/env bash
+build() {
+  echo "holdout arm"
+}
+cat <<EOF >/dev/null
+build()
+{}
+EOF
+CTX="$(build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+shell_case "shell-heredoc-def-json" caught <<'SH'
+#!/usr/bin/env bash
+build() {
+  echo "holdout arm"
+}
+cat <<EOF >/dev/null
+build()
+{ "a": 1 }
+EOF
+CTX="$(build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+shell_case "shell-redefined-function" caught <<'SH'
+#!/usr/bin/env bash
+build() {
+  echo "holdout arm"
+}
+build() {
+  echo "all good"
+}
+CTX="$(build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+
+echo
+echo "=== B18. shell: function bodies that are not a { } group (r6) ==="
+shell_case "shell-subshell-body-same-line" caught <<'SH'
+#!/usr/bin/env bash
+build() (
+  echo "holdout arm"
+)
+CTX="$(build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+shell_case "shell-subshell-body-next-line" caught <<'SH'
+#!/usr/bin/env bash
+build()
+(
+  echo "holdout arm"
+)
+CTX="$(build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+shell_case "shell-if-body" caught <<'SH'
+#!/usr/bin/env bash
+build()
+if true; then echo "holdout arm"; fi
+CTX="$(build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+shell_case "shell-unused-subshell-function-clean" clean <<'SH'
+#!/usr/bin/env bash
+unrelated() (
+  echo "holdout arm"
+)
+CTX="all good"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+
+echo
 echo "=== C2. vocabulary regressions (word boundary) ==="
 py_case "identity-prose"    '"experiment identity check failed"'        clean
 py_case "bucket-names-prose" '"bucket names must be lowercase"'          clean
@@ -662,7 +746,7 @@ gprobe format-nested-spec '(?::((?:[^{}]|\{[^{}]*\})*))?' '(?::([^{}]*))?' neste
   'print({"additionalContext": "cohort {:{}} x".format(7, 5)})' caught
 gprobe format-accessors '((?:\.\w+|\[[^\]]*\])*)' '()' format-index-field \
   'print({"additionalContext": "cohort {0[1]}".format(("x", 7))})' caught
-shprobe shell-function-keyword 'funcs[m.group(1) or m.group(2)] = (body, depth <= 0)' 'funcs[m.group(2) or "-"] = (body, depth <= 0)' caught <<'SH'
+shprobe shell-function-keyword 'name = m.group(1) or m.group(2)' 'name = m.group(2) or "-"' caught <<'SH'
 #!/usr/bin/env bash
 function build {
   echo "session cohort 7"
@@ -719,13 +803,45 @@ _SEP = r"[\s=:]*"' sep-form-1 \
   'from exp import g
 x = g()
 print({"additionalContext": f"arm=[{x}]"})' caught '^UNRESOLVED .*runtime value'
-shprobe shell-brace-next-line 'def _next_brace(code, i):' 'def _next_brace(code, i):
-    return None' caught <<'SH'
+shprobe shell-brace-next-line 'def _next_line(code, i):' 'def _next_line(code, i):
+    return None' clean <<'SH'
 #!/usr/bin/env bash
 build()
 {
+  echo "change your approach"
+}
+CTX="$(build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+# r6 probes
+shprobe shell-heredoc-skip-outer 'if outer_tag is not None:' 'if False:' clean <<'SH'
+#!/usr/bin/env bash
+build() {
+  echo "change your approach"
+}
+cat <<EOF >/dev/null
+build()
+echo look-alike text
+EOF
+CTX="$(build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+shprobe shell-merge-redefinition 'funcs[name] = (old_body + body, old_ok and ok)' 'funcs[name] = (body, ok)' caught <<'SH'
+#!/usr/bin/env bash
+build() {
   echo "holdout arm"
 }
+build() {
+  echo "all good"
+}
+CTX="$(build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+shprobe shell-unfollowable-body 'body, ok = [], False' 'body, ok = [], True' caught <<'SH'
+#!/usr/bin/env bash
+build() (
+  echo "holdout arm"
+)
 CTX="$(build)"
 jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
 SH
