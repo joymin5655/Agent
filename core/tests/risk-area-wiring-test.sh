@@ -152,6 +152,13 @@ run_case "noyaml-redirect-subst-deny"    "$PROOT" 'echo $(<vault/prod.key)' deny
 run_case "noyaml-python-c-deny"          "$PROOT" "python3 -c \"open('vault/k')\"" deny
 run_case "noyaml-more-reader-deny"       "$PROOT" 'base64 vault/prod.key'   deny
 run_case "noyaml-redirect-out-allow"     "$PROOT" 'echo hi > out.txt'       allow
+# intended over-block while the parser is missing (the declared paths are unknown): a read-redirect,
+# inline interpreter code and a listed reader deny whatever they name
+run_case "noyaml-redirect-any-deny"      "$PROOT" 'wc -c < README.md'       deny
+run_case "noyaml-rw-redirect-deny"       "$PROOT" 'exec 3<>vault/k'         deny
+run_case "noyaml-py-I-c-deny"            "$PROOT" 'python3 -I -c "print(1)"' deny
+run_case "noyaml-sort-deny"              "$PROOT" 'sort notes.txt'          deny
+run_case "noyaml-heredoc-allow"          "$PROOT" $'echo x <<\'EOF\'\nbody\nEOF' allow
 # commands outside that family keep working, including the remediation itself
 run_case "noyaml-ls-allow"               "$PROOT" 'ls -la'                  allow
 run_case "noyaml-pip-fix-allow"          "$PROOT" 'python3 -m pip install --user pyyaml' allow
@@ -194,7 +201,8 @@ done
 run_case "f-xargs-cat-deny"         "$PROOT" 'xargs cat vault/prod.key'    deny
 run_case "f-xargs-base64-deny"      "$PROOT" 'xargs base64 vault/prod.key' deny
 run_case "f-redir-nospace-deny"     "$PROOT" 'cat<vault/prod.key'          deny
-run_case "f-redir-heredoc-deny"     "$PROOT" 'cat<<vault/prod.key'         deny
+# a heredoc delimiter (<<) is not a read; the path is only a word here (r1: << and <<< excluded)
+run_case "f-redir-heredoc-allow"    "$PROOT" 'cat<<vault/prod.key'         allow
 run_case "f-redir-leading-deny"     "$PROOT" '< vault/prod.key cat'        deny
 run_case "f-redir-leading-nsp-deny" "$PROOT" '<vault/prod.key cat'         deny
 run_case "f-redir-subst-deny"       "$PROOT" 'echo $(<vault/prod.key)'     deny
@@ -220,6 +228,54 @@ run_case "f-ctl-redir-out-allow"    "$PROOT" 'echo x > out.txt'            allow
 run_case "f-ctl-python-other-allow" "$PROOT" "python3 -c \"print(1)\""     allow
 run_case "f-ctl-sibling-allow"      "$PROOT" 'sort myvault2/x'             allow
 run_case "f-ctl-heredoc-allow"      "$PROOT" $'cat <<\'EOF\'\nhello\nEOF' allow
+
+echo
+echo "=== (g) r1: <> redirect, inline-code variants, more readers, narrower redirect clause ==="
+# <> opens the file for reading too: both forms read a declared path without a blank or a verb.
+run_case "g-rw-redirect-read-deny"   "$PROOT" 'read -r v <>vault/k; printf "%s\n" "$v"' deny
+run_case "g-rw-redirect-exec-deny"   "$PROOT" 'exec 3<>vault/k'                          deny
+run_case "g-rw-redirect-spaced-deny" "$PROOT" 'exec 3<> vault/k'                         deny
+# inline code: options before the flag, glued flag and quote, $'..', -p, --eval=, deno eval, bundled flags
+run_case "g-py-I-c-deny"             "$PROOT" "python3 -I -c \"open('vault/k')\""         deny
+run_case "g-py-B-c-deny"             "$PROOT" "python3 -B -c \"open('vault/k')\""         deny
+run_case "g-py-W-ignore-c-deny"      "$PROOT" "python3 -W ignore -c \"open('vault/k')\""  deny
+run_case "g-py-glued-deny"           "$PROOT" "python3 -c\"open('vault/k')\""             deny
+run_case "g-node-glued-deny"         "$PROOT" "node -e'require(\"fs\").readFileSync(\"vault/k\")'" deny
+run_case "g-py-ansi-c-deny"          "$PROOT" "python3 -c \$'open(\"vault/k\")'"          deny
+run_case "g-node-p-deny"             "$PROOT" "node -p \"require('fs').readFileSync('vault/k')\"" deny
+run_case "g-node-eval-eq-deny"       "$PROOT" "node --eval=\"require('fs').readFileSync('vault/k')\"" deny
+run_case "g-deno-eval-deny"          "$PROOT" "deno eval \"Deno.readTextFileSync('vault/k')\"" deny
+run_case "g-perl-le-deny"            "$PROOT" "perl -le 'print for <vault/*>'"                deny
+run_case "g-php-r-deny"              "$PROOT" "php -r 'echo file_get_contents(\"vault/k\");'" deny
+# the same interpreters running plain code, or a script, stay allowed
+run_case "g-ctl-py-I-c-allow"        "$PROOT" 'python3 -I -c "print(1)"'                  allow
+run_case "g-ctl-node-p-allow"        "$PROOT" "node -p '1+1'"                              allow
+run_case "g-ctl-deno-eval-allow"     "$PROOT" 'deno eval "console.log(1)"'                 allow
+run_case "g-ctl-py-script-allow"     "$PROOT" 'python3 tools/build.py --out dist'          allow
+# readers added in r1: path denies, no-path control allows
+for rd in iconv split install look; do
+  run_case "g-$rd-deny"              "$PROOT" "$rd vault/prod.key"                         deny
+done
+# pip/npm install are not the coreutils copy: install only counts as a command word
+run_case "g-ctl-pip-install-allow"   "$PROOT" 'python3 -m pip install --user requests'      allow
+run_case "g-install-chain-deny"      "$PROOT" 'cd x && install vault/k /tmp/y'               deny
+run_case "g-ctl-gh-pr-allow"         "$PROOT" 'gh pr view 12'                                allow
+run_case "g-ctl-iconv-allow"         "$PROOT" 'iconv -f latin1 -t utf-8 notes.txt'         allow
+run_case "g-ctl-split-allow"         "$PROOT" 'split -l 100 notes.txt part_'               allow
+run_case "g-ctl-install-allow"       "$PROOT" 'install -m 755 build.sh /tmp/x'             allow
+run_case "g-ctl-look-allow"          "$PROOT" 'look abc words.txt'                         allow
+# redirect clause: << and <<< are not file reads
+run_case "g-ctl-here-string-allow"   "$PROOT" 'echo "x" <<< "vault/ mention"'              allow
+run_case "g-ctl-heredoc-body-allow"  "$PROOT" $'cat <<\'EOF\'\nvault/ is described here\nEOF' allow
+# the verb clause keeps its ".*": narrowing it to [^;|&]* would open a quoted ; or | before the path
+run_case "g-verb-quoted-alt-deny"    "$PROOT" "grep -E 'a|b' vault/k"                      deny
+run_case "g-verb-quoted-semi-deny"   "$PROOT" "sed 's/a/b/;s/c/d/' vault/k"                deny
+run_case "g-verb-and-deny"           "$PROOT" 'cat x;cat vault/k'                          deny
+run_case "g-verb-stderr-deny"        "$PROOT" 'cat vault/k 2>&1'                           deny
+# known over-blocks, pinned so a later change shows up here (a verb and the path in different simple
+# commands; the verb word inside prose)
+run_case "g-known-sep-deny"          "$PROOT" 'sort notes.txt; ls vault/'                  deny
+run_case "g-known-prose-deny"        "$PROOT" "echo 'vim vault/ is blocked'"               deny
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
