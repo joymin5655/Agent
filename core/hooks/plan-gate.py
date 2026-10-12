@@ -83,10 +83,7 @@ def memory_only_plan(plan: str) -> bool:
 
 
 def flag_session(flag: pathlib.Path) -> str:
-    try:
-        m = re.search(r"session=(\S+)", flag.read_text(encoding="utf-8"))
-    except OSError:
-        return ""
+    m = re.search(r"session=(\S+)", _read(str(flag)) or "")  # _read: no FIFO blocking
     return m.group(1) if m else ""
 
 
@@ -150,7 +147,10 @@ def _write_all(fd: int, data: bytes) -> None:
 
 
 def _unlink_if_same(path: str, ident: "tuple[int, int]") -> None:
-    """Remove path only if it is still the file we created/opened (dev, ino)."""
+    """Remove path only if it is still the file we created/opened (dev, ino).
+
+    The lstat->unlink gap cannot be closed on POSIX: a file swapped in inside it can still
+    be removed. Accepted: for the approval flag the failure direction is "approval gone"."""
     try:
         st = os.lstat(path)
         if (st.st_dev, st.st_ino) == ident:
@@ -173,7 +173,10 @@ def _read(name: str, dir_fd: "int | None" = None) -> "str | None":
 
 
 def _write_verified(name: str, content: str, dir_fd: "int | None" = None) -> bool:
-    """Write, then read back: a swallowed OSError must not look like success."""
+    """Write, then read back: a swallowed OSError must not look like success.
+
+    A failed write leaves the (possibly truncated) file: the markers are judged by name,
+    so keeping one stays on the withheld side, while deleting it would re-open the gate."""
     try:
         data = content.encode("utf-8")  # before open: an unencodable id must not truncate
         fd = _open_regular(name, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, dir_fd)
@@ -239,18 +242,21 @@ def is_withheld(sid: str) -> bool:
     return legacy_session() == sid or _claim_holds(sid)
 
 
-def _claim_holds(sid: str) -> bool:
-    """A claim left behind by _restore_claim still records its session as withheld."""
+def _claims_of(sid: str) -> "list[str]":
+    """Claims left behind by _restore_claim whose content is this session's id."""
     prefix = legacy_marker().name + ".claim."
     try:
         with os.scandir(str(PLAN_FLAG.parent)) as it:
             names = [e.name for e in it if e.name.startswith(prefix)]
     except OSError:
-        return False
-    for name in names:
-        if _read(str(PLAN_FLAG.parent / name)) == sid:
-            return True
-    return False
+        return []
+    paths = [str(PLAN_FLAG.parent / name) for name in names]
+    return [p for p in paths if _read(p) == sid]
+
+
+def _claim_holds(sid: str) -> bool:
+    """A kept claim still records its session as withheld."""
+    return bool(_claims_of(sid))
 
 
 def migrate_legacy() -> None:
@@ -329,17 +335,17 @@ def _create_exclusive(path: str, content: str) -> bool:
         return False
     try:
         st = os.fstat(fd)
+        try:
+            _write_all(fd, content.encode("utf-8"))
+        except (OSError, UnicodeError):
+            # Only our own half-written file, compared while fd pins the inode number:
+            # a newer session may own the slot now.
+            _unlink_if_same(path, (st.st_dev, st.st_ino))
+            return False
     except OSError:
-        os.close(fd)
         return False
-    try:
-        _write_all(fd, content.encode("utf-8"))
-    except (OSError, UnicodeError):
+    finally:
         os.close(fd)
-        # Clean up only our own half-written file: a newer session may own the slot now.
-        _unlink_if_same(path, (st.st_dev, st.st_ino))
-        return False
-    os.close(fd)
     return _read(path) == content
 
 
@@ -407,6 +413,11 @@ def clear_withheld(sid: str) -> None:
                 os.close(dfd)
     if legacy_session() == sid:
         _claim_remove_legacy(sid)
+    for kept in _claims_of(sid):  # a kept claim is this session's record too
+        try:
+            os.unlink(kept)
+        except OSError:
+            pass
 
 
 def write_flag(sid: str) -> None:

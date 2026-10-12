@@ -773,12 +773,80 @@ try:
 finally:
     undo()
 report("ag16-write-fail-newer-flag-not-deleted", flag.read_text() == "newer")
+
+# AG16 r1: clear_withheld also drops this session's kept claim, never another session's
+mod, flag = load("clear-claim")
+mine = pathlib.Path(str(flag) + ".withheld.claim.1.aaaa")
+other = pathlib.Path(str(flag) + ".withheld.claim.2.bbbb")
+mine.write_text("sidMine")
+other.write_text("sidOther")
+before = mod.is_withheld("sidMine")
+mod.clear_withheld("sidMine")
+report("ag16-clear-withheld-drops-own-kept-claim",
+       before is True and mod.is_withheld("sidMine") is False and not mine.exists())
+report("ag16-clear-withheld-keeps-other-claim",
+       other.exists() and mod.is_withheld("sidOther") is True)
+
+# AG16 r1: _create_exclusive compares/unlinks while its fd is still open (inode pinned)
+mod, flag = load("excl-fd-open")
+captured = []
+real_open_x = os.open
+
+
+def capture_open(path, flags, *a, **kw):
+    fd = real_open_x(path, flags, *a, **kw)
+    if flags & os.O_EXCL:
+        captured.append(fd)
+    return fd
+
+
+fd_open_during_cleanup = []
+real_unlink_same = mod._unlink_if_same
+
+
+def probe_unlink_same(path, ident):
+    try:
+        os.fstat(captured[0])
+        fd_open_during_cleanup.append(True)
+    except OSError:
+        fd_open_during_cleanup.append(False)
+    real_unlink_same(path, ident)
+
+
+mod._unlink_if_same = probe_unlink_same
+os.open = capture_open
+undo = patched(os, "write", fail_write)
+try:
+    mod._create_exclusive(str(slot(flag)), "ownerX")
+finally:
+    undo()
+    os.open = real_open_x
+report("ag16-excl-cleanup-while-fd-open", fd_open_during_cleanup == [True])
+
+# AG16 r1: _create_exclusive completes short writes
+mod, flag = load("excl-short")
+undo = patched(os, "write", short_write)
+try:
+    ok = mod._create_exclusive(str(slot(flag)), "ownerXYZ")
+finally:
+    undo()
+report("ag16-excl-short-write-completed", ok is True and slot(flag).read_text() == "ownerXYZ")
 PY
 while read -r verdict name; do
   [[ -z "${verdict:-}" ]] && continue
   if [[ "$verdict" == "PASS" ]]; then echo "  ok   [ag10-unit-$name]"; PASS=$((PASS + 1))
   else echo "  FAIL [ag10-unit-$name]"; FAIL=$((FAIL + 1)); fi
 done < <(python3 "$TMP_DIR/unit.py" "$HOOK" "$TMP_DIR" 2>&1 || echo "FAIL unit-script-crashed")
+
+# AG16 r1: a FIFO at the flag path must not block a memory-only withhold (flag_session)
+reset_w
+mkfifo "$FLAG_W"
+OUT_F="$(plan_event_sid fifoS "$MEM_ONLY" | AGENT_PLAN_FLAG="$FLAG_W" python3 -c 'import subprocess, sys
+subprocess.run([sys.executable, sys.argv[1]], stdin=sys.stdin, timeout=10)' "$HOOK" 2>/dev/null)"
+RC_F=$?
+[[ $RC_F -eq 0 && "$OUT_F" == *"Could not clear the approval flag"* ]]
+check "ag16-fifo-flag-withhold-does-not-block" $?
+rm -f "$FLAG_W"
 
 # optional: event without session_id says no marker was recorded
 reset_w
