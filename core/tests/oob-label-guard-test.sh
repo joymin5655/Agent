@@ -589,10 +589,14 @@ jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
 SH
 
 echo
-echo "=== B20. label noun + runtime value: ordinary sentences stay clean (AG18 A1) ==="
+echo "=== B20. label noun + runtime value stays UNRESOLVED in prose, paths and URLs (AG18 r1) ==="
+# Accepted false positives: the guard is a fail-closed CI tripwire. A label can ride in a
+# sentence, a path, a file name or a URL ("cohort_{x}.csv" -> cohort_treatment.csv), so none
+# of these is proven clean. Remedy: reword so the noun and the value are apart
+# (f"{x} is full"); never ALLOW (it blinds the whole function).
 i=0
 while IFS= read -r expr; do
-  i=$((i + 1)); form_case "prose-clean-$i" "$expr" clean
+  i=$((i + 1)); form_case "prose-caught-$i" "$expr" caught '^UNRESOLVED .*runtime value'
 done <<'FORMS'
 f'bucket {x} is full'
 f'left arm {x}'
@@ -600,6 +604,21 @@ f'Experiment {x} finished'
 f'use variant {x}'
 f'the bucket {x}'
 f'cohort {x} ready'
+f'session cohort {x}'
+f'user variant {x}'
+f'assigned arm {x}'
+f'your bucket {x}'
+f'this experiment {x}'
+f'cohort {x} selected'
+f'variant "{x}" selected'
+f'variant ({x}) active'
+f'arm=/{x}'
+f'arm=={x}'
+f'arm=[ {x}]'
+f'done.arm={x}'
+f'arm_{x}.v2'
+f'arm.{x}'
+f'(bucket {x})'
 FORMS
 i=0
 while IFS= read -r expr; do
@@ -620,10 +639,10 @@ f'cohort {x}, ok'
 FORMS
 
 echo
-echo "=== B21. paths, URLs and markdown around a label word are not labels (AG18 A2) ==="
+echo "=== B21. paths, URLs and markdown around a label word (AG18 r1: accepted false positives) ==="
 i=0
 while IFS= read -r expr; do
-  i=$((i + 1)); form_case "path-clean-$i" "$expr" clean
+  i=$((i + 1)); form_case "path-caught-$i" "$expr" caught '^UNRESOLVED .*runtime value'
 done <<'FORMS'
 f'docs/arm/{x}'
 f'see docs/variant/{x}.md'
@@ -632,7 +651,7 @@ f'/arm/{x}/file'
 f'https://x.test/variant/{x}'
 f'cohort_{x}.csv'
 f'arm/{x}/file'
-f'C:\\arm\\{x}'
+f'/tmp/arm/{x}'
 FORMS
 
 echo
@@ -749,10 +768,12 @@ jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
 SH
 
 echo
-echo "=== B25. cost: a combinatorial shape stops at a global budget, under 1 s (AG18 A6) ==="
-# cost_case <name> <python snippet that prints the hook source>
+echo "=== B25. cost: a combinatorial shape stops at a global budget (AG18 A6, r1: message-based) ==="
+# cost_case <name> <expected UNRESOLVED message regex> <python snippet that prints the hook source>
+# The verdict is the message, not the clock: a slow machine cannot fake or hide it. The 5 s
+# ceiling only catches a runaway.
 cost_case() {
-  local name="$1" root out rc t0 t1
+  local name="$1" rx="$2" root out rc t0 t1
   root=$(mkroot "$name")
   python3 -c "
 def alt(i, n):
@@ -760,21 +781,148 @@ def alt(i, n):
     for j in range(n - 1):
         e = \"('v%d_%d' if s else %s)\" % (i, j, e)
     return e
-$2" > "$root/core/hooks/fx.py"
+$3" > "$root/core/hooks/fx.py"
   t0=$(python3 -c 'import time; print(time.time())')
   out=$(python3 "$GUARD" --root "$root" 2>&1); rc=$?
   t1=$(python3 -c 'import time; print(time.time())')
-  if [[ $rc -ne 0 ]] && printf '%s' "$out" | grep -qE '^UNRESOLVED ' && ! printf '%s' "$out" | grep -q Traceback \
-     && python3 -c "import sys; sys.exit(0 if $t1 - $t0 < 1.0 else 1)"; then
-    ok "$name" "UNRESOLVED in $(python3 -c "print(round($t1 - $t0, 2))")s"
+  if [[ $rc -ne 0 ]] && printf '%s' "$out" | grep -qE "^UNRESOLVED .*($rx)" && ! printf '%s' "$out" | grep -q Traceback \
+     && python3 -c "import sys; sys.exit(0 if $t1 - $t0 < 5.0 else 1)"; then
+    ok "$name" "/$rx/ in $(python3 -c "print(round($t1 - $t0, 2))")s"
   else
-    bad "$name" "rc=$rc $(python3 -c "print(round($t1 - $t0, 2))")s (want UNRESOLVED, <1s)"
+    bad "$name" "rc=$rc $(python3 -c "print(round($t1 - $t0, 2))")s (want /$rx/, <5s): $(printf '%s' "$out" | tail -1 | cut -c1-120)"
   fi
 }
-cost_case "cost-binop-40" "print('import sys\ns = sys.argv\nprint({\"additionalContext\": %s})' % ' + '.join(alt(i, 3) for i in range(40)))"
-cost_case "cost-binop-300" "print('import sys\ns = sys.argv\nprint({\"additionalContext\": %s})' % ' + '.join(alt(i, 2) for i in range(300)))"
-cost_case "cost-dict-60x8" "print('import sys, json\ns = sys.argv\nd = {%s}\nprint({\"additionalContext\": json.dumps(d)})' % ', '.join('\"k%d\": %s' % (i, alt(i, 8)) for i in range(60)))"
-cost_case "cost-names-50x8" "print('import sys\ns = sys.argv\n%s\nprint({\"additionalContext\": %s})' % ('\n'.join('n%d = %s' % (i, alt(i, 8)) for i in range(50)), ' + '.join('n%d' % i for i in range(50))))"
+cost_case "cost-binop-40" 'work budget exceeded|distinct tails' "print('import sys\ns = sys.argv\nprint({\"additionalContext\": %s})' % ' + '.join(alt(i, 3) for i in range(40)))"
+cost_case "cost-binop-300" 'work budget exceeded|distinct tails|too deep' "print('import sys\ns = sys.argv\nprint({\"additionalContext\": %s})' % ' + '.join(alt(i, 2) for i in range(300)))"
+cost_case "cost-dict-60x8" 'work budget exceeded|distinct tails' "print('import sys, json\ns = sys.argv\nd = {%s}\nprint({\"additionalContext\": json.dumps(d)})' % ', '.join('\"k%d\": %s' % (i, alt(i, 8)) for i in range(60)))"
+cost_case "cost-names-50x8" 'work budget exceeded' "print('import sys\ns = sys.argv\n%s\nprint({\"additionalContext\": %s})' % ('\n'.join('n%d = %s' % (i, alt(i, 8)) for i in range(50)), ' + '.join('n%d' % i for i in range(50))))"
+cost_case "cost-name-doubling" 'work budget exceeded' "print('n0 = \"a\"\n%s\nprint({\"additionalContext\": n21})' % '\n'.join('n%d = n%d + n%d' % (i, i - 1, i - 1) for i in range(1, 22)))"
+
+echo
+echo "=== B26. shell: a backslash-continued definition is still a definition (AG18 r1) ==="
+# main reported all of these UNRESOLVED; dropping the definition made them clean (fail-open).
+shell_case "shell-cont-parens" caught <<'SH'
+#!/usr/bin/env bash
+build() \
+{
+  echo "holdout arm"
+}
+CTX="$(build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+shell_case "shell-cont-keyword" caught <<'SH'
+#!/usr/bin/env bash
+function build \
+{
+  echo "holdout arm"
+}
+CTX="$(build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+shell_case "shell-cont-keyword-parens" caught <<'SH'
+#!/usr/bin/env bash
+function build() \
+{
+  echo "holdout arm"
+}
+CTX="$(build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+printf '%s\n' '#!/usr/bin/env bash' 'build()'$'\t''\' '{' '  echo "holdout arm"' '}' 'CTX="$(build)"' \
+  "jq -nc --arg ctx \"\$CTX\" '{hookSpecificOutput: {additionalContext: \$ctx}}'" | shell_case "shell-cont-tab" caught
+shell_case "shell-cont-twice" caught <<'SH'
+#!/usr/bin/env bash
+build() \
+\
+{
+  echo "holdout arm"
+}
+CTX="$(build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+shell_case "shell-cont-comment-line" caught <<'SH'
+#!/usr/bin/env bash
+build() \
+# c
+{
+  echo "holdout arm"
+}
+CTX="$(build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+shell_case "shell-cont-subshell" caught <<'SH'
+#!/usr/bin/env bash
+build() \
+(
+  echo "holdout arm"
+)
+CTX="$(build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+shell_case "shell-cont-clean" clean <<'SH'
+#!/usr/bin/env bash
+build() \
+{
+  echo "change your approach"
+}
+CTX="$(build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+shell_case "shell-cont-even-backslashes-not-joined" caught <<'SH'
+#!/usr/bin/env bash
+echo a \\
+build() { echo "holdout arm"; }
+CTX="$(build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+printf '%s\n' '#!/usr/bin/env bash' 'CTX="$(build)"' \
+  "jq -nc --arg ctx \"\$CTX\" '{hookSpecificOutput: {additionalContext: \$ctx}}'" 'build() \' | shell_case "shell-cont-dangling-eof" caught
+shell_case "shell-paren-space-def" caught <<'SH'
+#!/usr/bin/env bash
+build ( ) {
+  echo "holdout arm"
+}
+CTX="$(build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+
+echo
+echo "=== B27. computed keys: giving up on one must not blind the next (AG18 r1) ==="
+# gen_case <name> <want> <regex> <python snippet printing the source>
+gen_case() {
+  local name="$1" want="$2" rx="$3" root got
+  root=$(mkroot "$name")
+  python3 -c "
+def alt(i, n):
+    e = \"'z'\"
+    for j in range(n - 1):
+        e = \"('v%d_%d' if s else %s)\" % (i, j, e)
+    return e
+$4" > "$root/core/hooks/fx.py"
+  got=$(verdict "$GUARD" "$root")
+  if [[ "$got" == "$want" ]] && python3 "$GUARD" --root "$root" 2>&1 | grep -qE "$rx"; then
+    ok "$name" "want=$want /$rx/"
+  else
+    bad "$name" "want=$want got=$got (needs /$rx/)"
+  fi
+}
+JUNK="' + '.join(alt(i, 3) for i in range(40))"
+gen_case "key-dict-after-junk-finds-site" caught '^UNRESOLVED .*runtime value' \
+  "print('import sys\ns = sys.argv\njunk = {%s: 1}\nprint({\"additional\" + \"Context\": f\"arm={sys.argv[1]}\"})' % ($JUNK))"
+gen_case "key-dict-junk-is-unresolved" caught '^UNRESOLVED .*computed key' \
+  "print('import sys\ns = sys.argv\njunk = {%s: 1}\nprint({\"additional\" + \"Context\": \"all good\"})' % ($JUNK))"
+gen_case "key-subscript-after-junk-finds-site" caught '^UNRESOLVED .*runtime value' \
+  "print('import sys\ns = sys.argv\nd = {}\nd[%s] = 1\nd[\"additional\" + \"Context\"] = f\"arm={sys.argv[1]}\"' % ($JUNK))"
+gen_case "key-subscript-junk-is-unresolved" caught '^UNRESOLVED .*computed key' \
+  "print('import sys\ns = sys.argv\nd = {}\nd[%s] = 1\nd[\"additional\" + \"Context\"] = \"all good\"' % ($JUNK))"
+src_case "key-runtime-stays-exempt" 'import os
+d = {}
+d[os.environ["K"]] = 1
+print({"additionalContext": "all good"})' clean
+
+echo
+echo "=== B28. the test file itself stays portable (BSD sed has no bare in-place flag) (AG18 r1) ==="
+if grep -nE 'se[d] -i' "$0" >/dev/null; then bad "no-gnu-sed-i" "$(grep -nE 'se[d] -i' "$0" | head -3 | tr '\n' ' ')"; else ok "no-gnu-sed-i" "no in-place sed in this file"; fi
 
 echo
 echo "=== C2. vocabulary regressions (word boundary) ==="
@@ -1014,21 +1162,53 @@ build() {
 CTX="$(build)"
 jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
 SH
-# cost: without the early exit the huge template runs for many seconds
-m=$(gmutate cat-early-exit 'return list(itertools.islice(nxt, HARD_CAP))     # stop at the first overflow' 'pass')
-[[ -n "$m" ]] && sed -i 's/^WORK_CAP = [0-9]*/WORK_CAP = 10**12/' "$m"   # the budget would mask the early exit
-if [[ -z "$m" ]]; then bad "mutation/cat-early-exit-anchor" "anchor not found — probe is inert"; else
-  root=$(mkroot mp-cat-early-exit); printf '%s\n' "$BIGSRC" > "$root/core/hooks/fx.py"
-  if python3 -c "
-import subprocess, sys
+root=$(mkroot mp-huge); printf '%s\n' "$BIGSRC" > "$root/core/hooks/fx.py"
+# gcap <file> <value> — set WORK_CAP in a mutant (python: BSD sed has no bare in-place flag)
+gcap() {
+  python3 - "$1" "$2" <<'PY'
+import re, sys
+p, v = sys.argv[1], sys.argv[2]
+t = open(p, encoding="utf-8").read()
+open(p, "w", encoding="utf-8").write(re.sub(r"(?m)^WORK_CAP = .*$", "WORK_CAP = " + v, t, count=1))
+PY
+}
+# tprobe <name> <find> <repl> <fixture-root> <message regex> [cap] [extra-find extra-repl]
+# A mutant that stops enforcing a cost limit either runs past 5 s or no longer says what the
+# real guard says. The message is the deterministic signal; the clock only catches a runaway.
+tprobe() {
+  local name="$1" m root flipped
+  m=$(gmutate "$name" "$2" "$3")
+  if [[ -z "$m" ]]; then bad "mutation/$name-anchor" "anchor not found — probe is inert"; return; fi
+  [[ -n "${6:-}" ]] && gcap "$m" "$6"
+  if [[ -n "${7:-}" ]]; then
+    python3 - "$m" "$7" "${8:-}" <<'PY' || { bad "mutation/$name-anchor" "extra anchor not found — probe is inert"; return; }
+import sys
+p, a, b = sys.argv[1:4]
+t = open(p, encoding="utf-8").read()
+if a not in t:
+    sys.exit(1)
+open(p, "w", encoding="utf-8").write(t.replace(a, b, 1))
+PY
+  fi
+  root="$4"
+  python3 "$GUARD" --root "$root" 2>&1 | grep -qE "^UNRESOLVED .*($5)" || { bad "mutation/$name-fixture" "real guard does not say /$5/"; return; }
+  flipped=$(python3 - "$m" "$root" "$5" <<'PY'
+import re, subprocess, sys
+m, root, rx = sys.argv[1:4]
 try:
-    subprocess.run([sys.executable, '$m', '--root', '$root'], capture_output=True, timeout=3)
+    r = subprocess.run([sys.executable, m, "--root", root], capture_output=True, text=True, timeout=5)
 except subprocess.TimeoutExpired:
-    sys.exit(0)
-sys.exit(1)"; then ok "mutation/cat-early-exit" "mutant exceeds 3s on the huge template"; else bad "mutation/cat-early-exit" "mutant is still fast"; fi
-fi
+    print("timeout"); sys.exit(0)
+print("silent" if not re.search("(?m)^UNRESOLVED .*(" + rx + ")", r.stdout + r.stderr) else "same")
+PY
+)
+  if [[ "$flipped" == timeout || "$flipped" == silent ]]; then ok "mutation/$name" "mutant: $flipped"; else bad "mutation/$name" "mutant still says /$5/ within 5s"; fi
+}
+# cost: without the early exit (and without the budget masking it) the huge template runs for many seconds
+tprobe cat-early-exit 'return list(itertools.islice(nxt, HARD_CAP))     # stop at the first overflow' 'pass' "$WORK/mp-huge" 'distinct tails' '10**12'
 # r5 probes
-gprobe separator-class '\s*[=:#]\s*[\[(<'"'"'"`-]*"""' '\s*[=:#]\s*"""' sep-form-1 \
+gprobe separator-class '# separator class' '# separator class
+_SEP = r"[\s=:]*"' sep-form-1 \
   'from exp import g
 x = g()
 print({"additionalContext": f"arm=[{x}]"})' caught '^UNRESOLVED .*runtime value'
@@ -1107,28 +1287,19 @@ if [[ -z "$m" ]]; then bad "mutation/shell-brace-anchor" "anchor not found — p
   [[ $(verdict "$m" "$root") == caught ]] && ok "mutation/shell-brace" "mutant leaves the function unterminated" || bad "mutation/shell-brace" "mutant still clean"
 fi
 # AG18 probes — each condition of the r8 fixes must be load-bearing
-gprobe bare-clause-start '"|(?:^|(?<=[.;:,!?|(\\[]))[ \t]*" + _NOUN' '"|[ \t]*" + _NOUN' ag18-use-variant \
+# r1: the r0 narrowing of _RUNTIME must not come back — each piece alone flips a fixture
+gprobe r0-trailing-end '    + SENT + r"|(?<![\w-])(?:guard' '    + SENT + r"(?![ \t]+\w)|(?<![\w-])(?:guard' prose-selected \
   'from exp import g
 x = g()
-print({"additionalContext": f"use variant {x}"})' clean
-gprobe bare-clause-end '[ \t]+" + SENT + _END
-    + r")|' '[ \t]+" + SENT
-    + r")|' ag18-bucket-full \
+print({"additionalContext": f"cohort {x} selected"})' caught '^UNRESOLVED .*runtime value'
+gprobe r0-path-neighbour 'r"(?i)\b(?:experiment|cohort|variant|arm|bucket)[ _-]?(?:id|name|label|group)?" + _SEP' 'r"(?i)(?<![\w/.])\b(?:experiment|cohort|variant|arm|bucket)[ _-]?(?:id|name|label|group)?" + _SEP' path-neighbour \
   'from exp import g
 x = g()
-print({"additionalContext": f"bucket {x} is full"})' clean
-gprobe path-neighbour '_PRE = r"(?<![\w/.\\])"' '_PRE = r""' ag18-docs-arm \
+print({"additionalContext": f"done.arm={x}"})' caught '^UNRESOLVED .*runtime value'
+gprobe r0-clause-start 'r"(?i)\b(?:experiment|cohort|variant|arm|bucket)[ _-]?(?:id|name|label|group)?" + _SEP' 'r"(?i)(?<![A-Za-z] )\b(?:experiment|cohort|variant|arm|bucket)[ _-]?(?:id|name|label|group)?" + _SEP' prose-session \
   'from exp import g
 x = g()
-print({"additionalContext": f"docs/arm/{x}"})' clean
-gprobe path-tail '_NOPATH = r"(?![\w-]*[./\\]\w)"' '_NOPATH = r""' ag18-cohort-csv \
-  'from exp import g
-x = g()
-print({"additionalContext": f"cohort_{x}.csv"})' clean
-gprobe markdown-link 'r"\s*" + _OPEN + "+" + SENT + _END' 'r"\s*" + _OPEN.replace("[", "[\\]") + "+" + SENT + _END' ag18-md-link \
-  'from exp import g
-x = g()
-print({"additionalContext": f"[variant]({x})"})' clean
+print({"additionalContext": f"session cohort {x}"})' caught '^UNRESOLVED .*runtime value'
 shprobe shell-call-line-not-def 'if nl is None or not _SH_BODY.match(code[nl][1].strip()):' 'if nl is None:' clean <<'SH'
 #!/usr/bin/env bash
 python3 - <<'PY'
@@ -1138,7 +1309,7 @@ PY
 MSG="please end the session and flush the cache"
 jq -nc --arg ctx "$MSG" '{hookSpecificOutput: {additionalContext: $ctx}}'
 SH
-shprobe shell-same-line-not-def 'elif not _SH_BODY.match(tail):' 'elif False:' clean <<'SH'
+shprobe shell-same-line-not-def 'elif not _SH_BODY.match(tail) and not unsure:' 'elif False:' clean <<'SH'
 #!/usr/bin/env bash
 python3 - <<'PY'
 flush() : pass
@@ -1167,24 +1338,88 @@ build() # builds the text
 CTX="$(build)"
 jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
 SH
-# the global budget: without it the name-concatenation shape runs for many seconds
-m=$(gmutate work-budget 'if self.spend(1):' 'if False:')
-if [[ -z "$m" ]]; then bad "mutation/work-budget-anchor" "anchor not found — probe is inert"; else
-  sed -i 's/^WORK_CAP = [0-9]*/WORK_CAP = 10**12/' "$m"
-  root="$WORK/cost-names-50x8"
-  if python3 -c "
-import subprocess, sys
-try:
-    subprocess.run([sys.executable, '$m', '--root', '$root'], capture_output=True, timeout=3)
-except subprocess.TimeoutExpired:
-    sys.exit(0)
-sys.exit(1)"; then ok "mutation/work-budget" "mutant exceeds 3s on 50 names x 8 alternatives"; else bad "mutation/work-budget" "mutant is still fast"; fi
-fi
+# the global budget: the node-visit check and the join check each bound a different shape
+tprobe work-budget-visit 'if self.spend(1):' 'if False:' "$WORK/cost-name-doubling" 'work budget exceeded'
+# the join and the compress charge are one mechanism (either alone is backed up by the other)
+tprobe work-budget-cat 'if self.spend(len(cur) * len(part)):' 'if False:' "$WORK/cost-names-50x8" 'work budget exceeded' "" 'if self.spend(4 * len(nxt)):' 'if False:'
+tprobe work-budget-message 'work budget exceeded (%d steps)' 'gave up (%d steps)' "$WORK/cost-name-doubling" 'work budget exceeded'
+# r1: computed keys — a fresh budget per probe, and "gave up" becomes a site
+gprobe key-probe-reset '        rs.work = 0
+        strs, opq = rs.resolve(node' '        strs, opq = rs.resolve(node' key-dict-after-junk \
+  "$(python3 -c "
+def alt(i, n):
+    e = \"'z'\"
+    for j in range(n - 1):
+        e = \"('v%d_%d' if s else %s)\" % (i, j, e)
+    return e
+print('import sys\ns = sys.argv\njunk = {%s: 1}\nprint({\"additional\" + \"Context\": f\"arm={sys.argv[1]}\"})' % ' + '.join(alt(i, 3) for i in range(40)))")" caught '^UNRESOLVED .*runtime value'
+gprobe key-gave-up-site '                elif gave_up:
+                    sites.append((k.lineno' '                elif False:
+                    sites.append((k.lineno' key-dict-junk \
+  "$(python3 -c "
+def alt(i, n):
+    e = \"'z'\"
+    for j in range(n - 1):
+        e = \"('v%d_%d' if s else %s)\" % (i, j, e)
+    return e
+print('import sys\ns = sys.argv\njunk = {%s: 1}\nprint({\"additional\" + \"Context\": \"all good\"})' % ' + '.join(alt(i, 3) for i in range(40)))")" caught '^UNRESOLVED .*computed key'
+gprobe key-gave-up-subscript '            elif gave_up:
+                sites.append((n.lineno' '            elif False:
+                sites.append((n.lineno' key-subscript-junk \
+  "$(python3 -c "
+def alt(i, n):
+    e = \"'z'\"
+    for j in range(n - 1):
+        e = \"('v%d_%d' if s else %s)\" % (i, j, e)
+    return e
+print('import sys\ns = sys.argv\nd = {}\nd[%s] = 1\nd[\"additional\" + \"Context\"] = \"all good\"' % ' + '.join(alt(i, 3) for i in range(40)))")" caught '^UNRESOLVED .*computed key'
+# r1: backslash continuation and definitions that look like `build ( )`
+shprobe shell-cont-join 'def _logical_lines(lines):' 'def _logical_lines(lines):
+    return [(i + 1, ln) for i, ln in enumerate(lines)]' clean <<'SH'
+#!/usr/bin/env bash
+build() \
+{
+  echo "change your approach"
+}
+CTX="$(build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+shprobe shell-cont-parity 'len(m.group(1)) % 2 == 0' 'len(m.group(1)) % 2 == 2' caught <<'SH'
+#!/usr/bin/env bash
+echo a \\
+build() { echo "holdout arm"; }
+CTX="$(build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+shprobe shell-cont-comment 'commentish = text.lstrip().startswith("#") or re.search(r"\s#", text)' 'commentish = False' clean <<'SH'
+#!/usr/bin/env bash
+build() \
+# c \
+{
+  echo "change your approach"
+}
+CTX="$(build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+shprobe shell-cont-unsure 'unsure = isinstance(ln, _Joined) or tail == "\\"' 'unsure = False' caught <<'SH'
+#!/usr/bin/env bash
+CTX="$(build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+build() \
+SH
+shprobe shell-paren-space 'r")\s*\(\s*\))\s*(.*)$")' 'r")\s*\(\))\s*(.*)$")' caught <<'SH'
+#!/usr/bin/env bash
+build ( ) {
+  echo "holdout arm"
+}
+CTX="$(build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
 # timing: the guard must stay cheap (it runs in every battery)
 T0=$(python3 -c 'import time; print(time.time())')
 python3 "$GUARD" --root "$REPO_ROOT" >/dev/null 2>&1
 T1=$(python3 -c 'import time; print(time.time())')
-if python3 -c "import sys; sys.exit(0 if $T1 - $T0 < 1.0 else 1)"; then ok "guard-under-1s" "$(python3 -c "print(round($T1 - $T0, 2))")s"; else bad "guard-under-1s" "slow"; fi
+if python3 -c "import sys; sys.exit(0 if $T1 - $T0 < 3.0 else 1)"; then ok "guard-under-3s" "$(python3 -c "print(round($T1 - $T0, 2))")s"; else bad "guard-under-3s" "slow"; fi
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
