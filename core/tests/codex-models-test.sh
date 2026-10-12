@@ -275,11 +275,15 @@ cp "$WORK/cache.keep" "$CH/models_cache.json"
 
 # OSError -> clean exit
 write_profiles gpt-5.6-sol gpt-6-luna
-chmod 000 "$CH/deep.config.toml"
-run check >/dev/null 2>"$WORK/err"; rc=$?
-chmod 644 "$CH/deep.config.toml"
-if [[ $rc -eq 1 ]] && grep -q '^codex-models:' "$WORK/err" && ! grep -q Traceback "$WORK/err"; then ok "OSError -> clean message, exit 1"
-else bad "oserror clean" "rc=$rc $(head -2 "$WORK/err")"; fi
+if [[ "$(id -u)" -ne 0 ]]; then
+  chmod 000 "$CH/deep.config.toml"
+  run check >/dev/null 2>"$WORK/err"; rc=$?
+  chmod 644 "$CH/deep.config.toml"
+  if [[ $rc -eq 1 ]] && grep -q '^codex-models:' "$WORK/err" && ! grep -q Traceback "$WORK/err"; then ok "OSError -> clean message, exit 1"
+  else bad "oserror clean" "rc=$rc $(head -2 "$WORK/err")"; fi
+else
+  echo "  skip [oserror-clean] running as root (chmod 000 does not bind)"
+fi
 
 # --- 5. tiers file --------------------------------------------------------
 write_profiles gpt-5.6-sol gpt-5.6-luna
