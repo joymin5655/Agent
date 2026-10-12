@@ -11,12 +11,19 @@
 # .agent/locks/goal-state.db is never touched.
 #
 # Requires sqlite3 + jq (same floor as supervisor-goal.sh itself — the script
-# hard-exits 127 without them, so this battery would fail loudly, not silently).
+# hard-exits 127 without them). Without them the whole battery cannot run, so it
+# emits a single `SKIP:` line and exits 2 (the verify-all skip contract) instead
+# of reporting a dozen misleading case failures.
 #
 # Usage: bash core/tests/supervisor-goal-record-test.sh
 set -u
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+if ! command -v sqlite3 >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
+  echo "SKIP: supervisor-goal-record-test.sh requires sqlite3 + jq (supervisor-goal.sh dependency); not installed"
+  exit 2
+fi
 
 PASS=0
 FAIL=0
