@@ -336,5 +336,91 @@ run_case "h-ctl-pip-r-allow"         "$PROOT" 'python3 -m pip install -r require
 run_case "h-ctl-node-p-allow"        "$PROOT" 'node -p process.version'                            allow
 
 echo
+echo "=== (i) AG17: timeout/gtimeout duration is any non-option word, not only a number ==="
+# Same verdict on both routes: PyYAML present (declared vault/ path) and PyYAML absent (fail-closed).
+# A single-quoted '5' and "$T" are one word to the shell; infinity, .5, 5e0, 0x5 are valid GNU durations.
+for d in infinity .5 5e0 0x5 '$T' '${T}' '"$T"' "'5'" '-s KILL infinity' '--kill-after=1 .5' '-k 1 .5'; do
+  run_case "i-timeout-[$d]-deny"               "$PROOT" "timeout $d install vault/k /tmp/y" deny
+  PYTHONPATH="$NOYAML" run_case "i-noyaml-timeout-[$d]-deny" "$PROOT" "timeout $d install vault/k /tmp/y" deny
+done
+for d in 5 infinity '$T'; do
+  run_case "i-gtimeout-[$d]-deny"              "$PROOT" "gtimeout $d install vault/k /tmp/y" deny
+  PYTHONPATH="$NOYAML" run_case "i-noyaml-gtimeout-[$d]-deny" "$PROOT" "gtimeout $d install vault/k /tmp/y" deny
+done
+run_case "i-wrapped-var-deny"        "$PROOT" 'sudo timeout $T install vault/k /tmp/y' deny
+# r1: options that take no value (--foreground, --preserve-status, -v, -f, -p, --) must not swallow the
+# duration, and options that do (-k, -s, --kill-after, --signal, separate or glued) must still be skipped
+for d in '--foreground 10' '--preserve-status 10' '-v infinity' '-f 10' '-p 10' '-- 10' '--verbose 10' \
+         '--preserve-status -s KILL 10' '--signal KILL 5' '--signal=KILL 5' '--kill-after 1 5' '-k1 5' '-sKILL 5'; do
+  run_case "i-opt-[$d]-deny"                   "$PROOT" "timeout $d install vault/k /tmp/y" deny
+  PYTHONPATH="$NOYAML" run_case "i-noyaml-opt-[$d]-deny" "$PROOT" "timeout $d install vault/k /tmp/y" deny
+done
+# r1: a program name after the duration is never the duration (main allowed all of these)
+for c in 'timeout --preserve-status 10 pip install -r requirements.txt' 'gtimeout --foreground 10 pip install x' \
+         'timeout --foreground 10 brew install jq' 'timeout -v 10 pip install x' \
+         'timeout --preserve-status 10 make install -j4' 'timeout --preserve-status 10 npm install -g x' \
+         'timeout --foreground 10 "pip" install x' "timeout --foreground 10 'pip' install x" \
+         'timeout -s KILL 10 pip install x' 'timeout --kill-after=1 10 pip install x' 'timeout -k 1 10 npm install'; do
+  run_case "i-ctl-opt-[$c]-allow"              "$PROOT" "$c" allow
+  PYTHONPATH="$NOYAML" run_case "i-noyaml-ctl-opt-[$c]-allow" "$PROOT" "$c" allow
+done
+# r2: words are capped at 64 characters (a regex run is compiled for every command and an unbounded run is
+# quadratic in a UTF-8 locale). At the cap a `$`-word of 63 more characters is still read as a duration, one
+# past it is not. The longer forms below are holes left for that cost bound, not durations that cannot run:
+# a long variable name expands to 5, and a run of zeros before the 5 is still 5 (pinned, not endorsed).
+_W63=$(printf 'a%.0s' $(seq 1 63)); _W64=$(printf 'a%.0s' $(seq 1 64)); _Z64=$(printf '0%.0s' $(seq 1 64))
+run_case "i-cap-63-dur-deny"           "$PROOT" "timeout \$$_W63 install vault/k /tmp/y"  deny
+PYTHONPATH="$NOYAML" run_case "i-noyaml-cap-63-dur-deny" "$PROOT" "timeout \$$_W63 install vault/k /tmp/y" deny
+run_case "i-known-cap-64-var-allow"    "$PROOT" "timeout \$$_W64 install vault/k /tmp/y"  allow
+run_case "i-known-cap-64-num-allow"    "$PROOT" "timeout ${_Z64}5 install vault/k /tmp/y"  allow
+run_case "i-known-cap-64-opt-allow"    "$PROOT" "timeout -$_W64 5 install vault/k /tmp/y"  allow
+# r1: the duration slot takes a duration-shaped word only, so a program name there never makes the
+# `install` after it a command (timeout rejects these before running anything; a number-less word is no wrapper)
+for c in 'timeout pip install x' 'timeout -s KILL pip install x' 'timeout --signal KILL brew install jq' \
+         'gtimeout make install' 'timeout --foreground npm install -g x'; do
+  run_case "i-ctl-slot-[$c]-allow"             "$PROOT" "$c" allow
+  PYTHONPATH="$NOYAML" run_case "i-noyaml-ctl-slot-[$c]-allow" "$PROOT" "$c" allow
+done
+run_case "i-ctl-slot-declared-allow" "$PROOT" 'timeout -s KILL pip install vault/k' allow
+# r2: values follow getopt_long (GNU "+fk:ps:v", FreeBSD "+fhk:ps:v"): a short bundle ending in k or s and an
+# unambiguous long-option prefix (--k.., --s..) take the next word as their value
+for d in '-vk 5 infinity' '-vs KILL infinity' '--sig KILL infinity' '--kill 5 infinity' '--k 5 infinity' \
+         '--s KILL infinity' '--foreground -vk 1 .5' '-fk 5 .5' '-pvk 5 infinity' '--sign KILL 5' '--kill-a 5 5'; do
+  run_case "i-getopt-[$d]-deny"                "$PROOT" "timeout $d install vault/k /tmp/y" deny
+  PYTHONPATH="$NOYAML" run_case "i-noyaml-getopt-[$d]-deny" "$PROOT" "timeout $d install vault/k /tmp/y" deny
+done
+for c in 'timeout -vk 5 10 pip install x' 'timeout --sig KILL 10 pip install x' 'timeout -vk 5 10 make install -j4' \
+         'timeout -vk 5 infinity pip install x' 'timeout --kill 5 10 npm install -g x' 'timeout --help pip install x'; do
+  run_case "i-ctl-getopt-[$c]-allow"           "$PROOT" "$c" allow
+  PYTHONPATH="$NOYAML" run_case "i-noyaml-ctl-getopt-[$c]-allow" "$PROOT" "$c" allow
+done
+run_case "i-ctl-help-declared-allow" "$PROOT" 'timeout --help pip install vault/k' allow
+PYTHONPATH="$NOYAML" run_case "i-noyaml-ctl-help-declared-allow" "$PROOT" 'timeout --help pip install vault/k' allow
+# r2: a value-less option must not swallow the duration even when the program name after it looks like a
+# duration word (a variable, a quoted variable, a name that starts with a digit)
+for c in 'timeout -v 10 $PIP install x' 'timeout --foreground 10 "$PIP" install x' 'timeout -p 10 2to3 install x' \
+         "timeout -f 10 '2to3' install x" 'timeout --preserve-status 10 ${PIP} install x'; do
+  run_case "i-ctl-novalue-[$c]-allow"          "$PROOT" "$c" allow
+  PYTHONPATH="$NOYAML" run_case "i-noyaml-ctl-novalue-[$c]-allow" "$PROOT" "$c" allow
+done
+# r2: GNU reads inf with a unit suffix (infs), any case; gtimeout runs with a warning
+for d in infs INF Infinity infm; do
+  run_case "i-inf-[$d]-deny"                   "$PROOT" "timeout $d install vault/k /tmp/y" deny
+  PYTHONPATH="$NOYAML" run_case "i-noyaml-inf-[$d]-deny" "$PROOT" "timeout $d install vault/k /tmp/y" deny
+done
+# r2: right after -- the duration may start with a sign (timeout -- -0 runs without a limit under gtimeout)
+run_case "i-dashdash-neg-deny"         "$PROOT" 'timeout -- -0 install vault/k /tmp/y' deny
+PYTHONPATH="$NOYAML" run_case "i-noyaml-dashdash-neg-deny" "$PROOT" 'timeout -- -0 install vault/k /tmp/y' deny
+run_case "i-ctl-dashdash-allow"        "$PROOT" 'timeout -- 10 pip install x' allow
+PYTHONPATH="$NOYAML" run_case "i-noyaml-ctl-dashdash-allow" "$PROOT" 'timeout -- 10 pip install x' allow
+# with a declared path named, the program is not install either: only PyYAML-present route can tell
+run_case "i-ctl-opt-pip-declared-allow" "$PROOT" 'timeout --preserve-status 10 pip install vault/k' allow
+for c in 'timeout 5 make install' 'timeout infinity make install' 'timeout 5 pip install x' \
+         'timeout .5 pip install x' 'timeout $T make install' 'gtimeout 5 make install'; do
+  run_case "i-ctl-[$c]-allow"        "$PROOT" "$c" allow
+  PYTHONPATH="$NOYAML" run_case "i-noyaml-ctl-[$c]-allow" "$PROOT" "$c" allow
+done
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]

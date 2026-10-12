@@ -316,9 +316,20 @@ _SECRET_HERESTRING="${_SECRET_INTERP}([[:space:]]+[^[:space:];|&<>]+)*[[:space:]
 # catch `pip install` / `npm install`, including the remediation hint of the fail-closed branch, so
 # 11b matches it as a command word instead (_SECRET_CMD_START_READERS).
 _SECRET_STAGE12_ONLY='install'
-# A wrapper in front (env, time, timeout with its duration, command, exec, sudo, xargs with its options, NAME=value, a background launcher) or a
+# timeout/gtimeout read their options with getopt_long (GNU "+fk:ps:v", FreeBSD "+fhk:ps:v"): a short bundle
+# that ends in k or s (-k, -vk, -fk) and a long option written out or as an unambiguous prefix (--kill-after,
+# --kill, --k, --signal, --sig, --s) take the next word as their value; every other option (--foreground,
+# --preserve-status, -v, -f, -p, --, and the glued -k5 / --signal=KILL forms) takes none, so the word after it is
+# the duration. The duration is a word that looks like one - a number (5, .5, 5e0, 0x5, +5, or -0 right after
+# --), inf / infinity with an optional unit (infs), a variable ($T, ${T}, "$T"), a quoted word ('5') - so the
+# program name after it ("pip") is not. Words are capped at 64 characters: this regex is compiled for every
+# command once risk_areas are declared, and an unbounded run that fails to match is quadratic in a UTF-8
+# locale in glibc (a 400 KB word took 10 s); a longer word is not read as a duration or an option.
+_SECRET_TIMEOUT='g?timeout([[:space:]]+((-[A-Za-z]{0,63}[ks]|--[ks][a-z-]{0,63})[[:space:]]+[^[:space:]-][^[:space:]]{0,63}|-[^[:space:]]{1,63}))*[[:space:]]+(inf(inity)?[smhd]?|-?[0-9.+][^[:space:]]{0,63}|\$[^[:space:]]{0,63}|["'"'"'][^[:space:]]{0,63})'  # supply-chain-scan: allow-literal wrapper name in a command-word regex, not a spawn
+# A wrapper in front (env, time, timeout/gtimeout with its duration, command, exec, sudo, xargs with its
+# options, NAME=value, a background launcher) or a
 # path (/usr/bin/install) does not hide it; `pip install`, `npm install`, `make install` are not it.
-_SECRET_CMD_START='(^|[;&|(`]|&&)[[:space:]]*(((env|nohup|time|command|exec|sudo|doas|nice|xargs|stdbuf)([[:space:]]+-[^[:space:]]+([[:space:]]+[^[:space:]-][^[:space:]]*)?)*|timeout([[:space:]]+-[^[:space:]]+([[:space:]]+[^[:space:]-][^[:space:]]*)?)*[[:space:]]+[0-9][0-9.]*[smhd]?|[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*)[[:space:]]+)*([^[:space:]]*/)?install[[:space:]]+'  # supply-chain-scan: allow-literal wrapper names in a command-word regex, not a spawn
+_SECRET_CMD_START='(^|[;&|(`]|&&)[[:space:]]*(((env|nohup|time|command|exec|sudo|doas|nice|xargs|stdbuf)([[:space:]]+-[^[:space:]]+([[:space:]]+[^[:space:]-][^[:space:]]*)?)*|'"$_SECRET_TIMEOUT"'|[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*)[[:space:]]+)*([^[:space:]]*/)?install[[:space:]]+'  # supply-chain-scan: allow-literal wrapper names in a command-word regex, not a spawn
 _SECRET_MORE_READERS='base64|base32|basenc|sort|uniq|cut|paste|column|join|comm|expand|unexpand|fmt|shuf|cksum|b2sum|sha1sum|sha224sum|sha384sum|zgrep|bzgrep|xzgrep|iconv|split|look|vim|nano|emacs|jq|yq'
 _secrets_verdict() {
   # a python3 that is missing, exits non-zero or is killed leaves `error` behind, never an allow
