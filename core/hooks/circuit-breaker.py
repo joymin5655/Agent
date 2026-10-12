@@ -151,8 +151,17 @@ def append_fire_record(data: dict, record: dict) -> None:
     call; O_NONBLOCK makes that open fail fast) and O_NOFOLLOW (a symlinked sink
     must not redirect the write to a file outside the project). The project root
     must already exist: only `.agent/logs` below it is created, never a missing
-    root tree, and `.agent` / `.agent/logs` must not be symlinks leaving the root. Root resolution is inside the try because `os.getcwd()` raises
-    when the process cwd was deleted.
+    root tree. `.agent` and `.agent/logs` must not be symlinks at all — even one
+    that stays inside the root — so the record is skipped rather than written
+    below a link.
+
+    Root resolution is inside the try because `os.getcwd()` raises when the
+    process cwd was deleted.
+
+    Limits, by design: the link check and the open are not atomic (a TOCTOU), which
+    is fine for a checkout whose links are committed ahead of time; and
+    AGENT_GATE_SINK_DIR / AGENT_CIRCUIT_BREAKER_SINK are operator-chosen paths whose
+    parents are not link-checked (the override is confined by realpath instead).
     """
     fd = -1
     try:

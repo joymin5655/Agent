@@ -426,6 +426,7 @@ def spy(path, *a, **k):
         finally:
             fh.close()
     return real_open(path, *a, **k)
+import pathlib  # py3.9 pathlib binds os.open at import: do it BEFORE patching
 os.open = spy
 ev = {"event": "PostToolUse", "tool_name": "Bash", "cwd": proj, "session_id": "lk",
       "tool_response": {"stdout": "Traceback (most recent call last): lock probe"}}
@@ -502,12 +503,18 @@ exec 3>&-
 if [[ -z "$LINE" && "$R" == "rc=0 out="[1-9]* ]]; then ok "nonregular-sink-not-written" "FIFO with reader got nothing ($R)"; else bad "nonregular-sink-not-written" "line=${LINE:0:60} $R"; fi
 
 # Intermediate symlinks: <root>/.agent or <root>/.agent/logs pointing outside the root.
-for variant in agent-dir logs-dir; do
-  IS="$STATE_DIR/is-$variant"; mkdir -p "$IS/proj" "$IS/outside/logs"
-  if [[ "$variant" == agent-dir ]]; then ln -s "$IS/outside" "$IS/proj/.agent"
-  else mkdir -p "$IS/proj/.agent"; ln -s "$IS/outside/logs" "$IS/proj/.agent/logs"; fi
+for variant in agent-dir logs-dir inroot-agent inroot-logs; do
+  IS_CHECK=; IS="$STATE_DIR/is-$variant"; mkdir -p "$IS/proj" "$IS/outside/logs"
+  case "$variant" in
+    agent-dir)    ln -s "$IS/outside" "$IS/proj/.agent" ;;
+    logs-dir)     mkdir -p "$IS/proj/.agent"; ln -s "$IS/outside/logs" "$IS/proj/.agent/logs" ;;
+    # a link that stays INSIDE the root is skipped too: the check is "any symlink"
+    inroot-agent) mkdir -p "$IS/proj/store/logs"; ln -s store "$IS/proj/.agent"; IS_CHECK="$IS/proj/store/logs" ;;
+    inroot-logs)  mkdir -p "$IS/proj/.agent" "$IS/proj/shared"; ln -s ../shared "$IS/proj/.agent/logs"; IS_CHECK="$IS/proj/shared" ;;
+  esac
   R=$(run_cb "$IS/proj" "AGENT_CIRCUIT_BREAKER_THRESHOLD=1" "AGENT_CIRCUIT_BREAKER_STATE=$IS/st.json")
-  if [[ ! -e "$IS/outside/logs/circuit-breaker.jsonl" && "$R" == "rc=0 out="[1-9]* ]]; then
+  if [[ ! -e "$IS/outside/logs/circuit-breaker.jsonl" && ! -e "${IS_CHECK:-$IS/outside}/circuit-breaker.jsonl" \
+        && "$R" == "rc=0 out="[1-9]* ]]; then
     ok "symlinked-parent-$variant" "nothing written through the link ($R)"
   else
     bad "symlinked-parent-$variant" "$(ls -R "$IS/outside" 2>&1 | head -3) $R"
