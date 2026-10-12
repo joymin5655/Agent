@@ -212,8 +212,14 @@ what to do next ("change your approach", "write the failing test first") is the
 point of an advisory hook and stays in context. The test is whether the text would
 read the same if the hook were not being measured.
 
-`core/tests/oob-label-guard-test.sh` resolves the text each hook can emit into those
-two fields and fails on label vocabulary, and on any emit site it cannot resolve.
+**Guard scope.** The principle covers every channel the model reads: `additionalContext`,
+`systemMessage`, a system prompt, a deny/ask `permissionDecisionReason`, a Stop
+`decision: block` `reason`, and plain SessionStart stdout. The mechanical guard checks
+only the first two. `core/tests/oob-label-guard-test.sh` finds each place a hook writes
+them (dict key, subscript store, keyword argument, JSON string), follows the text one
+helper call deep, and fails on label vocabulary and on any site it cannot follow
+(unless listed in the guard's `ALLOW` with a reason). The other channels are follow-up
+candidates for the same guard; until then, review them by hand.
 
 ---
 

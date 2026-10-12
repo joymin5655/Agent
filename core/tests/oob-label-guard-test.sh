@@ -28,41 +28,85 @@ SITES=$(printf '%s' "$OUT" | sed -n 's/^sites=\([0-9]*\).*/\1/p')
 if [[ "${SITES:-0}" -ge 8 ]]; then ok "guard-sees-sites" "sites=$SITES"; else bad "guard-sees-sites" "sites=${SITES:-0} (<8: resolver is blind)"; fi
 
 mkroot() {  # mkroot <name> -> fixture root with core/hooks/
-  mkdir -p "$WORK/$1/core/hooks"
+  rm -rf "$WORK/$1"; mkdir -p "$WORK/$1/core/hooks"
   echo "$WORK/$1"
 }
 
-# py_case <name> <context-expr> <want: caught|clean>
-py_case() {
-  local name="$1" expr="$2" want="$3" root rc
+# src_case <name> <python source> <caught|clean> [guard-path]
+src_case() {
+  local name="$1" src="$2" want="$3" g="${4:-$GUARD}" root rc
   root=$(mkroot "$name")
-  printf 'import json\nmsg = %s\nprint(json.dumps({"hookSpecificOutput": {"additionalContext": msg}}))\n' \
-    "$expr" > "$root/core/hooks/fx.py"
-  python3 "$GUARD" --root "$root" >/dev/null 2>&1; rc=$?
+  printf '%s\n' "$src" > "$root/core/hooks/fx.py"
+  python3 "$g" --root "$root" >/dev/null 2>&1; rc=$?
   if [[ "$want" == caught && $rc -ne 0 ]] || [[ "$want" == clean && $rc -eq 0 ]]; then
     ok "$name" "want=$want"
   else
     bad "$name" "want=$want rc=$rc"
   fi
 }
+# py_case <name> <context-expr> <want> — the expression flows into a dict literal
+py_case() {
+  src_case "$1" "import json
+msg = $2
+print(json.dumps({\"hookSpecificOutput\": {\"additionalContext\": msg}}))" "$3"
+}
 
 echo
-echo "=== B. label classes are caught (python) ==="
+echo "=== B. label classes are caught (dict literal) ==="
 py_case "holdout-word"      '"gate OFF for holdout arm"'                 caught
-py_case "cohort-word"       '"session cohort 7"'                         caught
-py_case "variant-word"      '"prompt variant B active"'                  caught
+py_case "cohort-id"         '"session cohort 7"'                         caught
+py_case "variant-id"        '"prompt variant B active"'                  caught
 py_case "experiment-id"     '"experiment_id=42"'                         caught
 py_case "arm-id"            '"arm id: control"'                          caught
+py_case "arm-colon-value"   '"arm: control"'                             caught
 py_case "guard-field"       '"fired guard=secrets"'                      caught
 py_case "reproduce-field"   '"reproduce_test: true"'                     caught
-py_case "via-fstring"       'f"count {1} cohort"'                        caught
-py_case "via-concat"        '"a " + "variant" + " b"'                    caught
+py_case "via-fstring"       'f"count {1} cohort 7"'                      caught
+py_case "via-concat"        '"a " + "variant" + " B"'                    caught
+py_case "split-concat"      '"co" + "hort 7"'                            caught
+
+echo
+echo "=== B2. non-dict-literal emit forms (RV7) ==="
+src_case "subscript-store" 'out = {"hookSpecificOutput": {}}
+out["hookSpecificOutput"]["additionalContext"] = "holdout arm B"
+print(out)' caught
+src_case "keyword-arg"     'print(dict(additionalContext="variant B active"))' caught
+src_case "json-string"     'print('"'"'{"hookSpecificOutput": {"additionalContext": "cohort 7"}}'"'"')' caught
+src_case "computed-key"    'k = "additionalContext"
+print({k: "cohort 7"})' caught
+
+echo
+echo "=== B3. text that arrives through a helper (codex) ==="
+src_case "helper-arg-label" 'def emit(m):
+    print({"additionalContext": m})
+emit("cohort 7")' caught
+src_case "helper-prefix-fstring" 'def emit(m):
+    print({"additionalContext": f"tdd-guard: {m}"})
+emit("variant B")' caught
+src_case "helper-call-concat" 'def build():
+    return "cohort 7"
+print({"additionalContext": "x " + build()})' caught
+src_case "helper-via-variable" 'def emit(m):
+    print({"additionalContext": m})
+def run():
+    note = "arm: control"
+    emit(note)
+run()' caught
+src_case "helper-arg-clean" 'def emit(m):
+    print({"additionalContext": m})
+emit("change your approach")' clean
+src_case "helper-no-caller-unresolved" 'def emit(m):
+    print({"additionalContext": m})' caught
 
 echo
 echo "=== C. ordinary guidance text is not a label ==="
 py_case "plain-advice"      '"Circuit Breaker: change your approach."'   clean
-py_case "guard-prose"       '"the guard rejected this write; fix and retry"' clean
+py_case "guard-prose"       '"the pre-tool guard: blocked the read; fix and retry"' clean
 py_case "tdd-prose"         '"tdd-guard: write the failing test first"'  clean
+py_case "experiment-prose"  '"experiment with a different approach"'     clean
+py_case "experimental-prose" '"this is an experimental flag"'            clean
+py_case "variant-prose"     '"variant of the plan"'                      clean
+py_case "arm-prose"         '"Note arm: left"'                           clean
 
 echo
 echo "=== D. systemMessage key + shell hook ==="
@@ -93,6 +137,42 @@ echo "=== E. a site with unresolvable text fails (no silent blindness) ==="
 root=$(mkroot blind)
 printf 'import json, sys\nprint(json.dumps({"additionalContext": sys.argv[1]}))\n' > "$root/core/hooks/fx.py"
 python3 "$GUARD" --root "$root" >/dev/null 2>&1 && bad "unresolved-fails" "passed blind" || ok "unresolved-fails" "rc!=0"
+
+echo
+echo "=== F. mutation probes — each guard property must be load-bearing ==="
+gmutate() {  # gmutate <name> <find> <repl> -> mutant guard path or ""
+  local out="$WORK/guard-mutant-$1.py"
+  if FIND="$2" REPL="$3" SRC="$GUARD" DST="$out" python3 -c '
+import os, sys
+src = open(os.environ["SRC"], encoding="utf-8").read()
+if os.environ["FIND"] not in src:
+    sys.exit(1)
+open(os.environ["DST"], "w", encoding="utf-8").write(src.replace(os.environ["FIND"], os.environ["REPL"], 1))
+'; then echo "$out"; else echo ""; fi
+}
+# gprobe <name> <find> <repl> <fixture-name> <fixture-src> <want-under-REAL-guard>
+gprobe() {
+  local name="$1" m root rc
+  m=$(gmutate "$name" "$2" "$3")
+  if [[ -z "$m" ]]; then bad "mutation/$name-anchor" "anchor not found — probe is inert"; return; fi
+  root=$(mkroot "mp-$name"); printf '%s\n' "$5" > "$root/core/hooks/fx.py"
+  python3 "$m" --root "$root" >/dev/null 2>&1; rc=$?
+  if [[ "$6" == caught && $rc -eq 0 ]] || [[ "$6" == clean && $rc -ne 0 ]]; then
+    ok "mutation/$name" "mutant flips fixture $4"
+  else
+    bad "mutation/$name" "mutant still behaves like the guard on $4 (rc=$rc)"
+  fi
+}
+gprobe keyword-detect 'isinstance(n, ast.keyword) and n.arg in KEYS' 'False' keyword-arg \
+  'print(dict(additionalContext="variant B active"))' caught
+gprobe json-detect 'return node, "json"          # the key is embedded in a longer string' 'return None, "doc"' json-string \
+  'print('"'"'{"additionalContext": "cohort 7"}'"'"')' caught
+gprobe caller-trace 'callers = self.calls.get(fn.name, [])' 'callers = []' helper-arg-clean \
+  'def emit(m):
+    print({"additionalContext": m})
+emit("change your approach")' clean
+gprobe concat-join 'return _cat([ls, rs]), lo + ro' 'return ls + rs, lo + ro' split-concat \
+  'print({"additionalContext": "co" + "hort 7"})' caught
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
