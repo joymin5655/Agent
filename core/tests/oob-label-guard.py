@@ -108,9 +108,13 @@ def label_hits(text):
 
 
 SENT = "\ufffc"      # stands in for an interpolated value the guard cannot follow
+# separators allowed between a label word and the value: spaces, = : # brackets,
+# quotes, slashes, dots, dashes — "arm=[{x}]", 'arm="{x}"', "cohort #{x}", "variant/{x}"
+_SEP = r"""[\s=:#\[\]()<>'"`./\\-]*"""  # separator class
 _RUNTIME = re.compile(
-    r"(?i)\b(?:experiment|cohort|variant|arm|bucket)[ _-]?(?:id|name|label|group)?\s*[=:]?\s*"
-    + SENT + r"|(?<![\w-])(?:guard|gate_id|reproduce_test|schema_version|sig_sha)\s*[=:]\s*" + SENT)
+    r"(?i)\b(?:experiment|cohort|variant|arm|bucket)[ _-]?(?:id|name|label|group)?" + _SEP
+    + SENT + r"|(?<![\w-])(?:guard|gate_id|reproduce_test|schema_version|sig_sha)\s*[=:]"
+    + _SEP + SENT)
 
 
 def runtime_hits(text):
@@ -686,7 +690,7 @@ def scan_python(path, rel):
 
 _JQ_ARG = re.compile(r'--arg\s+\w+\s+"\$\{?(\w+)')
 _SH_FUNC = re.compile(
-    r"^\s*(?:function\s+([A-Za-z_][\w-]*)\s*(?:\(\))?|([A-Za-z_][\w-]*)\s*\(\))\s*\{(.*)$")
+    r"^\s*(?:function\s+([A-Za-z_][\w-]*)\s*(?:\(\))?|([A-Za-z_][\w-]*)\s*\(\))\s*(?:\{(.*))?$")
 _HEREDOC = re.compile(r"(?<!<)<<(?!<)-?\s*([\"']?)(\w+)\1")
 
 
@@ -698,6 +702,17 @@ def _braces(line):
     return t.count("{") - t.count("}")
 
 
+def _next_brace(code, i):
+    """Opening `{` on the next non-blank line after a definition line:
+    (text after the brace, index of the line after it), or None."""
+    j = i + 1
+    while j < len(code) and not code[j][1].strip():
+        j += 1
+    if j < len(code) and code[j][1].strip().startswith("{"):
+        return code[j][1].strip()[1:], j + 1
+    return None
+
+
 def _shell_functions(code):
     """name -> (body lines, terminated). Brace-counted outside quotes, escapes and
     heredoc bodies, so a `}` printed by the function does not end it early."""
@@ -706,9 +721,15 @@ def _shell_functions(code):
         m = _SH_FUNC.match(ln)
         if not m:
             continue
-        body = [m.group(3)]
-        depth = 1 + _braces(m.group(3))
-        tag, j = None, i + 1
+        rest, j = m.group(3), i + 1
+        if rest is None:                      # brace on a later line
+            nb = _next_brace(code, i)
+            if nb is None:
+                continue
+            rest, j = nb
+        body = [rest]
+        depth = 1 + _braces(rest)
+        tag = None
         while depth > 0 and j < len(code):
             nxt = code[j][1]
             body.append(nxt)

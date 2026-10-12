@@ -393,6 +393,77 @@ T1=$(python3 -c 'import time; print(time.time())')
 if python3 -c "import sys; sys.exit(0 if $T1 - $T0 < 3.0 else 1)"; then ok "huge-template-fast" "$(python3 -c "print(round($T1 - $T0, 2))")s"; else bad "huge-template-fast" "$(python3 -c "print(round($T1 - $T0, 2))")s (>=3s)"; fi
 
 echo
+echo "=== B15. separators between a label word and a runtime value (r5) ==="
+# form_case <name> <python expression using {x}> <caught|clean>
+form_case() {
+  src_case "$1" "from exp import g
+x = g()
+print({\"additionalContext\": $2})" "$3" "" "${4:-}"
+}
+i=0
+while IFS= read -r expr; do
+  i=$((i + 1)); form_case "sep-form-$i" "$expr" caught '^UNRESOLVED .*runtime value'
+done <<'FORMS'
+f'arm=[{x}]'
+f"arm='{x}'"
+f'arm="{x}"'
+f'cohort #{x}'
+f'variant ({x})'
+f'arm=<{x}>'
+f'arm=`{x}`'
+f'cohort.{x}'
+f'variant/{x}'
+f'arm=-{x}'
+f'variant "{x}"'
+FORMS
+i=0
+while IFS= read -r expr; do
+  i=$((i + 1)); form_case "sep-clean-$i" "$expr" clean
+done <<'FORMS'
+f'alarm={x}'
+f'farm: {x}'
+f'charm {x}'
+f'armed={x}'
+f'variant of {x}'
+f'cohort of {x}'
+f'arm64 build: {x}'
+f'experiment with {x}'
+f'variants: {x}'
+f'buckets {x}'
+FORMS
+
+echo
+echo "=== B16. shell function whose opening brace is on the next line (r5) ==="
+shell_case "shell-brace-next-line-parens" caught <<'SH'
+#!/usr/bin/env bash
+build()
+{
+  echo "holdout arm"
+}
+CTX="$(build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+shell_case "shell-brace-next-line-keyword" caught <<'SH'
+#!/usr/bin/env bash
+function build
+
+{
+  echo "holdout arm"
+}
+CTX="$(build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+shell_case "shell-brace-next-line-clean" clean <<'SH'
+#!/usr/bin/env bash
+build()
+{
+  echo "change your approach"
+}
+CTX="$(build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+
+echo
 echo "=== C2. vocabulary regressions (word boundary) ==="
 py_case "identity-prose"    '"experiment identity check failed"'        clean
 py_case "bucket-names-prose" '"bucket names must be lowercase"'          clean
@@ -642,6 +713,22 @@ except subprocess.TimeoutExpired:
     sys.exit(0)
 sys.exit(1)"; then ok "mutation/cat-early-exit" "mutant exceeds 3s on the huge template"; else bad "mutation/cat-early-exit" "mutant is still fast"; fi
 fi
+# r5 probes
+gprobe separator-class '# separator class' '# separator class
+_SEP = r"[\s=:]*"' sep-form-1 \
+  'from exp import g
+x = g()
+print({"additionalContext": f"arm=[{x}]"})' caught '^UNRESOLVED .*runtime value'
+shprobe shell-brace-next-line 'def _next_brace(code, i):' 'def _next_brace(code, i):
+    return None' caught <<'SH'
+#!/usr/bin/env bash
+build()
+{
+  echo "holdout arm"
+}
+CTX="$(build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
 # shell function following
 m=$(gmutate shell-fn 'strs += funcs[f][0]' 'pass')
 if [[ -z "$m" ]]; then bad "mutation/shell-fn-anchor" "anchor not found — probe is inert"; else

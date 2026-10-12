@@ -264,8 +264,10 @@ echo
 echo "=== F. firing sink (X-3) + pollution isolation ==="
 SINK="$STATE_DIR/sink-f.jsonl"; FSTATE="$STATE_DIR/f-state.json"; rm -f "$SINK" "$FSTATE"
 FEV=$(ev_text 'Traceback (most recent call last): sink probe failure')
-OUT=$(printf '%s' "$FEV" | AGENT_CIRCUIT_BREAKER_SINK="$SINK" AGENT_CIRCUIT_BREAKER_STATE="$FSTATE" \
-  AGENT_CIRCUIT_BREAKER_THRESHOLD=1 python3 "$HOOK" 2>/dev/null)
+# AGENT_LOG_ORIGIN is exported "test" by verify-all.sh, so the origin default is only
+# observable with it cleared (same approach as log-origin-test.sh).
+OUT=$(printf '%s' "$FEV" | env -u AGENT_LOG_ORIGIN AGENT_CIRCUIT_BREAKER_SINK="$SINK" \
+  AGENT_CIRCUIT_BREAKER_STATE="$FSTATE" AGENT_CIRCUIT_BREAKER_THRESHOLD=1 python3 "$HOOK" 2>/dev/null)
 if [[ -n "$OUT" ]] && [[ "$(wc -l < "$SINK" 2>/dev/null || echo 0)" -eq 1 ]]; then
   ok "fire-writes-one-sink-line" "stdout non-empty, 1 jsonl line"
 else
@@ -283,6 +285,17 @@ assert "ts" in r and "sig_sha" in r and "Traceback" not in json.dumps(r), r
   ok "sink-record-fields" "guard/hook/decision/session_id/signal/reproduce_test, no raw text"
 else
   bad "sink-record-fields" "$(cat "$SINK" 2>/dev/null)"
+fi
+
+# AGENT_LOG_ORIGIN is recorded verbatim, so a battery-fed record is tagged "test".
+SINK_T="$STATE_DIR/sink-origin-test.jsonl"; rm -f "$SINK_T" "$STATE_DIR/ot-state.json"
+printf '%s' "$FEV" | AGENT_LOG_ORIGIN=test AGENT_CIRCUIT_BREAKER_SINK="$SINK_T" \
+  AGENT_CIRCUIT_BREAKER_STATE="$STATE_DIR/ot-state.json" AGENT_CIRCUIT_BREAKER_THRESHOLD=1 \
+  python3 "$HOOK" >/dev/null 2>&1
+if [[ "$(SINK="$SINK_T" python3 -c 'import json,os; print(json.loads(open(os.environ["SINK"]).readline())["origin"])' 2>/dev/null)" == test ]]; then
+  ok "sink-origin-test-tag" "AGENT_LOG_ORIGIN=test -> origin \"test\""
+else
+  bad "sink-origin-test-tag" "$(cat "$SINK_T" 2>/dev/null)"
 fi
 
 # Below threshold = no fire = no sink line.
