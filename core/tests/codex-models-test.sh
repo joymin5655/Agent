@@ -22,6 +22,7 @@ HOOK="$REPO_ROOT/core/hooks/session-init.py"
 
 PASS=0
 FAIL=0
+SKIP=0
 WORK="$(mktemp -d)"
 trap '[[ -n "$WORK" && -d "$WORK" ]] && rm -rf "$WORK"' EXIT
 
@@ -282,7 +283,7 @@ if [[ "$(id -u)" -ne 0 ]]; then
   if [[ $rc -eq 1 ]] && grep -q '^codex-models:' "$WORK/err" && ! grep -q Traceback "$WORK/err"; then ok "OSError -> clean message, exit 1"
   else bad "oserror clean" "rc=$rc $(head -2 "$WORK/err")"; fi
 else
-  echo "  skip [oserror-clean] running as root (chmod 000 does not bind)"
+  SKIP=$((SKIP+1)); echo "  skip [oserror-clean] running as root (chmod 000 does not bind)"
 fi
 
 # --- 5. tiers file --------------------------------------------------------
@@ -336,5 +337,5 @@ else bad "no-catalog skip" "rc=$rc"; fi
 mv "$CH/models_cache.json.hold" "$CH/models_cache.json"
 
 echo
-echo "codex-models-test: $PASS pass, $FAIL fail"
+echo "codex-models-test: $PASS pass, $FAIL fail, $SKIP skip"
 [[ $FAIL -eq 0 ]]
