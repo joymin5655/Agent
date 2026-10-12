@@ -31,6 +31,8 @@ GATE <id> | <hook> | <decision> | <sink> | <match> | <last_reviewed> | <assumpti
 ```
 
 - `<sink>` is a path relative to `.agent/logs/`, or `-` when the gate writes no log.
+- Sink-record fields are measurement labels: keep them in the sink, never in the text a gate
+  shows the model (`hook-protocol.md` § Out-of-band labels).
 - `<match>` is the `guard` field value to count in the sink, or `*` to count every
   line in the sink (used when the sink holds exactly one gate's records).
 - `<last_reviewed>` is `YYYY-MM-DD`.

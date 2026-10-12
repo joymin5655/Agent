@@ -189,6 +189,31 @@ in handler order or shared side effects between parallel hooks.
 6. Document expected `tool_name` matchers in the file's header comment.
 7. Add to `adapters/claude-code/settings.json.template` hook registration if appropriate.
 8. Run the cross-AI parity test: `bash core/tests/adapter-parity.sh`.
+9. Keep measurement labels out of model-visible text (next subsection);
+   `bash core/tests/oob-label-guard-test.sh` enforces it.
+
+### Out-of-band labels
+
+Measurement labels travel **out of band**: they go to the jsonl sink under
+`.agent/logs/` and nowhere the model reads. A hook must not put one into
+`additionalContext`, `systemMessage` or a system prompt. Logging inside the context
+changes the behavior being measured — in a comparable harness the control group was
+observed quoting the rule that had been injected for labeling only.
+
+A **measurement label** is, narrowly, a value that exists only to group or aggregate
+observations:
+
+- an experiment, holdout, cohort, variant or arm assignment (or its id);
+- a sink-record field written for aggregation: `guard`, `gate_id`, `reproduce_test`,
+  `schema_version`, a signature digest.
+
+Ordinary guidance is **not** a label. A message that tells the model what happened or
+what to do next ("change your approach", "write the failing test first") is the
+point of an advisory hook and stays in context. The test is whether the text would
+read the same if the hook were not being measured.
+
+`core/tests/oob-label-guard-test.sh` resolves the text each hook can emit into those
+two fields and fails on label vocabulary, and on any emit site it cannot resolve.
 
 ---
 

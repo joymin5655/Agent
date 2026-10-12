@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Out-of-band label principle + guard (X-2).** `docs/hook-protocol.md` defines
+  measurement labels narrowly and bars them from `additionalContext` / `systemMessage`;
+  `core/tests/oob-label-guard-test.sh` scans the text `core/hooks` emit (0 violations today).
+- **circuit-breaker firing sink (X-3).** Each fire appends a line to
+  `.agent/logs/circuit-breaker.jsonl` (failures to write are ignored) and the gate has a
+  `docs/gate-registry.md` row, so `telemetry-digest --gates` can count it. Verdict unchanged.
+
 ## [0.9.0] - 2026-10-12
 
 Planning and verification discipline borrowed from a decision-coverage / plan-checker workflow.
