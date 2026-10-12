@@ -31,6 +31,12 @@ HOOK="$REPO_ROOT/core/hooks/circuit-breaker.py"
 STATE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/circuit-breaker-test.XXXXXX")"
 trap 'rm -rf "$STATE_DIR"' EXIT
 
+# Every case fires the hook, which now appends to a jsonl sink (X-3). Point it at
+# the scratch dir for the whole battery so no case can write a real .agent/logs
+# (the fixture cwd is /tmp) — section F asserts that isolation holds.
+export AGENT_CIRCUIT_BREAKER_SINK="$STATE_DIR/sink-default.jsonl"
+export AGENT_REPRODUCE_TEST=1
+
 PASS=0
 FAIL=0
 CASE_N=0
@@ -253,6 +259,93 @@ done
 wait
 N=$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$PAR_STATE" 2>/dev/null || echo 0)
 if [[ "$N" -eq 20 ]]; then ok "parallel-20-failures-all-recorded" "n=$N"; else bad "parallel-lost-update" "n=$N (want 20)"; fi
+
+echo
+echo "=== F. firing sink (X-3) + pollution isolation ==="
+SINK="$STATE_DIR/sink-f.jsonl"; FSTATE="$STATE_DIR/f-state.json"; rm -f "$SINK" "$FSTATE"
+FEV=$(ev_text 'Traceback (most recent call last): sink probe failure')
+OUT=$(printf '%s' "$FEV" | AGENT_CIRCUIT_BREAKER_SINK="$SINK" AGENT_CIRCUIT_BREAKER_STATE="$FSTATE" \
+  AGENT_CIRCUIT_BREAKER_THRESHOLD=1 python3 "$HOOK" 2>/dev/null)
+if [[ -n "$OUT" ]] && [[ "$(wc -l < "$SINK" 2>/dev/null || echo 0)" -eq 1 ]]; then
+  ok "fire-writes-one-sink-line" "stdout non-empty, 1 jsonl line"
+else
+  bad "fire-writes-one-sink-line" "out=${OUT:0:40} sink=$(cat "$SINK" 2>/dev/null)"
+fi
+if SINK="$SINK" python3 -c '
+import json, os
+r = json.loads(open(os.environ["SINK"]).readline())
+assert r["guard"] == "circuit-breaker" and r["hook"] == "circuit-breaker.py", r
+assert r["decision"] == "advise" and r["session_id"] == "cb-test", r
+assert r["signal"] == "text" and r["kind"] in ("repeat", "multi"), r
+assert r["reproduce_test"] is True and r["origin"] == "session", r
+assert "ts" in r and "sig_sha" in r and "Traceback" not in json.dumps(r), r
+' 2>/dev/null; then
+  ok "sink-record-fields" "guard/hook/decision/session_id/signal/reproduce_test, no raw text"
+else
+  bad "sink-record-fields" "$(cat "$SINK" 2>/dev/null)"
+fi
+
+# Below threshold = no fire = no sink line.
+Q_SINK="$STATE_DIR/sink-quiet.jsonl"; rm -f "$Q_SINK" "$STATE_DIR/q-state.json"
+printf '%s' "$FEV" | AGENT_CIRCUIT_BREAKER_SINK="$Q_SINK" AGENT_CIRCUIT_BREAKER_STATE="$STATE_DIR/q-state.json" \
+  AGENT_CIRCUIT_BREAKER_THRESHOLD=3 python3 "$HOOK" >/dev/null 2>&1
+if [[ ! -s "$Q_SINK" ]]; then ok "no-fire-no-sink-line" "sink empty"; else bad "no-fire-no-sink-line" "$(cat "$Q_SINK")"; fi
+
+# Sink failure must not change behaviour: a directory squatting on the sink path.
+D_SINK="$STATE_DIR/sink-is-a-dir"; mkdir -p "$D_SINK"
+OUT=$(printf '%s' "$FEV" | AGENT_CIRCUIT_BREAKER_SINK="$D_SINK" AGENT_CIRCUIT_BREAKER_STATE="$STATE_DIR/d-state.json" \
+  AGENT_CIRCUIT_BREAKER_THRESHOLD=1 python3 "$HOOK" 2>/dev/null); RC=$?
+if [[ $RC -eq 0 && "$OUT" == *"Circuit Breaker"* ]]; then
+  ok "sink-failure-is-silent" "rc=0, advisory still emitted"
+else
+  bad "sink-failure-is-silent" "rc=$RC out=$OUT"
+fi
+
+# The record is out-of-band: advisory text carries none of the measurement fields.
+if [[ "$OUT" != *sig_sha* && "$OUT" != *reproduce_test* && "$OUT" != *'"guard"'* ]]; then
+  ok "advisory-carries-no-label" "no sink fields in additionalContext"
+else
+  bad "advisory-carries-no-label" "$OUT"
+fi
+
+# Pollution: no env override, event cwd = a scratch project -> default
+# <cwd>/.agent/logs/circuit-breaker.jsonl, never the real repo's logs.
+PROJ="$STATE_DIR/proj"; mkdir -p "$PROJ"
+REAL_BEFORE=$(cat "$REPO_ROOT/.agent/logs/circuit-breaker.jsonl" 2>/dev/null | wc -l)
+PEV=$(PROJ="$PROJ" python3 -c '
+import os, json
+print(json.dumps({"ai": "claude-code", "event": "PostToolUse", "session_id": "cb-proj",
+    "tool_name": "Bash", "tool_input": {"command": "x"},
+    "tool_response": {"stdout": "Traceback (most recent call last): proj"},
+    "cwd": os.environ["PROJ"]}))')
+printf '%s' "$PEV" | env -u AGENT_CIRCUIT_BREAKER_SINK -u AGENT_GATE_SINK_DIR AGENT_CIRCUIT_BREAKER_STATE="$STATE_DIR/p-state.json" \
+  AGENT_CIRCUIT_BREAKER_THRESHOLD=1 python3 "$HOOK" >/dev/null 2>&1
+REAL_AFTER=$(cat "$REPO_ROOT/.agent/logs/circuit-breaker.jsonl" 2>/dev/null | wc -l)
+if [[ -s "$PROJ/.agent/logs/circuit-breaker.jsonl" && "$REAL_BEFORE" -eq "$REAL_AFTER" ]]; then
+  ok "default-sink-is-project-local" "wrote $PROJ/.agent/logs, repo logs untouched"
+else
+  bad "default-sink-is-project-local" "proj=$(ls "$PROJ/.agent/logs" 2>&1) real $REAL_BEFORE->$REAL_AFTER"
+fi
+
+# Escaping override falls back to the project default instead of writing elsewhere.
+EVIL="$STATE_DIR/../circuit-breaker-evil-$$.jsonl"
+printf '%s' "$PEV" | AGENT_CIRCUIT_BREAKER_SINK="/etc/cb-evil-$$.jsonl" AGENT_CIRCUIT_BREAKER_STATE="$STATE_DIR/e2-state.json" \
+  AGENT_CIRCUIT_BREAKER_THRESHOLD=1 python3 "$HOOK" >/dev/null 2>&1
+if [[ ! -e "/etc/cb-evil-$$.jsonl" && ! -e "$EVIL" ]]; then ok "override-confined" "escaping sink path not written"; else bad "override-confined" "wrote outside allowed roots"; rm -f "/etc/cb-evil-$$.jsonl"; fi
+
+# Registry row is readable by the digest and counts the sink.
+DIGEST="$REPO_ROOT/core/infra/telemetry-digest.sh"
+GL="$STATE_DIR/gl"; mkdir -p "$GL"
+python3 -c '
+import json, sys, datetime
+print(json.dumps({"ts": datetime.datetime.now(datetime.timezone.utc).isoformat(), "guard": "circuit-breaker",
+  "hook": "circuit-breaker.py", "decision": "advise", "origin": "session"}))' > "$GL/circuit-breaker.jsonl"
+DOUT=$(bash "$DIGEST" --gates --logs-dir "$GL" 2>&1 || true)
+if printf '%s' "$DOUT" | grep -E '^ *circuit-breaker' | grep -qv 'UNINSTRUMENTED\|DEAD'; then
+  ok "digest-reads-registry-row" "$(printf '%s' "$DOUT" | grep -E '^ *circuit-breaker' | head -1)"
+else
+  bad "digest-reads-registry-row" "$(printf '%s' "$DOUT" | grep -i circuit | head -3)"
+fi
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
