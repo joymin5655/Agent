@@ -297,18 +297,28 @@ fi
 # denies them as unknown programs; as VERBS members they would count as known non-walking readers
 # and let `gzip -r . ; ls secrets/` through. (zgrep, bzgrep and xzgrep need the list: stage 2 allowed them.)
 # Inline interpreter code that 11b and its fail-closed branch look for: the interpreter, any words
-# (options such as -I or -W ignore) and then a code flag: -c -e -E -p -r, bundled (-le, -pe), --eval,
-# --print, or deno's `eval` word, then the quote that opens the code, glued (-c"x", -e'x') or
-# spaced, plain or $'...'. Words in between are not told apart from a script name, so
-# `python3 tool.py -e "vault/x"` also matches; that only costs when a declared path is named too.
-_SECRET_INLINE_CODE='(python[0-9.]*|pypy[0-9]*|node|nodejs|deno|bun|perl|ruby|php)([[:space:]]+[^[:space:];|&<>"'"'"']+)*[[:space:]]+(-[a-zA-Z]*[ceEpr]|--eval|--print|eval)(=|[[:space:]]+)?[[:space:]]*\$?["'"'"']'
+# (options such as -I or -W "ignore", quoted or not) and then a code flag: -c -e -E -p -r, bundled
+# (-le, -pe), --eval, --print, or deno's `eval` word, then the code: opened by a quote, glued
+# (-c"x", -e'x') or spaced, plain or $'...', or unquoted with a backslash in it (node -p
+# require\(...\)): a shell needs that escape for any code with a parenthesis, and the backslash
+# keeps `pytest -p no:cacheprovider` and `pip install -r reqs.txt` out. Words in between are not
+# told apart from a script name, so `python3 tool.py -e "vault/x"` also matches; that only costs
+# when a declared path is named too.
+_SECRET_INTERP='(python[0-9.]*|pypy[0-9]*|node|nodejs|deno|bun|perl|ruby|php)'
+_SECRET_CODE_OPEN='(\$?["'"'"']|[^[:space:]]*\\)'
+_SECRET_INLINE_CODE="${_SECRET_INTERP}([[:space:]]+[^[:space:];|&<>]+)*[[:space:]]+(-[a-zA-Z]*[ceEpr]|--eval|--print|eval)(=|[[:space:]]+)?[[:space:]]*${_SECRET_CODE_OPEN}"
+# An interpreter fed a here-string reads its program from it (python3 <<< "open('p')"); echo "x" <<< "p"
+# is only text and stays out.
+_SECRET_HERESTRING="${_SECRET_INTERP}([[:space:]]+[^[:space:];|&<>]+)*[[:space:]]*<<<"
 # `pr` is not listed: the unanchored match would nominate every `gh pr create --body ...secrets/...`,
 # and stage 2 reads `pr` as a known reader of that body text (gh-pr-body-allow); coreutils pr is rare.
 # `install` (a copy) is nominated and judged by stages 1-2 only: in 11b a bare word match would also
 # catch `pip install` / `npm install`, including the remediation hint of the fail-closed branch, so
 # 11b matches it as a command word instead (_SECRET_CMD_START_READERS).
 _SECRET_STAGE12_ONLY='install'
-_SECRET_CMD_START='(^|[;&|(`]|&&)[[:space:]]*(sudo[[:space:]]+)?install[[:space:]]+'
+# A wrapper in front (env, nohup, time, command, exec, sudo, xargs with its options, NAME=value) or a
+# path (/usr/bin/install) does not hide it; `pip install`, `npm install`, `make install` are not it.
+_SECRET_CMD_START='(^|[;&|(`]|&&)[[:space:]]*(((env|nohup|time|command|exec|sudo|doas|nice|xargs|stdbuf|timeout)([[:space:]]+-[^[:space:]]+([[:space:]]+[^[:space:]-][^[:space:]]*)?)*|[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*)[[:space:]]+)*([^[:space:]]*/)?install[[:space:]]+'
 _SECRET_MORE_READERS='base64|base32|basenc|sort|uniq|cut|paste|column|join|comm|expand|unexpand|fmt|shuf|cksum|b2sum|sha1sum|sha224sum|sha384sum|zgrep|bzgrep|xzgrep|iconv|split|look|vim|nano|emacs|jq|yq'
 _secrets_verdict() {
   # a python3 that is missing, exits non-zero or is killed leaves `error` behind, never an allow
@@ -2095,10 +2105,17 @@ PY
   # unanchored verb match minus the path clause. That keeps fail-closed a strict
   # superset of the token path (incl. JSON-declared paths) and over-blocks
   # deliberately until PyYAML is installed.
+  # Inline code and a here-string may span lines (python3 -c "<newline>open('p')<newline>"): look at
+  # a copy with backslash-newline joined and newlines turned into blanks. Only the two interpreter
+  # clauses use it; every other clause keeps its line-by-line match.
+  _CMD_FLAT=${COMMAND//\\$'\n'/}
+  _CMD_FLAT=${_CMD_FLAT//$'\n'/ }
   if [[ "$_EXTRA_SECRET_ALT" == "!UNPARSEABLE" ]]; then
     if echo "$COMMAND" | grep -qiE "($_SECRET_READ_VERBS)\s+" \
        || echo "$COMMAND" | grep -qiE "$_SECRET_CMD_START" \
-       || echo "$COMMAND" | grep -qiE "$_SECRET_INLINE_CODE" \
+       || echo "$_CMD_FLAT" | grep -qiE "$_SECRET_INLINE_CODE" \
+       || echo "$_CMD_FLAT" | grep -qiE "$_SECRET_HERESTRING" \
+       || echo "$COMMAND" | grep -qiE "\|.*xargs" \
        || echo "$COMMAND" | grep -qiE "(^|[^<])<>?\s*[\"']?[^ ;|&<>(]"; then
       log_violation secrets "risk_areas declared but unparseable (PyYAML missing)"
       emit_deny "Read/copy/upload command blocked: project secret paths cannot be checked (Risk Area #2: secrets).
@@ -2116,7 +2133,9 @@ FIX: install PyYAML (bash setup.sh --bootstrap asks first; or python3 -m pip ins
     if echo "$COMMAND" | grep -qiE "($_SECRET_READ_VERBS)\s+.*($_EXTRA_SECRET_ALT)" \
        || echo "$COMMAND" | grep -qiE "${_SECRET_CMD_START}.*($_EXTRA_SECRET_ALT)" \
        || echo "$COMMAND" | grep -qiE "(^|[^<])<>?\s*[\"']?[^ ;|&<>]*($_EXTRA_SECRET_ALT)" \
-       || echo "$COMMAND" | grep -qiE "${_SECRET_INLINE_CODE}.*($_EXTRA_SECRET_ALT)"; then
+       || echo "$_CMD_FLAT" | grep -qiE "${_SECRET_INLINE_CODE}.*($_EXTRA_SECRET_ALT)" \
+       || echo "$_CMD_FLAT" | grep -qiE "${_SECRET_HERESTRING}.*($_EXTRA_SECRET_ALT)" \
+       || echo "$COMMAND" | grep -qiE "($_EXTRA_SECRET_ALT).*\|.*xargs"; then
       log_violation secrets "project secrets path access blocked"
       emit_deny "Access to a project-declared secret path blocked (Risk Area #2: secrets).
 WHY: hook-config.yml risk_areas.secrets.paths marks this path as secret; reading/copying/uploading it exposes credentials.

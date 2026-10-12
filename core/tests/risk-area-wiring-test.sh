@@ -159,6 +159,16 @@ run_case "noyaml-rw-redirect-deny"       "$PROOT" 'exec 3<>vault/k'         deny
 run_case "noyaml-py-I-c-deny"            "$PROOT" 'python3 -I -c "print(1)"' deny
 run_case "noyaml-sort-deny"              "$PROOT" 'sort notes.txt'          deny
 run_case "noyaml-heredoc-allow"          "$PROOT" $'echo x <<\'EOF\'\nbody\nEOF' allow
+# r2: fail-closed stays a superset of the token path for the clauses the token path gained
+run_case "noyaml-install-deny"           "$PROOT" 'install vault/prod.key /tmp/x'    deny
+run_case "noyaml-install-wrapper-deny"   "$PROOT" 'env install vault/prod.key /tmp/x' deny
+run_case "noyaml-herestring-deny"        "$PROOT" "python3 <<< \"print(open('vault/k').read())\"" deny
+run_case "noyaml-xargs-pipe-deny"        "$PROOT" 'echo vault/k | xargs -I{} install {} /tmp/y' deny
+run_case "noyaml-ml-inline-deny"         "$PROOT" $'python3 -c "\nprint(open(\'vault/k\').read())\n"' deny
+run_case "noyaml-node-p-unquoted-deny"   "$PROOT" 'node -p require\(\"fs\"\).readFileSync\(\"vault/k\"\)' deny
+run_case "noyaml-ctl-pip-install-allow"  "$PROOT" 'pip3 install -r requirements.txt'  allow
+run_case "noyaml-ctl-make-install-allow" "$PROOT" 'make install'                       allow
+run_case "noyaml-ctl-pytest-p-allow"     "$PROOT" 'python3 -m pytest -p no:cacheprovider tests/' allow
 # commands outside that family keep working, including the remediation itself
 run_case "noyaml-ls-allow"               "$PROOT" 'ls -la'                  allow
 run_case "noyaml-pip-fix-allow"          "$PROOT" 'python3 -m pip install --user pyyaml' allow
@@ -245,7 +255,8 @@ run_case "g-py-ansi-c-deny"          "$PROOT" "python3 -c \$'open(\"vault/k\")'"
 run_case "g-node-p-deny"             "$PROOT" "node -p \"require('fs').readFileSync('vault/k')\"" deny
 run_case "g-node-eval-eq-deny"       "$PROOT" "node --eval=\"require('fs').readFileSync('vault/k')\"" deny
 run_case "g-deno-eval-deny"          "$PROOT" "deno eval \"Deno.readTextFileSync('vault/k')\"" deny
-run_case "g-perl-le-deny"            "$PROOT" "perl -le 'print for <vault/*>'"                deny
+# (the redirect clause finds <vault/ here, so this one no longer proves the bundled-flag match: see h-perl-ne)
+run_case "g-redir-glob-in-perl-deny" "$PROOT" "perl -le 'print for <vault/*>'"                deny
 run_case "g-php-r-deny"              "$PROOT" "php -r 'echo file_get_contents(\"vault/k\");'" deny
 # the same interpreters running plain code, or a script, stay allowed
 run_case "g-ctl-py-I-c-allow"        "$PROOT" 'python3 -I -c "print(1)"'                  allow
@@ -276,6 +287,47 @@ run_case "g-verb-stderr-deny"        "$PROOT" 'cat vault/k 2>&1'                
 # commands; the verb word inside prose)
 run_case "g-known-sep-deny"          "$PROOT" 'sort notes.txt; ls vault/'                  deny
 run_case "g-known-prose-deny"        "$PROOT" "echo 'vim vault/ is blocked'"               deny
+
+echo
+echo "=== (h) r2: interpreter here-string, install behind wrappers, multi-line and unquoted code ==="
+# here-string: the interpreter reads its program from it; echo's text does not
+run_case "h-py-herestring-deny"      "$PROOT" "python3 <<< \"print(open('vault/k').read())\""   deny
+run_case "h-node-herestring-deny"    "$PROOT" "node <<< \"console.log(require('fs').readFileSync('vault/k','utf8'))\"" deny
+run_case "h-perl-herestring-deny"    "$PROOT" "perl <<< 'open F, \"vault/k\"'"                  deny
+run_case "h-py-herestring-opts-deny" "$PROOT" "python3 -I <<< \"open('vault/k')\""              deny
+run_case "h-ctl-py-herestring-allow" "$PROOT" 'python3 <<< "print(1)"'                           allow
+run_case "h-ctl-echo-herestring-allow" "$PROOT" 'echo "x" <<< "vault/ mention"'                  allow
+# bundled flag: -ne is not caught by the redirect clause, only by the inline-code match
+run_case "h-perl-ne-deny"            "$PROOT" "perl -ne 'print' vault/k"                         deny
+run_case "h-perl-pe-deny"            "$PROOT" "perl -pe 's/a/b/' vault/k"                        deny
+# install behind a wrapper, an assignment or a path; and as the target of a pipe into xargs
+for w in 'env install' 'nohup install' 'time install' 'command install' 'exec install' 'sudo install' \
+         'x=1 install' 'env -i install' 'xargs install' '/usr/bin/install' 'sudo -u root install'; do
+  run_case "h-install-[$w]-deny"     "$PROOT" "$w vault/k /tmp/y"                                deny
+done
+run_case "h-install-xargs-pipe-deny" "$PROOT" 'echo vault/k | xargs -I{} install {} /tmp/y'      deny
+run_case "h-install-xargs-sp-deny"   "$PROOT" 'echo vault/k | xargs -I {} install {} /tmp/y'     deny
+run_case "h-xargs-pipe-cat-deny"     "$PROOT" 'echo vault/k | xargs cat'                          deny
+for c in 'pip install requests' 'pip3 install -r requirements.txt' 'python3 -m pip install --user pyyaml' \
+         'brew install jq' 'npm install' 'apt-get install -y curl' 'sudo apt-get install -y curl' \
+         'cargo install ripgrep' 'go install example.com/x@latest' 'make install' 'sudo make install'; do
+  run_case "h-ctl-[$c]-allow"        "$PROOT" "$c"                                               allow
+done
+# multi-line inline code: the interpreter and the path sit on different lines
+run_case "h-ml-py-deny"              "$PROOT" $'python3 -c "\nprint(open(\'vault/k\').read())\n"' deny
+run_case "h-ml-py-backslash-deny"    "$PROOT" $'python3 -c \\\n"print(open(\'vault/k\').read())"' deny
+run_case "h-ml-node-deny"            "$PROOT" $'node -e "\nrequire(\'fs\').readFileSync(\'vault/k\')\n"' deny
+run_case "h-ctl-ml-py-allow"         "$PROOT" $'python3 -c "\nprint(1)\n"'                        allow
+run_case "h-ctl-ml-plain-allow"      "$PROOT" $'ls\npwd\nls src'                                   allow
+# known over-block: a separate command on the next line that names the path, after inline code
+# (the same line already denied: python3 -c "print(1)"; ls vault/)
+run_case "h-known-ml-next-cmd-deny"  "$PROOT" $'python3 -c "print(1)"\nls vault/'                  deny
+# quoted option values and unquoted code
+run_case "h-py-W-quoted-deny"        "$PROOT" "python3 -W \"ignore\" -c \"print(open('vault/k').read())\"" deny
+run_case "h-node-p-unquoted-deny"    "$PROOT" 'node -p require\(\"fs\"\).readFileSync\(\"vault/k\",\"utf8\"\)' deny
+run_case "h-ctl-pytest-p-allow"      "$PROOT" 'python3 -m pytest -p no:cacheprovider tests/'      allow
+run_case "h-ctl-pip-r-allow"         "$PROOT" 'python3 -m pip install -r requirements.txt'        allow
+run_case "h-ctl-node-p-allow"        "$PROOT" 'node -p process.version'                            allow
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
