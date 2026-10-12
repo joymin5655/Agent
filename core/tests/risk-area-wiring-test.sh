@@ -396,6 +396,13 @@ for c in 'timeout -vk 5 10 pip install x' 'timeout --sig KILL 10 pip install x' 
 done
 run_case "i-ctl-help-declared-allow" "$PROOT" 'timeout --help pip install vault/k' allow
 PYTHONPATH="$NOYAML" run_case "i-noyaml-ctl-help-declared-allow" "$PROOT" 'timeout --help pip install vault/k' allow
+# r2: a value-less option must not swallow the duration even when the program name after it looks like a
+# duration word (a variable, a quoted variable, a name that starts with a digit)
+for c in 'timeout -v 10 $PIP install x' 'timeout --foreground 10 "$PIP" install x' 'timeout -p 10 2to3 install x' \
+         "timeout -f 10 '2to3' install x" 'timeout --preserve-status 10 ${PIP} install x'; do
+  run_case "i-ctl-novalue-[$c]-allow"          "$PROOT" "$c" allow
+  PYTHONPATH="$NOYAML" run_case "i-noyaml-ctl-novalue-[$c]-allow" "$PROOT" "$c" allow
+done
 # r2: GNU reads inf with a unit suffix (infs), any case; gtimeout runs with a warning
 for d in infs INF Infinity infm; do
   run_case "i-inf-[$d]-deny"                   "$PROOT" "timeout $d install vault/k /tmp/y" deny
