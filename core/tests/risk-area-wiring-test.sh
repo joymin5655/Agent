@@ -348,6 +348,30 @@ for d in 5 infinity '$T'; do
   PYTHONPATH="$NOYAML" run_case "i-noyaml-gtimeout-[$d]-deny" "$PROOT" "gtimeout $d install vault/k /tmp/y" deny
 done
 run_case "i-wrapped-var-deny"        "$PROOT" 'sudo timeout $T install vault/k /tmp/y' deny
+# r1: options that take no value (--foreground, --preserve-status, -v, -f, -p, --) must not swallow the
+# duration, and options that do (-k, -s, --kill-after, --signal, separate or glued) must still be skipped
+for d in '--foreground 10' '--preserve-status 10' '-v infinity' '-f 10' '-p 10' '-- 10' '--verbose 10' \
+         '--preserve-status -s KILL 10' '--signal KILL 5' '--signal=KILL 5' '--kill-after 1 5' '-k1 5' '-sKILL 5'; do
+  run_case "i-opt-[$d]-deny"                   "$PROOT" "timeout $d install vault/k /tmp/y" deny
+  PYTHONPATH="$NOYAML" run_case "i-noyaml-opt-[$d]-deny" "$PROOT" "timeout $d install vault/k /tmp/y" deny
+done
+# r1: a program name after the duration is never the duration (main allowed all of these)
+for c in 'timeout --preserve-status 10 pip install -r requirements.txt' 'gtimeout --foreground 10 pip install x' \
+         'timeout --foreground 10 brew install jq' 'timeout -v 10 pip install x' \
+         'timeout --preserve-status 10 make install -j4' 'timeout --preserve-status 10 npm install -g x' \
+         'timeout --foreground 10 "pip" install x' "timeout --foreground 10 'pip' install x" \
+         'timeout -s KILL 10 pip install x' 'timeout --kill-after=1 10 pip install x' 'timeout -k 1 10 npm install'; do
+  run_case "i-ctl-opt-[$c]-allow"              "$PROOT" "$c" allow
+  PYTHONPATH="$NOYAML" run_case "i-noyaml-ctl-opt-[$c]-allow" "$PROOT" "$c" allow
+done
+# r1: words are capped at 255 characters (an unbounded run is quadratic in a UTF-8 locale); at the cap a
+# duration is still read, one char past it is not (pinned gap: such a word is no real duration anyway)
+_W255=$(printf 'a%.0s' $(seq 1 255)); _W256=$(printf 'a%.0s' $(seq 1 256))
+run_case "i-cap-255-dur-deny"          "$PROOT" "timeout \$$_W255 install vault/k /tmp/y"  deny
+PYTHONPATH="$NOYAML" run_case "i-noyaml-cap-255-dur-deny" "$PROOT" "timeout \$$_W255 install vault/k /tmp/y" deny
+run_case "i-known-cap-256-dur-allow"   "$PROOT" "timeout \$$_W256 install vault/k /tmp/y"  allow
+# with a declared path named, the program is not install either: only PyYAML-present route can tell
+run_case "i-ctl-opt-pip-declared-allow" "$PROOT" 'timeout --preserve-status 10 pip install vault/k' allow
 for c in 'timeout 5 make install' 'timeout infinity make install' 'timeout 5 pip install x' \
          'timeout .5 pip install x' 'timeout $T make install' 'gtimeout 5 make install'; do
   run_case "i-ctl-[$c]-allow"        "$PROOT" "$c" allow
