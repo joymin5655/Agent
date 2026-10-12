@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **plan-gate: approval flag write and legacy restore hardened (AG15).** `write_flag` no longer follows a symlink or truncates a hard-linked file (same `O_NOFOLLOW` / single-link / truncate-after-validate path as the withheld marker); the claim-restore fallback creates the slot with `O_EXCL` instead of `lexists`+`rename`. New tests pin the claim wiring, those two paths and previously surviving mutants; the codex-models and goal-record tests count root-only skips.
 - **verify-all green on a root VM without sqlite3.** `codex-models-test.sh` skips only its
   `chmod 000` OSError case when running as root; `supervisor-goal-record-test.sh` emits the
   `SKIP:` line and exits 2 when sqlite3 or jq is missing; two E702 statements in
