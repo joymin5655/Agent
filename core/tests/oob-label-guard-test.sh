@@ -792,9 +792,9 @@ $3" > "$root/core/hooks/fx.py"
     bad "$name" "rc=$rc $(python3 -c "print(round($t1 - $t0, 2))")s (want /$rx/, <5s): $(printf '%s' "$out" | tail -1 | cut -c1-120)"
   fi
 }
-cost_case "cost-binop-40" 'work budget exceeded|distinct tails' "print('import sys\ns = sys.argv\nprint({\"additionalContext\": %s})' % ' + '.join(alt(i, 3) for i in range(40)))"
-cost_case "cost-binop-300" 'work budget exceeded|distinct tails|too deep' "print('import sys\ns = sys.argv\nprint({\"additionalContext\": %s})' % ' + '.join(alt(i, 2) for i in range(300)))"
-cost_case "cost-dict-60x8" 'work budget exceeded|distinct tails' "print('import sys, json\ns = sys.argv\nd = {%s}\nprint({\"additionalContext\": json.dumps(d)})' % ', '.join('\"k%d\": %s' % (i, alt(i, 8)) for i in range(60)))"
+cost_case "cost-binop-40" 'distinct tails' "print('import sys\ns = sys.argv\nprint({\"additionalContext\": %s})' % ' + '.join(alt(i, 3) for i in range(40)))"
+cost_case "cost-binop-300" 'distinct tails' "print('import sys\ns = sys.argv\nprint({\"additionalContext\": %s})' % ' + '.join(alt(i, 2) for i in range(300)))"
+cost_case "cost-dict-60x8" 'distinct tails' "print('import sys, json\ns = sys.argv\nd = {%s}\nprint({\"additionalContext\": json.dumps(d)})' % ', '.join('\"k%d\": %s' % (i, alt(i, 8)) for i in range(60)))"
 cost_case "cost-names-50x8" 'work budget exceeded' "print('import sys\ns = sys.argv\n%s\nprint({\"additionalContext\": %s})' % ('\n'.join('n%d = %s' % (i, alt(i, 8)) for i in range(50)), ' + '.join('n%d' % i for i in range(50))))"
 cost_case "cost-name-doubling" 'work budget exceeded' "print('n0 = \"a\"\n%s\nprint({\"additionalContext\": n21})' % '\n'.join('n%d = n%d + n%d' % (i, i - 1, i - 1) for i in range(1, 22)))"
 
@@ -919,6 +919,88 @@ src_case "key-runtime-stays-exempt" 'import os
 d = {}
 d[os.environ["K"]] = 1
 print({"additionalContext": "all good"})' clean
+
+echo
+echo "=== B29. shell: a backslash-newline inside single quotes stays literal (AG18 r2) ==="
+# Bash keeps `\`+newline inside '...' and inside a quoted heredoc; joining it would glue
+# `holdout\` + `arm` into `holdoutarm` and hide the label. The physical lines are checked too.
+shell_rx_case "shell-sq-continuation-label" caught '^LABEL ' <<'SH'
+#!/usr/bin/env bash
+CTX='holdout\
+arm'
+jq -n --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+shell_rx_case "shell-quoted-heredoc-continuation-label" caught '^LABEL ' <<'SH'
+#!/usr/bin/env bash
+build() {
+  cat <<'EOF'
+holdout\
+arm
+EOF
+}
+CTX="$(build)"
+jq -n --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+shell_rx_case "shell-def-line-continuation-physical-label" caught '^LABEL ' <<'SH'
+#!/usr/bin/env bash
+build() \
+{ echo 'holdout\
+arm'; }
+CTX="$(build)"
+jq -n --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+shell_rx_case "shell-dq-continuation-label" caught '^LABEL ' <<'SH'
+#!/usr/bin/env bash
+CTX="hold\
+out"
+jq -n --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+shell_case "shell-sq-continuation-clean" clean <<'SH'
+#!/usr/bin/env bash
+CTX='change your\
+approach'
+jq -n --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+
+echo
+echo "=== B30. computed keys: setdefault, dict(pairs), and keys with an unfollowable piece (AG18 r2) ==="
+src_case "key-setdefault-computed" 'd = {}
+d.setdefault("additional" + "Context", "holdout arm")
+print(d)' caught "" '^LABEL '
+src_case "key-setdefault-computed-runtime" 'import sys
+d = {}
+d.setdefault("additional" + "Context", f"arm={sys.argv[1]}")
+print(d)' caught "" '^UNRESOLVED .*runtime value'
+src_case "key-dict-pairs-list" 'd = dict([("additional" + "Context", "holdout arm")])
+print(d)' caught "" '^LABEL '
+src_case "key-dict-pairs-tuple" 'd = dict((("additional" + "Context", "holdout arm"),))
+print(d)' caught "" '^LABEL '
+src_case "key-setdefault-runtime-clean" 'import os
+d = {}
+d.setdefault(os.environ["K"], "all good")
+print({"additionalContext": "all good"})' clean
+src_case "key-dict-pairs-runtime-clean" 'import os
+d = dict([(os.environ["K"], "all good")])
+print({"additionalContext": "all good"})' clean
+CHAIN=$(python3 -c '
+print("a0 = \"additional\"")
+for i in range(1, 46):
+    print("a%d = a%d" % (i, i - 1))
+print("print({f\"{a45}Context\": \"all good\"})")')
+src_case "key-fstring-alias-chain" "$CHAIN" caught "" '^UNRESOLVED .*computed key'
+src_case "key-fstring-prefix-runtime" 'import os
+print({f"additional{os.environ[chr(75)]}": "all good"})' caught "" '^UNRESOLVED .*computed key'
+src_case "key-fstring-suffix-runtime" 'import os
+print({f"{os.environ[chr(75)]}Context": "all good"})' caught "" '^UNRESOLVED .*computed key'
+src_case "key-fstring-unrelated-clean" 'import os
+print({f"k{os.environ[chr(75)]}": "all good", "additionalContext": "all good"})' clean
+src_case "key-fstring-pure-runtime-clean" 'import os
+print({f"{os.environ[chr(75)]}": "all good"})' clean
+
+echo
+echo "=== B31. one file cannot cost keys x WORK_CAP: a file-wide budget (AG18 r2) ==="
+gen_case "file-budget-many-keys" caught 'work budget exceeded for the whole file' \
+  "print('import sys\ns = sys.argv\n' + '\n'.join('junk%d = {%s: 1}' % (k, ' + '.join(alt(i, 3) for i in range(40))) for k in range(60)) + '\nprint({\"additionalContext\": \"all good\"})')"
 
 echo
 echo "=== B28. the test file itself stays portable (BSD sed has no bare in-place flag) (AG18 r1) ==="
@@ -1239,7 +1321,7 @@ CTX="$(build)"
 jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
 SH
 # replacing (instead of merging) lets a heredoc look-alike hide the real definition
-shprobe shell-replace-redefinition 'funcs[name] = (old_body + body, old_ok and ok)' 'funcs[name] = (body, ok)' caught <<'SH'
+shprobe shell-replace-redefinition 'funcs[name] = (old_body + body + head_phys, old_ok and ok)' 'funcs[name] = (body, ok)' caught <<'SH'
 #!/usr/bin/env bash
 build() {
   echo "holdout arm"
@@ -1250,7 +1332,7 @@ EOF
 CTX="$(build)"
 jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
 SH
-shprobe shell-merge-redefinition 'funcs[name] = (old_body + body, old_ok and ok)' 'funcs[name] = (body, ok)' caught <<'SH'
+shprobe shell-merge-redefinition 'funcs[name] = (old_body + body + head_phys, old_ok and ok)' 'funcs[name] = (body, ok)' caught <<'SH'
 #!/usr/bin/env bash
 build() {
   echo "holdout arm"
@@ -1353,9 +1435,9 @@ def alt(i, n):
         e = \"('v%d_%d' if s else %s)\" % (i, j, e)
     return e
 print('import sys\ns = sys.argv\njunk = {%s: 1}\nprint({\"additional\" + \"Context\": f\"arm={sys.argv[1]}\"})' % ' + '.join(alt(i, 3) for i in range(40)))")" caught '^UNRESOLVED .*runtime value'
-gprobe key-gave-up-site '                elif gave_up:
-                    sites.append((k.lineno' '                elif False:
-                    sites.append((k.lineno' key-dict-junk \
+gprobe key-gave-up-site '        elif gave_up:
+            sites.append((lineno, "key"' '        elif False:
+            sites.append((lineno, "key"' key-dict-junk \
   "$(python3 -c "
 def alt(i, n):
     e = \"'z'\"
@@ -1363,9 +1445,9 @@ def alt(i, n):
         e = \"('v%d_%d' if s else %s)\" % (i, j, e)
     return e
 print('import sys\ns = sys.argv\njunk = {%s: 1}\nprint({\"additional\" + \"Context\": \"all good\"})' % ' + '.join(alt(i, 3) for i in range(40)))")" caught '^UNRESOLVED .*computed key'
-gprobe key-gave-up-subscript '            elif gave_up:
-                sites.append((n.lineno' '            elif False:
-                sites.append((n.lineno' key-subscript-junk \
+gprobe key-gave-up-subscript '        elif gave_up:
+            sites.append((lineno, "key"' '        elif False:
+            sites.append((lineno, "key"' key-subscript-junk \
   "$(python3 -c "
 def alt(i, n):
     e = \"'z'\"
@@ -1415,6 +1497,46 @@ build ( ) {
 CTX="$(build)"
 jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
 SH
+# r2 probes: the lines as written, more computed-key forms, the file-wide budget
+shprobe shell-physical-sq 'strs = [x for t in strs for x in [t] + _phys(t)]    # and the lines as written' 'pass' caught <<'SH'
+#!/usr/bin/env bash
+CTX='holdout\
+arm'
+jq -n --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+shprobe shell-physical-heredoc 'strs = [x for t in strs for x in [t] + _phys(t)]    # and the lines as written' 'pass' caught <<'SH'
+#!/usr/bin/env bash
+build() {
+  cat <<'EOF'
+holdout\
+arm
+EOF
+}
+CTX="$(build)"
+jq -n --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+shprobe shell-physical-def-line '(old_body + body + head_phys, old_ok and ok)' '(old_body + body, old_ok and ok)' caught <<'SH'
+#!/usr/bin/env bash
+build() \
+{ echo 'holdout\
+arm'; }
+CTX="$(build)"
+jq -n --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+gprobe key-setdefault 'f.attr == "setdefault" and len(n.args) >= 2 \' 'f.attr == "setdefault_" and len(n.args) >= 2 \' key-setdefault-computed \
+  'd = {}
+d.setdefault("additional" + "Context", "holdout arm")
+print(d)' caught '^LABEL '
+gprobe key-dict-pairs 'elif isinstance(f, ast.Name) and f.id == "dict" and n.args \' 'elif isinstance(f, ast.Name) and f.id == "dict_" and n.args \' key-dict-pairs-list \
+  'd = dict([("additional" + "Context", "holdout arm")])
+print(d)' caught '^LABEL '
+gprobe key-may-spell 'elif any(_may_spell(c) for c in texts):' 'elif False:' key-fstring-prefix-runtime \
+  'import os
+print({f"additional{os.environ[chr(75)]}": "all good"})' caught '^UNRESOLVED .*computed key'
+gprobe key-may-spell-suffix 'elif any(_may_spell(c) for c in texts):' 'elif False:' key-fstring-suffix-runtime \
+  'import os
+print({f"{os.environ[chr(75)]}Context": "all good"})' caught '^UNRESOLVED .*computed key'
+tprobe file-budget 'return self.work > WORK_CAP or self.total > FILE_CAP' 'return self.work > WORK_CAP' "$WORK/file-budget-many-keys" 'whole file'
 # timing: the guard must stay cheap (it runs in every battery)
 T0=$(python3 -c 'import time; print(time.time())')
 python3 "$GUARD" --root "$REPO_ROOT" >/dev/null 2>&1
