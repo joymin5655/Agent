@@ -45,6 +45,7 @@ Registered in docs/gate-registry.md (GATE plan-scope-allow).
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -132,6 +133,17 @@ def log_allow(root, file_path):
         pass  # telemetry must never block the decision
 
 
+def plan_flag_approved():
+    """Approval = a regular file we own with a single link. lstat, so a symlink,
+    directory, FIFO, hard link or foreign-owned file planted in /tmp is not approval.
+    Same predicate in spec-gate.py and plan-scope-allow.py."""
+    try:
+        st = os.lstat(PLAN_FLAG)
+    except OSError:
+        return False
+    return stat.S_ISREG(st.st_mode) and st.st_uid == os.geteuid() and st.st_nlink == 1
+
+
 def main():
     # 3-way mode gate: explicit "on" -> active, any other explicit value ->
     # dark, unset/empty -> the per-project trust tier decides (checked below,
@@ -151,7 +163,7 @@ def main():
     if not isinstance(file_path, str) or not file_path.strip():
         return
 
-    if not os.path.exists(PLAN_FLAG):
+    if not plan_flag_approved():
         return
 
     for pattern in NEVER_ALLOW:

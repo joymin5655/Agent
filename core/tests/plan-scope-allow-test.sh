@@ -25,22 +25,49 @@
 set -u
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-HOOK="$REPO_ROOT/core/hooks/plan-scope-allow.py"
 
 PASS=0
 FAIL=0
 
 WORK="$(mktemp -d)"
 SINK="$WORK/plan-scope-allow.jsonl"
-FLAG="/tmp/agent-plan-approved"
+# The hook hardcodes the shared flag path, and the reader must stay coupled to plan-gate.py's
+# writer, so run a COPY of core/hooks whose PLAN_FLAG points inside $WORK. The real
+# /tmp/agent-plan-approved (another live session may own it) is never touched; the battery
+# asserts its state is identical before and after.
+REAL_FLAG="/tmp/agent-plan-approved"
+real_state() {
+  python3 - "$REAL_FLAG" <<'PY'
+import hashlib, os, stat, sys
+p = sys.argv[1]
+try:
+    st = os.lstat(p)
+except OSError:
+    print("absent")
+    raise SystemExit
+body = ""
+if stat.S_ISREG(st.st_mode):
+    with open(p, "rb") as fh:
+        body = hashlib.sha256(fh.read()).hexdigest()
+print(st.st_ino, stat.S_IFMT(st.st_mode), st.st_nlink, st.st_uid, body)
+PY
+}
+REAL_BEFORE="$(real_state)"
+FLAG="$WORK/plan-flag"
+HOOKS_COPY="$WORK/hooks-copy"
+cp -R "$REPO_ROOT/core/hooks" "$HOOKS_COPY"
+python3 - "$HOOKS_COPY/plan-scope-allow.py" "$FLAG" <<'PY' || { echo "FAIL: PLAN_FLAG substitution did not match exactly once"; exit 1; }
+import sys
+path, flag = sys.argv[1:]
+src = open(path).read()
+old = 'PLAN_FLAG = "/tmp/agent-plan-approved"'
+if src.count(old) != 1:
+    raise SystemExit(1)
+open(path, "w").write(src.replace(old, 'PLAN_FLAG = "%s"' % flag))
+PY
+HOOK="$HOOKS_COPY/plan-scope-allow.py"
 TRUST_FILE="$WORK/no-trust.list"   # default: nonexistent -> tier fails closed
-
-# Save any live session's real flag; restore on exit.
-FLAG_BACKUP="$WORK/flag.bak"; HAD_FLAG=0
-[[ -e "$FLAG" ]] && { cp "$FLAG" "$FLAG_BACKUP" && HAD_FLAG=1; }
 cleanup() {
-  rm -f "$FLAG"
-  [[ "$HAD_FLAG" -eq 1 ]] && mv "$FLAG_BACKUP" "$FLAG"
   [[ -n "$WORK" && -d "$WORK" ]] && rm -rf "$WORK"
 }
 trap cleanup EXIT
@@ -59,10 +86,23 @@ ln -s "$OUTSIDE" "$WORK/src/linkout"
 # evt <tool_name> <file_path>
 evt() { printf '{"event":"PreToolUse","tool_name":"%s","tool_input":{"file_path":"%s"},"cwd":"%s"}' "$1" "$2" "$WORK"; }
 
+# set_flag <present|absent|dir|fifo|symlink|hardlink|foreign>: plant the flag slot in a given shape
+set_flag() {
+  rm -rf "$FLAG"
+  case "$1" in
+    present)  : > "$FLAG" ;;
+    dir)      mkdir "$FLAG" ;;
+    fifo)     mkfifo "$FLAG" ;;
+    symlink)  : > "$WORK/flag-target"; ln -s "$WORK/flag-target" "$FLAG" ;;
+    hardlink) : > "$WORK/flag-hl"; ln "$WORK/flag-hl" "$FLAG" ;;
+    foreign)  : > "$FLAG"; chown 65534 "$FLAG" ;;
+  esac
+}
+
 # run <mode: on|off|unset> <flag: present|absent> <json>  -> sets OUT, RC
 run() {
   local mode="$1" flagstate="$2" json="$3"
-  if [[ "$flagstate" == present ]]; then : > "$FLAG"; else rm -f "$FLAG"; fi
+  set_flag "$flagstate"
   if [[ "$mode" == unset ]]; then
     OUT="$(printf '%s' "$json" | ( cd "$WORK" && env -u AGENT_PLAN_ALLOW_MODE \
       AGENT_PROJECT_DIR="$WORK" \
@@ -205,6 +245,21 @@ run on present "$(evt Write "$WORK/src/sinkcase.ts")"
 if [[ "$(sink_lines)" == "1" ]]; then ok "h1-allow-writes-one-sink-line"; else bad "h1-allow-writes-one-sink-line" "sink lines=$(sink_lines)"; fi
 run on present "$(evt Write "$WORK/migrations/m.sql")"
 if [[ "$(sink_lines)" == "1" ]]; then ok "h2-passthrough-writes-none"; else bad "h2-passthrough-writes-none" "sink lines=$(sink_lines)"; fi
+
+echo
+echo "=== AG16: only a regular, own, single-link file counts as approval ==="
+expect "ag16-dir-flag-silent"      on dir      Write "$WORK/src/x.ts" silent
+expect "ag16-fifo-flag-silent"     on fifo     Write "$WORK/src/x.ts" silent
+expect "ag16-symlink-flag-silent"  on symlink  Write "$WORK/src/x.ts" silent
+expect "ag16-hardlink-flag-silent" on hardlink Write "$WORK/src/x.ts" silent
+expect "ag16-regular-flag-allows"  on present  Write "$WORK/src/x.ts" allow
+if [[ "$(id -u)" -eq 0 ]]; then
+  expect "ag16-foreign-uid-flag-silent" on foreign Write "$WORK/src/x.ts" silent
+fi
+
+echo
+echo "=== real shared flag untouched ==="
+if [[ "$(real_state)" == "$REAL_BEFORE" ]]; then ok "real-flag-state-unchanged"; else bad "real-flag-state-unchanged" "$REAL_BEFORE -> $(real_state)"; fi
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="

@@ -24,22 +24,48 @@
 set -u
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-HOOK="$REPO_ROOT/core/hooks/spec-gate.py"
 
 PASS=0
 FAIL=0
 
 WORK="$(mktemp -d)"
 SINK="$WORK/spec-gate.jsonl"        # absolute sink — keeps the real repo clean
-FLAG="/tmp/agent-plan-approved"     # the REAL shared flag (spec-gate hardcodes it,
-                                    # matching plan-gate.py / session-init.py / session-close.sh)
-
-# Save any live session's real flag so the battery never clobbers it; restore on exit.
-FLAG_BACKUP="$WORK/flag.bak"; HAD_FLAG=0
-[[ -e "$FLAG" ]] && { cp "$FLAG" "$FLAG_BACKUP" && HAD_FLAG=1; }
+# The hook hardcodes the shared flag path, and the reader must stay coupled to plan-gate.py's
+# writer, so run a COPY of core/hooks whose PLAN_FLAG points inside $WORK. The real
+# /tmp/agent-plan-approved (another live session may own it) is never touched; the battery
+# asserts its state is identical before and after.
+REAL_FLAG="/tmp/agent-plan-approved"
+real_state() {
+  python3 - "$REAL_FLAG" <<'PY'
+import hashlib, os, stat, sys
+p = sys.argv[1]
+try:
+    st = os.lstat(p)
+except OSError:
+    print("absent")
+    raise SystemExit
+body = ""
+if stat.S_ISREG(st.st_mode):
+    with open(p, "rb") as fh:
+        body = hashlib.sha256(fh.read()).hexdigest()
+print(st.st_ino, stat.S_IFMT(st.st_mode), st.st_nlink, st.st_uid, body)
+PY
+}
+REAL_BEFORE="$(real_state)"
+FLAG="$WORK/plan-flag"
+HOOKS_COPY="$WORK/hooks-copy"
+cp -R "$REPO_ROOT/core/hooks" "$HOOKS_COPY"
+python3 - "$HOOKS_COPY/spec-gate.py" "$FLAG" <<'PY' || { echo "FAIL: PLAN_FLAG substitution did not match exactly once"; exit 1; }
+import sys
+path, flag = sys.argv[1:]
+src = open(path).read()
+old = 'PLAN_FLAG = "/tmp/agent-plan-approved"'
+if src.count(old) != 1:
+    raise SystemExit(1)
+open(path, "w").write(src.replace(old, 'PLAN_FLAG = "%s"' % flag))
+PY
+HOOK="$HOOKS_COPY/spec-gate.py"
 cleanup() {
-  rm -f "$FLAG"
-  [[ "$HAD_FLAG" -eq 1 ]] && mv "$FLAG_BACKUP" "$FLAG"
   [[ -n "$WORK" && -d "$WORK" ]] && rm -rf "$WORK"
 }
 trap cleanup EXIT
@@ -50,10 +76,23 @@ trap cleanup EXIT
 
 evt() { printf '{"event":"PreToolUse","tool_name":"Write","tool_input":{"file_path":"%s"}}' "$1"; }
 
+# set_flag <present|absent|dir|fifo|symlink|hardlink|foreign>: plant the flag slot in a given shape
+set_flag() {
+  rm -rf "$FLAG"
+  case "$1" in
+    present)  : > "$FLAG" ;;
+    dir)      mkdir "$FLAG" ;;
+    fifo)     mkfifo "$FLAG" ;;
+    symlink)  : > "$WORK/flag-target"; ln -s "$WORK/flag-target" "$FLAG" ;;
+    hardlink) : > "$WORK/flag-hl"; ln "$WORK/flag-hl" "$FLAG" ;;
+    foreign)  : > "$FLAG"; chown 65534 "$FLAG" ;;
+  esac
+}
+
 # run <mode> <flag: present|absent> <json>  -> sets OUT, RC
 run() {
   local mode="$1" flagstate="$2" json="$3"
-  if [[ "$flagstate" == present ]]; then : > "$FLAG"; else rm -f "$FLAG"; fi
+  set_flag "$flagstate"
   OUT="$(printf '%s' "$json" | ( cd "$WORK" && env \
     AGENT_SPEC_GATE_MODE="$mode" \
     AGENT_SPEC_GATE_SINK="$SINK" \
@@ -180,6 +219,21 @@ echo "=== dryrun never emits a stop decision ==="
 run dryrun absent "$(evt 'src/pay.ts')"
 assert_not_contains "s-dryrun-no-permissiondecision" 'permissionDecision'
 assert_contains     "s-dryrun-has-advisory"          'additionalContext'
+
+echo
+echo "=== AG16: only a regular, own, single-link file counts as approval ==="
+expect "ag16-dir-flag-not-approval"      block dir      'src/x.ts' ask
+expect "ag16-fifo-flag-not-approval"     block fifo     'src/x.ts' ask
+expect "ag16-symlink-flag-not-approval"  block symlink  'src/x.ts' ask
+expect "ag16-hardlink-flag-not-approval" block hardlink 'src/x.ts' ask
+expect "ag16-regular-flag-approves"      block present  'src/x.ts' allow
+if [[ "$(id -u)" -eq 0 ]]; then
+  expect "ag16-foreign-uid-flag-not-approval" block foreign 'src/x.ts' ask
+fi
+
+echo
+echo "=== real shared flag untouched ==="
+if [[ "$(real_state)" == "$REAL_BEFORE" ]]; then ok "real-flag-state-unchanged"; else bad "real-flag-state-unchanged" "$REAL_BEFORE -> $(real_state)"; fi
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
