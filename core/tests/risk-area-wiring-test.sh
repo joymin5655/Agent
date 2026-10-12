@@ -166,6 +166,9 @@ run_case "noyaml-herestring-deny"        "$PROOT" "python3 <<< \"print(open('vau
 run_case "noyaml-xargs-pipe-deny"        "$PROOT" 'echo vault/k | xargs -I{} install {} /tmp/y' deny
 run_case "noyaml-ml-inline-deny"         "$PROOT" $'python3 -c "\nprint(open(\'vault/k\').read())\n"' deny
 run_case "noyaml-node-p-unquoted-deny"   "$PROOT" 'node -p require\(\"fs\"\).readFileSync\(\"vault/k\"\)' deny
+run_case "noyaml-xargs-only-deny"        "$PROOT" 'echo x | xargs echo'              deny
+run_case "noyaml-timeout-install-deny"   "$PROOT" 'timeout 5 install vault/k /tmp/y' deny
+run_case "noyaml-ml-split-word-deny"     "$PROOT" $'pyth\\\non3 -c "print(1)"'                  deny
 run_case "noyaml-ctl-pip-install-allow"  "$PROOT" 'pip3 install -r requirements.txt'  allow
 run_case "noyaml-ctl-make-install-allow" "$PROOT" 'make install'                       allow
 run_case "noyaml-ctl-pytest-p-allow"     "$PROOT" 'python3 -m pytest -p no:cacheprovider tests/' allow
@@ -302,11 +305,14 @@ run_case "h-perl-ne-deny"            "$PROOT" "perl -ne 'print' vault/k"        
 run_case "h-perl-pe-deny"            "$PROOT" "perl -pe 's/a/b/' vault/k"                        deny
 # install behind a wrapper, an assignment or a path; and as the target of a pipe into xargs
 for w in 'env install' 'nohup install' 'time install' 'command install' 'exec install' 'sudo install' \
-         'x=1 install' 'env -i install' 'xargs install' '/usr/bin/install' 'sudo -u root install'; do
+         'x=1 install' 'env -i install' 'xargs install' '/usr/bin/install' 'sudo -u root install' \
+         'timeout 5 install' 'timeout -k 1 5s install'; do
   run_case "h-install-[$w]-deny"     "$PROOT" "$w vault/k /tmp/y"                                deny
 done
 run_case "h-install-xargs-pipe-deny" "$PROOT" 'echo vault/k | xargs -I{} install {} /tmp/y'      deny
 run_case "h-install-xargs-sp-deny"   "$PROOT" 'echo vault/k | xargs -I {} install {} /tmp/y'     deny
+# a line continuation inside the interpreter word: only joining backslash-newline reveals it
+run_case "h-ml-split-word-deny"      "$PROOT" $'pyth\\\non3 -c "open(\'vault/k\')"'               deny
 run_case "h-xargs-pipe-cat-deny"     "$PROOT" 'echo vault/k | xargs cat'                          deny
 for c in 'pip install requests' 'pip3 install -r requirements.txt' 'python3 -m pip install --user pyyaml' \
          'brew install jq' 'npm install' 'apt-get install -y curl' 'sudo apt-get install -y curl' \
