@@ -119,12 +119,20 @@ def marker_dir() -> pathlib.Path:
 
 
 def _open_regular(name: str, flags: int, dir_fd: "int | None" = None) -> int:
-    """Open without following symlinks; only a regular file we own is accepted."""
-    fd = os.open(name, flags | _NOFOLLOW, 0o600, dir_fd=dir_fd)
+    """Open without following symlinks; only a regular file we own is accepted.
+
+    Writes additionally require a single link and truncate only AFTER validation, so a
+    hard link planted at the legacy slot cannot get a victim-owned file truncated."""
+    writing = bool(flags & (os.O_WRONLY | os.O_RDWR))
+    fd = os.open(name, (flags & ~os.O_TRUNC) | _NOFOLLOW, 0o600, dir_fd=dir_fd)
     try:
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode) or st.st_uid != os.geteuid():
             raise OSError("not a regular file owned by this user")
+        if writing and st.st_nlink != 1:
+            raise OSError("marker file has extra hard links")
+        if flags & os.O_TRUNC:
+            os.ftruncate(fd, 0)
     except OSError:
         os.close(fd)
         raise
@@ -147,12 +155,13 @@ def _read(name: str, dir_fd: "int | None" = None) -> "str | None":
 def _write_verified(name: str, content: str, dir_fd: "int | None" = None) -> bool:
     """Write, then read back: a swallowed OSError must not look like success."""
     try:
+        data = content.encode("utf-8")  # before open: an unencodable id must not truncate
         fd = _open_regular(name, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, dir_fd)
         try:
-            os.write(fd, content.encode("utf-8"))
+            os.write(fd, data)
         finally:
             os.close(fd)
-    except OSError:
+    except (OSError, UnicodeError):
         return False
     return _read(name, dir_fd) == content
 
@@ -278,6 +287,36 @@ def set_withheld(sid: str) -> "tuple[str, list[str], str]":
     return "none", [], "; ".join(problems)
 
 
+def _restore_claim(claim: str, legacy: str, content: "str | None") -> None:
+    """Put a claimed slot that is not ours back without losing it or clobbering a
+    newer slot: link, else rename when the slot is still free (FS without hard
+    links), else keep that session as a per-session marker."""
+    try:
+        os.link(claim, legacy)
+        os.unlink(claim)
+        return
+    except OSError:
+        pass
+    if not os.path.lexists(legacy):
+        try:
+            os.rename(claim, legacy)
+            return
+        except OSError:
+            pass
+    if content and safe_sid(content):
+        dfd, _ = open_marker_dir(True)
+        if dfd is not None:
+            try:
+                if not _write_verified(content, content, dfd):
+                    return  # keep the claim file rather than lose the record
+            finally:
+                os.close(dfd)
+    try:
+        os.unlink(claim)
+    except OSError:
+        pass
+
+
 def _claim_remove_legacy(sid: str) -> None:
     """Delete the legacy slot only if it is still this session's: rename to a unique
     name first, so a concurrent writer cannot be deleted between check and unlink."""
@@ -292,19 +331,7 @@ def _claim_remove_legacy(sid: str) -> None:
         if content == sid:
             os.unlink(claim)
             return
-        try:
-            os.link(claim, legacy)  # put it back; fails if a newer slot appeared
-        except FileExistsError:
-            if content and safe_sid(content):
-                dfd, _ = open_marker_dir(True)
-                if dfd is not None:
-                    try:
-                        _write_verified(content, content, dfd)  # keep that session
-                    finally:
-                        os.close(dfd)
-        except OSError:
-            pass
-        os.unlink(claim)
+        _restore_claim(claim, legacy, content)
     except OSError:
         pass
 
@@ -341,7 +368,10 @@ def notice(message: str) -> None:
 
 def withhold(sid: str) -> None:
     """Memory-only plan: no flag for this session, and Agent path stays shut."""
-    where, pruned, problem = set_withheld(sid) if sid else ("none", [], "")
+    try:
+        where, pruned, problem = set_withheld(sid) if sid else ("none", [], "")
+    except Exception as exc:  # never let a recording failure pass silently
+        where, pruned, problem = "none", [], f"internal error: {type(exc).__name__}"
     cleared = False
     if PLAN_FLAG.exists() and sid and flag_session(PLAN_FLAG) == sid:
         try:

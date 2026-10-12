@@ -61,7 +61,8 @@ For interactive and autonomous tiers touching 3+ files:
      Session ids must be filename-safe (`[A-Za-z0-9][A-Za-z0-9._-]*`, max 128, no `..`).
      - /tmp hardening: markers are opened `O_NOFOLLOW`; the marker dir must be a real directory
        owned by the hook's user and not group/world-writable (created `0700`), and markers and
-       the legacy slot must be regular files owned by that user. Otherwise the hook emits a
+       the legacy slot must be regular files owned by that user (writes also need a single
+       hard link and truncate only after validation). Otherwise the hook emits a
        notice and falls back to the legacy single slot `<flag>.withheld`.
      - No silent fail-open: every write is read back. If neither the per-session marker nor
        the legacy slot can be recorded the notice says "Withheld marker not recorded"; an
@@ -73,7 +74,9 @@ For interactive and autonomous tiers touching 3+ files:
        overnight pause does not re-open the Agent path). Every plan-gate event for the session
        (withhold, `Agent`/`Task`, `ExitPlanMode`) refreshes its mtime; prune re-stats before
        unlinking, skips symlinks and non-owned entries, and reports the count in the notice.
-       `session-close` does not clear markers.
+       `session-close` does not clear markers. On macOS the system `/tmp` cleaner
+       (`daily_clean_tmps_days="3"`, daily) removes files untouched for over 3 days, so the
+       effective retention there is about 3 days, not 7.
    - W-8 limits: Claude-only (needs `ExitPlanMode` + `additionalContext`); regex heuristic that
      misses paraphrases ("my notes", "earlier session"); the approval flag file is still global, so
      a flag from another session is left in place and edits may pass; `spec-gate.py` only asks
