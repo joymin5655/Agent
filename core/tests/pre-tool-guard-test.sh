@@ -2069,6 +2069,59 @@ run_case_timed "shadow-json-benign-allow"  'ls -la && echo hello'       allow CA
 rm -rf "$SHADOW_DIR"
 
 echo
+echo "=== guard 5: readers outside the first verb list (P1-12) -> deny; mentions of them -> allow ==="
+# Stage 1 only nominates a line that holds a verb from its list, so a line whose ONLY reader was
+# missing from that list never reached stage 2. (`cat x; sort secrets/k` was already denied: cat
+# nominated it.) Each deny below is a bare line with no other reader.
+# zgrep/bzgrep/xzgrep take a PATTERN first like grep, so a bare `zgrep secrets/k` reads stdin: see the r1 section
+for _rd in base64 base32 sort uniq cut paste column join comm fmt shuf cksum b2sum sha1sum zcat gzip vim nano emacs; do
+  run_case "reader-$_rd-deny"          "$_rd secrets/k"                  deny
+  run_case "reader-$_rd-xargs-deny"    "xargs $_rd secrets/k"            deny
+done
+run_case "reader-jq-deny"              'jq . secrets/k.json'             deny
+run_case "reader-yq-deny"              'yq . secrets/k.yml'              deny
+run_case "reader-sort-flags-deny"      'sort -u -o /tmp/x secrets/k'     deny
+run_case "reader-base64-pipe-deny"     'base64 secrets/k | tr -d "\n"'   deny
+# controls: the reader and the path in different simple commands, prose, patterns
+run_case "reader-ctl-ls-sort-allow"    'ls secrets/ | sort'              allow
+run_case "reader-ctl-ls-cut-allow"     'ls secrets/ | cut -d. -f1'       allow
+run_case "reader-ctl-commit-msg-allow" 'git commit -m "docs: sort secrets/ handling, base64 secrets/k"' allow
+run_case "reader-ctl-grep-pat-allow"   "grep -n 'base64 secrets/' README.md" allow
+run_case "reader-ctl-echo-allow"       'echo "sort secrets/k is blocked"' allow
+run_case "reader-ctl-sort-other-allow" 'sort -u names.txt; ls secrets/'  allow
+run_case "reader-ctl-jq-other-allow"   'jq . package.json; ls secrets/'  allow
+# the redirect and xargs forms the plan listed (already denied by guards 7-8; pinned here)
+run_case "redir-nospace-deny"          'cat<secrets/k'                   deny
+run_case "redir-heredoc-nospace-deny"  'cat<<secrets/k'                  deny
+run_case "redir-leading-deny"          '< secrets/k cat'                 deny
+run_case "redir-subst-deny"            'echo $(<secrets/k)'              deny
+run_case "redir-subst-space-deny"      'echo $(< secrets/k)'             deny
+run_case "xargs-cat-deny"              'xargs cat secrets/k'             deny
+run_case "python-open-deny"            "python3 -c \"open('secrets/k')\"" deny
+
+echo
+echo "=== guard 5: r1 — <> redirect, zgrep patterns, more readers ==="
+run_case "rw-redirect-read-deny"       'read -r v <>secrets/k; printf "%s\n" "$v"' deny
+run_case "rw-redirect-exec-deny"       'exec 3<>secrets/k'               deny
+run_case "rw-redirect-spaced-deny"     'exec 3<> secrets/k'              deny
+run_case "rw-redirect-other-allow"     'exec 3<>/tmp/pipe'               allow
+# zgrep/bzgrep/xzgrep take a PATTERN first, like grep: a pattern that holds the path is no read
+for _zg in zgrep bzgrep xzgrep; do
+  run_case "$_zg-pattern-allow"        "$_zg 'secrets/' README.gz"       allow
+  run_case "$_zg-file-deny"            "$_zg -i token secrets/k.gz"      deny
+done
+run_case "grep-pattern-still-allow"    "grep 'secrets/' README.md"       allow
+for _rd in iconv split install look; do
+  run_case "reader-$_rd-deny"          "$_rd secrets/k"                  deny
+  run_case "reader-ctl-$_rd-ls-allow"  "ls secrets/ | $_rd"              allow
+done
+run_case "reader-ctl-gh-pr-allow"      'gh pr create --body "docs: sort secrets/ handling"' allow
+run_case "reader-ctl-iconv-allow"      'iconv -f latin1 -t utf-8 notes.txt' allow
+run_case "reader-ctl-split-allow"      'split -l 100 notes.txt part_'    allow
+run_case "reader-ctl-install-allow"    'install -m 755 build.sh /tmp/x'  allow
+run_case "reader-ctl-look-allow"       'look abc words.txt'              allow
+
+echo
 echo "=== guard 5: later guards 6-11 still fire when guard 5 stays quiet ==="
 # curl/wget upload (6), xargs indirection (7), stdin redirect (8), find -exec (9), source (10),
 # python/node inline (11): each command below has NO guard-5 verb, so these prove the later

@@ -289,9 +289,40 @@ fi
 # (shell -c, eval, ssh, su, watch and the terminal multiplexers are known; another tool with a
 # command-line option of its own is not): its strings read as prose. Stage 2 is a speed bump
 # against careless reads, like the rest of this file.
+# Readers beyond the original list. One source for stage 1 (nominates a line), stage 2 (a VERBS
+# member is a reader of its secrets/ operands; handed over as SCAN_READERS) and guard 11b. A line
+# whose only reader is missing here is never nominated, so it never reaches stage 2. Stage 2 keeps
+# precision: `ls secrets/ | sort` and a commit message that names the path stay allowed.
+# Not listed on purpose: gzip, zcat, zless, zmore, batcat ... already end in a listed verb and stage 2
+# denies them as unknown programs; as VERBS members they would count as known non-walking readers
+# and let `gzip -r . ; ls secrets/` through. (zgrep, bzgrep and xzgrep need the list: stage 2 allowed them.)
+# Inline interpreter code that 11b and its fail-closed branch look for: the interpreter, any words
+# (options such as -I or -W "ignore", quoted or not) and then a code flag: -c -e -E -p -r, bundled
+# (-le, -pe), --eval, --print, or deno's `eval` word, then the code: opened by a quote, glued
+# (-c"x", -e'x') or spaced, plain or $'...', or unquoted with a backslash in it (node -p
+# require\(...\)): a shell needs that escape for any code with a parenthesis, and the backslash
+# keeps `pytest -p no:cacheprovider` and `pip install -r reqs.txt` out. Words in between are not
+# told apart from a script name, so `python3 tool.py -e "vault/x"` also matches; that only costs
+# when a declared path is named too.
+_SECRET_INTERP='(python[0-9.]*|pypy[0-9]*|node|nodejs|deno|bun|perl|ruby|php)'
+_SECRET_CODE_OPEN='(\$?["'"'"']|[^[:space:]]*\\)'
+_SECRET_INLINE_CODE="${_SECRET_INTERP}([[:space:]]+[^[:space:];|&<>]+)*[[:space:]]+(-[a-zA-Z]*[ceEpr]|--eval|--print|eval)(=|[[:space:]]+)?[[:space:]]*${_SECRET_CODE_OPEN}"
+# An interpreter fed a here-string reads its program from it (python3 <<< "open('p')"); echo "x" <<< "p"
+# is only text and stays out.
+_SECRET_HERESTRING="${_SECRET_INTERP}([[:space:]]+[^[:space:];|&<>]+)*[[:space:]]*<<<"
+# `pr` is not listed: the unanchored match would nominate every `gh pr create --body ...secrets/...`,
+# and stage 2 reads `pr` as a known reader of that body text (gh-pr-body-allow); coreutils pr is rare.
+# `install` (a copy) is nominated and judged by stages 1-2 only: in 11b a bare word match would also
+# catch `pip install` / `npm install`, including the remediation hint of the fail-closed branch, so
+# 11b matches it as a command word instead (_SECRET_CMD_START_READERS).
+_SECRET_STAGE12_ONLY='install'
+# A wrapper in front (env, time, timeout with its duration, command, exec, sudo, xargs with its options, NAME=value, a background launcher) or a
+# path (/usr/bin/install) does not hide it; `pip install`, `npm install`, `make install` are not it.
+_SECRET_CMD_START='(^|[;&|(`]|&&)[[:space:]]*(((env|nohup|time|command|exec|sudo|doas|nice|xargs|stdbuf)([[:space:]]+-[^[:space:]]+([[:space:]]+[^[:space:]-][^[:space:]]*)?)*|timeout([[:space:]]+-[^[:space:]]+([[:space:]]+[^[:space:]-][^[:space:]]*)?)*[[:space:]]+[0-9][0-9.]*[smhd]?|[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*)[[:space:]]+)*([^[:space:]]*/)?install[[:space:]]+'  # supply-chain-scan: allow-literal wrapper names in a command-word regex, not a spawn
+_SECRET_MORE_READERS='base64|base32|basenc|sort|uniq|cut|paste|column|join|comm|expand|unexpand|fmt|shuf|cksum|b2sum|sha1sum|sha224sum|sha384sum|zgrep|bzgrep|xzgrep|iconv|split|look|vim|nano|emacs|jq|yq'
 _secrets_verdict() {
   # a python3 that is missing, exits non-zero or is killed leaves `error` behind, never an allow
-  SCAN_INPUT="$1" python3 -I - <<'PY' 2>/dev/null || printf 'error'
+  SCAN_INPUT="$1" SCAN_READERS="$_SECRET_MORE_READERS|$_SECRET_STAGE12_ONLY" python3 -I - <<'PY' 2>/dev/null || printf 'error'
 import fnmatch
 import os
 import re
@@ -340,7 +371,8 @@ ANSI_PLAIN = {"n": "\n", "t": "\t", "r": "\r", "a": "\a", "b": "\b", "e": "\x1b"
 VERBS = frozenset(
     "cat tac nl head tail less more awk sed grep egrep fgrep rg ag bat hexdump xxd od strings "
     "dd fold rev tee cp mv ln md5sum shasum sha256sum sha512sum wc diff cmp gunzip bunzip2 "
-    "bzip2 bzcat xz xzcat unxz lzma lz4cat tar unzip 7z zip gpg openssl age rsync scp".split())
+    "bzip2 bzcat xz xzcat unxz lzma lz4cat tar unzip 7z zip gpg openssl age rsync scp".split()
+) | frozenset(os.environ.get("SCAN_READERS", "").split("|")) - {""}  # the list in _SECRET_MORE_READERS
 SHELLS = frozenset("sh bash zsh dash ksh ash".split())
 BACKGROUNDERS = {"nohup", "setsid"}  # supply-chain-scan: allow-literal wrapper names, not a spawn
 LAUNCHERS = frozenset(
@@ -383,7 +415,7 @@ RESERVED = frozenset("! { } if then elif else fi while until do done in esac fun
 LEAD = RESERVED | {"for"}  # words that may precede an arithmetic (( ))
 PAREN_KEYWORDS = frozenset("if elif while until for select then do else time".split())  # may touch a `(`
 PAREN_OK = LEAD | PAREN_KEYWORDS  # words after which a blank and a `(` still open a subshell
-GREPS = frozenset("grep egrep fgrep rg ag".split())
+GREPS = frozenset("grep egrep fgrep rg ag zgrep bzgrep xzgrep".split())
 GIT_READ = frozenset("show diff log blame annotate grep cat-file archive format-patch "
                      "diff-tree diff-index interpret-trailers".split())
 # -F FILE / --file FILE: git stores the file as a message (commit, tag, merge, commit-tree, notes) or prints its
@@ -419,7 +451,7 @@ EXCL_LONG = frozenset(["--exclude", "--exclude-dir"])  # --include SELECTS what 
 STDIN_SCRIPT = re.compile(  # script text read from stdin or an fd
     r"^(-|/dev/stdin|/dev/fd/[0-9]+|/proc/(self|[0-9]+)/fd/[0-9]+)$")
 SHORT_VAL = {"grep": "efmABCdD", "egrep": "efmABCdD", "fgrep": "efmABCdD", "rg": "efgtTmjMrEABCd",
-             "ag": "GgmpW"}  # ag: -G/-g PATTERN, -m/-W NUM, -p FILE; its -A/-B/-C take an optional number
+             "ag": "GgmpW", "zgrep": "efmABCdD", "bzgrep": "efmABCdD", "xzgrep": "efmABCdD"}  # ag: -G/-g PATTERN, -m/-W NUM, -p FILE; its -A/-B/-C take an optional number
 READ_VAL = frozenset(["file", "exclude-from", "ignore-file", "pre", "pre-glob", "pager", "path-to-ignore"])
 NONREAD_VAL = frozenset(  # pager: ag runs it
     "regexp include include-dir exclude exclude-dir glob iglob type type-not type-add type-clear "
@@ -1944,7 +1976,7 @@ PY
 }
 _S5_BLOCK=""
 _S5_WHY=""
-if echo "$COMMAND" | grep -qiE '(cat|tac|nl|head|tail|less|more|awk|sed|grep|egrep|fgrep|rg|ag|bat|hexdump|xxd|od|strings|dd|fold|rev|tee|cp|mv|ln|md5sum|shasum|sha256sum|sha512sum|wc|diff|cmp|gunzip|bunzip2|bzip2|bzcat|xz|xzcat|unxz|lzma|lz4cat|tar|unzip|7z|zip|gpg|openssl|age|rsync|scp)\s+.*secrets/'; then
+if echo "$COMMAND" | grep -qiE "(cat|tac|nl|head|tail|less|more|awk|sed|grep|egrep|fgrep|rg|ag|bat|hexdump|xxd|od|strings|dd|fold|rev|tee|cp|mv|ln|md5sum|shasum|sha256sum|sha512sum|wc|diff|cmp|gunzip|bunzip2|bzip2|bzcat|xz|xzcat|unxz|lzma|lz4cat|tar|unzip|7z|zip|gpg|openssl|age|rsync|scp|$_SECRET_MORE_READERS|$_SECRET_STAGE12_ONLY)\s+.*secrets/"; then
   _S5_V=$(_secrets_verdict "$COMMAND")
   case "$_S5_V" in
     inert) ;;
@@ -1996,7 +2028,7 @@ FIX: for inventory, list key NAMES only via awk -F= on the env file."
 fi
 
 # 8. Risk Area #2 — stdin redirect from secrets/
-if echo "$COMMAND" | grep -qiE '<\s*[^>]*secrets/'; then
+if echo "$COMMAND" | grep -qiE '<>?\s*[^>]*secrets/'; then
   log_violation secrets "stdin redirect from secrets/ blocked"
   emit_deny "stdin redirect from secrets/ blocked (Risk Area #2: secrets).
 WHY: redirecting a secret file into a command reads its plaintext into the session.
@@ -2067,14 +2099,24 @@ except Exception:
 print("|".join(t.replace(".", "[.]") for t in toks))
 PY
 )
-  _SECRET_READ_VERBS='cat|tac|nl|head|tail|less|more|awk|sed|grep|egrep|fgrep|rg|ag|bat|hexdump|xxd|od|strings|dd|fold|rev|tee|cp|mv|ln|md5sum|shasum|sha256sum|sha512sum|diff|cmp|gunzip|bunzip2|bzip2|bzcat|xz|xzcat|unxz|lzma|lz4cat|tar|unzip|7z|zip|gpg|openssl|age|rsync|scp|curl|wget|source|\.'
+  _SECRET_READ_VERBS='cat|tac|nl|head|tail|less|more|awk|sed|grep|egrep|fgrep|rg|ag|bat|hexdump|xxd|od|strings|dd|fold|rev|tee|cp|mv|ln|md5sum|shasum|sha256sum|sha512sum|diff|cmp|gunzip|bunzip2|bzip2|bzcat|xz|xzcat|unxz|lzma|lz4cat|tar|unzip|7z|zip|gpg|openssl|age|rsync|scp|curl|wget|source|\.|'"$_SECRET_MORE_READERS"
   # P1-9: risk_areas declared but PyYAML absent -> the declared paths are unknown,
   # so deny anything the token match below could deny for SOME path: the same
   # unanchored verb match minus the path clause. That keeps fail-closed a strict
   # superset of the token path (incl. JSON-declared paths) and over-blocks
   # deliberately until PyYAML is installed.
+  # Inline code and a here-string may span lines (python3 -c "<newline>open('p')<newline>"): look at
+  # a copy with backslash-newline joined and newlines turned into blanks. Only the two interpreter
+  # clauses use it; every other clause keeps its line-by-line match.
+  _CMD_FLAT=${COMMAND//\\$'\n'/}
+  _CMD_FLAT=${_CMD_FLAT//$'\n'/ }
   if [[ "$_EXTRA_SECRET_ALT" == "!UNPARSEABLE" ]]; then
-    if echo "$COMMAND" | grep -qiE "($_SECRET_READ_VERBS)\s+"; then
+    if echo "$COMMAND" | grep -qiE "($_SECRET_READ_VERBS)\s+" \
+       || echo "$COMMAND" | grep -qiE "$_SECRET_CMD_START" \
+       || echo "$_CMD_FLAT" | grep -qiE "$_SECRET_INLINE_CODE" \
+       || echo "$_CMD_FLAT" | grep -qiE "$_SECRET_HERESTRING" \
+       || echo "$COMMAND" | grep -qiE "\|.*xargs" \
+       || echo "$COMMAND" | grep -qiE "(^|[^<])<>?\s*[\"']?[^ ;|&<>(]"; then
       log_violation secrets "risk_areas declared but unparseable (PyYAML missing)"
       emit_deny "Read/copy/upload command blocked: project secret paths cannot be checked (Risk Area #2: secrets).
 WHY: .agent/hook-config.yml declares risk_areas, but PyYAML is not installed, so the declared secret paths are unknown and the guard fails closed.
@@ -2084,7 +2126,16 @@ FIX: install PyYAML (bash setup.sh --bootstrap asks first; or python3 -m pip ins
     _EXTRA_SECRET_ALT=""
   fi
   if [[ -n "$_EXTRA_SECRET_ALT" ]]; then
-    if echo "$COMMAND" | grep -qiE "($_SECRET_READ_VERBS)\s+.*($_EXTRA_SECRET_ALT)"; then
+    # P1-12: besides a reader verb followed by blank + path, a declared path is read through a
+    # redirect (cat<p, `< p cat`, $(<p): no blank after any verb) and through inline interpreter
+    # code (python3 -c "open('p')"), as guards 8 and 11 already catch for the built-in path.
+    # The redirect operand is a word that holds the token, so `wc -c < README.md` stays allowed.
+    if echo "$COMMAND" | grep -qiE "($_SECRET_READ_VERBS)\s+.*($_EXTRA_SECRET_ALT)" \
+       || echo "$COMMAND" | grep -qiE "${_SECRET_CMD_START}.*($_EXTRA_SECRET_ALT)" \
+       || echo "$COMMAND" | grep -qiE "(^|[^<])<>?\s*[\"']?[^ ;|&<>]*($_EXTRA_SECRET_ALT)" \
+       || echo "$_CMD_FLAT" | grep -qiE "${_SECRET_INLINE_CODE}.*($_EXTRA_SECRET_ALT)" \
+       || echo "$_CMD_FLAT" | grep -qiE "${_SECRET_HERESTRING}.*($_EXTRA_SECRET_ALT)" \
+       || echo "$COMMAND" | grep -qiE "($_EXTRA_SECRET_ALT).*\|.*xargs"; then
       log_violation secrets "project secrets path access blocked"
       emit_deny "Access to a project-declared secret path blocked (Risk Area #2: secrets).
 WHY: hook-config.yml risk_areas.secrets.paths marks this path as secret; reading/copying/uploading it exposes credentials.
