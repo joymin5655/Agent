@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **verify-all green on a root VM without sqlite3.** `codex-models-test.sh` skips only its
+  `chmod 000` OSError case when running as root; `supervisor-goal-record-test.sh` emits the
+  `SKIP:` line and exits 2 when sqlite3 or jq is missing; two E702 statements in
+  `sync-instructions-test.py` are split. The plan doc marks the shipped V-1..V-6, H-1 and T-4 ①.
+
 ## [0.8.1] - 2026-10-11
 
 Ships #176. The secrets guard (#5) denies reads of the secrets path instead of every command that
