@@ -29,10 +29,13 @@ Method
      is the only way to accept one.
 
 Deliberate exemptions — not "unresolved", stated so the claim stays true:
-  * A value interpolated into an f-string is a runtime datum (counts, paths, tool
-    output). Its literal fragments are still checked; what it cannot follow is
-    ignored — EXCEPT a name or attribute chain rooted at an imported, non-stdlib
-    name (`f"{LBL}"` with `from labels import LBL`), which is UNRESOLVED.
+  * A value interpolated into an f-string / `.format` / `%` is a runtime datum (counts,
+    paths, tool output). Its literal fragments are still checked; what it cannot follow
+    is ignored — EXCEPT (a) a name or attribute chain rooted at an imported, non-stdlib
+    name (`f"{LBL}"` with `from labels import LBL`) and (b) a value placed right after a
+    label word or sink field (`f"arm={arm}"`, `"cohort {}".format(assign())`,
+    `f"guard={g()}"`), where the literal template already names the label and the
+    value is the assignment: both are UNRESOLVED.
   * A key computed from a runtime or imported value (not from string constants) is
     invisible: nothing in the file says it will spell additionalContext.
   * Same-named definitions are unioned: an unrelated class's `build()` can be reported
@@ -104,7 +107,19 @@ def label_hits(text):
     return [m.group(0) for rx in _WORDS + _FIELDS for m in rx.finditer(text)]
 
 
-_FMT_TOKEN = re.compile(r"\{\{|\}\}|\{([A-Za-z_]\w*|\d*)(?:![rsa])?(?::([^{}]*))?\}")
+SENT = "\ufffc"      # stands in for an interpolated value the guard cannot follow
+_RUNTIME = re.compile(
+    r"(?i)\b(?:experiment|cohort|variant|arm|bucket)[ _-]?(?:id|name|label|group)?\s*[=:]?\s*"
+    + SENT + r"|(?<![\w-])(?:guard|gate_id|reproduce_test|schema_version|sig_sha)\s*[=:]\s*" + SENT)
+
+
+def runtime_hits(text):
+    return [m.group(0).replace(SENT, "{…}") for m in _RUNTIME.finditer(text)]
+
+
+_FMT_TOKEN = re.compile(
+    r"\{\{|\}\}|\{([A-Za-z_]\w*|\d*)((?:\.\w+|\[[^\]]*\])*)(?:![rsa])?"
+    r"(?::((?:[^{}]|\{[^{}]*\})*))?\}")
 _PCT_TOKEN = re.compile(r"%%|%(?:\((\w+)\))?[-#0 +]*(\d*)(?:\.(\d+))?([sdifrxXcgeE])")
 _SPEC = re.compile(r"^(?:.?[<>^=])?[+\- ]?#?(0?)(\d*),?(?:\.(\d+))?([a-zA-Z%]?)$")
 
@@ -124,7 +139,8 @@ def _apply_spec(val, spec):
 
 
 def _compress(text):
-    hits = label_hits(text) if len(text) > TAIL else []
+    hits = (label_hits(text) + [m.group(0) for m in _RUNTIME.finditer(text)]
+            if len(text) > TAIL else [])
     return ("\n".join(hits) + "\n" if hits else "") + text[-TAIL:]
 
 
@@ -176,6 +192,18 @@ class Resolver:
                     f.attr if isinstance(f, ast.Attribute) else None)
                 if key:
                     self.calls.setdefault(key, []).append(n)
+                if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name):
+                    dkey = (f.value.id, id(self.enclosing_fn(n)))
+                    if f.attr == "update":
+                        for kw in n.keywords:
+                            if kw.arg:
+                                self.dict_sets.setdefault(dkey, []).append(
+                                    (ast.Constant(kw.arg), kw.value))
+                        for a in n.args:
+                            if isinstance(a, ast.Dict):
+                                self.dict_sets.setdefault(dkey, []).extend(zip(a.keys, a.values))
+                    elif f.attr == "setdefault" and len(n.args) >= 2:
+                        self.dict_sets.setdefault(dkey, []).append((n.args[0], n.args[1]))
                 if isinstance(f, ast.Attribute) and f.attr in ("append", "extend", "insert") \
                         and isinstance(f.value, ast.Name) and n.args:
                     self._add(f.value.id, n.args[-1], n)
@@ -226,7 +254,7 @@ class Resolver:
                 nxt = dict.fromkeys(_compress(x) for x in nxt)
             if len(nxt) > HARD_CAP:
                 opq.append("combinatorial expansion beyond %d distinct tails" % HARD_CAP)
-                nxt = dict(itertools.islice(nxt.items(), HARD_CAP))
+                return list(itertools.islice(nxt, HARD_CAP))     # stop at the first overflow
             cur = list(nxt)
         return cur
 
@@ -253,7 +281,9 @@ class Resolver:
                     if self._is_dictlike(v.value, fn):
                         s, _ = self._render(v.value, fn, seen, depth + 1, "repr")
                     else:
-                        s, _ = r(v.value)
+                        s, vo = r(v.value)
+                        if not s or vo:
+                            s = s + [SENT]        # a value the guard cannot see
                     spec = "".join(c.value for c in (v.format_spec.values if v.format_spec else [])
                                    if isinstance(c, ast.Constant) and isinstance(c.value, str))
                     if spec:
@@ -269,6 +299,15 @@ class Resolver:
                     op += o
                 parts.append(s)
             return self.cat(parts, op), op
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mult):
+            for text_node, num in ((node.left, node.right), (node.right, node.left)):
+                if isinstance(num, ast.Constant) and isinstance(num.value, int) \
+                        and not isinstance(num.value, bool) and 0 <= num.value <= 256 \
+                        and not (isinstance(text_node, ast.Constant)
+                                 and not isinstance(text_node.value, str)):
+                    ts, to = r(text_node)
+                    if ts:
+                        return [t * num.value for t in ts if len(t) * num.value <= 8192], to
         if isinstance(node, ast.BinOp):
             ls, lo = r(node.left)
             if isinstance(node.op, ast.Mod) and ls:
@@ -326,8 +365,8 @@ class Resolver:
         """One template argument -> candidate list; runtime data (empty) -> ['']."""
         if self._is_dictlike(node, fn):
             return self._render(node, fn, seen, depth + 1, "repr")[0] or [""]
-        s, _ = self.resolve(node, fn, seen, depth + 1)
-        return s or [""]
+        s, o = self.resolve(node, fn, seen, depth + 1)
+        return s + [SENT] if (not s or o) else s
 
     def _kw_from(self, node, fn, seen, depth):
         """Mapping name -> candidates from a dict literal / dict variable."""
@@ -350,9 +389,12 @@ class Resolver:
                     if m.group(0) in ("{{", "}}"):
                         parts.append([m.group(0)[0]])
                         continue
-                    key, spec = m.group(1), m.group(2) or ""
+                    key, spec = m.group(1), m.group(3) or ""
                     if key == "":
                         key, auto = str(auto), auto + 1
+                    if "{" in spec:          # nested {} in the spec consume arguments too
+                        auto += spec.count("{")
+                        spec = ""
                     vals = pos[int(key)] if key.isdigit() and int(key) < len(pos) \
                         else kw.get(key, [""])
                     parts.append([_apply_spec(val, spec) for val in vals])
@@ -643,33 +685,43 @@ def scan_python(path, rel):
 
 
 _JQ_ARG = re.compile(r'--arg\s+\w+\s+"\$\{?(\w+)')
-_SH_FUNC = re.compile(r"^\s*(?:function\s+)?([A-Za-z_][\w-]*)\s*\(\)\s*\{(.*)$")
+_SH_FUNC = re.compile(
+    r"^\s*(?:function\s+([A-Za-z_][\w-]*)\s*(?:\(\))?|([A-Za-z_][\w-]*)\s*\(\))\s*\{(.*)$")
+_HEREDOC = re.compile(r"(?<!<)<<(?!<)-?\s*([\"']?)(\w+)\1")
 
 
 def _braces(line):
-    """Net `{` minus `}` of a shell line, ignoring ${...} expansions and quoted text."""
-    t = re.sub(r"\$\{[^}]*\}", "", line)
-    t = re.sub(r'"[^"]*"|\'[^\']*\'', "", t)
+    """Net `{` minus `}` of a shell line; escaped, ${...} and quoted braces do not count."""
+    t = re.sub(r"\\.", "", line)                       # \{ \} are literal
+    t = re.sub(r"\$\{[^}]*\}", "", t)                   # ${...} expansions
+    t = re.sub(r"\"[^\"]*\"|'[^']*'", "", t)             # quoted text
     return t.count("{") - t.count("}")
 
 
 def _shell_functions(code):
-    """name -> (body lines, terminated). Brace-counted, so `${HOME}` or a quoted
-    brace on the opening line does not end the function early."""
+    """name -> (body lines, terminated). Brace-counted outside quotes, escapes and
+    heredoc bodies, so a `}` printed by the function does not end it early."""
     funcs = {}
     for i, (_, ln) in enumerate(code):
         m = _SH_FUNC.match(ln)
         if not m:
             continue
-        body = [m.group(2)]
-        depth = 1 + _braces(m.group(2))
-        j = i + 1
+        body = [m.group(3)]
+        depth = 1 + _braces(m.group(3))
+        tag, j = None, i + 1
         while depth > 0 and j < len(code):
             nxt = code[j][1]
-            depth += _braces(nxt)
             body.append(nxt)
             j += 1
-        funcs[m.group(1)] = (body, depth <= 0)
+            if tag is not None:
+                if nxt.strip() == tag:
+                    tag = None
+                continue
+            depth += _braces(nxt)
+            hd = _HEREDOC.search(nxt)
+            if hd:
+                tag = hd.group(2)
+        funcs[m.group(1) or m.group(2)] = (body, depth <= 0)
     return funcs
 
 
@@ -727,6 +779,10 @@ def main():
         for lineno, kind, strs, opq, fn in sites:
             total += 1
             rel = "core/hooks/%s:%d" % (name, lineno)
+            rt = sorted({h for text in list(strs) + ["\n".join(strs)] for h in runtime_hits(text)})
+            if rt:
+                opq = list(opq) + ["label word followed by a runtime value: " + ", ".join(
+                    repr(h) for h in rt)]
             if opq:
                 key = "%s:%s" % (name, fn.name if fn is not None else "<module>")
                 if key in ALLOW:

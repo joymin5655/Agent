@@ -225,9 +225,11 @@ with a reason).
 
 Stated limits, so the claim stays true:
 
-- A value interpolated into an f-string is treated as runtime data (counts, paths, tool
-  output) — its literal fragments are checked, the value is not — except a name rooted at
-  an imported, non-stdlib module, which fails as unresolved.
+- A value interpolated into an f-string, `.format` or `%` is treated as runtime data
+  (counts, paths, tool output) — its literal fragments are checked, the value is not —
+  except (a) a name rooted at an imported, non-stdlib module and (b) a value placed right
+  after a label word or sink field (`f"arm={arm}"`, `"cohort {}".format(assign())`), where
+  the literal already names the label. Both fail as unresolved.
 - A key computed from a runtime or imported value, rather than from string constants,
   is invisible to the guard.
 - Shell hooks are checked through `jq --arg` variables, their assignment lines and

@@ -28,20 +28,38 @@ SITES=$(printf '%s' "$OUT" | sed -n 's/^sites=\([0-9]*\).*/\1/p')
 if [[ "${SITES:-0}" -ge 8 ]]; then ok "guard-sees-sites" "sites=$SITES"; else bad "guard-sees-sites" "sites=${SITES:-0} (<8: resolver is blind)"; fi
 
 mkroot() {  # mkroot <name> -> fixture root with core/hooks/
-  rm -rf "$WORK/$1"; mkdir -p "$WORK/$1/core/hooks"
+  rm -rf "${WORK:?}/$1"; mkdir -p "$WORK/$1/core/hooks"
   echo "$WORK/$1"
 }
 
-# src_case <name> <python source> <caught|clean> [guard-path]
+# verdict <guard> <root> -> caught | clean | crash. "caught" needs a non-zero exit AND
+# a LABEL/UNRESOLVED line: a guard that dies with a Traceback is never counted.
+verdict() {
+  local out rc
+  out=$(python3 "$1" --root "$2" 2>&1); rc=$?
+  if printf '%s' "$out" | grep -q Traceback; then echo crash
+  elif [[ $rc -ne 0 ]] && printf '%s' "$out" | grep -qE '^(LABEL|UNRESOLVED) '; then echo caught
+  elif [[ $rc -eq 0 ]]; then echo clean
+  else echo crash; fi
+}
+# shell_case <name> <caught|clean> <script text on stdin>
+shell_case() {
+  local name="$1" want="$2" root got
+  root=$(mkroot "$name"); cat > "$root/core/hooks/fx.sh"
+  got=$(verdict "$GUARD" "$root")
+  if [[ "$got" == "$want" ]]; then ok "$name" "want=$want"; else bad "$name" "want=$want got=$got"; fi
+}
+
+# src_case <name> <python source> <caught|clean> [guard-path] [output regex]
 src_case() {
-  local name="$1" src="$2" want="$3" g="${4:-$GUARD}" root rc
+  local name="$1" src="$2" want="$3" g="${4:-$GUARD}" rx="${5:-}" root got
   root=$(mkroot "$name")
   printf '%s\n' "$src" > "$root/core/hooks/fx.py"
-  python3 "$g" --root "$root" >/dev/null 2>&1; rc=$?
-  if [[ "$want" == caught && $rc -ne 0 ]] || [[ "$want" == clean && $rc -eq 0 ]]; then
-    ok "$name" "want=$want"
+  got=$(verdict "$g" "$root")
+  if [[ "$got" == "$want" ]] && { [[ -z "$rx" ]] || python3 "$g" --root "$root" 2>&1 | grep -qE "$rx"; }; then
+    ok "$name" "want=$want${rx:+ /$rx/}"
   else
-    bad "$name" "want=$want rc=$rc"
+    bad "$name" "want=$want got=$got${rx:+ (needs /$rx/)}"
   fi
 }
 # kind_case <name> <python source> <regex the guard output must match>
@@ -198,12 +216,12 @@ src_case "min-max-text" 'print({"additionalContext": min("cohort 7", "zzz")})' c
 
 echo
 echo "=== B8. numeric constants and format specs (r3) ==="
-src_case "int-format"      'print({"additionalContext": "cohort {}".format(7)})' caught
-src_case "int-fstring"     'print({"additionalContext": f"cohort {7}"})' caught
-src_case "int-percent"     'print({"additionalContext": "variant %d" % 3})' caught
+src_case "int-format"      'print({"additionalContext": "cohort {}".format(7)})' caught "" '^LABEL'
+src_case "int-fstring"     'print({"additionalContext": f"cohort {7}"})' caught "" '^LABEL'
+src_case "int-percent"     'print({"additionalContext": "variant %d" % 3})' caught "" '^LABEL'
 src_case "int-via-name"    'N = 7
-print({"additionalContext": "cohort {}".format(N)})' caught
-src_case "int-spec"        'print({"additionalContext": "cohort {:02}".format(7)})' caught
+print({"additionalContext": "cohort {}".format(N)})' caught "" '^LABEL'
+src_case "int-spec"        'print({"additionalContext": "cohort {:02}".format(7)})' caught "" '^LABEL'
 src_case "spec-truncation" 'print({"additionalContext": "arm {:.1}".format("Bclean")})' caught
 src_case "percent-precision" 'print({"additionalContext": "arm %.1s" % "Bclean"})' caught
 src_case "int-count-clean" 'print({"additionalContext": "found {} files".format(7)})' clean
@@ -257,6 +275,124 @@ src_case "stdlib-interp-clean" 'import os
 print({"additionalContext": f"advice: {os.getcwd()}"})' clean
 
 echo
+echo "=== B11. label word followed by a runtime value (r4) ==="
+src_case "runtime-arm-assign" 'from exp import compute_arm
+arm = compute_arm("s")
+print({"additionalContext": f"arm={arm}"})' caught "" '^UNRESOLVED .*runtime value'
+src_case "runtime-variant-local-fn" 'def pick():
+    return input()
+v = pick()
+print({"additionalContext": f"variant: {v}"})' caught "" '^UNRESOLVED .*runtime value'
+src_case "runtime-bucket-format" 'from exp import arm_of
+print({"additionalContext": "bucket: {}".format(arm_of(1))})' caught "" '^UNRESOLVED .*runtime value'
+src_case "runtime-arm-environ" 'import os
+print({"additionalContext": "arm: {}".format(os.environ["ARM"])})' caught "" '^UNRESOLVED .*runtime value'
+src_case "runtime-cohort-call" 'from exp import assign_cohort
+print({"additionalContext": f"cohort {assign_cohort(1)}"})' caught "" '^UNRESOLVED .*runtime value'
+src_case "runtime-cohort-percent" 'from exp import g
+print({"additionalContext": "cohort %s" % g()})' caught "" '^UNRESOLVED .*runtime value'
+src_case "runtime-guard-field" 'from exp import g
+print({"additionalContext": f"guard={g()}"})' caught "" '^UNRESOLVED .*runtime value'
+src_case "runtime-count-clean" 'import sys
+n = len(sys.argv)
+print({"additionalContext": f"{n} files changed; run tests"})' clean
+src_case "runtime-cwd-clean" 'import os
+p = os.getcwd()
+print({"additionalContext": f"cwd: {p}"})' clean
+src_case "runtime-after-prose-clean" 'import os
+p = os.getcwd()
+print({"additionalContext": f"retry the command in {p}"})' clean
+
+echo
+echo "=== B12. shell function bodies (r4) ==="
+shell_case "shell-function-keyword" caught <<'SH'
+#!/usr/bin/env bash
+function build {
+  echo "session cohort 7"
+}
+CTX="$(build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+shell_case "shell-function-keyword-parens" caught <<'SH'
+#!/usr/bin/env bash
+function build() {
+  echo "session cohort 7"
+}
+CTX="$(build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+shell_case "shell-heredoc-brace" caught <<'SH'
+#!/usr/bin/env bash
+build() {
+  cat <<EOF
+}
+EOF
+  echo "holdout arm B"
+}
+CTX="$(build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+shell_case "shell-escaped-brace" caught <<'SH'
+#!/usr/bin/env bash
+build() {
+  echo \}
+  echo "session cohort 7"
+}
+CTX="$(build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+shell_case "shell-quoted-brace" caught <<'SH'
+#!/usr/bin/env bash
+build() {
+  echo "}"
+  echo "session cohort 7"
+}
+CTX="$(build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+shell_case "shell-heredoc-clean" clean <<'SH'
+#!/usr/bin/env bash
+build() {
+  cat <<'EOF'
+}
+change your approach
+EOF
+}
+CTX="$(build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+
+echo
+echo "=== B13. remaining artificial forms (r4) ==="
+src_case "nested-format-spec" 'print({"additionalContext": "cohort {:{}} x".format(7, 5)})' caught
+src_case "format-index-field" 'print({"additionalContext": "cohort {0[1]}".format(("x", 7))})' caught
+src_case "format-attr-field" 'print({"additionalContext": "cohort {0.real}".format(7)})' caught
+src_case "string-multiply-template" 'print({"additionalContext": ("{} " * 2).format("a", "cohort 7")})' caught
+src_case "dict-update-kwarg" 'import json
+rec = {}
+rec.update(guard="x")
+print({"additionalContext": json.dumps(rec)})' caught
+src_case "dict-update-dict" 'import json
+rec = {}
+rec.update({"guard": "x"})
+print({"additionalContext": json.dumps(rec)})' caught
+src_case "dict-setdefault" 'import json
+rec = {}
+rec.setdefault("guard", "x")
+print({"additionalContext": json.dumps(rec)})' caught
+
+echo
+echo "=== B14. cost: a huge template stops at the first state explosion (r4) ==="
+FIELDS=$(python3 -c 'print(", ".join(["a"] * 60))')
+BIGSRC="import sys
+a = \"p\" if sys.argv else (\"q\" if sys.argv else (\"r\" if sys.argv else (\"s\" if sys.argv else (\"t\" if sys.argv else (\"u\" if sys.argv else (\"v\" if sys.argv else \"w\"))))))
+print({\"additionalContext\": (\"{}.\" * 60).format($FIELDS)})"
+T0=$(python3 -c 'import time; print(time.time())')
+src_case "huge-template-unresolved" "$BIGSRC" caught "" '^UNRESOLVED .*distinct tails'
+T1=$(python3 -c 'import time; print(time.time())')
+if python3 -c "import sys; sys.exit(0 if $T1 - $T0 < 3.0 else 1)"; then ok "huge-template-fast" "$(python3 -c "print(round($T1 - $T0, 2))")s"; else bad "huge-template-fast" "$(python3 -c "print(round($T1 - $T0, 2))")s (>=3s)"; fi
+
+echo
 echo "=== C2. vocabulary regressions (word boundary) ==="
 py_case "identity-prose"    '"experiment identity check failed"'        clean
 py_case "bucket-names-prose" '"bucket names must be lowercase"'          clean
@@ -265,7 +401,7 @@ echo
 echo "=== D. systemMessage key + shell hook ==="
 root=$(mkroot sysmsg)
 printf 'import json\nprint(json.dumps({"systemMessage": "holdout arm B"}))\n' > "$root/core/hooks/fx.py"
-python3 "$GUARD" --root "$root" >/dev/null 2>&1 && bad "systemMessage-caught" "not caught" || ok "systemMessage-caught" "rc!=0"
+[[ $(verdict "$GUARD" "$root") == caught ]] && ok "systemMessage-caught" "LABEL line" || bad "systemMessage-caught" "not caught"
 
 root=$(mkroot shbad)
 cat > "$root/core/hooks/fx.sh" <<'SH'
@@ -274,7 +410,7 @@ CTX_PARTS+=("session cohort 3")
 CTX="$(printf '%s\n' "${CTX_PARTS[@]}")"
 jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
 SH
-python3 "$GUARD" --root "$root" >/dev/null 2>&1 && bad "shell-hook-caught" "not caught" || ok "shell-hook-caught" "rc!=0"
+[[ $(verdict "$GUARD" "$root") == caught ]] && ok "shell-hook-caught" "LABEL line" || bad "shell-hook-caught" "not caught"
 
 root=$(mkroot shgood)
 cat > "$root/core/hooks/fx.sh" <<'SH'
@@ -283,7 +419,7 @@ CTX_PARTS+=("2 active sessions in this repo")
 CTX="$(printf '%s\n' "${CTX_PARTS[@]}")"
 jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
 SH
-python3 "$GUARD" --root "$root" >/dev/null 2>&1 && ok "shell-hook-clean" "rc=0" || bad "shell-hook-clean" "false positive"
+[[ $(verdict "$GUARD" "$root") == clean ]] && ok "shell-hook-clean" "rc=0" || bad "shell-hook-clean" "false positive"
 
 root=$(mkroot shfn)
 cat > "$root/core/hooks/fx.sh" <<'SH'
@@ -292,7 +428,7 @@ build() { echo "session cohort 7"; }
 CTX="$(build)"
 jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
 SH
-python3 "$GUARD" --root "$root" >/dev/null 2>&1 && bad "shell-function-followed" "not caught" || ok "shell-function-followed" "rc!=0"
+[[ $(verdict "$GUARD" "$root") == caught ]] && ok "shell-function-followed" "LABEL line" || bad "shell-function-followed" "not caught"
 
 root=$(mkroot shfn2)
 cat > "$root/core/hooks/fx.sh" <<'SH'
@@ -303,7 +439,7 @@ build() { local h="${HOME}"
 CTX="$(build)"
 jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
 SH
-python3 "$GUARD" --root "$root" >/dev/null 2>&1 && bad "shell-multiline-function" "not caught" || ok "shell-multiline-function" "rc!=0"
+[[ $(verdict "$GUARD" "$root") == caught ]] && ok "shell-multiline-function" "LABEL line" || bad "shell-multiline-function" "not caught"
 root=$(mkroot shfn3)
 cat > "$root/core/hooks/fx.sh" <<'SH'
 #!/usr/bin/env bash
@@ -312,13 +448,13 @@ build() {
 CTX="$(build)"
 jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
 SH
-python3 "$GUARD" --root "$root" >/dev/null 2>&1 && bad "shell-unterminated-function" "passed" || ok "shell-unterminated-function" "rc!=0"
+[[ $(verdict "$GUARD" "$root") == caught ]] && ok "shell-unterminated-function" "UNRESOLVED line" || bad "shell-unterminated-function" "passed"
 
 echo
 echo "=== E. a site with unresolvable text fails (no silent blindness) ==="
 root=$(mkroot blind)
 printf 'import json, sys\nprint(json.dumps({"additionalContext": sys.argv[1]}))\n' > "$root/core/hooks/fx.py"
-python3 "$GUARD" --root "$root" >/dev/null 2>&1 && bad "unresolved-fails" "passed blind" || ok "unresolved-fails" "rc!=0"
+[[ $(verdict "$GUARD" "$root") == caught ]] && ok "unresolved-fails" "UNRESOLVED line" || bad "unresolved-fails" "passed blind"
 
 echo
 echo "=== F. mutation probes — each guard property must be load-bearing ==="
@@ -334,15 +470,17 @@ open(os.environ["DST"], "w", encoding="utf-8").write(src.replace(os.environ["FIN
 }
 # gprobe <name> <find> <repl> <fixture-name> <fixture-src> <want-under-REAL-guard>
 gprobe() {
-  local name="$1" m root rc
+  local name="$1" m root got
   m=$(gmutate "$name" "$2" "$3")
   if [[ -z "$m" ]]; then bad "mutation/$name-anchor" "anchor not found — probe is inert"; return; fi
   root=$(mkroot "mp-$name"); printf '%s\n' "$5" > "$root/core/hooks/fx.py"
-  python3 "$m" --root "$root" >/dev/null 2>&1; rc=$?
-  if [[ "$6" == caught && $rc -eq 0 ]] || [[ "$6" == clean && $rc -ne 0 ]]; then
+  got=$(verdict "$m" "$root")
+  # 7th arg: output the REAL guard gives; the mutant must stop giving it
+  if [[ -n "${7:-}" ]] && ! python3 "$m" --root "$root" 2>&1 | grep -qE "$7"; then got=flipped; fi
+  if [[ "$got" == flipped ]] || [[ "$6" == caught && "$got" == clean ]] || [[ "$6" == clean && "$got" == caught ]]; then
     ok "mutation/$name" "mutant flips fixture $4"
   else
-    bad "mutation/$name" "mutant still behaves like the guard on $4 (rc=$rc)"
+    bad "mutation/$name" "mutant still behaves like the guard on $4 (got=$got)"
   fi
 }
 gprobe keyword-detect 'isinstance(n, ast.keyword) and n.arg in KEYS' 'False' keyword-arg \
@@ -396,7 +534,7 @@ b = "a" if sys.argv else "b"
 msg = b + b + b + b + b + b + b + b + b + b + b + b + b
 print({"additionalContext": msg})' caught
 gprobe number-const 'if isinstance(node.value, (int, float)) and not isinstance(node.value, bool):' 'if False:' int-fstring \
-  'print({"additionalContext": f"cohort {7}"})' caught
+  'print({"additionalContext": f"cohort {7}"})' caught '^LABEL'
 gprobe format-spec '_apply_spec(val, spec) for val in vals' 'val for val in vals' spec-truncation \
   'print({"additionalContext": "arm {:.1}".format("Bclean")})' caught
 gprobe dict-subscript-sets 'pairs += self.dict_sets.get((name, id(fn)), []) + self.dict_sets.get((name, id(None)), [])' 'pass' dict-subscript-dumps \
@@ -413,13 +551,104 @@ print({"additionalContext": json.dumps({"x": get()})})' caught
 gprobe import-origin 'and self.imported[base.id] not in SAFE_MODULES' 'and base.id not in SAFE_MODULES' alias-shadows-safe-module \
   'from labels import LBL as os
 print({"additionalContext": f"advice: {os.x}"})' caught
+# --- r4 probes
+shprobe() {  # shprobe <name> <find> <repl> <caught|clean>  (fixture script on stdin)
+  local name="$1" m root got
+  m=$(gmutate "$name" "$2" "$3")
+  if [[ -z "$m" ]]; then bad "mutation/$name-anchor" "anchor not found — probe is inert"; cat >/dev/null; return; fi
+  root=$(mkroot "mp-$name"); cat > "$root/core/hooks/fx.sh"
+  [[ $(verdict "$GUARD" "$root") == "$4" ]] || bad "mutation/$name-fixture" "fixture is not '$4' under the real guard"
+  got=$(verdict "$m" "$root")
+  if [[ "$4" == caught && "$got" == clean ]] || [[ "$4" == clean && "$got" == caught ]]; then
+    ok "mutation/$name" "mutant flips the shell fixture"
+  else
+    bad "mutation/$name" "mutant behaves like the guard (got=$got)"
+  fi
+}
+gprobe sentinel-fstring 's = s + [SENT]        # a value the guard cannot see' 'pass' runtime-arm-assign \
+  'from exp import compute_arm
+arm = compute_arm("s")
+print({"additionalContext": f"arm={arm}"})' caught '^UNRESOLVED .*runtime value'
+gprobe sentinel-template 'return s + [SENT] if (not s or o) else s' 'return s or [""]' runtime-bucket-format \
+  'from exp import arm_of
+print({"additionalContext": "bucket: {}".format(arm_of(1))})' caught '^UNRESOLVED .*runtime value'
+gprobe runtime-hit-report 'if rt:' 'if False:' runtime-cohort-call \
+  'from exp import assign_cohort
+print({"additionalContext": f"cohort {assign_cohort(1)}"})' caught '^UNRESOLVED .*runtime value'
+gprobe string-multiply 'if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mult):' 'if False:' string-multiply-template \
+  'print({"additionalContext": ("{} " * 2).format("a", "cohort 7")})' caught
+gprobe dict-update 'if f.attr == "update":' 'if False:' dict-update-kwarg \
+  'import json
+rec = {}
+rec.update(guard="x")
+print({"additionalContext": json.dumps(rec)})' caught
+gprobe dict-setdefault 'elif f.attr == "setdefault" and len(n.args) >= 2:' 'elif False:' dict-setdefault \
+  'import json
+rec = {}
+rec.setdefault("guard", "x")
+print({"additionalContext": json.dumps(rec)})' caught
+gprobe format-nested-spec '(?::((?:[^{}]|\{[^{}]*\})*))?' '(?::([^{}]*))?' nested-format-spec \
+  'print({"additionalContext": "cohort {:{}} x".format(7, 5)})' caught
+gprobe format-accessors '((?:\.\w+|\[[^\]]*\])*)' '()' format-index-field \
+  'print({"additionalContext": "cohort {0[1]}".format(("x", 7))})' caught
+shprobe shell-function-keyword 'funcs[m.group(1) or m.group(2)] = (body, depth <= 0)' 'funcs[m.group(2) or "-"] = (body, depth <= 0)' caught <<'SH'
+#!/usr/bin/env bash
+function build {
+  echo "session cohort 7"
+}
+CTX="$(build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+shprobe shell-heredoc 'if tag is not None:' 'if False:' caught <<'SH'
+#!/usr/bin/env bash
+build() {
+  cat <<EOF
+}
+EOF
+  echo "holdout arm B"
+}
+CTX="$(build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+shprobe shell-escaped-brace '# \{ \} are literal' '# \{ \} are literal
+    t = line' caught <<'SH'
+#!/usr/bin/env bash
+build() {
+  echo \}
+  echo "session cohort 7"
+}
+CTX="$(build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+shprobe shell-quoted-brace '# quoted text' '# quoted text
+    t = line' caught <<'SH'
+#!/usr/bin/env bash
+build() {
+  echo "}"
+  echo "session cohort 7"
+}
+CTX="$(build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+# cost: without the early exit the huge template runs for many seconds
+m=$(gmutate cat-early-exit 'return list(itertools.islice(nxt, HARD_CAP))     # stop at the first overflow' 'pass')
+if [[ -z "$m" ]]; then bad "mutation/cat-early-exit-anchor" "anchor not found — probe is inert"; else
+  root=$(mkroot mp-cat-early-exit); printf '%s\n' "$BIGSRC" > "$root/core/hooks/fx.py"
+  if python3 -c "
+import subprocess, sys
+try:
+    subprocess.run([sys.executable, '$m', '--root', '$root'], capture_output=True, timeout=3)
+except subprocess.TimeoutExpired:
+    sys.exit(0)
+sys.exit(1)"; then ok "mutation/cat-early-exit" "mutant exceeds 3s on the huge template"; else bad "mutation/cat-early-exit" "mutant is still fast"; fi
+fi
 # shell function following
 m=$(gmutate shell-fn 'strs += funcs[f][0]' 'pass')
 if [[ -z "$m" ]]; then bad "mutation/shell-fn-anchor" "anchor not found — probe is inert"; else
   root=$(mkroot mp-shell-fn)
   printf '%s\n' '#!/usr/bin/env bash' 'build() { echo "session cohort 7"; }' 'CTX="$(build)"' \
     "jq -nc --arg ctx \"\$CTX\" '{hookSpecificOutput: {additionalContext: \$ctx}}'" > "$root/core/hooks/fx.sh"
-  python3 "$m" --root "$root" >/dev/null 2>&1 && ok "mutation/shell-fn" "mutant misses the function body" || bad "mutation/shell-fn" "mutant still caught it"
+  [[ $(verdict "$m" "$root") == clean ]] && ok "mutation/shell-fn" "mutant misses the function body" || bad "mutation/shell-fn" "mutant still caught it"
 fi
 # brace counting: a clean multi-line function with an unquoted ${...} must stay clean
 m=$(gmutate shell-brace 'depth += _braces(nxt)' 'depth += 0')
@@ -427,8 +656,8 @@ if [[ -z "$m" ]]; then bad "mutation/shell-brace-anchor" "anchor not found — p
   root=$(mkroot mp-shell-brace)
   printf '%s\n' '#!/usr/bin/env bash' 'build() { h=${HOME}' '  echo "all good"' '}' 'CTX="$(build)"' \
     "jq -nc --arg ctx \"\$CTX\" '{hookSpecificOutput: {additionalContext: \$ctx}}'" > "$root/core/hooks/fx.sh"
-  python3 "$GUARD" --root "$root" >/dev/null 2>&1 || bad "mutation/shell-brace-fixture" "clean fixture not clean under the real guard"
-  python3 "$m" --root "$root" >/dev/null 2>&1 && bad "mutation/shell-brace" "mutant still clean" || ok "mutation/shell-brace" "mutant leaves the function unterminated"
+  [[ $(verdict "$GUARD" "$root") == clean ]] || bad "mutation/shell-brace-fixture" "clean fixture not clean under the real guard"
+  [[ $(verdict "$m" "$root") == caught ]] && ok "mutation/shell-brace" "mutant leaves the function unterminated" || bad "mutation/shell-brace" "mutant still clean"
 fi
 # timing: the guard must stay cheap (it runs in every battery)
 T0=$(python3 -c 'import time; print(time.time())')
