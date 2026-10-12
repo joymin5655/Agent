@@ -27,6 +27,14 @@ quality lever in multi-agent work — fill every section or state why it is empt
   `skills/supervise/SKILL.md` (approved spec → low; no spec → medium; risk area
   → high). Advisory; OMIT when no effort policy applies>
 
+## Skills
+
+- **skills**: <exact skill names the worker loads with the Skill tool before
+  starting (`plugin:skill` for plugin skills), or `none` with a one-line reason.
+  Name only skills the wave's work directly uses (0–3) and that appear in the
+  session's available-skills list. Names only — never paste a skill's body;
+  the worker loads it, as with constraints re-injection below>
+
 ## Self-contained (no history assumed)
 
 Write the contract as if the worker has never seen this conversation — because
