@@ -597,6 +597,30 @@ buf = io.StringIO()
 with contextlib.redirect_stdout(buf):
     mod.withhold("sidI")
 report("withhold-unexpected-exception-notice", "not recorded" in buf.getvalue())
+
+# AG15 L2: the approval flag is written like the withheld marker - no symlink / hard-link follow
+mod, flag = load("flag-hl")
+victim = tmp / "unit-flag-hl-victim"
+victim.write_text("precious")
+os.link(victim, flag)
+mod.write_flag("sidF")
+report("flag-hardlink-victim-not-truncated", victim.read_text() == "precious")
+
+mod, flag = load("flag-sym")
+victim = tmp / "unit-flag-sym-victim"
+victim.write_text("precious")
+os.symlink(victim, flag)
+mod.write_flag("sidF")
+report("flag-symlink-not-followed", victim.read_text() == "precious" and flag.is_symlink())
+
+mod, flag = load("flag-ok")
+mod.write_flag("sidF")
+first = flag.read_text()
+mod.write_flag("sidLongerSession")
+report("flag-normal-write-and-overwrite",
+       first.startswith("approved at ") and first.endswith("session=sidF")
+       and flag.read_text().endswith("session=sidLongerSession")
+       and flag.read_text().count("approved at") == 1 and mod.flag_session(flag) == "sidLongerSession")
 PY
 while read -r verdict name; do
   [[ -z "${verdict:-}" ]] && continue

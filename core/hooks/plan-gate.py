@@ -352,11 +352,16 @@ def clear_withheld(sid: str) -> None:
 
 
 def write_flag(sid: str) -> None:
+    # Same discipline as the withheld marker: no symlink follow, single link only,
+    # truncate after validation (a planted link must not get a victim file rewritten).
     try:
-        PLAN_FLAG.write_text(
-            f"approved at {datetime.now().isoformat()} session={sid}", encoding="utf-8"
-        )
-    except OSError:
+        data = f"approved at {datetime.now().isoformat()} session={sid}".encode("utf-8")
+        fd = _open_regular(str(PLAN_FLAG), os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
+        try:
+            os.write(fd, data)
+        finally:
+            os.close(fd)
+    except (OSError, UnicodeError):
         pass
 
 
