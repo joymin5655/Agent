@@ -644,12 +644,209 @@ kept = pathlib.Path(str(flag) + ".withheld.d") / "ownerX"
 report("restore-excl-create-loses-race-old-session-preserved",
        slot(flag).read_text() == "newZ" and kept.is_file() and kept.read_text() == "ownerX"
        and not claims(flag))
+
+# AG16 (2): an old session's record is never deleted when it cannot be preserved; the
+# kept claim still counts as that session's withheld marker
+def newer_slot_race(flag):
+    def racing(a, b, *args, **kw):
+        real_rename(a, b, *args, **kw)
+        if a == str(slot(flag)) and ".claim." in str(b):
+            slot(flag).write_text("newZ")
+    return racing
+
+
+# (a) marker dir unusable (a plain file sits there), link and exclusive create both lose
+mod, flag = load("keep-a")
+slot(flag).write_text("ownerX")
+pathlib.Path(str(flag) + ".withheld.d").write_text("not a dir")
+undo = patched(os, "rename", newer_slot_race(flag))
+try:
+    mod._claim_remove_legacy("other")
+finally:
+    undo()
+report("ag16-keep-claim-marker-dir-unusable",
+       len(claims(flag)) == 1 and pathlib.Path(claims(flag)[0]).read_text() == "ownerX"
+       and slot(flag).read_text() == "newZ")
+report("ag16-kept-claim-reads-as-withheld", mod.is_withheld("ownerX") is True)
+report("ag16-kept-claim-other-session-not-withheld", mod.is_withheld("someoneElse") is False)
+
+# (b) claim content empty / unreadable
+mod, flag = load("keep-b")
+slot(flag).write_text("")
+undo = patched(os, "rename", newer_slot_race(flag))
+try:
+    mod._claim_remove_legacy("other")
+finally:
+    undo()
+report("ag16-keep-claim-empty-content", len(claims(flag)) == 1 and slot(flag).read_text() == "newZ")
+
+# (c) content is not a filename-safe session id
+mod, flag = load("keep-c")
+slot(flag).write_text("odd id/x")
+undo = patched(os, "rename", newer_slot_race(flag))
+try:
+    mod._claim_remove_legacy("other")
+finally:
+    undo()
+report("ag16-keep-claim-unsafe-sid",
+       len(claims(flag)) == 1 and slot(flag).read_text() == "newZ" and mod.is_withheld("odd id/x") is True)
+
+
+# AG16 (3): a failed exclusive create only removes the file it created itself
+def replace_then_fail(path):
+    def w(fd, data):
+        os.unlink(path)
+        pathlib.Path(path).write_text("newer")
+        raise OSError(28, "No space left on device")
+    return w
+
+
+mod, flag = load("excl-fail")
+target = str(slot(flag))
+undo = patched(os, "write", replace_then_fail(target))
+try:
+    ok = mod._create_exclusive(target, "ownerX")
+finally:
+    undo()
+report("ag16-excl-fail-newer-file-not-deleted", ok is False and slot(flag).read_text() == "newer")
+
+mod, flag = load("excl-fail-own")
+
+
+def fail_write(fd, data):
+    raise OSError(28, "No space left on device")
+
+
+undo = patched(os, "write", fail_write)
+try:
+    ok = mod._create_exclusive(str(slot(flag)), "ownerX")
+finally:
+    undo()
+report("ag16-excl-fail-own-file-removed", ok is False and not slot(flag).exists())
+
+# AG16 (4): short writes are completed; a failing write drops only our own flag
+real_write = os.write
+
+
+def short_write(fd, data):
+    return real_write(fd, bytes(data)[:3])
+
+
+mod, flag = load("short")
+undo = patched(os, "write", short_write)
+try:
+    mod.write_flag("sidShort")
+finally:
+    undo()
+report("ag16-short-write-completed", flag.read_text().endswith("session=sidShort")
+       and mod.flag_session(flag) == "sidShort")
+
+mod, flag = load("short-marker")
+undo = patched(os, "write", short_write)
+try:
+    wrote = mod._write_verified(str(slot(flag)), "ownerXYZ")
+finally:
+    undo()
+report("ag16-short-write-marker-completed", wrote is True and slot(flag).read_text() == "ownerXYZ")
+
+mod, flag = load("zero-write")
+undo = patched(os, "write", lambda fd, data: 0)
+try:
+    mod.write_flag("sidZero")
+finally:
+    undo()
+report("ag16-zero-write-flag-removed", not flag.exists())
+
+mod, flag = load("flagfail-own")
+flag.write_text("approved at old session=old")
+undo = patched(os, "write", fail_write)
+try:
+    mod.write_flag("sidNew")
+finally:
+    undo()
+report("ag16-write-fail-own-flag-removed", not flag.exists())
+
+mod, flag = load("flagfail-newer")
+undo = patched(os, "write", replace_then_fail(str(flag)))
+try:
+    mod.write_flag("sidNew")
+finally:
+    undo()
+report("ag16-write-fail-newer-flag-not-deleted", flag.read_text() == "newer")
+
+# AG16 r1: clear_withheld also drops this session's kept claim, never another session's
+mod, flag = load("clear-claim")
+mine = pathlib.Path(str(flag) + ".withheld.claim.1.aaaa")
+other = pathlib.Path(str(flag) + ".withheld.claim.2.bbbb")
+mine.write_text("sidMine")
+other.write_text("sidOther")
+before = mod.is_withheld("sidMine")
+mod.clear_withheld("sidMine")
+report("ag16-clear-withheld-drops-own-kept-claim",
+       before is True and mod.is_withheld("sidMine") is False and not mine.exists())
+report("ag16-clear-withheld-keeps-other-claim",
+       other.exists() and mod.is_withheld("sidOther") is True)
+
+# AG16 r1: _create_exclusive compares/unlinks while its fd is still open (inode pinned)
+mod, flag = load("excl-fd-open")
+captured = []
+real_open_x = os.open
+
+
+def capture_open(path, flags, *a, **kw):
+    fd = real_open_x(path, flags, *a, **kw)
+    if flags & os.O_EXCL:
+        captured.append(fd)
+    return fd
+
+
+fd_open_during_cleanup = []
+real_unlink_same = mod._unlink_if_same
+
+
+def probe_unlink_same(path, ident):
+    try:
+        os.fstat(captured[0])
+        fd_open_during_cleanup.append(True)
+    except OSError:
+        fd_open_during_cleanup.append(False)
+    real_unlink_same(path, ident)
+
+
+mod._unlink_if_same = probe_unlink_same
+os.open = capture_open
+undo = patched(os, "write", fail_write)
+try:
+    mod._create_exclusive(str(slot(flag)), "ownerX")
+finally:
+    undo()
+    os.open = real_open_x
+report("ag16-excl-cleanup-while-fd-open", fd_open_during_cleanup == [True])
+
+# AG16 r1: _create_exclusive completes short writes
+mod, flag = load("excl-short")
+undo = patched(os, "write", short_write)
+try:
+    ok = mod._create_exclusive(str(slot(flag)), "ownerXYZ")
+finally:
+    undo()
+report("ag16-excl-short-write-completed", ok is True and slot(flag).read_text() == "ownerXYZ")
 PY
 while read -r verdict name; do
   [[ -z "${verdict:-}" ]] && continue
   if [[ "$verdict" == "PASS" ]]; then echo "  ok   [ag10-unit-$name]"; PASS=$((PASS + 1))
   else echo "  FAIL [ag10-unit-$name]"; FAIL=$((FAIL + 1)); fi
 done < <(python3 "$TMP_DIR/unit.py" "$HOOK" "$TMP_DIR" 2>&1 || echo "FAIL unit-script-crashed")
+
+# AG16 r1: a FIFO at the flag path must not block a memory-only withhold (flag_session)
+reset_w
+mkfifo "$FLAG_W"
+OUT_F="$(plan_event_sid fifoS "$MEM_ONLY" | AGENT_PLAN_FLAG="$FLAG_W" python3 -c 'import subprocess, sys
+subprocess.run([sys.executable, sys.argv[1]], stdin=sys.stdin, timeout=10)' "$HOOK" 2>/dev/null)"
+RC_F=$?
+[[ $RC_F -eq 0 && "$OUT_F" == *"Could not clear the approval flag"* ]]
+check "ag16-fifo-flag-withhold-does-not-block" $?
+rm -f "$FLAG_W"
 
 # optional: event without session_id says no marker was recorded
 reset_w
