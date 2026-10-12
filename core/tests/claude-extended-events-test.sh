@@ -34,6 +34,9 @@ trap '[[ -n "$WORK" && -d "$WORK" ]] && rm -rf "$WORK"' EXIT
 # X-5: keep this battery's gate records out of the live .agent/logs sink (caller-set seam wins)
 export AGENT_GATE_SINK_DIR="${AGENT_GATE_SINK_DIR:-$WORK/gate-sink}"
 export AGENT_CIRCUIT_BREAKER_SINK="${AGENT_CIRCUIT_BREAKER_SINK:-$WORK/circuit-breaker.jsonl}"
+# The breaker reads its threshold/window from the environment; pin both so an inherited value
+# (or a junk one) cannot change what a case means. Cases that need other values set them inline.
+export AGENT_CIRCUIT_BREAKER_THRESHOLD=3 AGENT_CIRCUIT_BREAKER_WINDOW=60
 
 ok()  { echo "  ok   [$1]"; PASS=$((PASS + 1)); }
 bad() { echo "  FAIL [$1] $2"; FAIL=$((FAIL + 1)); }
@@ -93,9 +96,9 @@ print(json.dumps({
     "tool_name": "Bash", "tool_input": {"command": "false"}, "tool_use_id": "tu-same",
     "error": "Traceback: dup", "cwd": "/tmp",
 }))')
-printf '%s' "$EV_DUP" | AGENT_CIRCUIT_BREAKER_STATE="$CB_STATE3" AGENT_CIRCUIT_BREAKER_THRESHOLD=99 \
+printf '%s' "$EV_DUP" | AGENT_CIRCUIT_BREAKER_STATE="$CB_STATE3" AGENT_CIRCUIT_BREAKER_THRESHOLD=99 AGENT_CIRCUIT_BREAKER_WINDOW=60 \
   bash "$ADAPTER" circuit-breaker.py >/dev/null 2>&1
-printf '%s' "$EV_DUP" | AGENT_CIRCUIT_BREAKER_STATE="$CB_STATE3" AGENT_CIRCUIT_BREAKER_THRESHOLD=99 \
+printf '%s' "$EV_DUP" | AGENT_CIRCUIT_BREAKER_STATE="$CB_STATE3" AGENT_CIRCUIT_BREAKER_THRESHOLD=99 AGENT_CIRCUIT_BREAKER_WINDOW=60 \
   bash "$ADAPTER" circuit-breaker.py >/dev/null 2>&1
 COUNT=$(python3 -c "import json; print(len(json.load(open('$CB_STATE3'))))" 2>/dev/null || echo -1)
 check "posttoolusefailure-dedupe-by-tool-use-id" $((COUNT == 1 ? 0 : 1)) "count=$COUNT"

@@ -36,6 +36,9 @@ trap 'rm -rf "$STATE_DIR"' EXIT
 # (the fixture cwd is /tmp) — section F asserts that isolation holds.
 export AGENT_CIRCUIT_BREAKER_SINK="$STATE_DIR/sink-default.jsonl"
 export AGENT_REPRODUCE_TEST=1
+# Pin the breaker's threshold/window: an inherited value (or a junk one that makes the hook
+# crash on int()) must not change what a case means. Cases needing others set them inline.
+export AGENT_CIRCUIT_BREAKER_THRESHOLD=3 AGENT_CIRCUIT_BREAKER_WINDOW=60
 
 PASS=0
 FAIL=0
