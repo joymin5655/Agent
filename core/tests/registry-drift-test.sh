@@ -15,7 +15,7 @@
 #   (3) an agents/*.md missing name: frontmatter
 #   (4) registry model != agent .md model
 #   (5) review/verify agent whose toolset is not read-only (or unbounded)
-#   (6) skills/supervise shipping without a delegation-contract **model**: field
+#   (6) skills/supervise shipping without a delegation-contract **model**: or **skills**: field
 #   (7) a shipped SKILL.md description without a "NOT " negative-trigger (T-3)
 #
 # Each case gets a FRESH fixture (mktemp -d) so a mutation never leaks into another.
@@ -197,12 +197,21 @@ run_gate "$FX"
 printf '%s\n' "$GATE_OUT" | grep -qF 'without templates/delegation-contract.md'; check "template-absent-named" $?
 
 echo
-echo "=== (6c) template with the model field -> PASS (and no-skills fixtures stay exempt) ==="
+echo "=== (6c) template with the model and skills fields -> PASS (and no-skills fixtures stay exempt) ==="
+FX=$(build_fixture)
+mkdir -p "$FX/skills/supervise/templates"
+printf '# Delegation contract\n\n- **model**: workhorse\n- **skills**: none\n' > "$FX/skills/supervise/templates/delegation-contract.md"
+run_gate "$FX"
+[[ $GATE_RC -eq 0 ]]; check "template-with-model-passes" $?
+
+echo
+echo "=== (6d) template with model but no skills field -> FAIL + named ==="
 FX=$(build_fixture)
 mkdir -p "$FX/skills/supervise/templates"
 printf '# Delegation contract\n\n- **model**: workhorse\n' > "$FX/skills/supervise/templates/delegation-contract.md"
 run_gate "$FX"
-[[ $GATE_RC -eq 0 ]]; check "template-with-model-passes" $?
+[[ $GATE_RC -eq 1 ]]; check "template-without-skills-fails" $?
+printf '%s\n' "$GATE_OUT" | grep -qF 'no **skills**: field'; check "template-without-skills-named" $?
 
 echo
 echo "=== (7) skill description without a negative-trigger -> FAIL + named ==="

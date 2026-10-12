@@ -19,9 +19,10 @@
 #   5. review/verify agent read-only toolset — every agents/*.md whose name
 #        contains reviewer/verifier must allowlist only Read/Grep/Glob (O-1
 #        write single-threading: the toolset is the mechanical enforcement).
-#   6. delegation-contract model field — when skills/supervise ships in the
-#        tree, templates/delegation-contract.md must exist and carry its
-#        **model**: field (O-1 explicit execution-tier dispatch).
+#   6. delegation-contract model + skills fields — when skills/supervise
+#        ships in the tree, templates/delegation-contract.md must exist and
+#        carry its **model**: field (O-1 explicit execution-tier dispatch) and
+#        its **skills**: field (the supervisor names the worker's skills).
 #   7. skill negative-trigger — every shipped skills/*/SKILL.md description
 #        must contain at least one "NOT " negative example (T-3: negative
 #        examples measurably improve skill-routing accuracy).
@@ -173,8 +174,11 @@ if sup.is_dir():
     tpl = sup / "templates" / "delegation-contract.md"
     if not tpl.is_file():
         fail.append("delegation contract: skills/supervise ships without templates/delegation-contract.md")
-    elif "**model**:" not in tpl.read_text(encoding="utf-8"):
-        fail.append("delegation contract: templates/delegation-contract.md has no **model**: field")
+    else:
+        tpl_text = tpl.read_text(encoding="utf-8")
+        for field in ("model", "skills"):
+            if f"**{field}**:" not in tpl_text:
+                fail.append(f"delegation contract: templates/delegation-contract.md has no **{field}**: field")
 
 # 7) every shipped skill's description carries a negative-trigger (T-3).
 #    The "NOT " token is the machine-checkable contract: a description that
