@@ -47,7 +47,8 @@ class SyncTests(unittest.TestCase):
     def test_validates_all_before_mutation(self):
         with tempfile.TemporaryDirectory() as directory:
             a, b = Path(directory) / 'a', Path(directory) / 'b'
-            a.write_text('original'); b.write_text(module.START)
+            a.write_text('original')
+            b.write_text(module.START)
             result = subprocess.run(['python3', str(SCRIPT), '--claude', str(a),
                                      '--codex', str(b)], capture_output=True, check=False)
             self.assertNotEqual(result.returncode, 0)
@@ -72,7 +73,8 @@ class SyncTests(unittest.TestCase):
             self.assertEqual(subprocess.run(cmd + ['--check'], capture_output=True, check=False).returncode, 1)
             self.assertFalse(a.parent.exists())
             subprocess.run(cmd, check=True, capture_output=True)
-            link = Path(directory) / 'link'; link.symlink_to(a)
+            link = Path(directory) / 'link'
+            link.symlink_to(a)
             result = subprocess.run(['python3', str(SCRIPT), '--codex', str(link)], capture_output=True, check=False)
             self.assertNotEqual(result.returncode, 0)
             self.assertTrue(link.is_symlink())
