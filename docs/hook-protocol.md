@@ -216,10 +216,25 @@ read the same if the hook were not being measured.
 `systemMessage`, a system prompt, a deny/ask `permissionDecisionReason`, a Stop
 `decision: block` `reason`, and plain SessionStart stdout. The mechanical guard checks
 only the first two. `core/tests/oob-label-guard-test.sh` finds each place a hook writes
-them (dict key, subscript store, keyword argument, JSON string), follows the text one
-helper call deep, and fails on label vocabulary and on any site it cannot follow
-(unless listed in the guard's `ALLOW` with a reason). The other channels are follow-up
-candidates for the same guard; until then, review them by hand.
+them (dict key, subscript store, keyword argument, JSON string, key built by
+concatenation), follows the text that can flow in (templates filled with their
+arguments, `json.dumps(dict)` as the JSON it produces, same-file functions, one level
+of caller arguments or parameter defaults, shell functions), and fails on label
+vocabulary and on any site it cannot follow (unless listed in the guard's `ALLOW`
+with a reason).
+
+Stated limits, so the claim stays true:
+
+- A value interpolated into an f-string is treated as runtime data (counts, paths, tool
+  output) — its literal fragments are checked, the value is not — except a name rooted at
+  an imported, non-stdlib module, which fails as unresolved.
+- A key computed from a runtime or imported value, rather than from string constants,
+  is invisible to the guard.
+- Shell hooks are checked through `jq --arg` variables, their assignment lines and
+  same-file shell functions; the output of external commands is runtime data.
+
+The other channels are follow-up candidates for the same guard; until then, review them
+by hand.
 
 ---
 

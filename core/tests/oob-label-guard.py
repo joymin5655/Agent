@@ -13,15 +13,31 @@ Method
   1. Emit sites: every place the key text `additionalContext` / `systemMessage`
      appears in a hook as something other than a read or a docstring — a dict
      literal key, a subscript store, a keyword argument, or inside a JSON string /
-     f-string. A form that is none of those (computed key, key passed around as a
-     value) cannot be followed and is reported UNRESOLVED.
+     f-string — plus keys built by concatenation ("additional" + "Context"). A form
+     that is none of those (the key text passed around as a bare value) is reported
+     UNRESOLVED.
   2. Text: the strings that can flow into the value — constants, f-strings,
-     concatenations (joined, so "co" + "hort" is seen as "cohort"), name
-     assignments, the return values of same-file helpers, and (one level) the
-     arguments at the call sites of a wrapping function. Protocol constants
-     (hookSpecificOutput, hookEventName, event names) are dropped.
-  3. Anything left that cannot be followed (imported value, unknown call) makes the
-     site UNRESOLVED, which FAILS — unless ALLOW names that function with a reason.
+     concatenations (joined, so "co" + "hort" is seen as "cohort"), `.format` / `%`
+     templates filled with their arguments, `json.dumps(dict)` rendered as the JSON
+     it produces, name assignments, the return values of same-file functions (all
+     same-named definitions), and one level of caller arguments or parameter
+     defaults. Protocol constants (hookSpecificOutput, event names) are dropped.
+  3. Anything left that cannot be followed makes the site UNRESOLVED, which FAILS:
+     an imported name or unknown call, a parameter nobody in the file calls, a call
+     through `*args` / `**kwargs` or on a receiver that may be the method's class,
+     a state explosion past HARD_CAP in the concatenation of alternatives. ALLOW (file:function -> reason)
+     is the only way to accept one.
+
+Deliberate exemptions — not "unresolved", stated so the claim stays true:
+  * A value interpolated into an f-string is a runtime datum (counts, paths, tool
+    output). Its literal fragments are still checked; what it cannot follow is
+    ignored — EXCEPT a name or attribute chain rooted at an imported, non-stdlib
+    name (`f"{LBL}"` with `from labels import LBL`), which is UNRESOLVED.
+  * A key computed from a runtime or imported value (not from string constants) is
+    invisible: nothing in the file says it will spell additionalContext.
+  * Shell hooks: the guard follows `jq --arg` variables to their assignment lines
+    and to same-file shell functions they call (3 levels). Output of external
+    commands is runtime data.
 
 Usage: oob-label-guard.py [--root DIR]   (exit 1 on a label hit or an unresolved site)
 """
@@ -30,6 +46,7 @@ from __future__ import annotations
 import argparse
 import ast
 import itertools
+import json
 import os
 import re
 import sys
@@ -44,23 +61,29 @@ PROTOCOL = {
     "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop", "SessionStart",
     "UserPromptSubmit", "SubagentStart", "SubagentStop",
 }
-NUMERIC_CALLS = {"int", "float", "len", "bool", "round", "abs", "sum", "min", "max",
-                 "range", "time", "monotonic", "getpid", "isinstance", "hexdigest", "digest"}
-TEXT_CALLS = {"str", "repr", "format", "sorted", "list", "tuple", "set", "dumps",
-              "basename", "dirname", "join", "relpath", "abspath", "getattr", "next"}
-STR_METHODS = {"join", "format", "strip", "lstrip", "rstrip", "replace", "lower",
-               "upper", "title", "capitalize", "splitlines", "split", "get", "items",
-               "values", "keys", "append", "encode", "decode", "removeprefix",
-               "removesuffix", "ljust", "rjust", "center", "expandtabs"}
-MAX_COMBOS = 32
+SAFE_MODULES = {"os", "sys", "json", "time", "re", "stat", "hashlib", "datetime", "pathlib",
+                "tempfile", "fcntl", "shutil", "subprocess", "itertools", "contextlib",
+                "string", "textwrap", "typing", "collections", "functools"}
+NUMERIC_CALLS = {"int", "float", "len", "bool", "round", "abs", "sum", "range", "time",
+                 "monotonic", "getpid", "isinstance", "hexdigest", "digest"}
+TEXT_CALLS = {"str", "repr", "format", "sorted", "list", "tuple", "set", "basename",
+              "dirname", "join", "relpath", "abspath", "getattr", "next", "min", "max"}
+STR_METHODS = {"join", "strip", "lstrip", "rstrip", "replace", "lower", "upper", "title",
+               "capitalize", "splitlines", "split", "get", "items", "values", "keys",
+               "append", "encode", "decode", "removeprefix", "removesuffix", "ljust",
+               "rjust", "center", "expandtabs"}
+MAX_COMBOS = 64      # candidates kept verbatim before compressing to hits + tail
+TAIL = 48            # chars kept after compression; label patterns are shorter
+HARD_CAP = 4096      # distinct compressed tails before a site is called unresolved
 
 _WORDS = [
     # assignment / identifier forms only — "experiment with X", "variant of the plan",
-    # "an experimental flag" are ordinary prose.
+    # "an experimental flag", "bucket names must be lowercase" are ordinary prose.
     re.compile(r"(?i)\bhold-?out\b"),
     re.compile(r"\b(?:cohort|variant|arm|bucket)\s+(?:[A-Z]\b|\d+\b)"),
+    re.compile(r"(?i)\b(?:experiment|cohort|variant|arm|bucket)[_-](?:id|name|label|group)\b"),
     re.compile(r"(?i)\b(?:experiment|cohort|variant|arm|bucket)[ _-]?(?:id|name|label|group)"
-               r"\s*[=:]?\s*\S"),
+               r"\s*[=:]\s*\S"),
     re.compile(r"(?i)\b(?:experiment|cohort|variant|arm|bucket)\s*[=:]\s*"
                r"(?:control|treatment|holdout|on|off|[A-Z]\b|\d+\b)"),
     re.compile(r"(?i)\b(?:control|treatment)[ -]group\b|\ba/b[ -]test\b"),
@@ -76,14 +99,40 @@ def label_hits(text):
     return [m.group(0) for rx in _WORDS + _FIELDS for m in rx.finditer(text)]
 
 
-def _cat(parts):
-    """Cartesian join of fragment alternatives (capped) so concatenations are
-    checked as the text the model would actually read."""
-    parts = [p if p else [""] for p in parts]
-    out = []
-    for combo in itertools.islice(itertools.product(*parts), MAX_COMBOS):
-        out.append("".join(combo))
-    return out
+_FMT_FIELD = re.compile(r"\{([A-Za-z_]\w*|\d*)(?:[!:][^{}]*)?\}")
+_PCT_FIELD = re.compile(r"%(?:\((\w+)\))?[-#0 +]*\d*(?:\.\d+)?[sdifrxXcgeE]")
+
+
+def _fill_format(tmpl, pos, kw):
+    """One concrete `str.format` result; unknown fields become empty."""
+    auto = iter(range(10 ** 6))
+
+    def sub(m):
+        key = m.group(1)
+        if key == "":
+            idx = next(auto)
+            return pos[idx] if idx < len(pos) else ""
+        if key.isdigit():
+            idx = int(key)
+            return pos[idx] if idx < len(pos) else ""
+        return kw.get(key, "")
+    return _FMT_FIELD.sub(sub, tmpl.replace("{{", "\0").replace("}}", "\1")
+                          ).replace("\0", "{").replace("\1", "}")
+
+
+def _fill_percent(tmpl, pos, kw):
+    it = iter(pos)
+
+    def sub(m):
+        if m.group(1):
+            return kw.get(m.group(1), "")
+        return next(it, "")
+    return _PCT_FIELD.sub(sub, tmpl.replace("%%", "\0")).replace("\0", "%")
+
+
+def _compress(text):
+    hits = label_hits(text) if len(text) > TAIL else []
+    return ("\n".join(hits) + "\n" if hits else "") + text[-TAIL:]
 
 
 class Resolver:
@@ -93,11 +142,19 @@ class Resolver:
         self.assigns = {}
         self.funcs = {}
         self.calls = {}
+        self.imported = set()
         for n in ast.walk(tree):
             for c in ast.iter_child_nodes(n):
                 self.parents[id(c)] = n
+        for n in ast.walk(tree):
             if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                self.funcs.setdefault(n.name, n)
+                self.funcs.setdefault(n.name, []).append(n)
+            elif isinstance(n, ast.Import):
+                for a in n.names:
+                    self.imported.add((a.asname or a.name).split(".")[0])
+            elif isinstance(n, ast.ImportFrom):
+                for a in n.names:
+                    self.imported.add(a.asname or a.name)
             elif isinstance(n, ast.Assign):
                 for t in n.targets:
                     for nm in ast.walk(t):
@@ -134,9 +191,46 @@ class Resolver:
             cur = self.parents.get(id(cur))
         return cur
 
+    def enclosing_class(self, fn):
+        p = self.parents.get(id(fn))
+        return p if isinstance(p, ast.ClassDef) else None
+
     def params(self, fn):
         a = fn.args
         return [x.arg for x in list(a.posonlyargs) + list(a.args) + list(a.kwonlyargs)]
+
+    def default_of(self, fn, name):
+        a = fn.args
+        pos = list(a.posonlyargs) + list(a.args)
+        if a.defaults:
+            tail = pos[len(pos) - len(a.defaults):]
+            for p, d in zip(tail, a.defaults):
+                if p.arg == name:
+                    return d
+        for p, d in zip(a.kwonlyargs, a.kw_defaults):
+            if p.arg == name and d is not None:
+                return d
+        return None
+
+    def cat(self, parts, opq):
+        """Join fragment alternatives so a label split across fragments is seen.
+
+        Past MAX_COMBOS the candidates are compressed to "label hits found so far +
+        the last TAIL characters": every later match that starts in the tail is still
+        found (label patterns are far shorter than TAIL) and every earlier match is
+        kept verbatim, so nothing is dropped. Only a state explosion beyond
+        HARD_CAP distinct tails is reported as unresolved."""
+        cur = [""]
+        for part in parts:
+            part = part or [""]
+            nxt = dict.fromkeys(a + b for a in cur for b in part)
+            if len(nxt) > MAX_COMBOS:
+                nxt = dict.fromkeys(_compress(x) for x in nxt)
+            if len(nxt) > HARD_CAP:
+                opq.append("combinatorial expansion beyond %d distinct tails" % HARD_CAP)
+                nxt = dict(itertools.islice(nxt.items(), HARD_CAP))
+            cur = list(nxt)
+        return cur
 
     def resolve(self, node, fn, seen, depth=0):
         """-> (candidate strings, opaque reasons)."""
@@ -153,22 +247,31 @@ class Resolver:
             parts, op = [], []
             for v in node.values:
                 if isinstance(v, ast.FormattedValue):
-                    # an interpolated value is a runtime datum (counts, paths, tool
-                    # output): its literal fragments are still checked, but what it
-                    # cannot follow is not an unresolved emit site.
+                    # an interpolated value is a runtime datum: its literal fragments
+                    # are still checked, what it cannot follow is ignored — except an
+                    # imported non-stdlib name, which may be a constant defined elsewhere.
                     s, _ = r(v.value)
+                    base = v.value
+                    while isinstance(base, (ast.Attribute, ast.Subscript)):
+                        base = base.value
+                    if isinstance(base, ast.Name) and base.id in self.imported \
+                            and base.id not in SAFE_MODULES:
+                        op.append("imported name %s interpolated" % base.id)
                 else:
                     s, o = r(v)
                     op += o
                 parts.append(s)
-            return _cat(parts), op
+            return self.cat(parts, op), op
         if isinstance(node, ast.BinOp):
             ls, lo = r(node.left)
+            if isinstance(node.op, ast.Mod) and ls:
+                return self._percent(node, ls, lo, fn, seen, depth)
             rs, ro = r(node.right)
-            if isinstance(node.op, (ast.Add, ast.Mod)) and ls and rs:
-                return _cat([ls, rs]), lo + ro
-            return ls + rs, lo + ro
-        if isinstance(node, (ast.IfExp,)):
+            op = lo + ro
+            if isinstance(node.op, ast.Add) and ls and rs:
+                return self.cat([ls, rs], op), op
+            return ls + rs, op
+        if isinstance(node, ast.IfExp):
             a, ao = r(node.body)
             b, bo = r(node.orelse)
             return a + b, ao + bo
@@ -180,7 +283,7 @@ class Resolver:
             s, o = r(node.value)
             if isinstance(node.value, ast.Name) and node.attr in ("sep", "linesep"):
                 return [], []
-            return s, o + [f"attribute .{node.attr}"]
+            return s, o + ["attribute .%s" % node.attr]
         s, o = [], []
         for c in ast.iter_child_nodes(node):
             if isinstance(c, (ast.expr, ast.comprehension, ast.keyword)):
@@ -188,6 +291,69 @@ class Resolver:
                 s += cs
                 o += co
         return s, o
+
+    def _args_text(self, nodes, fn, seen, depth):
+        """Each argument -> candidate list; runtime data (empty/opaque) -> ['']."""
+        out = []
+        for a in nodes:
+            s, _ = self.resolve(a, fn, seen, depth + 1)
+            out.append(s or [""])
+        return out
+
+    def _templated(self, fill, tmpls, pos_nodes, kw_nodes, fn, seen, depth, opq):
+        pos = self._args_text(pos_nodes, fn, seen, depth)
+        names = list(kw_nodes)
+        kws = self._args_text([kw_nodes[k] for k in names], fn, seen, depth)
+        out = []
+        for combo in itertools.islice(itertools.product(*(pos + kws)), 4 * MAX_COMBOS):
+            p = list(combo[:len(pos)])
+            k = dict(zip(names, combo[len(pos):]))
+            for t in tmpls:
+                out.append(fill(t, p, k))
+        return out[: MAX_COMBOS * 2]
+
+    def _percent(self, node, tmpls, lopq, fn, seen, depth):
+        right = node.right
+        if isinstance(right, ast.Tuple):
+            out = self._templated(_fill_percent, tmpls, right.elts, {}, fn, seen, depth, lopq)
+        elif isinstance(right, ast.Dict):
+            kw = {k.value: v for k, v in zip(right.keys, right.values)
+                  if isinstance(k, ast.Constant) and isinstance(k.value, str)}
+            out = self._templated(_fill_percent, tmpls, [], kw, fn, seen, depth, lopq)
+        else:
+            out = self._templated(_fill_percent, tmpls, [right], {}, fn, seen, depth, lopq)
+        return out, lopq
+
+    def _render(self, node, fn, seen, depth):
+        """Candidate JSON text for json.dumps(node)."""
+        if depth > 40:
+            return ["0"]
+        if isinstance(node, ast.Constant):
+            return [json.dumps(node.value)]
+        if isinstance(node, ast.Dict):
+            parts = ["{"]
+            for i, (k, v) in enumerate(zip(node.keys, node.values)):
+                kk = self._render(k, fn, seen, depth + 1) if k is not None else ['"**"']
+                parts += ([", "] if i else []) + [None, None, None]
+                parts[-3:] = [kk, [": "], self._render(v, fn, seen, depth + 1)]
+            parts.append("}")
+            return self.cat([p if isinstance(p, list) else [p] for p in parts], [])
+        if isinstance(node, (ast.List, ast.Tuple)):
+            parts = ["["]
+            for i, e in enumerate(node.elts):
+                parts += ([", "] if i else []) + [self._render(e, fn, seen, depth + 1)]
+            parts.append("]")
+            return self.cat([p if isinstance(p, list) else [p] for p in parts], [])
+        if isinstance(node, ast.Name):
+            vals = self.assigns.get((node.id, id(fn)), []) \
+                + (self.assigns.get((node.id, id(None)), []) if fn is not None else [])
+            if vals:
+                out = []
+                for v in vals:
+                    out += self._render(v, self.enclosing_fn(v), seen, depth + 1)
+                return out
+        s, _ = self.resolve(node, fn, seen, depth + 1)
+        return [json.dumps(x) for x in s] or ["0"]
 
     def _name(self, node, fn, seen, depth):
         name = node.id
@@ -199,8 +365,7 @@ class Resolver:
         seen = seen | {key}
         strs, opq = [], []
         found = False
-        scopes = [id(fn)] + ([id(None)] if fn is not None else [])
-        for sc in scopes:
+        for sc in [id(fn)] + ([id(None)] if fn is not None else []):
             for v in self.assigns.get((name, sc), []):
                 found = True
                 s, o = self.resolve(v, self.enclosing_fn(v), seen, depth + 1)
@@ -210,27 +375,53 @@ class Resolver:
                 break
         if fn is not None and name in self.params(fn):
             found = True
-            callers = self.calls.get(fn.name, [])
-            if not callers:
-                opq.append(f"parameter {name} of {fn.name}() has no in-file caller")
-            plist = self.params(fn)
-            offset = 1 if plist and plist[0] in ("self", "cls") else 0
-            for c in callers:
-                arg = None
-                if name in plist:
-                    idx = plist.index(name) - offset
-                    if 0 <= idx < len(c.args) and not isinstance(c.args[idx], ast.Starred):
-                        arg = c.args[idx]
-                for kw in c.keywords:
-                    if kw.arg == name:
-                        arg = kw.value
+            s, o = self._param(fn, name, seen, depth)
+            strs += s
+            opq += o
+        if not found:
+            opq.append("name %s (import/builtin/global)" % name)
+        return strs, opq
+
+    def _param(self, fn, name, seen, depth):
+        """Values of parameter `name`: caller arguments, else the default."""
+        strs, opq = [], []
+        plist = self.params(fn)
+        cls = self.enclosing_class(fn)
+        offset = 1 if cls is not None and plist and plist[0] in ("self", "cls") else 0
+        callers = []
+        for c in self.calls.get(fn.name, []):
+            f = c.func
+            if isinstance(f, ast.Name):
+                callers.append(c)
+            elif isinstance(f, ast.Attribute) and cls is not None:
+                recv = f.value
+                if isinstance(recv, ast.Name) and recv.id in ("self", "cls", cls.name):
+                    callers.append(c)
+                else:
+                    opq.append("ambiguous receiver for .%s()" % fn.name)
+        if not callers:
+            opq.append("parameter %s of %s() has no in-file caller" % (name, fn.name))
+        for c in callers:
+            if any(isinstance(a, ast.Starred) for a in c.args) \
+                    or any(k.arg is None for k in c.keywords):
+                opq.append("%s() called with */** unpacking" % fn.name)
+                continue
+            arg = None
+            idx = plist.index(name) - offset
+            if 0 <= idx < len(c.args):
+                arg = c.args[idx]
+            for kw in c.keywords:
+                if kw.arg == name:
+                    arg = kw.value
+            if arg is None:
+                arg = self.default_of(fn, name)
                 if arg is None:
                     continue
+                s, o = self.resolve(arg, fn, seen, depth + 1)
+            else:
                 s, o = self.resolve(arg, self.enclosing_fn(c), seen, depth + 1)
-                strs += s
-                opq += o
-        if not found:
-            opq.append(f"name {name} (import/builtin/global)")
+            strs += s
+            opq += o
         return strs, opq
 
     def _call(self, node, fn, seen, depth):
@@ -248,25 +439,48 @@ class Resolver:
 
         if name in NUMERIC_CALLS:
             return [], []
+        if name == "dumps" and node.args:
+            return self._render(node.args[0], fn, seen, depth + 1), []
         if name in self.funcs and not (isinstance(f, ast.Attribute) and name in STR_METHODS):
-            target = self.funcs[name]
             strs, opq = [], []
-            for n in ast.walk(target):
-                if isinstance(n, ast.Return) and n.value is not None \
-                        and self.enclosing_fn(n) is target:
-                    s, o = self.resolve(n.value, target, seen, depth + 1)
-                    strs += s
-                    opq += o
+            for target in self.funcs[name]:
+                for n in ast.walk(target):
+                    if isinstance(n, ast.Return) and n.value is not None \
+                            and self.enclosing_fn(n) is target:
+                        s, o = self.resolve(n.value, target, seen, depth + 1)
+                        strs += s
+                        opq += o
             return strs, opq
+        if isinstance(f, ast.Attribute) and name == "format":
+            tm, to = self.resolve(f.value, fn, seen, depth + 1)
+            if tm:
+                kw = {k.arg: k.value for k in node.keywords if k.arg}
+                return self._templated(_fill_format, tm, node.args, kw, fn, seen, depth, to), to
+            return over(args)
+        if isinstance(f, ast.Attribute) and name == "join":
+            sv, ov = self.resolve(f.value, fn, seen, depth + 1)
+            seq = node.args[0] if node.args else None
+            if isinstance(seq, (ast.List, ast.Tuple, ast.Set)) and seq.elts and sv:
+                parts, op = [], list(ov)
+                for i, e in enumerate(seq.elts):
+                    es, eo = self.resolve(e, fn, seen, depth + 1)
+                    if i:
+                        parts.append(sv)
+                    parts.append(es)
+                    op += eo
+                return self.cat(parts, op), op
+            sa, oa = over(args)
+            if sv and sa:
+                op = ov + oa
+                return self.cat([sa, sv], op) + sa, op
+            return sv + sa, ov + oa
         if isinstance(f, ast.Attribute) and name in STR_METHODS:
             sv, ov = self.resolve(f.value, fn, seen, depth + 1)
             sa, oa = over(args)
-            if name == "join" and sv and sa:
-                return _cat([sa, sv]) + sa, ov + oa
             return sv + sa, ov + oa
         if name in TEXT_CALLS:
             return over(args)
-        return [], [f"call {name or '<expr>'}()"]
+        return [], ["call %s()" % (name or "<expr>")]
 
 
 def _site_value(node, parents):
@@ -281,10 +495,7 @@ def _site_value(node, parents):
         return None, "other"
     if isinstance(parent, ast.Subscript) and parent.slice is node:
         if isinstance(parent.ctx, ast.Store):
-            asg = parents.get(id(parent))
-            while asg is not None and not isinstance(asg, (ast.Assign, ast.AugAssign)):
-                asg = parents.get(id(asg))
-            return (asg.value if asg is not None else None), "subscript"
+            return _store_value(parent, parents), "subscript"
         return None, "read"
     if isinstance(parent, ast.keyword):
         return parent.value, "keyword"
@@ -303,36 +514,71 @@ def _site_value(node, parents):
     return None, "other"
 
 
+def _store_value(sub, parents):
+    asg = parents.get(id(sub))
+    while asg is not None and not isinstance(asg, (ast.Assign, ast.AugAssign, ast.AnnAssign)):
+        asg = parents.get(id(asg))
+    return asg.value if asg is not None else None
+
+
 def scan_python(path, rel):
     try:
         tree = ast.parse(open(path, encoding="utf-8").read())
-    except (SyntaxError, OSError):
-        return []
+    except (SyntaxError, OSError) as exc:
+        # a file the guard cannot read is a blind spot, never a pass
+        return [(1, "parse", [], ["cannot parse: %s" % exc], None)]
     rs = Resolver(tree)
     sites = []
-    for n in ast.walk(tree):
-        if not (isinstance(n, ast.Constant) and isinstance(n.value, str)
-                and any(k in n.value for k in KEYS)):
-            continue
-        value, kind = _site_value(n, rs.parents)
-        if kind in ("doc", "read"):
-            continue
-        fn = rs.enclosing_fn(n)
-        if kind == "other":
-            sites.append((n.lineno, kind, [], ["key not in a followable form"], fn))
-            continue
+
+    def add(lineno, kind, value, anchor):
+        fn = rs.enclosing_fn(anchor)
         strs, opq = rs.resolve(value, fn, frozenset())
-        sites.append((n.lineno, kind, strs, opq, fn))
-    # keyword names (dict(additionalContext=...)) are ast.keyword.arg, not Constants
+        sites.append((lineno, kind, strs, opq, fn))
+
     for n in ast.walk(tree):
-        if isinstance(n, ast.keyword) and n.arg in KEYS:
-            fn = rs.enclosing_fn(n.value)
-            strs, opq = rs.resolve(n.value, fn, frozenset())
-            sites.append((n.value.lineno, "keyword", strs, opq, fn))
+        if isinstance(n, ast.Constant) and isinstance(n.value, str) \
+                and any(k in n.value for k in KEYS):
+            value, kind = _site_value(n, rs.parents)
+            if kind in ("doc", "read"):
+                continue
+            if kind == "other":
+                sites.append((n.lineno, kind, [], ["key not in a followable form"],
+                              rs.enclosing_fn(n)))
+                continue
+            add(n.lineno, kind, value, n)
+        elif isinstance(n, ast.keyword) and n.arg in KEYS:
+            add(n.value.lineno, "keyword", n.value, n.value)
+        elif isinstance(n, ast.Dict):
+            # keys built from string constants: {"additional" + "Context": ...}
+            for k, v in zip(n.keys, n.values):
+                if k is not None and not isinstance(k, ast.Constant) \
+                        and any(c in KEYS for c in rs.resolve(k, rs.enclosing_fn(n), frozenset())[0]):
+                    add(k.lineno, "dict", v, n)
+        elif isinstance(n, ast.Subscript) and isinstance(n.ctx, ast.Store) \
+                and not isinstance(n.slice, ast.Constant):
+            if any(c in KEYS for c in rs.resolve(n.slice, rs.enclosing_fn(n), frozenset())[0]):
+                add(n.lineno, "subscript", _store_value(n, rs.parents), n)
     return sites
 
 
 _JQ_ARG = re.compile(r'--arg\s+\w+\s+"\$\{?(\w+)')
+_SH_FUNC = re.compile(r"^\s*(?:function\s+)?([A-Za-z_][\w-]*)\s*\(\)\s*\{(.*)$")
+
+
+def _shell_functions(code):
+    funcs = {}
+    for i, (_, ln) in enumerate(code):
+        m = _SH_FUNC.match(ln)
+        if not m:
+            continue
+        body = [m.group(2)]
+        if "}" not in m.group(2):
+            for _, nxt in code[i + 1:]:
+                if nxt.strip() == "}":
+                    break
+                body.append(nxt)
+        funcs[m.group(1)] = body
+    return funcs
 
 
 def scan_shell(path, rel):
@@ -341,6 +587,7 @@ def scan_shell(path, rel):
     except OSError:
         return []
     code = [(i + 1, ln) for i, ln in enumerate(lines) if not ln.lstrip().startswith("#")]
+    funcs = _shell_functions(code)
     sites = []
     for i, (lineno, ln) in enumerate(code):
         if not any(k in ln for k in KEYS):
@@ -352,6 +599,16 @@ def scan_shell(path, rel):
             assign = re.compile(r"\b" + re.escape(name) + r"\w*(?:\[[^\]]*\])?\+?=")
             strs += [t for _, t in code if assign.search(t) or re.search(
                 r"\b" + re.escape(name) + r"_PARTS\b", t)]
+        done = set()
+        for _ in range(3):                      # follow same-file functions, 3 levels
+            blob = "\n".join(strs)
+            new = [f for f in funcs if f not in done
+                   and re.search(r"(?<![\w-])" + re.escape(f) + r"(?![\w-])", blob)]
+            if not new:
+                break
+            for f in new:
+                done.add(f)
+                strs += funcs[f]
         opq = [] if names else ["no jq --arg variable feeds the key"]
         sites.append((lineno, "jq", strs, opq, None))
     return sites
