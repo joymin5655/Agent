@@ -336,5 +336,24 @@ run_case "h-ctl-pip-r-allow"         "$PROOT" 'python3 -m pip install -r require
 run_case "h-ctl-node-p-allow"        "$PROOT" 'node -p process.version'                            allow
 
 echo
+echo "=== (i) AG17: timeout/gtimeout duration is any non-option word, not only a number ==="
+# Same verdict on both routes: PyYAML present (declared vault/ path) and PyYAML absent (fail-closed).
+# A single-quoted '5' and "$T" are one word to the shell; infinity, .5, 5e0, 0x5 are valid GNU durations.
+for d in infinity .5 5e0 0x5 '$T' '${T}' '"$T"' "'5'" '-s KILL infinity' '--kill-after=1 .5' '-k 1 .5'; do
+  run_case "i-timeout-[$d]-deny"               "$PROOT" "timeout $d install vault/k /tmp/y" deny
+  PYTHONPATH="$NOYAML" run_case "i-noyaml-timeout-[$d]-deny" "$PROOT" "timeout $d install vault/k /tmp/y" deny
+done
+for d in 5 infinity '$T'; do
+  run_case "i-gtimeout-[$d]-deny"              "$PROOT" "gtimeout $d install vault/k /tmp/y" deny
+  PYTHONPATH="$NOYAML" run_case "i-noyaml-gtimeout-[$d]-deny" "$PROOT" "gtimeout $d install vault/k /tmp/y" deny
+done
+run_case "i-wrapped-var-deny"        "$PROOT" 'sudo timeout $T install vault/k /tmp/y' deny
+for c in 'timeout 5 make install' 'timeout infinity make install' 'timeout 5 pip install x' \
+         'timeout .5 pip install x' 'timeout $T make install' 'gtimeout 5 make install'; do
+  run_case "i-ctl-[$c]-allow"        "$PROOT" "$c" allow
+  PYTHONPATH="$NOYAML" run_case "i-noyaml-ctl-[$c]-allow" "$PROOT" "$c" allow
+done
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]
