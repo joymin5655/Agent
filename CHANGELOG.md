@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **plan-gate: approval-flag readers and cleanup paths hardened (AG16).** `spec-gate` and `plan-scope-allow` accept the flag only as a regular, own, single-link file (`lstat`); `_restore_claim` keeps a claim it cannot preserve, `is_withheld` reads it and `clear_withheld` drops it; failed-write cleanup unlinks only the file it created (same dev/ino, fd still open); short writes are completed; `flag_session` cannot block on a FIFO flag. The reader tests now run a copy of the hooks against a throwaway flag path instead of the real `/tmp/agent-plan-approved`.
+
 ## [0.9.0] - 2026-10-12
 
 Planning and verification discipline borrowed from a decision-coverage / plan-checker workflow.

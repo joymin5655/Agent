@@ -83,10 +83,7 @@ def memory_only_plan(plan: str) -> bool:
 
 
 def flag_session(flag: pathlib.Path) -> str:
-    try:
-        m = re.search(r"session=(\S+)", flag.read_text(encoding="utf-8"))
-    except OSError:
-        return ""
+    m = re.search(r"session=(\S+)", _read(str(flag)) or "")  # _read: no FIFO blocking
     return m.group(1) if m else ""
 
 
@@ -139,6 +136,29 @@ def _open_regular(name: str, flags: int, dir_fd: "int | None" = None) -> int:
     return fd
 
 
+def _write_all(fd: int, data: bytes) -> None:
+    """os.write may be short; loop until done, and treat a zero return as failure."""
+    view = memoryview(data)
+    while view:
+        n = os.write(fd, view)
+        if n <= 0:
+            raise OSError("short write")
+        view = view[n:]
+
+
+def _unlink_if_same(path: str, ident: "tuple[int, int]") -> None:
+    """Remove path only if it is still the file we created/opened (dev, ino).
+
+    The lstat->unlink gap cannot be closed on POSIX: a file swapped in inside it can still
+    be removed. Accepted: for the approval flag the failure direction is "approval gone"."""
+    try:
+        st = os.lstat(path)
+        if (st.st_dev, st.st_ino) == ident:
+            os.unlink(path)
+    except OSError:
+        pass
+
+
 def _read(name: str, dir_fd: "int | None" = None) -> "str | None":
     try:
         fd = _open_regular(name, os.O_RDONLY, dir_fd)
@@ -153,12 +173,15 @@ def _read(name: str, dir_fd: "int | None" = None) -> "str | None":
 
 
 def _write_verified(name: str, content: str, dir_fd: "int | None" = None) -> bool:
-    """Write, then read back: a swallowed OSError must not look like success."""
+    """Write, then read back: a swallowed OSError must not look like success.
+
+    A failed write leaves the (possibly truncated) file: the markers are judged by name,
+    so keeping one stays on the withheld side, while deleting it would re-open the gate."""
     try:
         data = content.encode("utf-8")  # before open: an unencodable id must not truncate
         fd = _open_regular(name, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, dir_fd)
         try:
-            os.write(fd, data)
+            _write_all(fd, data)
         finally:
             os.close(fd)
     except (OSError, UnicodeError):
@@ -216,7 +239,24 @@ def is_withheld(sid: str) -> bool:
                     pass
                 os.close(fd)
                 return True
-    return legacy_session() == sid
+    return legacy_session() == sid or _claim_holds(sid)
+
+
+def _claims_of(sid: str) -> "list[str]":
+    """Claims left behind by _restore_claim whose content is this session's id."""
+    prefix = legacy_marker().name + ".claim."
+    try:
+        with os.scandir(str(PLAN_FLAG.parent)) as it:
+            names = [e.name for e in it if e.name.startswith(prefix)]
+    except OSError:
+        return []
+    paths = [str(PLAN_FLAG.parent / name) for name in names]
+    return [p for p in paths if _read(p) == sid]
+
+
+def _claim_holds(sid: str) -> bool:
+    """A kept claim still records its session as withheld."""
+    return bool(_claims_of(sid))
 
 
 def migrate_legacy() -> None:
@@ -294,22 +334,26 @@ def _create_exclusive(path: str, content: str) -> bool:
     except OSError:
         return False
     try:
-        os.write(fd, content.encode("utf-8"))
-    except (OSError, UnicodeError):
-        os.close(fd)
+        st = os.fstat(fd)
         try:
-            os.unlink(path)
-        except OSError:
-            pass
+            _write_all(fd, content.encode("utf-8"))
+        except (OSError, UnicodeError):
+            # Only our own half-written file, compared while fd pins the inode number:
+            # a newer session may own the slot now.
+            _unlink_if_same(path, (st.st_dev, st.st_ino))
+            return False
+    except OSError:
         return False
-    os.close(fd)
+    finally:
+        os.close(fd)
     return _read(path) == content
 
 
 def _restore_claim(claim: str, legacy: str, content: "str | None") -> None:
     """Put a claimed slot that is not ours back without losing it or clobbering a
     newer slot: link, else exclusive create when the slot is still free (FS without
-    hard links), else keep that session as a per-session marker."""
+    hard links), else keep that session as a per-session marker. When none of those
+    can hold the record the claim file stays: is_withheld() reads leftover claims."""
     try:
         os.link(claim, legacy)
         os.unlink(claim)
@@ -326,14 +370,15 @@ def _restore_claim(claim: str, legacy: str, content: "str | None") -> None:
         dfd, _ = open_marker_dir(True)
         if dfd is not None:
             try:
-                if not _write_verified(content, content, dfd):
-                    return  # keep the claim file rather than lose the record
+                if _write_verified(content, content, dfd):
+                    try:
+                        os.unlink(claim)
+                    except OSError:
+                        pass
             finally:
                 os.close(dfd)
-    try:
-        os.unlink(claim)
-    except OSError:
-        pass
+    # Anything else (marker dir unusable, empty/unreadable/unsafe content): keep the
+    # claim rather than lose that session's withheld record.
 
 
 def _claim_remove_legacy(sid: str) -> None:
@@ -368,6 +413,11 @@ def clear_withheld(sid: str) -> None:
                 os.close(dfd)
     if legacy_session() == sid:
         _claim_remove_legacy(sid)
+    for kept in _claims_of(sid):  # a kept claim is this session's record too
+        try:
+            os.unlink(kept)
+        except OSError:
+            pass
 
 
 def write_flag(sid: str) -> None:
@@ -376,12 +426,19 @@ def write_flag(sid: str) -> None:
     try:
         data = f"approved at {datetime.now().isoformat()} session={sid}".encode("utf-8")
         fd = _open_regular(str(PLAN_FLAG), os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
-        try:
-            os.write(fd, data)
-        finally:
-            os.close(fd)
     except (OSError, UnicodeError):
+        return
+    try:
+        st = os.fstat(fd)
+        try:
+            _write_all(fd, data)
+        except OSError:
+            # A flag without its session tail must not stay as an approval; drop only ours.
+            _unlink_if_same(str(PLAN_FLAG), (st.st_dev, st.st_ino))
+    except OSError:
         pass
+    finally:
+        os.close(fd)
 
 
 def notice(message: str) -> None:
