@@ -35,6 +35,10 @@ Deliberate exemptions — not "unresolved", stated so the claim stays true:
     name (`f"{LBL}"` with `from labels import LBL`), which is UNRESOLVED.
   * A key computed from a runtime or imported value (not from string constants) is
     invisible: nothing in the file says it will spell additionalContext.
+  * Same-named definitions are unioned: an unrelated class's `build()` can be reported
+    for another class's call site (conservative — it errs toward a false alarm).
+  * Numbers render as their decimal text; `.N` truncation and `0N` padding specs are
+    applied, other format specs only add spaces and are ignored.
   * Shell hooks: the guard follows `jq --arg` variables to their assignment lines
     and to same-file shell functions they call (3 levels). Output of external
     commands is runtime data.
@@ -88,10 +92,11 @@ _WORDS = [
                r"(?:control|treatment|holdout|on|off|[A-Z]\b|\d+\b)"),
     re.compile(r"(?i)\b(?:control|treatment)[ -]group\b|\ba/b[ -]test\b"),
 ]
+_Q = r"""(?:\\?["'])"""        # a quote, plain or backslash-escaped (nested dumps / repr)
 _FIELDS = [
     re.compile(r"(?<![\w-])(?:guard|gate_id|reproduce_test|schema_version|sig_sha)\s*=\s*\S"),
     re.compile(r"(?<![\w-])(?:gate_id|reproduce_test|schema_version|sig_sha)\s*:\s*\S"),
-    re.compile(r'"(?:guard|gate_id|reproduce_test|schema_version|sig_sha)"\s*:'),
+    re.compile(_Q + r"(?:guard|gate_id|reproduce_test|schema_version|sig_sha)" + _Q + r"\s*:"),
 ]
 
 
@@ -99,35 +104,23 @@ def label_hits(text):
     return [m.group(0) for rx in _WORDS + _FIELDS for m in rx.finditer(text)]
 
 
-_FMT_FIELD = re.compile(r"\{([A-Za-z_]\w*|\d*)(?:[!:][^{}]*)?\}")
-_PCT_FIELD = re.compile(r"%(?:\((\w+)\))?[-#0 +]*\d*(?:\.\d+)?[sdifrxXcgeE]")
+_FMT_TOKEN = re.compile(r"\{\{|\}\}|\{([A-Za-z_]\w*|\d*)(?:![rsa])?(?::([^{}]*))?\}")
+_PCT_TOKEN = re.compile(r"%%|%(?:\((\w+)\))?[-#0 +]*(\d*)(?:\.(\d+))?([sdifrxXcgeE])")
+_SPEC = re.compile(r"^(?:.?[<>^=])?[+\- ]?#?(0?)(\d*),?(?:\.(\d+))?([a-zA-Z%]?)$")
 
 
-def _fill_format(tmpl, pos, kw):
-    """One concrete `str.format` result; unknown fields become empty."""
-    auto = iter(range(10 ** 6))
-
-    def sub(m):
-        key = m.group(1)
-        if key == "":
-            idx = next(auto)
-            return pos[idx] if idx < len(pos) else ""
-        if key.isdigit():
-            idx = int(key)
-            return pos[idx] if idx < len(pos) else ""
-        return kw.get(key, "")
-    return _FMT_FIELD.sub(sub, tmpl.replace("{{", "\0").replace("}}", "\1")
-                          ).replace("\0", "{").replace("\1", "}")
-
-
-def _fill_percent(tmpl, pos, kw):
-    it = iter(pos)
-
-    def sub(m):
-        if m.group(1):
-            return kw.get(m.group(1), "")
-        return next(it, "")
-    return _PCT_FIELD.sub(sub, tmpl.replace("%%", "\0")).replace("\0", "%")
+def _apply_spec(val, spec):
+    """Effect of a format spec on a candidate string: `.N` truncates text,
+    `0N` zero-pads a number; width/alignment/sign only add spaces."""
+    m = _SPEC.match(spec or "")
+    if not m:
+        return val
+    zero, width, prec, kind = m.groups()
+    if prec and kind in ("", "s"):
+        return val[:int(prec)]
+    if zero and width and val.isdigit():
+        return val.zfill(int(width))
+    return val
 
 
 def _compress(text):
@@ -142,7 +135,8 @@ class Resolver:
         self.assigns = {}
         self.funcs = {}
         self.calls = {}
-        self.imported = set()
+        self.imported = {}
+        self.dict_sets = {}
         for n in ast.walk(tree):
             for c in ast.iter_child_nodes(n):
                 self.parents[id(c)] = n
@@ -151,12 +145,16 @@ class Resolver:
                 self.funcs.setdefault(n.name, []).append(n)
             elif isinstance(n, ast.Import):
                 for a in n.names:
-                    self.imported.add((a.asname or a.name).split(".")[0])
+                    self.imported[(a.asname or a.name).split(".")[0]] = a.name.split(".")[0]
             elif isinstance(n, ast.ImportFrom):
+                root = ("." * n.level + (n.module or "")).split(".")[0] or "."
                 for a in n.names:
-                    self.imported.add(a.asname or a.name)
+                    self.imported[a.asname or a.name] = root
             elif isinstance(n, ast.Assign):
                 for t in n.targets:
+                    if isinstance(t, ast.Subscript) and isinstance(t.value, ast.Name):
+                        self.dict_sets.setdefault((t.value.id, id(self.enclosing_fn(n))),
+                                                  []).append((t.slice, n.value))
                     for nm in ast.walk(t):
                         if isinstance(nm, ast.Name):
                             self._add(nm.id, n.value, n)
@@ -242,6 +240,8 @@ class Resolver:
         if isinstance(node, ast.Constant):
             if isinstance(node.value, str) and node.value not in PROTOCOL:
                 return [node.value], []
+            if isinstance(node.value, (int, float)) and not isinstance(node.value, bool):
+                return [str(node.value)], []
             return [], []
         if isinstance(node, ast.JoinedStr):
             parts, op = [], []
@@ -250,12 +250,19 @@ class Resolver:
                     # an interpolated value is a runtime datum: its literal fragments
                     # are still checked, what it cannot follow is ignored — except an
                     # imported non-stdlib name, which may be a constant defined elsewhere.
-                    s, _ = r(v.value)
+                    if self._is_dictlike(v.value, fn):
+                        s, _ = self._render(v.value, fn, seen, depth + 1, "repr")
+                    else:
+                        s, _ = r(v.value)
+                    spec = "".join(c.value for c in (v.format_spec.values if v.format_spec else [])
+                                   if isinstance(c, ast.Constant) and isinstance(c.value, str))
+                    if spec:
+                        s = [_apply_spec(val, spec) for val in s]
                     base = v.value
                     while isinstance(base, (ast.Attribute, ast.Subscript)):
                         base = base.value
                     if isinstance(base, ast.Name) and base.id in self.imported \
-                            and base.id not in SAFE_MODULES:
+                            and self.imported[base.id] not in SAFE_MODULES:
                         op.append("imported name %s interpolated" % base.id)
                 else:
                     s, o = r(v)
@@ -292,68 +299,136 @@ class Resolver:
                 o += co
         return s, o
 
-    def _args_text(self, nodes, fn, seen, depth):
-        """Each argument -> candidate list; runtime data (empty/opaque) -> ['']."""
-        out = []
-        for a in nodes:
-            s, _ = self.resolve(a, fn, seen, depth + 1)
-            out.append(s or [""])
+    def _is_dictlike(self, node, fn):
+        return isinstance(node, ast.Dict) or (
+            isinstance(node, ast.Name) and bool(self._dict_pairs(node, fn)))
+
+    def _dict_pairs(self, node, fn):
+        """(key-node, value-node) pairs of a dict literal or of a Name holding one
+        (literal assignments plus `d[k] = v` stores); [] when it is not a dict."""
+        if isinstance(node, ast.Dict):
+            return list(zip(node.keys, node.values))
+        if not isinstance(node, ast.Name):
+            return []
+        name = node.id
+        pairs, found = [], False
+        for sc in [id(fn)] + ([id(None)] if fn is not None else []):
+            for v in self.assigns.get((name, sc), []):
+                if isinstance(v, ast.Dict):
+                    found = True
+                    pairs += list(zip(v.keys, v.values))
+            if found:
+                break
+        pairs += self.dict_sets.get((name, id(fn)), []) + self.dict_sets.get((name, id(None)), [])
+        return pairs if (found or pairs) else []
+
+    def _cands(self, node, fn, seen, depth):
+        """One template argument -> candidate list; runtime data (empty) -> ['']."""
+        if self._is_dictlike(node, fn):
+            return self._render(node, fn, seen, depth + 1, "repr")[0] or [""]
+        s, _ = self.resolve(node, fn, seen, depth + 1)
+        return s or [""]
+
+    def _kw_from(self, node, fn, seen, depth):
+        """Mapping name -> candidates from a dict literal / dict variable."""
+        out = {}
+        for k, v in self._dict_pairs(node, fn):
+            if isinstance(k, ast.Constant) and isinstance(k.value, str):
+                out[k.value] = self._cands(v, fn, seen, depth)
         return out
 
-    def _templated(self, fill, tmpls, pos_nodes, kw_nodes, fn, seen, depth, opq):
-        pos = self._args_text(pos_nodes, fn, seen, depth)
-        names = list(kw_nodes)
-        kws = self._args_text([kw_nodes[k] for k in names], fn, seen, depth)
+    def _template(self, tmpls, kind, pos, kw, op):
+        """Fill str.format ('format') or %-style ('percent') templates; pos is a
+        list of candidate lists, kw a name -> candidate-list map."""
         out = []
-        for combo in itertools.islice(itertools.product(*(pos + kws)), 4 * MAX_COMBOS):
-            p = list(combo[:len(pos)])
-            k = dict(zip(names, combo[len(pos):]))
-            for t in tmpls:
-                out.append(fill(t, p, k))
-        return out[: MAX_COMBOS * 2]
+        for t in tmpls:
+            parts, last, auto = [], 0, 0
+            if kind == "format":
+                for m in _FMT_TOKEN.finditer(t):
+                    parts.append([t[last:m.start()]])
+                    last = m.end()
+                    if m.group(0) in ("{{", "}}"):
+                        parts.append([m.group(0)[0]])
+                        continue
+                    key, spec = m.group(1), m.group(2) or ""
+                    if key == "":
+                        key, auto = str(auto), auto + 1
+                    vals = pos[int(key)] if key.isdigit() and int(key) < len(pos) \
+                        else kw.get(key, [""])
+                    parts.append([_apply_spec(val, spec) for val in vals])
+            else:
+                for m in _PCT_TOKEN.finditer(t):
+                    parts.append([t[last:m.start()]])
+                    last = m.end()
+                    if m.group(0) == "%%":
+                        parts.append(["%"])
+                        continue
+                    name, prec, conv = m.group(1), m.group(3), m.group(4)
+                    if name:
+                        vals = kw.get(name, [""])
+                    else:
+                        vals = pos[auto] if auto < len(pos) else [""]
+                        auto += 1
+                    if prec and conv in ("s", "r"):
+                        vals = [val[:int(prec)] for val in vals]
+                    parts.append(vals)
+            parts.append([t[last:]])
+            out += self.cat(parts, op)
+        return out
 
     def _percent(self, node, tmpls, lopq, fn, seen, depth):
         right = node.right
+        pos, kw = [], {}
         if isinstance(right, ast.Tuple):
-            out = self._templated(_fill_percent, tmpls, right.elts, {}, fn, seen, depth, lopq)
-        elif isinstance(right, ast.Dict):
-            kw = {k.value: v for k, v in zip(right.keys, right.values)
-                  if isinstance(k, ast.Constant) and isinstance(k.value, str)}
-            out = self._templated(_fill_percent, tmpls, [], kw, fn, seen, depth, lopq)
+            pos = [self._cands(e, fn, seen, depth) for e in right.elts]
+        elif self._is_dictlike(right, fn):
+            kw = self._kw_from(right, fn, seen, depth)
         else:
-            out = self._templated(_fill_percent, tmpls, [right], {}, fn, seen, depth, lopq)
-        return out, lopq
+            pos = [self._cands(right, fn, seen, depth)]
+        return self._template(tmpls, "percent", pos, kw, lopq), lopq
 
-    def _render(self, node, fn, seen, depth):
-        """Candidate JSON text for json.dumps(node)."""
+    def _render(self, node, fn, seen, depth, style="json"):
+        """(candidate text, opaque reasons) of str()/json.dumps() applied to node."""
+        quote = json.dumps if style == "json" else repr
         if depth > 40:
-            return ["0"]
+            return ["0"], ["too deep"]
         if isinstance(node, ast.Constant):
-            return [json.dumps(node.value)]
-        if isinstance(node, ast.Dict):
-            parts = ["{"]
-            for i, (k, v) in enumerate(zip(node.keys, node.values)):
-                kk = self._render(k, fn, seen, depth + 1) if k is not None else ['"**"']
-                parts += ([", "] if i else []) + [None, None, None]
-                parts[-3:] = [kk, [": "], self._render(v, fn, seen, depth + 1)]
-            parts.append("}")
-            return self.cat([p if isinstance(p, list) else [p] for p in parts], [])
-        if isinstance(node, (ast.List, ast.Tuple)):
-            parts = ["["]
-            for i, e in enumerate(node.elts):
-                parts += ([", "] if i else []) + [self._render(e, fn, seen, depth + 1)]
-            parts.append("]")
-            return self.cat([p if isinstance(p, list) else [p] for p in parts], [])
-        if isinstance(node, ast.Name):
-            vals = self.assigns.get((node.id, id(fn)), []) \
-                + (self.assigns.get((node.id, id(None)), []) if fn is not None else [])
-            if vals:
-                out = []
-                for v in vals:
-                    out += self._render(v, self.enclosing_fn(v), seen, depth + 1)
-                return out
-        s, _ = self.resolve(node, fn, seen, depth + 1)
-        return [json.dumps(x) for x in s] or ["0"]
+            return [quote(node.value)], []
+        if isinstance(node, (ast.Dict, ast.List, ast.Tuple, ast.Set)) \
+                or (isinstance(node, ast.Name) and self._dict_pairs(node, fn)):
+            if isinstance(node, ast.Name):
+                key = ("render", node.id, id(fn))
+                if key in seen:
+                    return ["{}"], ["cyclic structure"]
+                seen = seen | {key}
+            op, parts = [], []
+            if isinstance(node, (ast.Dict, ast.Name)):
+                pairs = self._dict_pairs(node, fn)
+                parts.append(["{"])
+                for i, (k, v) in enumerate(pairs):
+                    if i:
+                        parts.append([", "])
+                    if k is None:
+                        op.append("dict ** unpacking")
+                        continue
+                    kt, ko = self._render(k, fn, seen, depth + 1, style)
+                    vt, vo = self._render(v, fn, seen, depth + 1, style)
+                    parts += [kt, [": "], vt]
+                    op += ko + vo
+                parts.append(["}"])
+            else:
+                o_, c_ = ("[", "]") if isinstance(node, ast.List) else ("(", ")")
+                parts.append([o_])
+                for i, e in enumerate(node.elts):
+                    if i:
+                        parts.append([", "])
+                    et, eo = self._render(e, fn, seen, depth + 1, style)
+                    parts.append(et)
+                    op += eo
+                parts.append([c_])
+            return self.cat(parts, op), op
+        s, op = self.resolve(node, fn, seen, depth + 1)
+        return [quote(x) for x in s] or ["0"], op
 
     def _name(self, node, fn, seen, depth):
         name = node.id
@@ -440,7 +515,9 @@ class Resolver:
         if name in NUMERIC_CALLS:
             return [], []
         if name == "dumps" and node.args:
-            return self._render(node.args[0], fn, seen, depth + 1), []
+            return self._render(node.args[0], fn, seen, depth + 1)
+        if name in ("str", "repr") and node.args and self._is_dictlike(node.args[0], fn):
+            return self._render(node.args[0], fn, seen, depth + 1, "repr")
         if name in self.funcs and not (isinstance(f, ast.Attribute) and name in STR_METHODS):
             strs, opq = [], []
             for target in self.funcs[name]:
@@ -454,8 +531,12 @@ class Resolver:
         if isinstance(f, ast.Attribute) and name == "format":
             tm, to = self.resolve(f.value, fn, seen, depth + 1)
             if tm:
-                kw = {k.arg: k.value for k in node.keywords if k.arg}
-                return self._templated(_fill_format, tm, node.args, kw, fn, seen, depth, to), to
+                pos = [self._cands(a, fn, seen, depth) for a in node.args]
+                kw = {k.arg: self._cands(k.value, fn, seen, depth) for k in node.keywords if k.arg}
+                for k in node.keywords:
+                    if k.arg is None:
+                        kw.update(self._kw_from(k.value, fn, seen, depth))
+                return self._template(tm, "format", pos, kw, to), to
             return over(args)
         if isinstance(f, ast.Attribute) and name == "join":
             sv, ov = self.resolve(f.value, fn, seen, depth + 1)
@@ -565,19 +646,30 @@ _JQ_ARG = re.compile(r'--arg\s+\w+\s+"\$\{?(\w+)')
 _SH_FUNC = re.compile(r"^\s*(?:function\s+)?([A-Za-z_][\w-]*)\s*\(\)\s*\{(.*)$")
 
 
+def _braces(line):
+    """Net `{` minus `}` of a shell line, ignoring ${...} expansions and quoted text."""
+    t = re.sub(r"\$\{[^}]*\}", "", line)
+    t = re.sub(r'"[^"]*"|\'[^\']*\'', "", t)
+    return t.count("{") - t.count("}")
+
+
 def _shell_functions(code):
+    """name -> (body lines, terminated). Brace-counted, so `${HOME}` or a quoted
+    brace on the opening line does not end the function early."""
     funcs = {}
     for i, (_, ln) in enumerate(code):
         m = _SH_FUNC.match(ln)
         if not m:
             continue
         body = [m.group(2)]
-        if "}" not in m.group(2):
-            for _, nxt in code[i + 1:]:
-                if nxt.strip() == "}":
-                    break
-                body.append(nxt)
-        funcs[m.group(1)] = body
+        depth = 1 + _braces(m.group(2))
+        j = i + 1
+        while depth > 0 and j < len(code):
+            nxt = code[j][1]
+            depth += _braces(nxt)
+            body.append(nxt)
+            j += 1
+        funcs[m.group(1)] = (body, depth <= 0)
     return funcs
 
 
@@ -599,7 +691,7 @@ def scan_shell(path, rel):
             assign = re.compile(r"\b" + re.escape(name) + r"\w*(?:\[[^\]]*\])?\+?=")
             strs += [t for _, t in code if assign.search(t) or re.search(
                 r"\b" + re.escape(name) + r"_PARTS\b", t)]
-        done = set()
+        done, unterminated = set(), []
         for _ in range(3):                      # follow same-file functions, 3 levels
             blob = "\n".join(strs)
             new = [f for f in funcs if f not in done
@@ -608,8 +700,11 @@ def scan_shell(path, rel):
                 break
             for f in new:
                 done.add(f)
-                strs += funcs[f]
+                strs += funcs[f][0]
+                if not funcs[f][1]:
+                    unterminated.append(f)
         opq = [] if names else ["no jq --arg variable feeds the key"]
+        opq += ["shell function %s() has no closing brace" % f for f in unterminated]
         sites.append((lineno, "jq", strs, opq, None))
     return sites
 

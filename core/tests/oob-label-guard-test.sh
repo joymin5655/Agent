@@ -197,6 +197,66 @@ print({"additionalContext": msg})' caught
 src_case "min-max-text" 'print({"additionalContext": min("cohort 7", "zzz")})' caught
 
 echo
+echo "=== B8. numeric constants and format specs (r3) ==="
+src_case "int-format"      'print({"additionalContext": "cohort {}".format(7)})' caught
+src_case "int-fstring"     'print({"additionalContext": f"cohort {7}"})' caught
+src_case "int-percent"     'print({"additionalContext": "variant %d" % 3})' caught
+src_case "int-via-name"    'N = 7
+print({"additionalContext": "cohort {}".format(N)})' caught
+src_case "int-spec"        'print({"additionalContext": "cohort {:02}".format(7)})' caught
+src_case "spec-truncation" 'print({"additionalContext": "arm {:.1}".format("Bclean")})' caught
+src_case "percent-precision" 'print({"additionalContext": "arm %.1s" % "Bclean"})' caught
+src_case "int-count-clean" 'print({"additionalContext": "found {} files".format(7)})' clean
+src_case "int-fstring-clean" 'print({"additionalContext": f"retry {3} times"})' clean
+
+echo
+echo "=== B9. record fields reaching the context by other routes (r3) ==="
+src_case "dict-subscript-dumps" 'import json
+rec = {}
+rec["guard"] = "x"
+print({"additionalContext": json.dumps(rec)})' caught
+src_case "dict-str" 'rec = {}
+rec["guard"] = "x"
+print({"additionalContext": str(rec)})' caught
+src_case "dict-repr-literal" 'print({"additionalContext": repr({"guard": "x"})})' caught
+src_case "dict-fstring" 'rec = {"gate_id": "g1"}
+print({"additionalContext": f"state {rec}"})' caught
+src_case "dumps-twice" 'import json
+print({"additionalContext": json.dumps(json.dumps({"guard": "x"}))})' caught
+src_case "percent-dict-var" 'ctx = {"v": "B"}
+print({"additionalContext": "variant %(v)s" % ctx})' caught
+src_case "format-star-star" 'ctx = {"v": "B"}
+print({"additionalContext": "variant {v}".format(**ctx)})' caught
+src_case "dumps-unresolved-value" 'import json
+print({"additionalContext": json.dumps({"x": get()})})' caught
+src_case "dumps-numeric-clean" 'import json, sys
+print({"additionalContext": json.dumps({"n": len(sys.argv)})})' clean
+src_case "circular-dict" 'import json
+d = {"a": 1}
+d["a"] = d
+print({"additionalContext": json.dumps(d)})' caught
+
+echo
+echo "=== B10. no silent truncation, no silent aliasing (r3) ==="
+src_case "template-expansion" 'import sys
+a = "x" if sys.argv else ("y" if sys.argv else "cohort 7")
+b = "1" if sys.argv else ("2" if sys.argv else ("3" if sys.argv else ("4" if sys.argv else ("5" if sys.argv else ("6" if sys.argv else ("7" if sys.argv else "8"))))))
+print({"additionalContext": "{} {} {}".format(a, b, b)})' caught
+src_case "compress-keeps-early-hit" 'import sys
+a = "cohort 7 ................................................................"
+b = "1" if sys.argv else "2"
+msg = a + b + b + b + b + b + b + b
+print({"additionalContext": msg})' caught
+src_case "state-explosion" 'import sys
+b = "a" if sys.argv else "b"
+msg = b + b + b + b + b + b + b + b + b + b + b + b + b
+print({"additionalContext": msg})' caught
+src_case "alias-shadows-safe-module" 'from labels import LBL as os
+print({"additionalContext": f"advice: {os.x}"})' caught
+src_case "stdlib-interp-clean" 'import os
+print({"additionalContext": f"advice: {os.getcwd()}"})' clean
+
+echo
 echo "=== C2. vocabulary regressions (word boundary) ==="
 py_case "identity-prose"    '"experiment identity check failed"'        clean
 py_case "bucket-names-prose" '"bucket names must be lowercase"'          clean
@@ -233,6 +293,26 @@ CTX="$(build)"
 jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
 SH
 python3 "$GUARD" --root "$root" >/dev/null 2>&1 && bad "shell-function-followed" "not caught" || ok "shell-function-followed" "rc!=0"
+
+root=$(mkroot shfn2)
+cat > "$root/core/hooks/fx.sh" <<'SH'
+#!/usr/bin/env bash
+build() { local h="${HOME}"
+  echo "session cohort 7"
+}
+CTX="$(build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+python3 "$GUARD" --root "$root" >/dev/null 2>&1 && bad "shell-multiline-function" "not caught" || ok "shell-multiline-function" "rc!=0"
+root=$(mkroot shfn3)
+cat > "$root/core/hooks/fx.sh" <<'SH'
+#!/usr/bin/env bash
+build() {
+  echo "all good"
+CTX="$(build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+python3 "$GUARD" --root "$root" >/dev/null 2>&1 && bad "shell-unterminated-function" "passed" || ok "shell-unterminated-function" "rc!=0"
 
 echo
 echo "=== E. a site with unresolvable text fails (no silent blindness) ==="
@@ -304,13 +384,51 @@ a = "x" if sys.argv else "cohort 7"
 b = "1" if sys.argv else "2"
 msg = a + b + b + b + b + b + b + b
 print({"additionalContext": msg})' caught
+gprobe compress-hits 'return ("\n".join(hits) + "\n" if hits else "") + text[-TAIL:]' 'return text[-TAIL:]' compress-keeps-early-hit \
+  'import sys
+a = "cohort 7 ................................................................"
+b = "1" if sys.argv else "2"
+msg = a + b + b + b + b + b + b + b
+print({"additionalContext": msg})' caught
+gprobe hard-cap 'opq.append("combinatorial expansion beyond %d distinct tails" % HARD_CAP)' 'pass' state-explosion \
+  'import sys
+b = "a" if sys.argv else "b"
+msg = b + b + b + b + b + b + b + b + b + b + b + b + b
+print({"additionalContext": msg})' caught
+gprobe number-const 'if isinstance(node.value, (int, float)) and not isinstance(node.value, bool):' 'if False:' int-fstring \
+  'print({"additionalContext": f"cohort {7}"})' caught
+gprobe format-spec '_apply_spec(val, spec) for val in vals' 'val for val in vals' spec-truncation \
+  'print({"additionalContext": "arm {:.1}".format("Bclean")})' caught
+gprobe dict-subscript-sets 'pairs += self.dict_sets.get((name, id(fn)), []) + self.dict_sets.get((name, id(None)), [])' 'pass' dict-subscript-dumps \
+  'import json
+rec = {}
+rec["guard"] = "x"
+print({"additionalContext": json.dumps(rec)})' caught
+gprobe quoted-key-field '_Q = r"""(?:\\?["'"'"'])"""' '_Q = r"""(?:")"""' dumps-twice \
+  'import json
+print({"additionalContext": json.dumps(json.dumps({"guard": "x"}))})' caught
+gprobe render-opaque 'return [quote(x) for x in s] or ["0"], op' 'return [quote(x) for x in s] or ["0"], []' dumps-unresolved-value \
+  'import json
+print({"additionalContext": json.dumps({"x": get()})})' caught
+gprobe import-origin 'and self.imported[base.id] not in SAFE_MODULES' 'and base.id not in SAFE_MODULES' alias-shadows-safe-module \
+  'from labels import LBL as os
+print({"additionalContext": f"advice: {os.x}"})' caught
 # shell function following
-m=$(gmutate shell-fn 'strs += funcs[f]' 'pass')
+m=$(gmutate shell-fn 'strs += funcs[f][0]' 'pass')
 if [[ -z "$m" ]]; then bad "mutation/shell-fn-anchor" "anchor not found — probe is inert"; else
   root=$(mkroot mp-shell-fn)
   printf '%s\n' '#!/usr/bin/env bash' 'build() { echo "session cohort 7"; }' 'CTX="$(build)"' \
     "jq -nc --arg ctx \"\$CTX\" '{hookSpecificOutput: {additionalContext: \$ctx}}'" > "$root/core/hooks/fx.sh"
   python3 "$m" --root "$root" >/dev/null 2>&1 && ok "mutation/shell-fn" "mutant misses the function body" || bad "mutation/shell-fn" "mutant still caught it"
+fi
+# brace counting: a clean multi-line function with an unquoted ${...} must stay clean
+m=$(gmutate shell-brace 'depth += _braces(nxt)' 'depth += 0')
+if [[ -z "$m" ]]; then bad "mutation/shell-brace-anchor" "anchor not found — probe is inert"; else
+  root=$(mkroot mp-shell-brace)
+  printf '%s\n' '#!/usr/bin/env bash' 'build() { h=${HOME}' '  echo "all good"' '}' 'CTX="$(build)"' \
+    "jq -nc --arg ctx \"\$CTX\" '{hookSpecificOutput: {additionalContext: \$ctx}}'" > "$root/core/hooks/fx.sh"
+  python3 "$GUARD" --root "$root" >/dev/null 2>&1 || bad "mutation/shell-brace-fixture" "clean fixture not clean under the real guard"
+  python3 "$m" --root "$root" >/dev/null 2>&1 && bad "mutation/shell-brace" "mutant still clean" || ok "mutation/shell-brace" "mutant leaves the function unterminated"
 fi
 # timing: the guard must stay cheap (it runs in every battery)
 T0=$(python3 -c 'import time; print(time.time())')
