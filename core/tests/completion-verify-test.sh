@@ -373,5 +373,120 @@ EOF
 fi
 
 echo
+echo "=== (d1-d5) decision coverage — advisory dryrun, never changes verdict/exit ==="
+DROOT="$TMP_ROOT/dproj"
+mkdir -p "$DROOT/src" "$DROOT/.agent/plans/feat" "$DROOT/.agent/plans/nonespec"
+printf 'x = 1\n' > "$DROOT/src/mod.py"
+printf '# Spec\n\n## Decisions\n- D1: first — settled by interview\n- D2: second — settled by approach\n\n## Open questions\n- D9: not a decision\n' \
+  > "$DROOT/.agent/plans/feat/spec.md"
+printf '# Spec\n\n## Decisions\n- none — trivial change\n' > "$DROOT/.agent/plans/nonespec/spec.md"
+BASE_CLAIM='"summary": "x", "files": [ { "path": "src/mod.py" } ], "tests": [ "true" ]'
+advisories_of() { python3 -c 'import sys,json; print("\n".join(json.load(open(sys.argv[1])).get("advisories", [])))' "$OUTFILE"; }
+valid_out() { python3 -c 'import sys,json; sys.exit(0 if "verdict" in json.load(open(sys.argv[1])) else 1)' "$OUTFILE" 2>/dev/null; }
+has_key() { python3 -c 'import sys,json; sys.exit(0 if sys.argv[2] in json.load(open(sys.argv[1])) else 1)' "$OUTFILE" "$1"; }
+
+# baseline: same claim with no decisions field, no spec -> reference output
+printf '{ "claim": { %s, "slug": "nospec" } }\n' "$BASE_CLAIM" > "$DROOT/nospec.json"
+RC=$(run_verify "$DROOT" "$DROOT/nospec.json")
+[[ $RC -eq 0 ]]; check "decisions-b-nospec-exit-0" $?
+valid_out && ! has_key advisories; check "decisions-b-nospec-no-advisories-key" $?
+
+# (a) spec D1,D2; claim covers D1 only
+printf '{ "claim": { %s, "slug": "feat", "decisions": [ {"id": "D1", "evidence": "see src/mod.py"} ] } }\n' "$BASE_CLAIM" > "$DROOT/a.json"
+RC=$(run_verify "$DROOT" "$DROOT/a.json")
+[[ $RC -eq 0 ]]; check "decisions-a-exit-unchanged" $?
+[[ "$(verdict_of)" == "CONFIRMED" ]]; check "decisions-a-verdict-unchanged" $?
+[[ "$(score_of)" == "1.0" || "$(score_of)" == "1" ]]; check "decisions-a-score-unchanged" $?
+advisories_of | grep -q "D2"; check "decisions-a-names-D2" $?
+valid_out && ! advisories_of | grep -q "D1"; check "decisions-a-D1-covered-not-named" $?
+valid_out && ! advisories_of | grep -q "D9"; check "decisions-a-ignores-other-sections" $?
+python3 -c 'import sys,json; sys.exit(0 if json.load(open(sys.argv[1]))["refutations"] == [] else 1)' "$OUTFILE"; check "decisions-a-refutations-empty" $?
+
+# empty evidence does not cover
+printf '{ "claim": { %s, "slug": "feat", "decisions": [ {"id": "D1", "evidence": "x"}, {"id": "D2", "evidence": "  "} ] } }\n' "$BASE_CLAIM" > "$DROOT/a2.json"
+RC=$(run_verify "$DROOT" "$DROOT/a2.json")
+advisories_of | grep -q "D2"; check "decisions-a-empty-evidence-not-covered" $?
+
+# (c) spec says "- none"
+printf '{ "claim": { %s, "slug": "nonespec" } }\n' "$BASE_CLAIM" > "$DROOT/c.json"
+RC=$(run_verify "$DROOT" "$DROOT/c.json")
+[[ $RC -eq 0 ]]; check "decisions-c-none-exit-0" $?
+valid_out && [[ -z "$(advisories_of)" ]]; check "decisions-c-none-no-advisories" $?
+
+# (d) slug derived from <slug>-w2.yml / .json file name (no slug field)
+printf '{ "claim": { %s } }\n' "$BASE_CLAIM" > "$DROOT/feat-w2.json"
+RC=$(run_verify "$DROOT" "$DROOT/feat-w2.json")
+advisories_of | grep -q "D1"; check "decisions-d-slug-from-w-suffix-D1" $?
+advisories_of | grep -q "D2"; check "decisions-d-slug-from-w-suffix-D2" $?
+cp "$DROOT/feat-w2.json" "$DROOT/feat.json"
+RC=$(run_verify "$DROOT" "$DROOT/feat.json")
+advisories_of | grep -q "D1"; check "decisions-d-slug-from-plain-name" $?
+
+# (e) malformed decisions (a string) -> advisory, verdict unchanged
+printf '{ "claim": { %s, "slug": "feat", "decisions": "D1 D2" } }\n' "$BASE_CLAIM" > "$DROOT/e.json"
+RC=$(run_verify "$DROOT" "$DROOT/e.json")
+[[ $RC -eq 0 ]]; check "decisions-e-malformed-exit-unchanged" $?
+[[ "$(verdict_of)" == "CONFIRMED" ]]; check "decisions-e-malformed-verdict-unchanged" $?
+advisories_of | grep -qi "decisions"; check "decisions-e-malformed-advisory" $?
+
+# a REFUTED claim stays REFUTED with identical exit code, advisories added
+printf '{ "claim": { "summary": "x", "slug": "feat", "files": [ {"path": "src/ghost.py"} ] } }\n' > "$DROOT/r.json"
+RC=$(run_verify "$DROOT" "$DROOT/r.json")
+[[ $RC -eq 1 && "$(verdict_of)" == "REFUTED" ]]; check "decisions-refuted-stays-refuted" $?
+advisories_of | grep -q "D1"; check "decisions-refuted-still-advises" $?
+
+
+# --- path traversal / slug hardening: D-IDs planted OUTSIDE .agent/plans/ ---
+mkdir -p "$DROOT/.agent/feat" "$DROOT/.agent/plans/a"
+printf '## Decisions\n- D1: planted\n' > "$DROOT/.agent/feat/spec.md"
+printf '## Decisions\n- D1: planted\n' > "$DROOT/.agent/plans/a/spec.md"
+printf '## Decisions\n- D1: planted\n' > "$DROOT/.agent/plans/spec.md"
+i=0
+for BAD in '../feat' 'a/b' '..' ' feat ' 'feat/' '/etc'; do
+  i=$((i + 1))
+  printf '{ "claim": { %s, "slug": "%s" } }\n' "$BASE_CLAIM" "$BAD" > "$DROOT/trav$i.json"
+  RC=$(run_verify "$DROOT" "$DROOT/trav$i.json")
+  [[ $RC -eq 0 && "$(verdict_of)" == "CONFIRMED" ]]; check "decisions-traversal-$i-verdict-unchanged" $?
+  valid_out && ! has_key advisories; check "decisions-traversal-$i-no-advisories" $?
+done
+
+# --- parser: fences, indentation, bold form, header suffix ---
+mkdir -p "$DROOT/.agent/plans/parse" "$DROOT/.agent/plans/hdr" "$DROOT/.agent/plans/svc-w2"
+cat > "$DROOT/.agent/plans/parse/spec.md" <<'EOF'
+# Spec
+
+## Decisions
+- D1: plain — settled by interview
+- **D2**: bold — settled by approach
+  - D3 depends on D1
+```
+- D4: inside a fence
+```
+- D5: after the fence
+EOF
+printf '{ "claim": { %s, "slug": "parse" } }\n' "$BASE_CLAIM" > "$DROOT/p.json"
+RC=$(run_verify "$DROOT" "$DROOT/p.json")
+[[ $RC -eq 0 ]]; check "decisions-parse-exit-unchanged" $?
+for want in D1 D2 D5; do advisories_of | grep -q "$want"; check "decisions-parse-lists-$want" $?; done
+for skip in D3 D4; do valid_out && ! advisories_of | grep -q "$skip"; check "decisions-parse-ignores-$skip" $?; done
+printf '## Decisions (final)\n- D1: x\n' > "$DROOT/.agent/plans/hdr/spec.md"
+printf '{ "claim": { %s, "slug": "hdr" } }\n' "$BASE_CLAIM" > "$DROOT/h.json"
+RC=$(run_verify "$DROOT" "$DROOT/h.json")
+advisories_of | grep -q "D1"; check "decisions-parse-header-suffix" $?
+
+# --- -w<N>: exact stem wins; strip only as a fallback ---
+printf '## Decisions\n- D7: genuine -w2 slug\n' > "$DROOT/.agent/plans/svc-w2/spec.md"
+printf '{ "claim": { %s } }\n' "$BASE_CLAIM" > "$DROOT/svc-w2.json"
+RC=$(run_verify "$DROOT" "$DROOT/svc-w2.json")
+advisories_of | grep -q "D7"; check "decisions-w-exact-stem-first" $?
+mkdir -p "$DROOT/.agent/plans/svc"
+printf '## Decisions\n- D8: stripped\n' > "$DROOT/.agent/plans/svc/spec.md"
+RC=$(run_verify "$DROOT" "$DROOT/svc-w2.json")
+valid_out && ! advisories_of | grep -q "D8"; check "decisions-w-exact-stem-beats-stripped" $?
+rm -rf "$DROOT/.agent/plans/svc-w2"
+RC=$(run_verify "$DROOT" "$DROOT/svc-w2.json")
+advisories_of | grep -q "D8"; check "decisions-w-fallback-to-stripped" $?
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]

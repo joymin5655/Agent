@@ -16,8 +16,8 @@
 #   4. registry↔agent model drift — for every agents/master-registry.json entry,
 #        agents/<id>.md must exist and its `model:` frontmatter must equal the
 #        registry `model` (the two halves of the routing contract must agree).
-#   5. review/verify agent read-only toolset — every agents/*.md whose name
-#        contains reviewer/verifier must allowlist only Read/Grep/Glob (O-1
+#   5. review/verify/check agent read-only toolset — every agents/*.md whose name
+#        contains reviewer/verifier/checker must allowlist only Read/Grep/Glob (O-1
 #        write single-threading: the toolset is the mechanical enforcement).
 #   6. delegation-contract model + skills fields — when skills/supervise
 #        ships in the tree, templates/delegation-contract.md must exist and
@@ -136,11 +136,11 @@ for a in sorted(pathlib.Path("agents").glob("*.md")):
     elif em.group(1) not in VALID_EFFORT:
         fail.append(f"agent effort: frontmatter invalid value '{em.group(1)}' (want one of {sorted(VALID_EFFORT)}): {a}")
 
-# 5) review/verify agents must carry a read-only toolset (O-1 write
+# 5) review/verify/check agents must carry a read-only toolset (O-1 write
 #    single-threading — the toolset is the one mechanical enforcement point:
-#    a reviewer/verifier that can Write can silently become a second writer).
+#    a reviewer/verifier/checker that can Write can silently become a second writer).
 #    Applies to every agents/*.md whose frontmatter name contains
-#    'reviewer' or 'verifier'. Read-only = a subset of Read/Grep/Glob;
+#    'reviewer', 'verifier' or 'checker'. Read-only = a subset of Read/Grep/Glob;
 #    a MISSING tools: line also fails (absence means all tools, write included).
 READ_ONLY = {"Read", "Grep", "Glob"}
 for a in sorted(pathlib.Path("agents").glob("*.md")):
@@ -149,7 +149,7 @@ for a in sorted(pathlib.Path("agents").glob("*.md")):
         continue  # no frontmatter -> already failed check 3
     fm = parts[1]
     nm = re.search(r"(?m)^name:\s*(\S+)", fm)
-    if not nm or not re.search(r"(reviewer|verifier)", nm.group(1), re.I):
+    if not nm or not re.search(r"(reviewer|verifier|checker)", nm.group(1), re.I):
         continue
     tm = re.search(r"(?m)^tools:\s*\[([^\]]*)\]", fm)
     if tm:

@@ -105,6 +105,10 @@ Pick a short kebab-case `<slug>` and write `.agent/plans/<slug>/spec.md`:
 ## Out of scope
 - <explicitly deferred>
 
+## Decisions
+- D1: <decision> — settled by <interview|approach|user>
+- none — <reason>          <!-- use INSTEAD of D-lines when nothing was decided -->
+
 ## Candidate scoring        <!-- --score-candidates runs only -->
 | candidate | <dim1> | <dim2> | <dim3> | total | verdict |
 |---|---|---|---|---|---|
@@ -112,13 +116,19 @@ Pick a short kebab-case `<slug>` and write `.agent/plans/<slug>/spec.md`:
 | <runner-up> | 3 | 5 | 2 | 10 | cut: <why> |
 
 ## Interview log            <!-- --interview runs only -->
-- Q: <question> → A: <answer> → settled: <the decision it fixed>
+- Q: <question> → A: <answer> → settled: D1
 
 ## Open questions           <!-- --interview runs only -->
 - <unresolved decision-changing unknown, carried, with its default>
 ```
 
-The trailing sections are submode-specific — `## Candidate scoring` on
+`## Decisions` is mandatory on every spec, submode or not: one `D<n>` line per
+decision, or `- none — <reason>` when nothing was decided. D-IDs are stable —
+never renumber; append new ones. `settled:` in the interview log cites the D-ID.
+`/verify-completion` checks that the completion claim covers each D-ID (advisory,
+dryrun) through the claim's optional `decisions: [{id, evidence}]` field.
+
+The remaining trailing sections are submode-specific — `## Candidate scoring` on
 `--score-candidates` runs, `## Interview log` / `## Open questions` on
 `--interview` runs; a single-pass spec omits them.
 
@@ -137,10 +147,33 @@ consumes:
 - <step> → verify: <check>
 ```
 
+`plan.md` holds only the `# <slug> — plan` title and `## Wave N: <name>` sections;
+any other `##` section fails lint. Every Wave needs at least one step, and steps
+may be `-`, `*` or `1.` bullets.
+
 Every step names its verification. A plan whose steps aren't checkable isn't done.
 Default each `→ verify:` to an **executable check** — a command whose exit code
 decides (`bash core/tests/<battery>.sh`, `grep -q <artifact>`); prose
-verification is allowed only with a stated reason why no command can check it.
+verification is allowed only when it carries `reason: <why no command can check
+it>` on the same step — that is the marker `plan-lint.sh` looks for.
+
+### 3.5 Check the plan
+
+Before asking for approval, lint and review the plan:
+
+1. Run `bash core/infra/plan-lint.sh <slug>` (deterministic). Exit 1 names the
+   defects: a missing `## Wave N:` header, a step without `→ verify:`, a prose
+   verify without `reason:`, a spec with no `## Decisions` section, or a success
+   criterion with backticked terms of which none is mentioned in a Wave step
+   (any one hit is enough, not every term).
+2. When lint passes, dispatch the read-only `plan-checker` agent
+   (`agent-harness:plan-checker`) with the `spec.md` and `plan.md` paths. It returns
+   a verdict-schema object (`docs/scoring-convention.md`); its `refutations` are
+   the semantic findings.
+3. Revise `plan.md` (and `spec.md` if a decision is missing), then re-run. At most
+   **3 rounds** in total.
+4. Whatever lint defects or refutations remain after the last round are listed in
+   the Step 4 approval message — never silently dropped.
 
 ### 4. Route to approval
 

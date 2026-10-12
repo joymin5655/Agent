@@ -256,7 +256,7 @@ Then:
 4. *(Optional)* In a repo that already runs another hook-heavy plugin, disable agent-harness there via `/plugin` — agents stay namespaced as `agent-harness:*`, so there's no collision either way.
 5. *(Optional)* Want the cross-vendor worker lanes (codex/antigravity second opinions)? Run `/agent-harness:worker-setup` for a guided install → auth → verify walkthrough with an upfront cost briefing.
 
-The plugin bundles: **3 agents**, **14 skills**, the hook set, and the
+The plugin bundles: **4 agents**, **14 skills**, the hook set, and the
 `/agent-harness:project-init` command.
 See the
 [plugin installation lifecycle](docs/claude-plugin-install-lifecycle.md) for
@@ -443,9 +443,10 @@ Manager-audit findings never self-apply — they land in a `PROPOSALS.md` for yo
 |---|---|---|---|
 | `code-reviewer` | sonnet | read-only | Reviews diffs; defers security to security-reviewer |
 | `security-reviewer` | opus | read-only | OWASP Top 10, secrets, auth, injection — owns security findings |
+| `plan-checker` | sonnet | read-only | Checks a plan against its spec before approval; emits one verdict object |
 | `persona-review-orchestrator` | sonnet | read-only + dispatch | Runs a citizen/user persona panel over UX or copy; judges user experience, never code |
 
-Model is cost-tiered per work class ([`docs/model-routing.md`](docs/model-routing.md) is the cross-runtime policy): judgment — planning, orchestration decisions, result synthesis — inherits the session's top model (no `model:` pin); the two reviewer pins above are kept in sync with `agents/master-registry.json` by a CI drift guard (the only machine-enforced part); implementation dispatches at the workhorse tier and mechanical work at the low tier via an explicit per-call `model` override — documented conventions. Read-only agents are enforced read-only (no `Write`/`Edit`/`Bash`). Specialize any of them per project with `.agent/` files — see [`docs/specializing-agents.md`](docs/specializing-agents.md).
+Model is cost-tiered per work class ([`docs/model-routing.md`](docs/model-routing.md) is the cross-runtime policy): judgment — planning, orchestration decisions, result synthesis — inherits the session's top model (no `model:` pin); the model pins above are kept in sync with `agents/master-registry.json` by a CI drift guard (the only machine-enforced part); implementation dispatches at the workhorse tier and mechanical work at the low tier via an explicit per-call `model` override — documented conventions. Read-only agents are enforced read-only (no `Write`/`Edit`/`Bash`). Specialize any of them per project with `.agent/` files — see [`docs/specializing-agents.md`](docs/specializing-agents.md).
 
 | Skills (`skills/`) | Trigger |
 |---|---|

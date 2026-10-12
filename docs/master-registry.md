@@ -53,7 +53,7 @@ Document deviations in your adoption log (see `rules/external-plugin-policy.md`
 
 ## See also
 
-- `agents/code-reviewer.md`, `agents/security-reviewer.md` — concrete
+- `agents/code-reviewer.md`, `agents/security-reviewer.md`, `agents/plan-checker.md` — concrete
   agent definitions distributed with the framework.
 - `core/hooks/supervisor.py` — the orchestrator.
 - `agents/master-registry.json` — the shipped default registry, read by the hooks. Each `model` (and, when present, `effort`) is kept in sync with `agents/<id>.md` frontmatter by the CI drift guard (`core/tests/registry-drift.sh`).

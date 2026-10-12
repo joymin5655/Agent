@@ -16,6 +16,19 @@
       "memory_scope": "local"
     },
     {
+      "id": "plan-checker",
+      "description": "Checks a plan against its spec before approval — criteria and decision coverage, step ordering, verify quality, write ownership.",
+      "matches": {
+        "keywords": [],
+        "tools": [],
+        "file_globs": []
+      },
+      "aliases": [],
+      "model": "sonnet",
+      "effort": "medium",
+      "memory_scope": "local"
+    },
+    {
       "id": "security-reviewer",
       "description": "Audits for OWASP Top 10, secret exposure, auth/authz bugs.",
       "matches": {

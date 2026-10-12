@@ -14,7 +14,7 @@
 #   (2) hooks.json referencing a non-existent core/hooks file
 #   (3) an agents/*.md missing name: frontmatter
 #   (4) registry model != agent .md model
-#   (5) review/verify agent whose toolset is not read-only (or unbounded)
+#   (5) review/verify/check agent (reviewer/verifier/checker names) whose toolset is not read-only (or unbounded)
 #   (6) skills/supervise shipping without a delegation-contract **model**: or **skills**: field
 #   (7) a shipped SKILL.md description without a "NOT " negative-trigger (T-3)
 #
@@ -178,6 +178,22 @@ PY
 run_gate "$FX"
 [[ $GATE_RC -eq 1 ]]; check "multiline-write-tool-fails" $?
 printf '%s\n' "$GATE_OUT" | grep -qF 'Edit'; check "multiline-write-tool-named" $?
+
+echo
+echo "=== (5e) a *-checker agent with a write tool -> FAIL + named ==="
+FX=$(build_fixture)
+printf -- '---\nname: style-checker\nmodel: sonnet\neffort: medium\ntools: [Read, Grep, Write]\n---\n# style-checker\n' > "$FX/agents/style-checker.md"
+python3 - "$FX/agents/master-registry.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p))
+d["agents"].append({"id": "style-checker", "model": "sonnet"})
+json.dump(d, open(p, "w"))
+PY
+run_gate "$FX"
+[[ $GATE_RC -eq 1 ]]; check "checker-write-tool-fails" $?
+printf '%s\n' "$GATE_OUT" | grep -qF 'style-checker'; check "checker-write-tool-named" $?
+printf '%s\n' "$GATE_OUT" | grep -qF 'Write'; check "checker-write-tool-names-the-tool" $?
 
 echo
 echo "=== (6) skills/supervise present but template missing its model field -> FAIL ==="
