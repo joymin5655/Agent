@@ -35,7 +35,13 @@ Deliberate exemptions — not "unresolved", stated so the claim stays true:
     name (`f"{LBL}"` with `from labels import LBL`) and (b) a value placed right after a
     label word or sink field (`f"arm={arm}"`, `"cohort {}".format(assign())`,
     `f"guard={g()}"`), where the literal template already names the label and the
-    value is the assignment: both are UNRESOLVED.
+    value is the assignment: both are UNRESOLVED. "Right after" is narrower than a
+    space: `arm=` / `arm:` / `cohort #` / `variant (` / `variant/` / `cohort_` / `arm id `
+    always count; a bare `cohort {x}` counts only as a whole clause (start of text or
+    after `. ; : , ! ? | (`, and the value ends it), so `bucket {x} is full`,
+    `left arm {x}`, `use variant {x}` are prose. A label word glued to a path fragment
+    (`docs/arm/{x}`, `cohort_{x}.csv`, `[variant]({x})`, `https://h/variant/{x}`) is not
+    a label. Cost: `session cohort {x}` (a bare form mid-sentence) is the miss this buys.
   * A key computed from a runtime or imported value (not from string constants) is
     invisible: nothing in the file says it will spell additionalContext.
   * Same-named definitions are unioned: an unrelated class's `build()` can be reported
@@ -44,9 +50,13 @@ Deliberate exemptions — not "unresolved", stated so the claim stays true:
     applied, other format specs only add spaces and are ignored.
   * Shell hooks: the guard follows `jq --arg` variables to their assignment lines
     and to same-file shell functions they call (3 levels; same-named definitions are
-    merged, so look-alikes in heredoc text cannot hide a real definition). A function whose body is not a `{ }` group
-    (`f() ( ... )`, `f() if ...`) is not parsed, and calling it is UNRESOLVED. Output of
-    external commands is runtime data.
+    merged, so look-alikes in heredoc text cannot hide a real definition; names may carry
+    `:` and `.`: `lib::build`, `pkg.build`). A `name()` line is a definition only when a
+    compound command follows (`{`, `(`, `if`, `for`, ...); a bare `flush()` is not.
+    A function whose body is not a `{ }` group (`f() ( ... )`, `f() if ...`) is not
+    parsed, and calling it is UNRESOLVED. Output of external commands is runtime data.
+  * Cost: each emit site has a work budget (WORK_CAP string joins and node visits);
+    past it the site is UNRESOLVED instead of enumerating every alternative.
 
 Usage: oob-label-guard.py [--root DIR]   (exit 1 on a label hit or an unresolved site)
 """
@@ -84,6 +94,8 @@ STR_METHODS = {"join", "strip", "lstrip", "rstrip", "replace", "lower", "upper",
 MAX_COMBOS = 64      # candidates kept verbatim before compressing to hits + tail
 TAIL = 48            # chars kept after compression; label patterns are shorter
 HARD_CAP = 4096      # distinct compressed tails before a site is called unresolved
+WORK_CAP = 250000     # string joins + node visits per emit site before it is called unresolved
+BUDGET_MSG = "work budget exceeded (%d steps): too many alternatives to enumerate" % WORK_CAP
 
 _WORDS = [
     # assignment / identifier forms only — "experiment with X", "variant of the plan",
@@ -110,16 +122,38 @@ def label_hits(text):
 
 
 SENT = "\ufffc"      # stands in for an interpolated value the guard cannot follow
-# separators allowed between a label word and the value: spaces, = : # brackets,
-# quotes, slashes, dots, dashes — "arm=[{x}]", 'arm="{x}"', "cohort #{x}", "variant/{x}"
-_SEP = r"""[\s=:#\[\]()<>'"`./\\-]*"""  # separator class
+# A label noun followed by a runtime value. Each form states what makes it a label;
+# a bare "<noun> <value>" is common prose ("bucket {x} is full", "left arm {x}"), so
+# it counts only as a whole clause. Path / URL / markdown neighbours are not labels.
+_NOUN = r"(?:experiment|cohort|variant|arm|bucket)"
+_IDW = r"(?:[ _-]?(?:id|name|label|group))?"
+_PRE = r"(?<![\w/.\\])"                  # not glued to a path fragment or a longer word
+_OPEN = r"""[\[(<'"`]"""
+_CLOSE = r"""[\])>'"`]"""
+_END = r"(?=" + _CLOSE + r"*[ \t]*(?:$|[.;,!?|]))"       # value closes the clause
+_NOPATH = r"(?![\w-]*[./\\]\w)"                    # ...and no path / extension follows
+_FIELD_SEP = r"""[\s=:#\[\]()<>'"`./\\-]*"""         # separators after a sink field name
 _RUNTIME = re.compile(
-    r"(?i)\b(?:experiment|cohort|variant|arm|bucket)[ _-]?(?:id|name|label|group)?" + _SEP
-    + SENT + r"|(?<![\w-])(?:guard|gate_id|reproduce_test|schema_version|sig_sha)\s*[=:]"
-    + _SEP + SENT)
+    "(?i)(?:"
+    # explicit delimiter: arm=[{x}]  arm: {x}  cohort #{x}  arm=-{x}  ?variant={x}
+    + _PRE + _NOUN + _IDW + r"""\s*[=:#]\s*[\[(<'"`-]*""" + SENT
+    # opener / quote: variant ({x})  variant "{x}"  (not markdown "[variant]({x})")
+    + "|" + _PRE + _NOUN + _IDW + r"\s*" + _OPEN + "+" + SENT + _END
+    # dot / slash: cohort.{x}  variant/{x}  (not docs/arm/{x}, arm/{x}/file)
+    + "|" + _PRE + _NOUN + _IDW + r"[./\\]" + SENT + _NOPATH
+    # joined: cohort_{x}  variant-{x}  (not cohort_{x}.csv)
+    + "|" + _PRE + _NOUN + r"(?:[_-](?:id|name|label|group))?[_-]" + SENT + _NOPATH
+    # "arm id {x}": the id word names the label outright
+    + "|" + _PRE + _NOUN + r"[ _-]?(?:id|name|label|group)[ \t]+" + SENT
+    # bare "cohort {x}": only as a whole clause, never inside a sentence
+    + "|(?:^|(?<=[.;:,!?|(\\[]))[ \t]*" + _NOUN + r"[ \t]+" + SENT + _END
+    + r")|(?<![\w-])(?:guard|gate_id|reproduce_test|schema_version|sig_sha)\s*[=:]"
+    + _FIELD_SEP + SENT, re.M)
 
 
 def runtime_hits(text):
+    if SENT not in text:                       # every runtime form needs the sentinel
+        return []
     return [m.group(0).replace(SENT, "{…}") for m in _RUNTIME.finditer(text)]
 
 
@@ -145,8 +179,8 @@ def _apply_spec(val, spec):
 
 
 def _compress(text):
-    hits = (label_hits(text) + [m.group(0) for m in _RUNTIME.finditer(text)]
-            if len(text) > TAIL else [])
+    hits = (label_hits(text) + ([m.group(0) for m in _RUNTIME.finditer(text)]
+                                if SENT in text else []) if len(text) > TAIL else [])
     return ("\n".join(hits) + "\n" if hits else "") + text[-TAIL:]
 
 
@@ -159,6 +193,7 @@ class Resolver:
         self.calls = {}
         self.imported = {}
         self.dict_sets = {}
+        self.work = 0
         for n in ast.walk(tree):
             for c in ast.iter_child_nodes(n):
                 self.parents[id(c)] = n
@@ -244,6 +279,11 @@ class Resolver:
                 return d
         return None
 
+    def spend(self, n):
+        """Charge n steps to the site being resolved; True once the budget is gone."""
+        self.work += n
+        return self.work > WORK_CAP
+
     def cat(self, parts, opq):
         """Join fragment alternatives so a label split across fragments is seen.
 
@@ -255,8 +295,14 @@ class Resolver:
         cur = [""]
         for part in parts:
             part = part or [""]
+            if self.spend(len(cur) * len(part)):
+                opq.append(BUDGET_MSG)
+                return cur
             nxt = dict.fromkeys(a + b for a in cur for b in part)
             if len(nxt) > MAX_COMBOS:
+                if self.spend(4 * len(nxt)):
+                    opq.append(BUDGET_MSG)
+                    return cur
                 nxt = dict.fromkeys(_compress(x) for x in nxt)
             if len(nxt) > HARD_CAP:
                 opq.append("combinatorial expansion beyond %d distinct tails" % HARD_CAP)
@@ -270,6 +316,8 @@ class Resolver:
             return [], []
         if depth > 40:
             return [], ["too deep"]
+        if self.spend(1):
+            return [], [BUDGET_MSG]
         r = lambda n, f=fn: self.resolve(n, f, seen, depth + 1)  # noqa: E731
         if isinstance(node, ast.Constant):
             if isinstance(node.value, str) and node.value not in PROTOCOL:
@@ -661,6 +709,7 @@ def scan_python(path, rel):
 
     def add(lineno, kind, value, anchor):
         fn = rs.enclosing_fn(anchor)
+        rs.work = 0                            # the budget is per emit site
         strs, opq = rs.resolve(value, fn, frozenset())
         sites.append((lineno, kind, strs, opq, fn))
 
@@ -691,8 +740,12 @@ def scan_python(path, rel):
 
 
 _JQ_ARG = re.compile(r'--arg\s+\w+\s+"\$\{?(\w+)')
+_SH_NAME = r"[A-Za-z_][\w:.-]*"           # lib::build  pkg.build  my-fn
 _SH_FUNC = re.compile(
-    r"^\s*(?:function\s+([A-Za-z_][\w-]*)\s*(?:\(\))?|([A-Za-z_][\w-]*)\s*\(\))\s*(.*)$")
+    r"^\s*(?:function\s+(" + _SH_NAME + r")\s*(?:\(\))?|(" + _SH_NAME + r")\s*\(\))\s*(.*)$")
+# What may follow `name()`: a compound command. A bare `flush()` line (a Python call inside
+# a heredoc, say) is no definition at all.
+_SH_BODY = re.compile(r"\{|\(|(?:if|for|while|until|case|select)\b|\[\[")
 _HEREDOC = re.compile(r"(?<!<)<<(?!<)-?\s*([\"']?)(\w+)\1")
 
 
@@ -716,8 +769,12 @@ def _shell_functions(code):
     """name -> (body lines, followable). A `{ }` body is brace-counted outside
     quotes, escapes and heredoc bodies, so a `}` printed by the function does not end
     it early. Same-named definitions are merged, never replaced, so a look-alike
-    `build()` in heredoc text cannot hide the real one. A definition whose body is not a `{ }` group (`( ... )`, `if`, ...) is
-    not parsed: it is marked unfollowable, which fails any site that calls it."""
+    `build()` in heredoc text cannot hide the real one. A `name()` line counts as a
+    definition only when a compound command follows it (`{`, `(`, `if`, `for`, `while`,
+    `until`, `case`, `select`, `[[`), here or on the next non-blank line: a bare call such
+    as a Python `flush()` inside a heredoc defines nothing. A definition whose body is
+    not a `{ }` group (`( ... )`, `if`, ...) is not parsed: it is marked unfollowable,
+    which fails any site that calls it."""
     funcs = {}
     for i, (_, ln) in enumerate(code):
         # No heredoc skipping at this level: a `<<` is not always a heredoc ($((1<<2)),
@@ -728,13 +785,18 @@ def _shell_functions(code):
             continue
         name = m.group(1) or m.group(2)
         tail = m.group(3).strip()
+        if tail.startswith("#"):               # `build() # note` — the comment is not the body
+            tail = ""
         rest, j = None, i + 1
+        if tail == "":
+            nl = _next_line(code, i)
+            if nl is None or not _SH_BODY.match(code[nl][1].strip()):
+                continue                       # not followed by a compound command: no definition
+            tail, j = code[nl][1].strip(), nl + 1
+        elif not _SH_BODY.match(tail):
+            continue
         if tail.startswith("{"):
             rest = tail[1:]
-        elif tail == "":
-            nl = _next_line(code, i)
-            if nl is not None and code[nl][1].strip().startswith("{"):
-                rest, j = code[nl][1].strip()[1:], nl + 1
         if rest is None:                       # body is not a { } group
             body, ok = [], False
         else:

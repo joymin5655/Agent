@@ -50,6 +50,18 @@ shell_case() {
   if [[ "$got" == "$want" ]]; then ok "$name" "want=$want"; else bad "$name" "want=$want got=$got"; fi
 }
 
+# shell_rx_case <name> <caught|clean> <regex the guard output must match> <script on stdin>
+shell_rx_case() {
+  local name="$1" want="$2" rx="$3" root got
+  root=$(mkroot "$name"); cat > "$root/core/hooks/fx.sh"
+  got=$(verdict "$GUARD" "$root")
+  if [[ "$got" == "$want" ]] && python3 "$GUARD" --root "$root" 2>&1 | grep -qE "$rx"; then
+    ok "$name" "want=$want /$rx/"
+  else
+    bad "$name" "want=$want /$rx/ got=$got"
+  fi
+}
+
 # src_case <name> <python source> <caught|clean> [guard-path] [output regex]
 src_case() {
   local name="$1" src="$2" want="$3" g="${4:-$GUARD}" rx="${5:-}" root got
@@ -577,6 +589,194 @@ jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
 SH
 
 echo
+echo "=== B20. label noun + runtime value: ordinary sentences stay clean (AG18 A1) ==="
+i=0
+while IFS= read -r expr; do
+  i=$((i + 1)); form_case "prose-clean-$i" "$expr" clean
+done <<'FORMS'
+f'bucket {x} is full'
+f'left arm {x}'
+f'Experiment {x} finished'
+f'use variant {x}'
+f'the bucket {x}'
+f'cohort {x} ready'
+FORMS
+i=0
+while IFS= read -r expr; do
+  i=$((i + 1)); form_case "label-still-caught-$i" "$expr" caught '^UNRESOLVED .*runtime value'
+done <<'FORMS'
+f'cohort {x}'
+f'arm {x}.'
+f'note: arm {x}'
+f'done. Variant {x}'
+f'arm id {x}'
+f'bucket name {x} is set'
+f'cohort_{x}'
+f'variant-{x}'
+f'?variant={x}'
+f'--arm={x}'
+f'experiment: {x} is next'
+f'cohort {x}, ok'
+FORMS
+
+echo
+echo "=== B21. paths, URLs and markdown around a label word are not labels (AG18 A2) ==="
+i=0
+while IFS= read -r expr; do
+  i=$((i + 1)); form_case "path-clean-$i" "$expr" clean
+done <<'FORMS'
+f'docs/arm/{x}'
+f'see docs/variant/{x}.md'
+f'[variant]({x})'
+f'/arm/{x}/file'
+f'https://x.test/variant/{x}'
+f'cohort_{x}.csv'
+f'arm/{x}/file'
+f'C:\\arm\\{x}'
+FORMS
+
+echo
+echo "=== B22. shell: a call line inside a heredoc is not a function definition (AG18 A3) ==="
+shell_case "shell-heredoc-call-lines-clean" clean <<'SH'
+#!/usr/bin/env bash
+python3 - <<'PY'
+def run():
+    pass
+flush()
+end()
+self.end()
+note_mention()
+PY
+MSG="please end the session and flush the cache, then note_mention"
+jq -nc --arg ctx "$MSG" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+shell_case "shell-heredoc-call-then-real-def" caught <<'SH'
+#!/usr/bin/env bash
+python3 - <<'PY'
+flush()
+PY
+flush() { echo "holdout arm"; }
+CTX="$(flush)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+shell_case "shell-for-body-still-unfollowable" caught <<'SH'
+#!/usr/bin/env bash
+build()
+for x in a; do echo "holdout arm"; done
+CTX="$(build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+shell_case "shell-while-body-still-unfollowable" caught <<'SH'
+#!/usr/bin/env bash
+build() while true; do echo "holdout arm"; break; done
+CTX="$(build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+shell_case "shell-test-body-still-unfollowable" caught <<'SH'
+#!/usr/bin/env bash
+build()
+[[ -n "$HOME" ]]
+CTX="$(build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+
+echo
+echo "=== B23. shell: names with :: and . are definitions too (AG18 A4) ==="
+shell_case "shell-ns-colon-def" caught <<'SH'
+#!/usr/bin/env bash
+lib::build() { echo "holdout arm"; }
+CTX="$(lib::build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+shell_case "shell-dotted-def" caught <<'SH'
+#!/usr/bin/env bash
+pkg.build() {
+  echo "holdout arm"
+}
+CTX="$(pkg.build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+shell_case "shell-ns-keyword-def" caught <<'SH'
+#!/usr/bin/env bash
+function lib::build {
+  echo "holdout arm"
+}
+CTX="$(lib::build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+shell_case "shell-ns-subshell-def-unresolved" caught <<'SH'
+#!/usr/bin/env bash
+lib::build() (
+  echo "holdout arm"
+)
+CTX="$(lib::build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+shell_case "shell-ns-def-clean" clean <<'SH'
+#!/usr/bin/env bash
+lib::build() { echo "change your approach"; }
+CTX="$(lib::build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+
+echo
+echo "=== B24. shell: a trailing comment after name() does not hide the { body (AG18 A5) ==="
+shell_case "shell-comment-tail-clean" clean <<'SH'
+#!/usr/bin/env bash
+build() # builds the text
+{
+  echo "change your approach"
+}
+CTX="$(build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+shell_rx_case "shell-comment-tail-label" caught '^LABEL ' <<'SH'
+#!/usr/bin/env bash
+build() # builds the text
+{
+  echo "holdout arm"
+}
+CTX="$(build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+shell_rx_case "shell-comment-tail-same-line-label" caught '^LABEL ' <<'SH'
+#!/usr/bin/env bash
+build() { # builds the text
+  echo "holdout arm # not a comment"
+}
+CTX="$(build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+
+echo
+echo "=== B25. cost: a combinatorial shape stops at a global budget, under 1 s (AG18 A6) ==="
+# cost_case <name> <python snippet that prints the hook source>
+cost_case() {
+  local name="$1" root out rc t0 t1
+  root=$(mkroot "$name")
+  python3 -c "
+def alt(i, n):
+    e = \"'z'\"
+    for j in range(n - 1):
+        e = \"('v%d_%d' if s else %s)\" % (i, j, e)
+    return e
+$2" > "$root/core/hooks/fx.py"
+  t0=$(python3 -c 'import time; print(time.time())')
+  out=$(python3 "$GUARD" --root "$root" 2>&1); rc=$?
+  t1=$(python3 -c 'import time; print(time.time())')
+  if [[ $rc -ne 0 ]] && printf '%s' "$out" | grep -qE '^UNRESOLVED ' && ! printf '%s' "$out" | grep -q Traceback \
+     && python3 -c "import sys; sys.exit(0 if $t1 - $t0 < 1.0 else 1)"; then
+    ok "$name" "UNRESOLVED in $(python3 -c "print(round($t1 - $t0, 2))")s"
+  else
+    bad "$name" "rc=$rc $(python3 -c "print(round($t1 - $t0, 2))")s (want UNRESOLVED, <1s)"
+  fi
+}
+cost_case "cost-binop-40" "print('import sys\ns = sys.argv\nprint({\"additionalContext\": %s})' % ' + '.join(alt(i, 3) for i in range(40)))"
+cost_case "cost-binop-300" "print('import sys\ns = sys.argv\nprint({\"additionalContext\": %s})' % ' + '.join(alt(i, 2) for i in range(300)))"
+cost_case "cost-dict-60x8" "print('import sys, json\ns = sys.argv\nd = {%s}\nprint({\"additionalContext\": json.dumps(d)})' % ', '.join('\"k%d\": %s' % (i, alt(i, 8)) for i in range(60)))"
+cost_case "cost-names-50x8" "print('import sys\ns = sys.argv\n%s\nprint({\"additionalContext\": %s})' % ('\n'.join('n%d = %s' % (i, alt(i, 8)) for i in range(50)), ' + '.join('n%d' % i for i in range(50))))"
+
+echo
 echo "=== C2. vocabulary regressions (word boundary) ==="
 py_case "identity-prose"    '"experiment identity check failed"'        clean
 py_case "bucket-names-prose" '"bucket names must be lowercase"'          clean
@@ -816,6 +1016,7 @@ jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
 SH
 # cost: without the early exit the huge template runs for many seconds
 m=$(gmutate cat-early-exit 'return list(itertools.islice(nxt, HARD_CAP))     # stop at the first overflow' 'pass')
+[[ -n "$m" ]] && sed -i 's/^WORK_CAP = [0-9]*/WORK_CAP = 10**12/' "$m"   # the budget would mask the early exit
 if [[ -z "$m" ]]; then bad "mutation/cat-early-exit-anchor" "anchor not found — probe is inert"; else
   root=$(mkroot mp-cat-early-exit); printf '%s\n' "$BIGSRC" > "$root/core/hooks/fx.py"
   if python3 -c "
@@ -827,17 +1028,16 @@ except subprocess.TimeoutExpired:
 sys.exit(1)"; then ok "mutation/cat-early-exit" "mutant exceeds 3s on the huge template"; else bad "mutation/cat-early-exit" "mutant is still fast"; fi
 fi
 # r5 probes
-gprobe separator-class '# separator class' '# separator class
-_SEP = r"[\s=:]*"' sep-form-1 \
+gprobe separator-class '\s*[=:#]\s*[\[(<'"'"'"`-]*"""' '\s*[=:#]\s*"""' sep-form-1 \
   'from exp import g
 x = g()
 print({"additionalContext": f"arm=[{x}]"})' caught '^UNRESOLVED .*runtime value'
 shprobe shell-brace-next-line 'def _next_line(code, i):' 'def _next_line(code, i):
-    return None' clean <<'SH'
+    return None' caught <<'SH'
 #!/usr/bin/env bash
 build()
 {
-  echo "change your approach"
+  echo "holdout arm"
 }
 CTX="$(build)"
 jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
@@ -905,6 +1105,80 @@ if [[ -z "$m" ]]; then bad "mutation/shell-brace-anchor" "anchor not found — p
     "jq -nc --arg ctx \"\$CTX\" '{hookSpecificOutput: {additionalContext: \$ctx}}'" > "$root/core/hooks/fx.sh"
   [[ $(verdict "$GUARD" "$root") == clean ]] || bad "mutation/shell-brace-fixture" "clean fixture not clean under the real guard"
   [[ $(verdict "$m" "$root") == caught ]] && ok "mutation/shell-brace" "mutant leaves the function unterminated" || bad "mutation/shell-brace" "mutant still clean"
+fi
+# AG18 probes — each condition of the r8 fixes must be load-bearing
+gprobe bare-clause-start '"|(?:^|(?<=[.;:,!?|(\\[]))[ \t]*" + _NOUN' '"|[ \t]*" + _NOUN' ag18-use-variant \
+  'from exp import g
+x = g()
+print({"additionalContext": f"use variant {x}"})' clean
+gprobe bare-clause-end '[ \t]+" + SENT + _END
+    + r")|' '[ \t]+" + SENT
+    + r")|' ag18-bucket-full \
+  'from exp import g
+x = g()
+print({"additionalContext": f"bucket {x} is full"})' clean
+gprobe path-neighbour '_PRE = r"(?<![\w/.\\])"' '_PRE = r""' ag18-docs-arm \
+  'from exp import g
+x = g()
+print({"additionalContext": f"docs/arm/{x}"})' clean
+gprobe path-tail '_NOPATH = r"(?![\w-]*[./\\]\w)"' '_NOPATH = r""' ag18-cohort-csv \
+  'from exp import g
+x = g()
+print({"additionalContext": f"cohort_{x}.csv"})' clean
+gprobe markdown-link 'r"\s*" + _OPEN + "+" + SENT + _END' 'r"\s*" + _OPEN.replace("[", "[\\]") + "+" + SENT + _END' ag18-md-link \
+  'from exp import g
+x = g()
+print({"additionalContext": f"[variant]({x})"})' clean
+shprobe shell-call-line-not-def 'if nl is None or not _SH_BODY.match(code[nl][1].strip()):' 'if nl is None:' clean <<'SH'
+#!/usr/bin/env bash
+python3 - <<'PY'
+flush()
+end()
+PY
+MSG="please end the session and flush the cache"
+jq -nc --arg ctx "$MSG" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+shprobe shell-same-line-not-def 'elif not _SH_BODY.match(tail):' 'elif False:' clean <<'SH'
+#!/usr/bin/env bash
+python3 - <<'PY'
+flush() : pass
+PY
+MSG="please flush the cache"
+jq -nc --arg ctx "$MSG" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+shprobe shell-name-class '_SH_NAME = r"[A-Za-z_][\w:.-]*"' '_SH_NAME = r"[A-Za-z_][\w-]*"' caught <<'SH'
+#!/usr/bin/env bash
+lib::build() { echo "holdout arm"; }
+CTX="$(lib::build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+shprobe shell-name-dot '_SH_NAME = r"[A-Za-z_][\w:.-]*"' '_SH_NAME = r"[A-Za-z_][\w:-]*"' caught <<'SH'
+#!/usr/bin/env bash
+pkg.build() { echo "holdout arm"; }
+CTX="$(pkg.build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+shprobe shell-comment-tail 'if tail.startswith("#"):' 'if False:' caught <<'SH'
+#!/usr/bin/env bash
+build() # builds the text
+{
+  echo "holdout arm"
+}
+CTX="$(build)"
+jq -nc --arg ctx "$CTX" '{hookSpecificOutput: {additionalContext: $ctx}}'
+SH
+# the global budget: without it the name-concatenation shape runs for many seconds
+m=$(gmutate work-budget 'if self.spend(1):' 'if False:')
+if [[ -z "$m" ]]; then bad "mutation/work-budget-anchor" "anchor not found — probe is inert"; else
+  sed -i 's/^WORK_CAP = [0-9]*/WORK_CAP = 10**12/' "$m"
+  root="$WORK/cost-names-50x8"
+  if python3 -c "
+import subprocess, sys
+try:
+    subprocess.run([sys.executable, '$m', '--root', '$root'], capture_output=True, timeout=3)
+except subprocess.TimeoutExpired:
+    sys.exit(0)
+sys.exit(1)"; then ok "mutation/work-budget" "mutant exceeds 3s on 50 names x 8 alternatives"; else bad "mutation/work-budget" "mutant is still fast"; fi
 fi
 # timing: the guard must stay cheap (it runs in every battery)
 T0=$(python3 -c 'import time; print(time.time())')
