@@ -316,9 +316,9 @@ _SECRET_HERESTRING="${_SECRET_INTERP}([[:space:]]+[^[:space:];|&<>]+)*[[:space:]
 # catch `pip install` / `npm install`, including the remediation hint of the fail-closed branch, so
 # 11b matches it as a command word instead (_SECRET_CMD_START_READERS).
 _SECRET_STAGE12_ONLY='install'
-# A wrapper in front (env, nohup, time, command, exec, sudo, xargs with its options, NAME=value) or a
+# A wrapper in front (env, time, command, exec, sudo, xargs with its options, NAME=value, a background launcher) or a
 # path (/usr/bin/install) does not hide it; `pip install`, `npm install`, `make install` are not it.
-_SECRET_CMD_START='(^|[;&|(`]|&&)[[:space:]]*(((env|nohup|time|command|exec|sudo|doas|nice|xargs|stdbuf|timeout)([[:space:]]+-[^[:space:]]+([[:space:]]+[^[:space:]-][^[:space:]]*)?)*|[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*)[[:space:]]+)*([^[:space:]]*/)?install[[:space:]]+'
+_SECRET_CMD_START='(^|[;&|(`]|&&)[[:space:]]*(((env|nohup|time|command|exec|sudo|doas|nice|xargs|stdbuf|timeout)([[:space:]]+-[^[:space:]]+([[:space:]]+[^[:space:]-][^[:space:]]*)?)*|[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*)[[:space:]]+)*([^[:space:]]*/)?install[[:space:]]+'  # supply-chain-scan: allow-literal wrapper names in a command-word regex, not a spawn
 _SECRET_MORE_READERS='base64|base32|basenc|sort|uniq|cut|paste|column|join|comm|expand|unexpand|fmt|shuf|cksum|b2sum|sha1sum|sha224sum|sha384sum|zgrep|bzgrep|xzgrep|iconv|split|look|vim|nano|emacs|jq|yq'
 _secrets_verdict() {
   # a python3 that is missing, exits non-zero or is killed leaves `error` behind, never an allow
