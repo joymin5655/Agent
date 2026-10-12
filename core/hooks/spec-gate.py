@@ -48,6 +48,7 @@ Exit always 0. Fail-open: any exception → exit 0, never block on error.
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import tempfile
@@ -171,6 +172,17 @@ def emit_ask(reason):
     sys.stdout.write(json.dumps(out))
 
 
+def plan_flag_approved():
+    """Approval = a regular file we own with a single link. lstat, so a symlink,
+    directory, FIFO, hard link or foreign-owned file planted in /tmp is not approval.
+    Same predicate in spec-gate.py and plan-scope-allow.py."""
+    try:
+        st = os.lstat(PLAN_FLAG)
+    except OSError:
+        return False
+    return stat.S_ISREG(st.st_mode) and st.st_uid == os.geteuid() and st.st_nlink == 1
+
+
 def main():
     try:
         data = json.load(sys.stdin)
@@ -182,7 +194,7 @@ def main():
         sys.exit(0)
 
     # Plan approved this session → all edits allowed (the flag is the dedup).
-    if os.path.exists(PLAN_FLAG):
+    if plan_flag_approved():
         sys.exit(0)
 
     root = repo_root()

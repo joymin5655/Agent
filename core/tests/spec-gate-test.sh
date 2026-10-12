@@ -38,7 +38,7 @@ FLAG="/tmp/agent-plan-approved"     # the REAL shared flag (spec-gate hardcodes 
 FLAG_BACKUP="$WORK/flag.bak"; HAD_FLAG=0
 [[ -e "$FLAG" ]] && { cp "$FLAG" "$FLAG_BACKUP" && HAD_FLAG=1; }
 cleanup() {
-  rm -f "$FLAG"
+  rm -rf "$FLAG"
   [[ "$HAD_FLAG" -eq 1 ]] && mv "$FLAG_BACKUP" "$FLAG"
   [[ -n "$WORK" && -d "$WORK" ]] && rm -rf "$WORK"
 }
@@ -50,10 +50,23 @@ trap cleanup EXIT
 
 evt() { printf '{"event":"PreToolUse","tool_name":"Write","tool_input":{"file_path":"%s"}}' "$1"; }
 
+# set_flag <present|absent|dir|fifo|symlink|hardlink|foreign>: plant the flag slot in a given shape
+set_flag() {
+  rm -rf "$FLAG"
+  case "$1" in
+    present)  : > "$FLAG" ;;
+    dir)      mkdir "$FLAG" ;;
+    fifo)     mkfifo "$FLAG" ;;
+    symlink)  : > "$WORK/flag-target"; ln -s "$WORK/flag-target" "$FLAG" ;;
+    hardlink) : > "$WORK/flag-hl"; ln "$WORK/flag-hl" "$FLAG" ;;
+    foreign)  : > "$FLAG"; chown 65534 "$FLAG" ;;
+  esac
+}
+
 # run <mode> <flag: present|absent> <json>  -> sets OUT, RC
 run() {
   local mode="$1" flagstate="$2" json="$3"
-  if [[ "$flagstate" == present ]]; then : > "$FLAG"; else rm -f "$FLAG"; fi
+  set_flag "$flagstate"
   OUT="$(printf '%s' "$json" | ( cd "$WORK" && env \
     AGENT_SPEC_GATE_MODE="$mode" \
     AGENT_SPEC_GATE_SINK="$SINK" \
@@ -180,6 +193,17 @@ echo "=== dryrun never emits a stop decision ==="
 run dryrun absent "$(evt 'src/pay.ts')"
 assert_not_contains "s-dryrun-no-permissiondecision" 'permissionDecision'
 assert_contains     "s-dryrun-has-advisory"          'additionalContext'
+
+echo
+echo "=== AG16: only a regular, own, single-link file counts as approval ==="
+expect "ag16-dir-flag-not-approval"      block dir      'src/x.ts' ask
+expect "ag16-fifo-flag-not-approval"     block fifo     'src/x.ts' ask
+expect "ag16-symlink-flag-not-approval"  block symlink  'src/x.ts' ask
+expect "ag16-hardlink-flag-not-approval" block hardlink 'src/x.ts' ask
+expect "ag16-regular-flag-approves"      block present  'src/x.ts' allow
+if [[ "$(id -u)" -eq 0 ]]; then
+  expect "ag16-foreign-uid-flag-not-approval" block foreign 'src/x.ts' ask
+fi
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="

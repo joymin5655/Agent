@@ -39,7 +39,7 @@ TRUST_FILE="$WORK/no-trust.list"   # default: nonexistent -> tier fails closed
 FLAG_BACKUP="$WORK/flag.bak"; HAD_FLAG=0
 [[ -e "$FLAG" ]] && { cp "$FLAG" "$FLAG_BACKUP" && HAD_FLAG=1; }
 cleanup() {
-  rm -f "$FLAG"
+  rm -rf "$FLAG"
   [[ "$HAD_FLAG" -eq 1 ]] && mv "$FLAG_BACKUP" "$FLAG"
   [[ -n "$WORK" && -d "$WORK" ]] && rm -rf "$WORK"
 }
@@ -59,10 +59,23 @@ ln -s "$OUTSIDE" "$WORK/src/linkout"
 # evt <tool_name> <file_path>
 evt() { printf '{"event":"PreToolUse","tool_name":"%s","tool_input":{"file_path":"%s"},"cwd":"%s"}' "$1" "$2" "$WORK"; }
 
+# set_flag <present|absent|dir|fifo|symlink|hardlink|foreign>: plant the flag slot in a given shape
+set_flag() {
+  rm -rf "$FLAG"
+  case "$1" in
+    present)  : > "$FLAG" ;;
+    dir)      mkdir "$FLAG" ;;
+    fifo)     mkfifo "$FLAG" ;;
+    symlink)  : > "$WORK/flag-target"; ln -s "$WORK/flag-target" "$FLAG" ;;
+    hardlink) : > "$WORK/flag-hl"; ln "$WORK/flag-hl" "$FLAG" ;;
+    foreign)  : > "$FLAG"; chown 65534 "$FLAG" ;;
+  esac
+}
+
 # run <mode: on|off|unset> <flag: present|absent> <json>  -> sets OUT, RC
 run() {
   local mode="$1" flagstate="$2" json="$3"
-  if [[ "$flagstate" == present ]]; then : > "$FLAG"; else rm -f "$FLAG"; fi
+  set_flag "$flagstate"
   if [[ "$mode" == unset ]]; then
     OUT="$(printf '%s' "$json" | ( cd "$WORK" && env -u AGENT_PLAN_ALLOW_MODE \
       AGENT_PROJECT_DIR="$WORK" \
@@ -205,6 +218,17 @@ run on present "$(evt Write "$WORK/src/sinkcase.ts")"
 if [[ "$(sink_lines)" == "1" ]]; then ok "h1-allow-writes-one-sink-line"; else bad "h1-allow-writes-one-sink-line" "sink lines=$(sink_lines)"; fi
 run on present "$(evt Write "$WORK/migrations/m.sql")"
 if [[ "$(sink_lines)" == "1" ]]; then ok "h2-passthrough-writes-none"; else bad "h2-passthrough-writes-none" "sink lines=$(sink_lines)"; fi
+
+echo
+echo "=== AG16: only a regular, own, single-link file counts as approval ==="
+expect "ag16-dir-flag-silent"      on dir      Write "$WORK/src/x.ts" silent
+expect "ag16-fifo-flag-silent"     on fifo     Write "$WORK/src/x.ts" silent
+expect "ag16-symlink-flag-silent"  on symlink  Write "$WORK/src/x.ts" silent
+expect "ag16-hardlink-flag-silent" on hardlink Write "$WORK/src/x.ts" silent
+expect "ag16-regular-flag-allows"  on present  Write "$WORK/src/x.ts" allow
+if [[ "$(id -u)" -eq 0 ]]; then
+  expect "ag16-foreign-uid-flag-silent" on foreign Write "$WORK/src/x.ts" silent
+fi
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
