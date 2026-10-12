@@ -327,11 +327,122 @@ else
   bad "default-sink-is-project-local" "proj=$(ls "$PROJ/.agent/logs" 2>&1) real $REAL_BEFORE->$REAL_AFTER"
 fi
 
-# Escaping override falls back to the project default instead of writing elsewhere.
-EVIL="$STATE_DIR/../circuit-breaker-evil-$$.jsonl"
-printf '%s' "$PEV" | AGENT_CIRCUIT_BREAKER_SINK="/etc/cb-evil-$$.jsonl" AGENT_CIRCUIT_BREAKER_STATE="$STATE_DIR/e2-state.json" \
-  AGENT_CIRCUIT_BREAKER_THRESHOLD=1 python3 "$HOOK" >/dev/null 2>&1
-if [[ ! -e "/etc/cb-evil-$$.jsonl" && ! -e "$EVIL" ]]; then ok "override-confined" "escaping sink path not written"; else bad "override-confined" "wrote outside allowed roots"; rm -f "/etc/cb-evil-$$.jsonl"; fi
+# run_cb <proj-cwd|-> <extra env assignments...> — fire the hook once for a failing
+# Bash event with the live sink env cleared; echoes "rc=<n>". Bounded by a python
+# subprocess timeout (macOS has no `timeout`), so a hang is a FAIL, not a stall.
+run_cb() {
+  local cwd="$1"; shift
+  CB_CWD="$cwd" HOOK="${CB_HOOK:-$HOOK}" python3 -c '
+import json, os, subprocess, sys
+ev = {"ai": "claude-code", "event": "PostToolUse", "session_id": "cb-run",
+      "tool_name": "Bash", "tool_input": {"command": "x"},
+      "tool_response": {"stdout": "Traceback (most recent call last): run_cb"}}
+if os.environ["CB_CWD"] != "-":
+    ev["cwd"] = os.environ["CB_CWD"]
+env = {k: v for k, v in os.environ.items()
+       if k not in ("AGENT_CIRCUIT_BREAKER_SINK", "AGENT_GATE_SINK_DIR", "CLAUDE_PROJECT_DIR")}
+env.update(dict(a.split("=", 1) for a in sys.argv[1:]))
+try:
+    r = subprocess.run([sys.executable, os.environ["HOOK"]], input=json.dumps(ev).encode(),
+                       env=env, capture_output=True, timeout=8)
+    print("rc=%d out=%d" % (r.returncode, len(r.stdout)))
+except subprocess.TimeoutExpired:
+    print("rc=HANG out=0")
+' "$@"
+}
+lines() { if [[ -f "$1" ]]; then wc -l < "$1" | tr -d ' '; else echo 0; fi; }
+
+# Escaping override: a path that is WRITABLE but outside {<root>/.agent/logs, temp
+# dir} must be ignored (root-only paths like /etc would pass vacuously for non-root).
+CONF="$STATE_DIR/conf"; mkdir -p "$CONF/tmproot" "$CONF/outside" "$CONF/proj"
+R=$(run_cb "$CONF/proj" "TMPDIR=$CONF/tmproot" "AGENT_CIRCUIT_BREAKER_THRESHOLD=1" \
+  "AGENT_CIRCUIT_BREAKER_STATE=$CONF/st.json" "AGENT_CIRCUIT_BREAKER_SINK=$CONF/outside/x.jsonl")
+if [[ ! -e "$CONF/outside/x.jsonl" && "$(lines "$CONF/proj/.agent/logs/circuit-breaker.jsonl")" -eq 1 ]]; then
+  ok "override-confined" "outside path untouched, default sink got the line ($R)"
+else
+  bad "override-confined" "outside=$(ls "$CONF/outside") default=$(lines "$CONF/proj/.agent/logs/circuit-breaker.jsonl") $R"
+fi
+
+# Symlinked default sink must not be followed out of the project.
+SL="$STATE_DIR/sl"; mkdir -p "$SL/proj/.agent/logs"; echo '{"victim":1}' > "$SL/victim.jsonl"
+ln -s "$SL/victim.jsonl" "$SL/proj/.agent/logs/circuit-breaker.jsonl"
+R=$(run_cb "$SL/proj" "AGENT_CIRCUIT_BREAKER_THRESHOLD=1" "AGENT_CIRCUIT_BREAKER_STATE=$SL/st.json")
+if [[ "$(lines "$SL/victim.jsonl")" -eq 1 && "$R" == "rc=0 out="[1-9]* ]]; then
+  ok "symlink-sink-not-followed" "victim file still 1 line, hook ok ($R)"
+else
+  bad "symlink-sink-not-followed" "victim=$(lines "$SL/victim.jsonl") $R"
+fi
+
+# A missing project root is not created (only .agent/logs under an existing root).
+GHOST="$STATE_DIR/ghost-root/zzz"
+R=$(run_cb "$GHOST" "AGENT_CIRCUIT_BREAKER_THRESHOLD=1" "AGENT_CIRCUIT_BREAKER_STATE=$STATE_DIR/gh.json")
+if [[ ! -e "$STATE_DIR/ghost-root" && "$R" == rc=0* ]]; then
+  ok "missing-root-not-created" "no tree made ($R)"
+else
+  bad "missing-root-not-created" "$(ls -d "$STATE_DIR/ghost-root" 2>&1) $R"
+fi
+
+# Deleted process cwd + no event cwd + no CLAUDE_PROJECT_DIR: exit code stays 0.
+DEL="$STATE_DIR/deleted-cwd"; mkdir -p "$DEL"
+R=$( cd "$DEL" && rmdir "$DEL" && run_cb - "AGENT_CIRCUIT_BREAKER_THRESHOLD=1" "AGENT_CIRCUIT_BREAKER_STATE=$STATE_DIR/del.json" )
+if [[ "$R" == "rc=0 out="[1-9]* ]]; then ok "deleted-cwd-rc0" "$R"; else bad "deleted-cwd-rc0" "$R"; fi
+
+# FIFO with no reader at the sink path: fail fast (O_NONBLOCK), never hang.
+FF="$STATE_DIR/fifo"; mkdir -p "$FF/proj/.agent/logs"; mkfifo "$FF/proj/.agent/logs/circuit-breaker.jsonl"
+R=$(run_cb "$FF/proj" "AGENT_CIRCUIT_BREAKER_THRESHOLD=1" "AGENT_CIRCUIT_BREAKER_STATE=$FF/st.json")
+if [[ "$R" == "rc=0 out="[1-9]* ]]; then ok "fifo-sink-no-hang" "$R"; else bad "fifo-sink-no-hang" "$R"; fi
+
+# Regular-file guard: a directory squatting on the default path is skipped silently.
+DD="$STATE_DIR/dd"; mkdir -p "$DD/proj/.agent/logs/circuit-breaker.jsonl"
+R=$(run_cb "$DD/proj" "AGENT_CIRCUIT_BREAKER_THRESHOLD=1" "AGENT_CIRCUIT_BREAKER_STATE=$DD/st.json")
+if [[ "$R" == "rc=0 out="[1-9]* ]]; then ok "dir-at-default-sink-silent" "$R"; else bad "dir-at-default-sink-silent" "$R"; fi
+
+# AGENT_GATE_SINK_DIR (X-5 seam) redirects the DEFAULT sink directory.
+GS="$STATE_DIR/gs"; mkdir -p "$GS/proj" "$GS/diverted"
+R=$(run_cb "$GS/proj" "AGENT_CIRCUIT_BREAKER_THRESHOLD=1" "AGENT_CIRCUIT_BREAKER_STATE=$GS/st.json" \
+  "AGENT_GATE_SINK_DIR=$GS/diverted")
+if [[ "$(lines "$GS/diverted/circuit-breaker.jsonl")" -eq 1 && ! -e "$GS/proj/.agent" ]]; then
+  ok "gate-sink-dir-seam" "diverted, project .agent untouched"
+else
+  bad "gate-sink-dir-seam" "diverted=$(lines "$GS/diverted/circuit-breaker.jsonl") proj=$(ls -A "$GS/proj") $R"
+fi
+
+# Mutation probes for the sink protections: each reverts ONE guard in a COPY of the
+# hook and the matching case above must then flip. An anchor miss is a hard FAIL.
+sink_probe() {  # sink_probe <name> <find> <repl> <scenario>
+  local name="$1" find="$2" repl="$3" scen="$4" m R flipped=0 d
+  m=$(mutate "sink-$name" "$find" "$repl")
+  if [[ -z "$m" ]]; then bad "mutation/$name-anchor" "anchor not found — probe is inert"; return; fi
+  d="$STATE_DIR/mp-$name"; rm -rf "$d"; mkdir -p "$d/tmproot" "$d/outside" "$d/proj/.agent/logs" "$d/diverted"
+  case "$scen" in
+    override)
+      CB_HOOK="$m" run_cb "$d/proj" "TMPDIR=$d/tmproot" AGENT_CIRCUIT_BREAKER_THRESHOLD=1 \
+        "AGENT_CIRCUIT_BREAKER_STATE=$d/st.json" "AGENT_CIRCUIT_BREAKER_SINK=$d/outside/x.jsonl" >/dev/null
+      [[ -e "$d/outside/x.jsonl" ]] && flipped=1 ;;
+    fifo)
+      mkfifo "$d/proj/.agent/logs/circuit-breaker.jsonl"
+      R=$(CB_HOOK="$m" run_cb "$d/proj" AGENT_CIRCUIT_BREAKER_THRESHOLD=1 "AGENT_CIRCUIT_BREAKER_STATE=$d/st.json")
+      [[ "$R" == rc=HANG* ]] && flipped=1 ;;
+    seam)
+      CB_HOOK="$m" run_cb "$d/proj" AGENT_CIRCUIT_BREAKER_THRESHOLD=1 "AGENT_CIRCUIT_BREAKER_STATE=$d/st.json" \
+        "AGENT_GATE_SINK_DIR=$d/diverted" >/dev/null
+      [[ ! -e "$d/diverted/circuit-breaker.jsonl" ]] && flipped=1 ;;
+    symlink)
+      echo '{"victim":1}' > "$d/victim.jsonl"; rm -rf "$d/proj/.agent/logs"; mkdir -p "$d/proj/.agent/logs"
+      ln -s "$d/victim.jsonl" "$d/proj/.agent/logs/circuit-breaker.jsonl"
+      CB_HOOK="$m" run_cb "$d/proj" AGENT_CIRCUIT_BREAKER_THRESHOLD=1 "AGENT_CIRCUIT_BREAKER_STATE=$d/st.json" >/dev/null
+      [[ "$(lines "$d/victim.jsonl")" -gt 1 ]] && flipped=1 ;;
+    ghost)
+      CB_HOOK="$m" run_cb "$d/ghost/zzz" AGENT_CIRCUIT_BREAKER_THRESHOLD=1 "AGENT_CIRCUIT_BREAKER_STATE=$d/st.json" >/dev/null
+      [[ -e "$d/ghost" ]] && flipped=1 ;;
+  esac
+  if [[ $flipped -eq 1 ]]; then ok "mutation/$name" "reverting it breaks the protection"; else bad "mutation/$name" "mutant behaves the same — case does not cover it"; fi
+}
+sink_probe confinement 'if candidate == base or candidate.startswith(base + os.sep):' 'if True:' override
+sink_probe nonblock '| getattr(os, "O_NONBLOCK", 0)' '' fifo
+sink_probe gate-sink-dir 'os.environ.get("AGENT_GATE_SINK_DIR") or ' '' seam
+sink_probe nofollow '| getattr(os, "O_NOFOLLOW", 0)' '' symlink
+sink_probe root-exists 'if not os.path.isdir(root):' 'if False:' ghost
 
 # Registry row is readable by the digest and counts the sink.
 DIGEST="$REPO_ROOT/core/infra/telemetry-digest.sh"

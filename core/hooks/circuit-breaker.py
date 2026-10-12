@@ -126,14 +126,45 @@ def _log_origin() -> str:
     return os.environ.get("AGENT_LOG_ORIGIN") or "session"
 
 
-def append_fire_record(root: str, record: dict) -> None:
-    """Append one JSON line; never raises, never blocks (regular files only —
-    a FIFO at the sink path would otherwise hang the tool call)."""
+# Fire records are queued under the machine-wide state lock and written after it
+# is released, so a slow project volume cannot stall other sessions' hooks.
+_PENDING: list = []
+
+
+def flush_pending() -> None:
+    while _PENDING:
+        data, record = _PENDING.pop(0)
+        append_fire_record(data, record)
+
+
+def sink_root(data: dict) -> str:
+    cwd = data.get("cwd")
+    if isinstance(cwd, str) and cwd:
+        return cwd
+    return os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+
+
+def append_fire_record(data: dict, record: dict) -> None:
+    """Append one JSON line; never raises, never blocks, never changes the exit code.
+
+    Regular files only (a FIFO at the sink path would otherwise hang the tool
+    call; O_NONBLOCK makes that open fail fast) and O_NOFOLLOW (a symlinked sink
+    must not redirect the write to a file outside the project). The project root
+    must already exist: only `.agent/logs` below it is created, never a missing
+    root tree. Root resolution is inside the try because `os.getcwd()` raises
+    when the process cwd was deleted.
+    """
     fd = -1
     try:
+        root = sink_root(data)
+        if not os.path.isdir(root):
+            return
         sink = resolve_sink(root)
         os.makedirs(os.path.dirname(sink), exist_ok=True)
-        flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NONBLOCK", 0)
+        flags = (
+            os.O_WRONLY | os.O_APPEND | os.O_CREAT
+            | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+        )
         fd = os.open(sink, flags, 0o600)
         if not stat.S_ISREG(os.fstat(fd).st_mode):
             return
@@ -304,11 +335,7 @@ def _maybe_fire(records: list, hook_event_name: str, data: dict, signal: str) ->
     }
     if os.environ.get("AGENT_REPRODUCE_TEST") == "1":
         record["reproduce_test"] = True
-    cwd = data.get("cwd")
-    root = cwd if isinstance(cwd, str) and cwd else (
-        os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
-    )
-    append_fire_record(root, record)
+    _PENDING.append((data, record))
 
 
 def main() -> None:
@@ -368,3 +395,4 @@ def main() -> None:
 if __name__ == "__main__":
     with state_lock():
         main()
+    flush_pending()
