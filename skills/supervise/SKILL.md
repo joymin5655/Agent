@@ -169,7 +169,9 @@ b. **Classify the wave and pick lanes** based on its content:
    Every dispatch is written as a **delegation contract** —
    `skills/supervise/templates/delegation-contract.md` (goal / output format /
    tools & scope / boundaries, plus an explicit `model` field per the Model
-   policy). Five orchestration rules travel with it (details in the template):
+   policy and a `skills` field naming the skills the worker loads — the
+   supervisor picks them; workers do not search for skills). Five
+   orchestration rules travel with it (details in the template):
    - **Fan-out cap 3–5** per wave — a wave with more concurrent subtasks
      splits into consecutive waves (the template shows a worked split).
    - **Write single-threading** — one writer per fileset; review/verify agents
