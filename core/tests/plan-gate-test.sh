@@ -621,6 +621,29 @@ report("flag-normal-write-and-overwrite",
        first.startswith("approved at ") and first.endswith("session=sidF")
        and flag.read_text().endswith("session=sidLongerSession")
        and flag.read_text().count("approved at") == 1 and mod.flag_session(flag) == "sidLongerSession")
+# AG15 N1: restore without link uses exclusive create; losing the race preserves per-session
+mod, flag = load("excl")
+slot(flag).write_text("ownerX")
+undo1 = patched(os, "link", no_link)
+real_open = os.open
+
+
+def racing_open(path, flags, *a, **kw):
+    if str(path) == str(slot(flag)) and flags & os.O_EXCL:
+        slot(flag).write_text("newZ")  # a newer slot lands just before our exclusive create
+    return real_open(path, flags, *a, **kw)
+
+
+os.open = racing_open
+try:
+    mod._claim_remove_legacy("other")
+finally:
+    os.open = real_open
+    undo1()
+kept = pathlib.Path(str(flag) + ".withheld.d") / "ownerX"
+report("restore-excl-create-loses-race-old-session-preserved",
+       slot(flag).read_text() == "newZ" and kept.is_file() and kept.read_text() == "ownerX"
+       and not claims(flag))
 PY
 while read -r verdict name; do
   [[ -z "${verdict:-}" ]] && continue
