@@ -59,9 +59,16 @@ fixed decisions (DROP/TRUNCATE TABLE stays `ask`, `data/artifacts/` add stays `d
   tee`, the destination of `cp install ln` (a destination directory also yields `dir/<basename>`;
   `-t DIR` works) plus the sources of `mv`, `sed|perl -i` / `--in-place[=SUF]` file operands (the
   script operand is skipped), `dd of=`, write redirects (`>` `>>` `>|` `&>` `&>>` `N>` `<>`), and
-  the bodies of `sh|bash|zsh|dash -c '...'` and `eval`. Relative paths are resolved against the
+  the bodies of `sh|bash|zsh|dash -c '...'` and `eval`, plus command substitutions anywhere —
+  `$(...)`, backticks (a backslash-escaped backtick nests, as in the shell), the same inside double
+  quotes and inside an UNQUOTED heredoc body (a quoted `<<'EOF'` body is data). `$((...))` is
+  arithmetic, not a command, but a `$(...)` nested inside it still counts. Relative paths are resolved against the
   event's `cwd` (default: the hook's), `..` is normalised, and paths outside the project are
-  ignored. It runs last, so a built-in deny/ask always wins.
+  ignored. It runs last, so a built-in deny/ask always wins. A project that declared an area
+  evaluates EVERY Bash command (one extra python start, ~30 ms; there is deliberately no verb
+  pre-filter, which could not be a safe superset of the tokenizer: `to\uch`, `git -c 'x=;' add`);
+  a project that declared none never starts python for this. A command over ~100 KB is cut by
+  bytes for the hand-off to python and reported as truncated (fail-closed, below).
 - **What it does not see (limits).** `git add .` / `-A` and globs (no file names), `rsync`,
   `find -delete|-exec`, `patch`, `git apply`, `git stash`, `awk -i inplace`, an interpreter
   one-liner that writes (`python -c "open(...)"`), a script body fed through a heredoc or a pipe

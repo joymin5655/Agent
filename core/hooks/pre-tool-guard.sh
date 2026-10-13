@@ -2271,19 +2271,26 @@ fi
 # whole evaluation by one process-wide deadline. Only projects that declare an area pay for this
 # second python start (line 2 of the 11b call).
 _RISK_RECORDS=""
-# Cheap pre-filter (bash builtin regex, no fork): only a command that mentions a path-modifying
-# verb or a redirect can have a target to evaluate, so `git status` / `ls` never start python.
-_RISK_MUT='(>|(^|[^[:alnum:]_.-])(cp|mv|rm|tee|touch|install|ln|truncate|unlink|sed|perl|dd|sh|bash|zsh|dash|eval)([^[:alnum:]_-]|$)|git[^;&|]*[[:space:]](add|rm|mv|restore|checkout)([^[:alnum:]_-]|$))'
-# A command so large or so full of separators that hook_config would truncate it is analysed even
-# without a verb: truncation is a fail-closed hit, never a silent skip.
-_RISK_SEPS=${SCAN_CMD//[;&|$'\n']/}
-if [[ "${_RISK_DECLARED:-0}" == 1 && -n "${_HOOK_DIR:-}" && -n "${_PROJ_ROOT:-}" ]] \
-   && [[ "$SCAN_CMD" =~ $_RISK_MUT || ${#SCAN_CMD} -gt 60000 || $(( ${#SCAN_CMD} - ${#_RISK_SEPS} )) -gt 400 ]]; then
+# No verb pre-filter: any text-level filter must be a superset of what the tokenizer reads
+# (`to\uch`, `s\ed`, `git -c 'x=;' add`, a line continuation all reach a writer), and a global
+# pattern substitution over the command is super-linear on bash 3.2. A project that declared an
+# area simply evaluates every Bash command; a project that declared none never starts python.
+# The command is handed over in an env var (one string is capped near 128 KB by exec), so a huge
+# one is cut by BYTES and flagged: hook_config then reports it as truncated, never as clean.
+_RISK_CUT=0
+_RISK_ARG="$SCAN_CMD"
+if (( ${#SCAN_CMD} > 100000 )); then
+  _RISK_ARG=$(printf '%s' "$SCAN_CMD" | head -c 100000)
+  _RISK_CUT=1
+fi
+_RISK_EVT=""
+if (( ${#INPUT} <= 100000 )); then _RISK_EVT="$INPUT"; fi   # only used for the event's cwd
+if [[ "${_RISK_DECLARED:-0}" == 1 && -n "${_HOOK_DIR:-}" && -n "${_PROJ_ROOT:-}" ]]; then
   # Belt and braces: hook_config has its own deadline; this outer bound covers a non-POSIX or
   # otherwise signal-less python. Where no timeout binary exists the in-process deadline stands.
   _RISK_TMO=()
   if command -v timeout >/dev/null 2>&1; then _RISK_TMO=(timeout 5); fi
-  _RISK_RECORDS=$(_HD="$_HOOK_DIR" _PR="$_PROJ_ROOT" _CMD="$SCAN_CMD" _EVT="$INPUT" "${_RISK_TMO[@]}" python3 - <<'PY' 2>/dev/null || true
+  _RISK_RECORDS=$(_HD="$_HOOK_DIR" _PR="$_PROJ_ROOT" _CMD="$_RISK_ARG" _CUT="$_RISK_CUT" _EVT="$_RISK_EVT" "${_RISK_TMO[@]}" python3 - <<'PY' 2>/dev/null || true
 import json, os, sys
 try:
     _cwd = os.getcwd()
@@ -2298,7 +2305,8 @@ try:
     except Exception:
         ev_cwd = ""
     for line in hook_config.risk_command_report(os.environ.get("_PR", ""), os.environ.get("_CMD", ""),
-                                                ev_cwd if isinstance(ev_cwd, str) else ""):
+                                                ev_cwd if isinstance(ev_cwd, str) else "",
+                                                os.environ.get("_CUT") == "1"):
         print(line)
 except Exception:
     pass

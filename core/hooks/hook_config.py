@@ -788,26 +788,66 @@ def _match_paren(src, i):
     return n
 
 
-def _heredoc_substitutions(body, on_subst):
-    """Hand the $(...) and `...` spans of an unquoted heredoc body to `on_subst`. A backslash
-    escapes the next character, as in the shell's own expansion of the body."""
+def _backtick_end(src, i):
+    """Index of the backtick closing the one at src[i]: a backslash escapes the next character,
+    so an escaped backtick nests instead of closing. len(src) when unterminated."""
+    j = i + 1
+    n = len(src)
+    while j < n:
+        if src[j] == "\\":
+            j += 2
+            continue
+        if src[j] == "`":
+            return j
+        j += 1
+    return n
+
+
+def _unescape_backtick(body):
+    """Body of a `...` substitution as the shell hands it to the inner command: `\\` followed by
+    a backtick, a dollar sign or a backslash loses the backslash."""
+    return re.sub(r"\\([`$\\])", r"\1", body)
+
+
+def _expansion_span(src, i):
+    """For a substitution starting at src[i] ('$(' or '$((' or a backtick), return
+    (end_index, kind, inner): kind is "cmd", "arith" or "tick"; inner is the text to scan."""
+    if src.startswith("$((", i):
+        k = _match_paren(src, i + 1)
+        if k > i + 3 and src[k - 1] == ")":
+            return k, "arith", src[i + 3:k - 1]
+        return k, "cmd", src[i + 2:k]
+    if src.startswith("$(", i):
+        k = _match_paren(src, i + 1)
+        return k, "cmd", src[i + 2:k]
+    k = _backtick_end(src, i)
+    return k, "tick", _unescape_backtick(src[i + 1:k])
+
+
+def _scan_expansions(text, on_subst):
+    """Hand every command substitution inside `text` (an unquoted heredoc body or an arithmetic
+    expression) to `on_subst`. $((...)) is arithmetic, not a command: only the substitutions
+    nested inside it count. A backslash escapes the next character."""
     i = 0
-    n = len(body)
+    n = len(text)
     while i < n:
-        c = body[i]
+        c = text[i]
         if c == "\\":
             i += 2
-        elif body.startswith("$(", i):
-            k = _match_paren(body, i + 1)
-            on_subst(body[i + 2:k])
-            i = k + 1
-        elif c == "`":
-            k = body.find("`", i + 1)
-            k = n if k < 0 else k
-            on_subst(body[i + 1:k])
+        elif text.startswith("$(", i) or c == "`":
+            k, kind, inner = _expansion_span(text, i)
+            if kind == "arith":
+                _scan_expansions(inner, on_subst)
+            else:
+                on_subst(inner)
             i = k + 1
         else:
             i += 1
+
+
+def _heredoc_substitutions(body, on_subst):
+    """The $(...) and `...` spans of an unquoted heredoc body run when the shell expands it."""
+    _scan_expansions(body, on_subst)
 
 
 def _lex(src, on_subst):
@@ -891,17 +931,13 @@ def _lex(src, on_subst):
                         seg.append(src[j:j + 2])
                     j += 2
                     continue
-                if src.startswith("$(", j):
-                    k = _match_paren(src, j + 1)
-                    on_subst(src[j + 2:k])
+                if src.startswith("$(", j) or src[j] == "`":
+                    k, kind, inner = _expansion_span(src, j)
+                    if kind == "arith":
+                        _scan_expansions(inner, on_subst)
+                    else:
+                        on_subst(inner)
                     seg.append("$(...)")
-                    j = k + 1
-                    continue
-                if src[j] == "`":
-                    k = src.find("`", j + 1)
-                    k = n if k < 0 else k
-                    on_subst(src[j + 1:k])
-                    seg.append("`...`")
                     j = k + 1
                     continue
                 seg.append(src[j])
@@ -910,18 +946,13 @@ def _lex(src, on_subst):
             inword = True
             i = j + 1
             continue
-        if src.startswith("$(", i):
-            k = _match_paren(src, i + 1)
-            on_subst(src[i + 2:k])
+        if src.startswith("$(", i) or c == "`":
+            k, kind, inner = _expansion_span(src, i)
+            if kind == "arith":
+                _scan_expansions(inner, on_subst)
+            else:
+                on_subst(inner)
             buf.append("$(...)")
-            inword = True
-            i = k + 1
-            continue
-        if c == "`":
-            k = src.find("`", i + 1)
-            k = n if k < 0 else k
-            on_subst(src[i + 1:k])
-            buf.append("`...`")
             inword = True
             i = k + 1
             continue
@@ -1194,7 +1225,7 @@ def command_paths(command, root="", cwd=""):
     return paths, state["truncated"]
 
 
-def risk_command_report(repo_root, command, cwd=""):
+def risk_command_report(repo_root, command, cwd="", cut=False):
     """Protocol lines for pre-tool-guard: `WARN\\t<text>` and `HIT\\t<area>\\t<decision>\\t<path>`.
     Silent (empty) for a command that modifies no path. A command over an analysis cap, or an area
     whose patterns the regex budget could not evaluate, is a synthetic fail-closed HIT whose
@@ -1202,6 +1233,7 @@ def risk_command_report(repo_root, command, cwd=""):
     try:
         _reset_budget()
         paths, truncated = command_paths(command, repo_root, cwd)
+        truncated = truncated or bool(cut)  # the caller cut the command before handing it over
         if not paths and not truncated:
             return []
         cfg = load_risk_area_patterns(repo_root)
