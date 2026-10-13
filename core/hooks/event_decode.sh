@@ -70,14 +70,21 @@ hook_input_is_blank() {
 # into a blank, printed without a trailing newline. Same result as ${v//\\$'\n'/} then ${v//$'\n'/ },
 # which is super-linear in the line count. Single-line text (the usual command) costs no process.
 hook_flatten_lines() {
+  local out
   if [[ $1 != *$'\n'* ]]; then
     printf '%s' "$1"
     return 0
   fi
-  printf '%s' "$1" | python3 -I -c '
+  if out=$(printf '%s' "$1" | python3 -I -c '
 import sys
 sys.stdout.buffer.write(sys.stdin.buffer.read().replace(b"\\\n", b"").replace(b"\n", b" "))
-' 2>/dev/null || printf '%s' "$1" | tr '\n' ' '
+' 2>/dev/null); then
+    printf '%s' "$out"
+    return 0
+  fi
+  # python3 missing or broken: the slow substitution is the exact same transformation
+  out=${1//\\$'\n'/}
+  printf '%s' "${out//$'\n'/ }"
 }
 
 decode_event_input() {
