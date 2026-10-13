@@ -135,7 +135,15 @@ esc_case quotes   'say "hi" now'                 'say "hi" now'
 esc_case backslash 'a\b \n c:\d'              'a\b \n c:\d'
 esc_case newline  $'line1\nline2\ttab'          $'line1\nline2\ttab'
 esc_case ctrl     $'a\001b\033c'                'a b c'
-esc_case unicode  '한글 — ok'                     '한글 — ok'
+esc_case unicode  '한글 — ok'                     '?????? ??? ok'
+
+# invalid UTF-8 bytes in the reason must not make the fallback JSON invalid: it is ASCII-only
+bad_utf8_out=$(PATH="$NOPY" bash -c 'source "$1"; hook_emit_decision deny "bad $(printf "\377\303") byte and 한글"' _ "$HOOKS/event_decode.sh" 2>/dev/null)
+if valid_json "$bad_utf8_out" && ! printf '%s' "$bad_utf8_out" | LC_ALL=C grep -q '[^ -~]'; then
+  ok "F2/fallback-escape/invalid-utf8-is-ascii-json"
+else
+  bad "F2/fallback-escape/invalid-utf8-is-ascii-json" "not valid ASCII JSON :: $bad_utf8_out"
+fi
 
 # a non-object tool_input together with a surrogate takes the python path: it must still fail closed
 if command -v jq >/dev/null 2>&1; then
@@ -148,6 +156,26 @@ NOJQ="$WORK/nojq"; shadow_path "$NOJQ" jq
 check "F4/no-jq/ctx-guard" "$CTX" allow "{\"tool_name\":\"$CTXN\",\"tool_input\":{\"code\":\"cat secrets/x\"}}" "$NOJQ"
 check "F4/no-jq/r4-mutex"  "$R4"  allow '{"tool_name":"Bash","tool_input":{"command":"git commit"}}' "$NOJQ"
 check "F4/no-jq/r4-file"   "$R4F" allow '{"tool_name":"Write","tool_input":{"file_path":"a.py"}}' "$NOJQ"
+
+# --- RV13 F1: the guard must find event_decode.sh however it is started -------------------------------------
+RM_EV='{"tool_name":"Bash","tool_input":{"command":"r''m -rf /"}}'
+OK_EV='{"tool_name":"Bash","tool_input":{"command":"ls"}}'
+(cd "$HOOKS" && printf '%s' "$RM_EV" | bash pre-tool-guard.sh 2>/dev/null) > "$WORK/rel.out"; rc=$?
+[[ $rc -eq 0 && "$(verdict "$(cat "$WORK/rel.out")")" == deny ]] && ok "F1/guard/bare-relative-path deny" || bad "F1/guard/bare-relative-path" "rc=$rc :: $(cat "$WORK/rel.out")"
+(cd "$HOOKS" && printf '%s' "$OK_EV" | bash pre-tool-guard.sh 2>/dev/null) > "$WORK/rel.out"
+[[ ! -s "$WORK/rel.out" ]] && ok "F1/guard/bare-relative-path benign allow" || bad "F1/guard/bare-relative-path benign" "$(cat "$WORK/rel.out")"
+(cd "$HOOKS" && printf '%s' "$RM_EV" | bash ./pre-tool-guard.sh 2>/dev/null) > "$WORK/rel.out"
+[[ "$(verdict "$(cat "$WORK/rel.out")")" == deny ]] && ok "F1/guard/dot-slash deny" || bad "F1/guard/dot-slash" "$(cat "$WORK/rel.out")"
+mkdir -p "$WORK/link"; ln -s "$GUARD" "$WORK/link/guard-link.sh"
+out=$(printf '%s' "$RM_EV" | bash "$WORK/link/guard-link.sh" 2>/dev/null)
+[[ "$(verdict "$out")" == deny ]] && ok "F1/guard/symlink deny" || bad "F1/guard/symlink" "$out"
+out=$(printf '%s' "$OK_EV" | bash "$WORK/link/guard-link.sh" 2>/dev/null)
+[[ -z "$out" ]] && ok "F1/guard/symlink benign allow (resolved to the real directory)" || bad "F1/guard/symlink benign" "$out"
+mkdir -p "$WORK/alone"; cp "$GUARD" "$WORK/alone/pre-tool-guard.sh"
+for ev in "$RM_EV" "$OK_EV"; do
+  out=$(printf '%s' "$ev" | bash "$WORK/alone/pre-tool-guard.sh" 2>/dev/null); rc=$?
+  if [[ $rc -eq 0 && "$(verdict "$out")" == deny ]] && valid_json "$out"; then ok "F1/guard/event_decode-missing fail-closed"; else bad "F1/guard/event_decode-missing" "rc=$rc :: $out"; fi
+done
 
 echo
 echo "hook-input-decode-residual-test: $PASS passed, $FAIL failed"
