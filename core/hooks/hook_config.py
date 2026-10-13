@@ -1341,7 +1341,14 @@ def _cli(argv):
         _reset_budget()
         if mode == "risk-paths":
             consumer = argv[3]
-            lines = [p for p in sys.stdin.read().splitlines() if p]
+            # Read bytes, not text: pre-push now passes paths with core.quotepath=off, so a name
+            # may carry non-ASCII or even invalid UTF-8 bytes. A strict stdin decode would raise and
+            # the outer `except` would swallow it, silently dropping EVERY declared area (deny too).
+            # surrogateescape round-trips any byte. Split on "\n" only: git still quotes a real
+            # newline in a path, and str.splitlines() would also break on U+2028/U+2029/U+0085,
+            # inventing a second path from one filename.
+            raw = sys.stdin.buffer.read().decode("utf-8", "surrogateescape")
+            lines = [p for p in raw.split("\n") if p]
             truncated = len(lines) > _MAX_PATH_ITEMS
             paths = lines[:_MAX_PATH_ITEMS]
             cfg = load_risk_area_patterns(root)
@@ -1366,7 +1373,10 @@ def _cli(argv):
                 for text in dict.fromkeys(synthetic):
                     print("HIT\t%s\t%s" % (area, text))
                 for path in hits:
-                    print("HIT\t%s\t%s" % (area, re.sub(r"[\t\r\n]+", " ", path)))
+                    # backslashreplace: a path decoded with surrogateescape would raise on a strict
+                    # stdout, and the outer `except` would then drop the rest of this area's hits.
+                    safe = re.sub(r"[\t\r\n]+", " ", path).encode("utf-8", "backslashreplace").decode("utf-8")
+                    print("HIT\t%s\t%s" % (area, safe))
         elif mode == "resource-match":
             tool = argv[3]
             command = sys.stdin.read() if tool == "Bash" else ""

@@ -64,7 +64,15 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     range="$remote_sha..$local_sha"
   fi
   DIFF_RANGE="$range"
-  files="$(git diff --name-only "$range" 2>/dev/null || true)"
+  # core.quotepath=off: by default git renders a non-ASCII path as a double-quoted, octal-escaped
+  # string ("db/migrations/\355...sql"), which no built-in risk pattern or hook_config matcher
+  # recognises, so a risk-area file with a non-ASCII name slips the scan. Off prints the real UTF-8
+  # bytes. ponytail: this does NOT close every quoting gap — git still C-quotes a path that contains
+  # a double-quote, backslash, tab or other control character ("db/migrations/a\tb.sql"), so a
+  # declared-deny can still be dodged by such a name; the risk-paths reader is byte-safe but the
+  # name arrives quoted. Pre-existing on main. Full close = a -z/NUL pipeline end to end (see the
+  # AG-queue follow-up); the repo already uses `-z` in review-evidence.py / impact-context.py.
+  files="$(git -c core.quotepath=off diff --name-only "$range" 2>/dev/null || true)"
   DIFF_FILES="${DIFF_FILES}${files}
 "
 done
