@@ -153,6 +153,21 @@ else
   bad "fuzz/live-command-never-hidden" "$(printf '%s' "$fuzz_out" | head -5)"
 fi
 
+# --- (3b) pathological nesting: no Traceback on stderr, the verdict stays deny ----------------------------
+deep=$(python3 -c 'import sys; sys.stdout.write("echo \"$(" * 1500)')
+ev=$(python3 - "git commit -m \"x\" ; $RMRF / ; $deep" <<'PY'
+import json
+import sys
+sys.stdout.write(json.dumps({"tool_name": "Bash", "tool_input": {"command": sys.argv[1]}}))
+PY
+)
+out=$(printf '%s' "$ev" | bash "$GUARD" 2>"$WORK/deep.err")
+if [[ "$(verdict "$out")" == deny && ! -s "$WORK/deep.err" ]]; then
+  ok "deep-nesting/deny-without-stderr"
+else
+  bad "deep-nesting/deny-without-stderr" "verdict=$(verdict "$out") stderr=$(head -c 120 "$WORK/deep.err")"
+fi
+
 # --- (4) hook_flatten_lines fallback is equivalent to the substitution (python3 failing) ------------------
 # shellcheck source=../hooks/event_decode.sh
 source "$HOOKS/event_decode.sh"
