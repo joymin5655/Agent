@@ -34,6 +34,52 @@ Differences from the Bash guard, which uses the same field:
   works without PyYAML.
 - The PyYAML warning can print once per hook invocation, so once per Edit/Write.
 
+## Risk-area patterns and mutex resources (T-4)
+
+Both files also carry the following. They are read by one loader (`core/hooks/hook_config.py`)
+and follow the same rule as everything else here: **extension-only**.
+
+| Field | Read by | Effect |
+|---|---|---|
+| `risk_areas.data.pattern` | `pre-tool-guard.sh` (guard 15), `core/git-hooks/pre-push`, `core/infra/auto-ship.sh` | a regex or list (Python `re`, `search` on a repo-relative path), added to the built-in `^.*/migrations/.*\.sql$` |
+| `risk_areas.deploy.pattern` | same three | added to the built-in `^.*/functions/.*/index\.ts$` |
+| `risk_areas.payment.pattern` | same three | added to auto-ship's built-in payment pattern; pre-tool-guard and pre-push have none, so there it only takes effect when listed |
+| `risk_areas.<area>.decision` | same three | `advisory` \| `ask` \| `deny`; effective = `max(consumer floor, declared)` |
+| `resources.<name>.triggers` | `r4-mutex-check.sh` | regexes mapping a Bash command / MCP tool name to the mutex `<name>`; consulted only when no built-in trigger matched |
+
+Consumer floors: `pre-tool-guard` **ask**, `pre-push` **advisory**, `auto-ship` **abort**. A
+declared `deny` blocks the push (pre-push exit 12/13/14 for data/deploy/payment) and denies the
+command (pre-tool-guard); it is the only way `deny` is reached. Built-in guards keep their own
+fixed decisions (DROP/TRUNCATE TABLE stays `ask`, `data/artifacts/` add stays `deny`).
+
+- **What pre-tool-guard matches.** A heuristic list of the paths a Bash command would modify:
+  `git add|rm|mv` arguments, `cp mv rm tee touch install ln truncate unlink`, `sed|perl -i`,
+  `dd of=`, redirect targets, and `sh -c '...'` bodies. `git add .` / `-A` expose no file names, so
+  pre-push is the backstop there. It can over-ask, never skips a built-in; it runs last, so a
+  built-in deny/ask always wins.
+- **PyYAML missing.** The `.yml` is skipped with ONE stderr line, `hook_config: PyYAML not installed
+  ...`, and the built-ins apply — no new refusal. `.json` still works. (`risk_areas.secrets.paths`
+  keeps its P1-9 fail-closed behaviour.)
+- **Bad entries.** A regex that is invalid, over 200 chars, nested-quantified (`(a+)+`, or a
+  character class followed by `+`/`*`) or that matches the empty string is ignored with
+  `hook_config: ignored ...`; siblings still apply. At most 20 patterns per area and 20 resources.
+  Matching sees at most 1024 chars per path and runs under a 0.5 s per-pattern watchdog, so a
+  catastrophic pattern is dropped, never a hang. A resource name must match `[a-z0-9][a-z0-9_.-]*`.
+- **Not read.** `resources.<name>.auto_expire_minutes` (an expiry would shorten a lock's hold, so it
+  would weaken the mutex; stale locks are `agent-session.sh gc`'s job), `secrets.keywords`,
+  `domain-output`, and a `hook-config.yml` at the project root.
+
+```yaml
+# .agent/hook-config.yml
+risk_areas:
+  data:    {pattern: '^db/migrations/.*\.sql$', decision: ask}
+  payment: {pattern: ['(billing/|stripe)', '^pay/']}
+resources:
+  ship-it: {triggers: ['make ship', '^release\.sh']}
+```
+
+Tests: `bash core/tests/risk-area-config-test.sh`.
+
 ## Schema
 
 All keys live under a top-level `python_hooks:` mapping (a bare top-level mapping

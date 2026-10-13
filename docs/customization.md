@@ -5,10 +5,11 @@ Two different things currently share this name, at different maturity levels:
 1. **The secret-scan extension loader** (`core/hooks/hook_config.py`) — small,
    dynamic, actually parsed at runtime by `secret-content-scan.py`.
 2. **The project-scaffold template** (`templates/hook-config.yml.template`,
-   installed by `setup.sh --project`) — documents an intended `risk_areas:` /
-   `resources:` / `hardcoding:` shape, but as of this writing no hook reads
-   that block dynamically. Each hook's actual matching is hardcoded in the
-   script.
+   installed by `setup.sh --project`) — documents the `risk_areas:` /
+   `resources:` / `hardcoding:` shape. `risk_areas.secrets.paths`,
+   `risk_areas.data/deploy/payment` and `resources.<name>.triggers` are read at
+   runtime (extension-only); the rest (`secrets.keywords`, `domain-output`,
+   `hardcoding:`) is documentation only.
 
 This page documents both, and is explicit about which is which.
 
@@ -36,8 +37,8 @@ never remove or weaken a built-in, never flip `deny` to `allow`.
   loader can't silently fall out of sync.
 - Repo root resolution: `$AGENT_PROJECT_DIR` env var, else `$CLAUDE_PROJECT_DIR`,
   else `git rev-parse --show-toplevel`. There is no `$AGENT_HOOK_CONFIG` env
-  var and no upward directory walk — those apply only to the aspirational
-  block in part 2.
+  var and no upward directory walk (the same root resolution serves the live
+  fields in part 2).
 - Missing / unreadable / malformed file → silently degrades to built-ins only
   (fail-safe: a broken config can never crash a session or weaken detection).
 
@@ -95,28 +96,35 @@ pattern is time-bounded rather than hanging the hook.
 
 ---
 
-## 2. `risk_areas:` / `resources:` / `hardcoding:` (documented shape, not yet dynamic)
+## 2. `risk_areas:` / `resources:` / `hardcoding:` (partly live, extension-only)
 
 `setup.sh --project` scaffolds a project-root `hook-config.yml` from
-`templates/hook-config.yml.template`. That file documents a map-keyed shape:
+`templates/hook-config.yml.template`; **copy it to `.agent/hook-config.yml`** (or `.json`) —
+the project-root copy is not read by any hook. That file documents a map-keyed shape, and the
+fields marked LIVE below are read at runtime through `core/hooks/hook_config.py`:
 
 - `risk_areas:` — `data`, `secrets`, `deploy`, `payment`, `domain-output`
-  (see `rules/policy/security-guards.md` for what each covers)
+  (see `rules/policy/security-guards.md` for what each covers).
+  LIVE: `secrets.paths`; `data` / `deploy` / `payment` `.pattern` and `.decision`
+  (read by `pre-tool-guard.sh`, `core/git-hooks/pre-push` and `core/infra/auto-ship.sh`).
+  NOT wired: `secrets.keywords`, `domain-output`.
 - `resources:` — `production-db`, `edge-function-deploy`, `production-deploy`
-  (mutex resource names, distinct from the risk-area IDs above)
+  (mutex resource names, distinct from the risk-area IDs above).
+  LIVE: `<name>.triggers` (read by `r4-mutex-check.sh`). `auto_expire_minutes` was removed
+  from the schema: an expiry would weaken the mutex.
 - `hardcoding:` — `exempt_globs`, `scan_extensions`
 - session/worktree settings — `heartbeat_interval_seconds`, `lock_dir`,
   `log_dir`, etc.
 
-**As of this writing, no hook reads this block at runtime.** `pre-tool-guard.sh`'s
-risk-area path/command matching, `r4-mutex-check.sh`'s resource-trigger
-matching, and `check-hardcoding.py`'s exempt-globs are each hardcoded
-directly in the script — not loaded from your project's `hook-config.yml`.
-Editing the yml file's `risk_areas:`/`resources:`/`hardcoding:` sections today
-has no effect on hook behavior; to change what a hook matches, edit the
-hardcoded patterns in the hook script itself. Treat
-`templates/hook-config.yml.template` as documentation of the target shape for
-a still-open gap, not a working config surface yet.
+**Extension-only.** A live field can only ADD to a hook's built-in behaviour: patterns are
+unioned with the built-ins, `decision` is `max(consumer floor, declared)` (it never lowers
+anything, and `deny` appears only when you write it), and `resources.<name>.triggers` are consulted
+only when no built-in trigger matched. Without PyYAML the `.yml` is skipped with a stderr warning
+and the built-ins apply (`.json` still works); the one exception stays `risk_areas.secrets.paths`,
+which fails closed (P1-9). A regex that is invalid, longer than 200 chars, nested-quantified or
+matches the empty string is ignored with a warning, and matching is time-bounded. Schema and
+per-consumer behaviour: [`hook-config.md`](hook-config.md). `check-hardcoding.py`'s exempt-globs
+are still hardcoded in the script (`hardcoding:` is documentation only).
 
 ---
 
@@ -125,20 +133,19 @@ a still-open gap, not a working config surface yet.
 | Hook | Reads project config? | What it does |
 |---|---|---|
 | `secret-content-scan.py` | Yes — `.agent/hook-config.yml`/`.json` via `hook_config.py` (schema in part 1) | Built-in scan + additive config patterns/exempts/key-names |
-| `pre-tool-guard.sh` | No — hardcoded in-script | Denies on hardcoded risk-area path/command patterns |
-| `r4-mutex-check.sh` | No — hardcoded in-script | Matches hardcoded resource triggers against the lock file |
+| `pre-tool-guard.sh` | Yes — `risk_areas.secrets.paths` (deny, P1-8) and `risk_areas.data/deploy/payment` (ask; deny only if declared) | Built-in patterns first, project paths added on top |
+| `r4-mutex-check.sh` | Yes — `resources.<name>.triggers` (extension-only) | Built-in resource triggers first; config adds resources; matches against the lock file |
+| `core/git-hooks/pre-push`, `core/infra/auto-ship.sh` | Yes — `risk_areas.data/deploy/payment` | Built-in/env patterns unioned with config; pre-push advisory (block only on declared `deny`), auto-ship aborts |
 | `check-hardcoding.py` | No — hardcoded in-script (patterns/exempts; wiring = backlog T-4) | Flags hardcoded design literals. Default **dryrun** (advisory + `.agent/logs/hardcoding.jsonl`); `AGENT_HARDCODING_MODE=off\|dryrun\|block` (block restores the pre-2026-07 deny). Note: `off` exits before any logging, so the telemetry digest shows the gate as DEAD while off — unenforced AND untelemetered |
 
 ---
 
-## If you need project-specific risk areas or mutex resources today
+## If you need project-specific risk areas or mutex resources
 
-Since `risk_areas:`/`resources:` aren't dynamically loaded yet: fork the
-relevant hook (`pre-tool-guard.sh` for risk areas, `r4-mutex-check.sh` for
-mutex resources) and edit its hardcoded patterns directly. Keep your
-`hook-config.yml`'s `risk_areas:`/`resources:` blocks as a record of intent
-even though nothing reads them yet — it keeps `rules/policy/security-guards.md`
-and your fork in sync when the dynamic loader lands.
+Declare `risk_areas.data/deploy/payment` patterns and `resources.<name>.triggers` in
+`.agent/hook-config.yml|json` (see above). To change or remove a built-in pattern, or to add a
+brand-new risk-area id, fork the hook script (`pre-tool-guard.sh`, `r4-mutex-check.sh`) — config
+deliberately cannot weaken a built-in.
 
 ---
 

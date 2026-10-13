@@ -2086,7 +2086,11 @@ fi
 _HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null)"
 _PROJ_ROOT="${AGENT_PROJECT_DIR:-${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null)}}"
 if [[ -n "$_PROJ_ROOT" && -n "$_HOOK_DIR" ]]; then
-  _EXTRA_SECRET_ALT=$(_HD="$_HOOK_DIR" _PR="$_PROJ_ROOT" python3 - <<'PY' 2>/dev/null || true
+  # One python start serves both consumers of hook_config: line 1 is the secrets-path
+  # alternation (unchanged), every further line is a T-4 risk-pattern record (WARN/HIT, tab-
+  # separated) for guard 15 below. SCAN_CMD is the message-stripped command, so a commit
+  # message that merely mentions a path cannot trigger a hit.
+  _PY_OUT=$(_HD="$_HOOK_DIR" _PR="$_PROJ_ROOT" _CMD="$SCAN_CMD" python3 - <<'PY' 2>/dev/null || true
 import os, sys
 # `python3 -` puts the working directory first on sys.path; drop it so a stray
 # yaml.py / yaml/ in the repo cannot stand in for PyYAML.
@@ -2096,20 +2100,33 @@ except OSError:  # deleted working directory
     _cwd = ""
 sys.path[:] = [p for p in sys.path if p not in ("", ".", _cwd)]
 sys.path.insert(0, os.environ.get("_HD", ""))
+unparseable = False
+toks = []
+hook_config = None
 try:
     import hook_config
-    if hook_config.risk_areas_unparseable(os.environ.get("_PR", "")):
-        # '!' can never appear in a safe token, so this sentinel is unambiguous.
-        print("!UNPARSEABLE")
-        sys.exit(0)
-    toks = hook_config.load_risk_area_secret_paths(os.environ.get("_PR", ""))
+    unparseable = hook_config.risk_areas_unparseable(os.environ.get("_PR", ""))
+    if not unparseable:
+        toks = hook_config.load_risk_area_secret_paths(os.environ.get("_PR", ""))
 except Exception:
     toks = []
-# tokens are already a safe literal set (^[A-Za-z0-9._/\-]+$); escape the regex
-# dot so a config '.env.prod' matches literally, then join into an ERE group.
-print("|".join(t.replace(".", "[.]") for t in toks))
+if unparseable:
+    # '!' can never appear in a safe token, so this sentinel is unambiguous.
+    print("!UNPARSEABLE")
+else:
+    # tokens are already a safe literal set (^[A-Za-z0-9._/\-]+$); escape the regex
+    # dot so a config '.env.prod' matches literally, then join into an ERE group.
+    print("|".join(t.replace(".", "[.]") for t in toks))
+try:
+    for line in hook_config.risk_command_report(os.environ.get("_PR", ""), os.environ.get("_CMD", "")):
+        print(line)
+except Exception:
+    pass
 PY
 )
+  _EXTRA_SECRET_ALT=${_PY_OUT%%$'\n'*}
+  _RISK_RECORDS=""
+  [[ "$_PY_OUT" == *$'\n'* ]] && _RISK_RECORDS=${_PY_OUT#*$'\n'}
   _SECRET_READ_VERBS='cat|tac|nl|head|tail|less|more|awk|sed|grep|egrep|fgrep|rg|ag|bat|hexdump|xxd|od|strings|dd|fold|rev|tee|cp|mv|ln|md5sum|shasum|sha256sum|sha512sum|diff|cmp|gunzip|bunzip2|bzip2|bzcat|xz|xzcat|unxz|lzma|lz4cat|tar|unzip|7z|zip|gpg|openssl|age|rsync|scp|curl|wget|source|\.|'"$_SECRET_MORE_READERS"
   # P1-9: risk_areas declared but PyYAML absent -> the declared paths are unknown,
   # so deny anything the token match below could deny for SOME path: the same
@@ -2211,5 +2228,32 @@ FIX: fix the flagged code itself; edit the config only when the rule change is t
   exit 0
 fi
 
+# 15. Project-declared risk-area paths (T-4) - hook-config.yml/json
+# risk_areas.<data|deploy|payment>.pattern. EXTENSION-ONLY: this runs after every built-in
+# guard above, so a built-in deny/ask always wins; a config pattern can only ADD an `ask`
+# (or an explicit `decision: deny`) for a command that modifies a matching path. It is never
+# consulted to relax anything. Records come from the single hook_config call in 11b.
+if [[ -n "${_RISK_RECORDS:-}" ]]; then
+  _RISK_HIT_AREA="" _RISK_HIT_DEC="" _RISK_HIT_PATHS=""
+  while IFS=$'\t' read -r _rk_kind _rk_a _rk_b _rk_c; do
+    case "$_rk_kind" in
+      WARN) echo "hook_config: $_rk_a" >&2 ;;
+      HIT)
+        [[ -z "$_RISK_HIT_AREA" ]] && _RISK_HIT_AREA="$_rk_a"
+        if [[ "$_rk_b" == "deny" ]]; then _RISK_HIT_DEC=deny
+        elif [[ -z "$_RISK_HIT_DEC" ]]; then _RISK_HIT_DEC="$_rk_b"; fi
+        _RISK_HIT_PATHS="${_RISK_HIT_PATHS:+$_RISK_HIT_PATHS, }$_rk_c"
+        ;;
+    esac
+  done <<< "$_RISK_RECORDS"
+  if [[ -n "$_RISK_HIT_AREA" ]]; then
+    log_violation project-risk-area "project $_RISK_HIT_AREA path modified: ${_RISK_HIT_PATHS:0:200}" "$_RISK_HIT_DEC"
+    _RISK_MSG="Command modifies a project-declared $_RISK_HIT_AREA path (Risk Area: $_RISK_HIT_AREA): ${_RISK_HIT_PATHS:0:200}
+WHY: .agent/hook-config risk_areas.$_RISK_HIT_AREA.pattern marks these paths as high-risk; automation must not change them without a human decision.
+FIX: confirm only if this change is intended; otherwise leave the file to a reviewed change, or narrow the pattern in .agent/hook-config.yml."
+    if [[ "$_RISK_HIT_DEC" == "deny" ]]; then emit_deny "$_RISK_MSG"; else emit_ask "$_RISK_MSG"; fi
+    exit 0
+  fi
+fi
 
 exit 0

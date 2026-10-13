@@ -10,7 +10,8 @@
 #
 # Wire into your AI's PreToolUse with matcher "*" (see adapters/<ai>/settings.template).
 #
-# Resource categories (defaults — extend via hook-config.yml):
+# Resource categories (built-in defaults — extended, never replaced, by .agent/hook-config.yml|json
+# `resources.<name>.triggers`; see the config step below):
 #   - production-db      DB migration / direct SQL on production
 #   - edge-function-deploy  Serverless function deploy
 #   - production-deploy  Frontend/backend production deploy
@@ -123,7 +124,7 @@ COMMAND=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // ""')
 
 # ---------------------------------------------------------------------------
 # Resource detection — match tool call to a known shared resource.
-# Default patterns shown; extend via hook-config.yml: resources[].matches.
+# Built-in patterns first; a project can ADD triggers for its own resources (below).
 # ---------------------------------------------------------------------------
 RESOURCE=""
 
@@ -151,6 +152,25 @@ case "$TOOL_NAME" in
     esac
     ;;
 esac
+
+# Project-declared triggers (T-4): `resources.<name>.triggers` in .agent/hook-config.yml|json,
+# regexes (Python re.search) tested against the Bash command or the MCP tool name. EXTENSION-ONLY:
+# consulted only when no built-in trigger matched, so config can neither re-route nor suppress a
+# built-in resource, and `auto_expire_minutes` is deliberately not read (an expiry would shorten a
+# lock's hold and weaken the mutex). python3 is started only for Bash/MCP calls and only when the
+# config file mentions `resources`, so a project without it pays nothing. PyYAML missing ->
+# hook_config warns on stderr and the yml triggers stay inactive (json still applies).
+if [[ -z "$RESOURCE" ]] && [[ "$TOOL_NAME" == "Bash" || "$TOOL_NAME" == mcp__* ]]; then
+  _HC_PY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hook_config.py"
+  if [[ -f "$_HC_PY" ]] && command -v python3 >/dev/null 2>&1; then
+    for _cfg in "$ROOT/.agent/hook-config.yml" "$ROOT/.agent/hook-config.json"; do
+      if [[ -f "$_cfg" ]] && grep -q 'resources' "$_cfg" 2>/dev/null; then
+        RESOURCE=$(printf '%s' "$COMMAND" | python3 "$_HC_PY" resource-match "$ROOT" "$TOOL_NAME" || true)
+        break
+      fi
+    done
+  fi
+fi
 
 if [[ -z "$RESOURCE" ]]; then
   exit 0
