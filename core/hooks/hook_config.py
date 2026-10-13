@@ -824,7 +824,10 @@ def _expansion_span(src, i):
     return k, "tick", _unescape_backtick(src[i + 1:k])
 
 
-def _scan_expansions(text, on_subst):
+_MAX_ARITH_DEPTH = 8
+
+
+def _scan_expansions(text, on_subst, overflow=None, depth=0):
     """Hand every command substitution inside `text` (an unquoted heredoc body or an arithmetic
     expression) to `on_subst`. $((...)) is arithmetic, not a command: only the substitutions
     nested inside it count. A backslash escapes the next character."""
@@ -837,7 +840,11 @@ def _scan_expansions(text, on_subst):
         elif text.startswith("$(", i) or c == "`":
             k, kind, inner = _expansion_span(text, i)
             if kind == "arith":
-                _scan_expansions(inner, on_subst)
+                if depth >= _MAX_ARITH_DEPTH:  # unbounded $((...)) nesting: stop, say so
+                    if overflow is not None:
+                        overflow()
+                else:
+                    _scan_expansions(inner, on_subst, overflow, depth + 1)
             else:
                 on_subst(inner)
             i = k + 1
@@ -845,12 +852,12 @@ def _scan_expansions(text, on_subst):
             i += 1
 
 
-def _heredoc_substitutions(body, on_subst):
+def _heredoc_substitutions(body, on_subst, overflow=None):
     """The $(...) and `...` spans of an unquoted heredoc body run when the shell expands it."""
-    _scan_expansions(body, on_subst)
+    _scan_expansions(body, on_subst, overflow)
 
 
-def _lex(src, on_subst):
+def _lex(src, on_subst, overflow=None):
     """Tokens: ("w", word) with quotes resolved, ("o", op) command separators, ("r", op)
     redirections. Heredoc bodies and comments are skipped; the bodies of $(...) and `...` are
     handed to `on_subst` and left as a placeholder inside the word."""
@@ -893,7 +900,7 @@ def _lex(src, on_subst):
                     body.append(line)
                 if not was_quoted:
                     # an unquoted heredoc is EXPANDED by the shell: its $(...) and `...` run
-                    _heredoc_substitutions("\n".join(body), on_subst)
+                    _heredoc_substitutions("\n".join(body), on_subst, overflow)
             continue
         if c in " \t":
             flush()
@@ -934,7 +941,7 @@ def _lex(src, on_subst):
                 if src.startswith("$(", j) or src[j] == "`":
                     k, kind, inner = _expansion_span(src, j)
                     if kind == "arith":
-                        _scan_expansions(inner, on_subst)
+                        _scan_expansions(inner, on_subst, overflow)
                     else:
                         on_subst(inner)
                     seg.append("$(...)")
@@ -949,7 +956,7 @@ def _lex(src, on_subst):
         if src.startswith("$(", i) or c == "`":
             k, kind, inner = _expansion_span(src, i)
             if kind == "arith":
-                _scan_expansions(inner, on_subst)
+                _scan_expansions(inner, on_subst, overflow)
             else:
                 on_subst(inner)
             buf.append("$(...)")
@@ -1086,7 +1093,16 @@ def _command_targets(command, base, depth, out, state):
     if depth > _MAX_SUBST_DEPTH:
         state["truncated"] = True
         return
-    toks = _lex(command, lambda body: _command_targets(body, base, depth + 1, out, state))
+    def sub(body):
+        try:
+            _command_targets(body, base, depth + 1, out, state)
+        except Exception:  # RecursionError and friends: keep what was found, flag the rest
+            state["truncated"] = True
+
+    def overflow():
+        state["truncated"] = True
+
+    toks = _lex(command, sub, overflow)
     for words, reds in _split_commands(toks):
         state["commands"] += 1
         if state["commands"] > _MAX_COMMANDS:
@@ -1211,7 +1227,9 @@ def command_paths(command, root="", cwd=""):
     try:
         _command_targets(command, base, 0, found, state)
     except Exception:
-        return [], False
+        # An extraction failure (e.g. RecursionError) is a truncation, not a clean command: the
+        # hits found so far are kept and the caller fails closed for the rest.
+        state["truncated"] = True
     root_norm = os.path.normpath(os.path.abspath(root))
     root_real = os.path.realpath(root)
     paths = []

@@ -67,8 +67,17 @@ fixed decisions (DROP/TRUNCATE TABLE stays `ask`, `data/artifacts/` add stays `d
   ignored. It runs last, so a built-in deny/ask always wins. A project that declared an area
   evaluates EVERY Bash command (one extra python start, ~30 ms; there is deliberately no verb
   pre-filter, which could not be a safe superset of the tokenizer: `to\uch`, `git -c 'x=;' add`);
-  a project that declared none never starts python for this. A command over ~100 KB is cut by
-  bytes for the hand-off to python and reported as truncated (fail-closed, below).
+  a project that declared none never starts python for this. The command goes to python in an env
+  var, and one string is capped near 128 KB by exec **in bytes** (50,000 Korean characters are
+  150 KB), so the size test runs under `LC_ALL=C`; a command over 100,000 bytes is cut and reported
+  as truncated (fail-closed, below). The event goes over stdin whatever its size, so its `cwd`
+  always arrives. If the python call does not run to its final `END` line (exec failure, crash, the
+  outer 5 s timeout), stderr says `risk-area evaluation did not complete` and the built-in verdicts
+  stand: this is deliberately fail-open, because the config is an extension — failing closed would
+  ask on every command of a declared project whenever the interpreter hiccups — and pre-push /
+  auto-ship, which read the real changed-file list, are the backstop. An extraction error inside a
+  command (for example a pathological `$((...))` nest) is a truncation too: the hits already found
+  are kept, the rest is reported as unevaluated.
 - **What it does not see (limits).** `git add .` / `-A` and globs (no file names), `rsync`,
   `find -delete|-exec`, `patch`, `git apply`, `git stash`, `awk -i inplace`, an interpreter
   one-liner that writes (`python -c "open(...)"`), a script body fed through a heredoc or a pipe

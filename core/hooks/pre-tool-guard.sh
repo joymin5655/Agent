@@ -2275,22 +2275,26 @@ _RISK_RECORDS=""
 # (`to\uch`, `s\ed`, `git -c 'x=;' add`, a line continuation all reach a writer), and a global
 # pattern substitution over the command is super-linear on bash 3.2. A project that declared an
 # area simply evaluates every Bash command; a project that declared none never starts python.
-# The command is handed over in an env var (one string is capped near 128 KB by exec), so a huge
-# one is cut by BYTES and flagged: hook_config then reports it as truncated, never as clean.
+# The command travels in an env var, and exec caps ONE string near 128 KB — counted in BYTES, so
+# the size test runs under LC_ALL=C (a UTF-8 shell counts characters: 50,000 Korean characters
+# are 150 KB). A bigger command is cut by bytes and flagged, and hook_config then reports it as
+# truncated (fail-closed), never as clean. The event itself goes over stdin, whatever its size,
+# so its cwd always arrives.
 _RISK_CUT=0
 _RISK_ARG="$SCAN_CMD"
+_rk_lc=${LC_ALL-__unset__}
+LC_ALL=C
 if (( ${#SCAN_CMD} > 100000 )); then
-  _RISK_ARG=$(printf '%s' "$SCAN_CMD" | head -c 100000)
+  _RISK_ARG=${SCAN_CMD:0:100000}
   _RISK_CUT=1
 fi
-_RISK_EVT=""
-if (( ${#INPUT} <= 100000 )); then _RISK_EVT="$INPUT"; fi   # only used for the event's cwd
+if [[ "$_rk_lc" == __unset__ ]]; then unset LC_ALL; else LC_ALL="$_rk_lc"; fi
 if [[ "${_RISK_DECLARED:-0}" == 1 && -n "${_HOOK_DIR:-}" && -n "${_PROJ_ROOT:-}" ]]; then
   # Belt and braces: hook_config has its own deadline; this outer bound covers a non-POSIX or
   # otherwise signal-less python. Where no timeout binary exists the in-process deadline stands.
   _RISK_TMO=()
   if command -v timeout >/dev/null 2>&1; then _RISK_TMO=(timeout 5); fi
-  _RISK_RECORDS=$(_HD="$_HOOK_DIR" _PR="$_PROJ_ROOT" _CMD="$_RISK_ARG" _CUT="$_RISK_CUT" _EVT="$_RISK_EVT" "${_RISK_TMO[@]}" python3 - <<'PY' 2>/dev/null || true
+  read -r -d '' _RISK_PY <<'PY' || true
 import json, os, sys
 try:
     _cwd = os.getcwd()
@@ -2301,17 +2305,27 @@ sys.path.insert(0, os.environ.get("_HD", ""))
 try:
     import hook_config
     try:
-        ev_cwd = json.loads(os.environ.get("_EVT", "") or "{}").get("cwd", "")
+        ev = json.loads(sys.stdin.read() or "{}")
+        ev_cwd = ev.get("cwd", "") if isinstance(ev, dict) else ""
     except Exception:
         ev_cwd = ""
     for line in hook_config.risk_command_report(os.environ.get("_PR", ""), os.environ.get("_CMD", ""),
                                                 ev_cwd if isinstance(ev_cwd, str) else "",
                                                 os.environ.get("_CUT") == "1"):
         print(line)
+    print("END")
 except Exception:
     pass
 PY
-)
+  _RISK_RECORDS=$(printf '%s' "$INPUT" | _HD="$_HOOK_DIR" _PR="$_PROJ_ROOT" _CMD="$_RISK_ARG" _CUT="$_RISK_CUT" "${_RISK_TMO[@]}" python3 -c "$_RISK_PY" 2>/dev/null)
+  # A python that did not run to the end (exec failure, crash, outer timeout) is reported, never
+  # silent. Extension-only: the built-in verdicts above stand; pre-push / auto-ship, which read the
+  # real changed-file list, are the backstop. Failing closed here would ask on EVERY command of a
+  # declared project whenever the interpreter hiccups.
+  case "$_RISK_RECORDS" in
+    *END) ;;
+    *) echo "hook_config: risk-area evaluation did not complete - project risk_areas not applied to this command (built-in guards unaffected)" >&2 ;;
+  esac
 fi
 if [[ -n "${_RISK_RECORDS:-}" ]]; then
   # The strongest decision wins and the message names the area(s) that reached it, with only their
