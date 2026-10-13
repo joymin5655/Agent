@@ -785,6 +785,68 @@ P=$(mkproj cli-s)
 CLI_ERR=$(python3 -c 'print("\n".join("src/f%d" % i for i in range(20001)))' | timeout 10 python3 "$HC" risk-paths "$P" auto-ship 2>&1 >/dev/null)
 [[ "$CLI_ERR" != *truncat* ]]; check "no area declared: a big file list produces no truncation warning" $?
 
+
+echo
+echo "=== (T) r3: no pre-filter between the shell and the tokenizer ==="
+P=$(mkproj ptg-t); mkdir -p "$P/db/migrations"
+printf '%s' $'risk_areas:\n  data:\n    pattern: \'^.*/migrations/.*\\.sql$\'\n' > "$P/.agent/hook-config.yml"
+Pd=$(mkproj ptg-td); mkdir -p "$Pd/db/migrations"
+printf '%s' $'risk_areas:\n  data:\n    pattern: \'^.*/migrations/.*\\.sql$\'\n    decision: deny\n' > "$Pd/.agent/hook-config.yml"
+for spec in \
+  'backslash inside the verb|to\uch db/migrations/a.sql' \
+  'backslash in sed|s\ed -i "s/a/b/" db/migrations/a.sql' \
+  'backslash in git|g\it restore db/migrations/a.sql' \
+  'git -c value holding a separator|git -c '"'"'x.y=;'"'"' add db/migrations/a.sql' \
+  'line continuation inside the verb|to\
+uch db/migrations/a.sql'; do
+  label=${spec%%|*}; cmd=${spec#*|}
+  ptg "$P" "$cmd";  [[ "$PTG_DEC" == ask  ]]; check "$label: ask" $?
+  ptg "$Pd" "$cmd"; [[ "$PTG_DEC" == deny ]]; check "$label: deny when the project declares deny" $?
+done
+if sed -n '/^# 15\./,$p' "$PTG" | grep -qE '\$\{[A-Za-z_]+//'; then rc=1; else rc=0; fi
+check "guard 15 has no global pattern substitution over the command (super-linear on bash 3.2)" $rc
+if sed -n '/^# 15\./,$p' "$PTG" | grep -q '_RISK_MUT'; then rc=1; else rc=0; fi
+check "guard 15 has no verb pre-filter regex" $rc
+
+echo
+echo "=== (U) r3: big inputs finish quickly, declared or not ==="
+Pu=$(mkproj ptg-u)
+ONE_BIG="$(python3 -c 'print(": " + "x" * 70000 + "; ls")')"
+SCRIPT120="$(python3 -c 'print("\n".join("echo line %d; ls -la src/dir%d" % (i, i) for i in range(120)))')"
+ECHO600="$(python3 -c 'print("echo x; " * 600 + "echo done")')"
+for pr in declared undeclared; do
+  if [[ $pr == declared ]]; then PP="$P"; else PP="$Pu"; fi
+  t0=$(now_ms); PTG_TIMEOUT=30 ptg "$PP" "$SCRIPT120"; el=$(( $(now_ms) - t0 ))
+  [[ "$PTG_DEC" == allow && $el -le 5000 ]]; check "$pr: 120-line script allow within 5s (${el}ms)" $?
+  t0=$(now_ms); PTG_TIMEOUT=30 ptg "$PP" "$ECHO600"; el=$(( $(now_ms) - t0 ))
+  if [[ $pr == declared ]]; then [[ "$PTG_DEC" == ask && $el -le 5000 ]]; else [[ "$PTG_DEC" == allow && $el -le 5000 ]]; fi
+  check "$pr: 600 echo commands within 5s, truncation rule applies only when declared (${el}ms, $PTG_DEC)" $?
+  t0=$(now_ms); PTG_TIMEOUT=30 ptg "$PP" "$ONE_BIG"; el=$(( $(now_ms) - t0 ))
+  if [[ $pr == declared ]]; then [[ "$PTG_DEC" == ask && $el -le 5000 ]]; else [[ "$PTG_DEC" == allow && $el -le 5000 ]]; fi
+  check "$pr: 70 KB one-line command within 5s (${el}ms, $PTG_DEC)" $?
+done
+HUGE="$(python3 -c 'print(": " + "x" * 110000 + "; touch src/x")')"
+ptg "$P" "$HUGE"
+[[ "$PTG_DEC" == ask ]]; check "declared: a 110 KB command is cut for the python hand-off, still fail-closed ask" $?
+
+echo
+echo "=== (V) r3: nested command substitution (backticks, arithmetic) ==="
+ptg_cwd "unquoted heredoc: nested backticks run"     "$P" $'cat <<EOF\n`echo \\`touch db/migrations/a.sql\\``\nEOF' ask
+ptg_cwd "plain command: nested backticks run"        "$P" 'echo `echo \`touch db/migrations/a.sql\``' ask
+ptg_cwd "double quotes: nested backticks run"        "$P" 'echo "`echo \`touch db/migrations/a.sql\``"' ask
+ptg_cwd "dollar-paren around a backtick"             "$P" 'echo $(echo `touch db/migrations/a.sql`)' ask
+ptg_cwd "quoted heredoc: nested backticks stay data" "$P" $'cat <<\'EOF\'\n`echo \\`touch db/migrations/a.sql\\``\nEOF' allow
+Pa=$(mkproj ptg-va); mkdir -p "$Pa/db/migrations"
+printf '%s' $'risk_areas:\n  data:\n    pattern: \'^db/migrations/\'\n' > "$Pa/.agent/hook-config.yml"
+ptg "$Pa" $'touch=1; db=1; migrations=1; a=1; cat <<EOF\n$((touch + db/migrations/a))\nEOF'
+[[ "$PTG_DEC" == allow ]]; check "arithmetic in an unquoted heredoc is not a command (allow)" $?
+ptg "$Pa" 'echo $((touch + db/migrations/a))'
+[[ "$PTG_DEC" == allow ]]; check "arithmetic in a plain command is not a command (allow)" $?
+ptg "$Pa" $'cat <<EOF\n$(( $(touch db/migrations/a) + 1 ))\nEOF'
+[[ "$PTG_DEC" == ask ]]; check "command substitution INSIDE arithmetic still runs (heredoc, ask)" $?
+ptg "$Pa" 'echo $(( $(touch db/migrations/a) + 1 ))'
+[[ "$PTG_DEC" == ask ]]; check "command substitution INSIDE arithmetic still runs (plain, ask)" $?
+
 echo
 echo "=== (J) docs and schema claims match the wiring ==="
 ! grep -q 'no hook reads this block' "$REPO_ROOT/docs/customization.md"; check "customization.md no longer claims no hook reads the block" $?
