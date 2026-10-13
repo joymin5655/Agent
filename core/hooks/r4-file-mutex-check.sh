@@ -23,6 +23,10 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 0
 fi
 
+# shellcheck source=event_decode.sh
+source "$(dirname "${BASH_SOURCE[0]}")/event_decode.sh"
+decode_event_input r4-file-mutex-check.sh ask
+
 TOOL_NAME=$(printf '%s' "$INPUT" | jq -r '.tool_name // .tool // ""')
 
 case "$TOOL_NAME" in

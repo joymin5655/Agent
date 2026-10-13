@@ -24,8 +24,36 @@
 # so that every guard sees nothing. (The PyYAML probe further down keeps the user site on purpose
 # and removes the working directory from sys.path itself.)
 INPUT=$(cat)
-TOOL_INPUT=$(echo "$INPUT" | python3 -I -c "import sys,json; print(json.dumps(json.load(sys.stdin).get('tool_input',{})))" 2>/dev/null || echo "{}")
-COMMAND=$(echo "$TOOL_INPUT" | python3 -I -c "import sys,json; print(json.load(sys.stdin).get('command',''))" 2>/dev/null || echo "")
+# AG21: decode the command in ONE step that cannot raise on text. A lone surrogate (`\ud800`) is legal
+# JSON and loads fine, but printing the str raised UnicodeEncodeError, and the old `2>/dev/null || echo ""`
+# turned that into an empty command that every guard below allowed. Surrogates are written as visible
+# `\udXXX` text instead, so the guards see the rest of the command unchanged. A decode that fails
+# (not JSON, not an object, tool_input of the wrong type, interpreter error) exits non-zero and is
+# denied further down, once emit_deny exists - never read as "no command". No event, or an event
+# with no tool_input.command (another tool), is not a failure and stays an allow.
+COMMAND=$(printf '%s' "$INPUT" | python3 -I -c '
+import json, sys
+raw = sys.stdin.buffer.read().decode("utf-8", "replace")
+if not raw.strip():
+    sys.exit(0)
+try:
+    event = json.loads(raw)
+except ValueError:
+    sys.exit(3)
+if not isinstance(event, dict):
+    sys.exit(3)
+tool_input = event.get("tool_input")
+if tool_input is None:
+    sys.exit(0)
+if not isinstance(tool_input, dict):
+    sys.exit(3)
+command = tool_input.get("command")
+if command is None:
+    command = ""
+elif not isinstance(command, str):
+    command = str(command)
+sys.stdout.buffer.write(command.encode("utf-8", "backslashreplace"))
+'); _DECODE_RC=$?
 
 emit_deny() {
   local reason="$1"
@@ -85,6 +113,14 @@ log_violation() {
     "$repo_root/core/infra/agent-session.sh" broadcast blocked \
       "[security] pre-tool-guard.sh: $reason" >/dev/null 2>&1 || true
 }
+
+if [[ $_DECODE_RC -ne 0 ]]; then
+  log_violation decode "hook input could not be decoded (rc=$_DECODE_RC)"
+  emit_deny "Hook input could not be decoded, so no guard could read the command (blocked fail-closed).
+WHY: an undecodable event looks the same to every guard as an empty command, and an empty command passes them all; allowing it would let any text the decoder chokes on carry a blocked command through.
+FIX: send the tool call again as plain JSON text; if the event itself is malformed, report it - do not wrap the command to dodge this check."
+  exit 0
+fi
 
 # W-7: strip commit-MESSAGE payloads before the destructive guards (1-4), so a
 # message that merely MENTIONS a destructive command ("fix: guard rm -rf /")

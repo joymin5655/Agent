@@ -29,6 +29,10 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 0
 fi
 
+# shellcheck source=event_decode.sh
+source "$(dirname "${BASH_SOURCE[0]}")/event_decode.sh"
+decode_event_input r4-mutex-check.sh ask
+
 # ---------------------------------------------------------------------------
 # Resolve canonical repo root (handles worktrees) — needed both by the
 # WorktreeCreate/WorktreeRemove branch below and by the resource-lock path.
