@@ -1348,7 +1348,15 @@ def _cli(argv):
             # newline in a path, and str.splitlines() would also break on U+2028/U+2029/U+0085,
             # inventing a second path from one filename.
             raw = sys.stdin.buffer.read().decode("utf-8", "surrogateescape")
-            lines = [p for p in raw.split("\n") if p]
+            lines = [ln for ln in (p.rstrip("\r") for p in raw.split("\n")) if ln]
+            # stdout may be ASCII (C locale, PYTHONIOENCODING=ascii); a HIT path with a non-ASCII or
+            # surrogate char would raise there and the outer `except` would drop the hits that follow
+            # it, including a later area's deny. Make every write non-raising. pre-push matches on the
+            # bytes regardless; only the rare ASCII-stdout display is escaped.
+            try:
+                sys.stdout.reconfigure(errors="backslashreplace")
+            except Exception:
+                pass
             truncated = len(lines) > _MAX_PATH_ITEMS
             paths = lines[:_MAX_PATH_ITEMS]
             cfg = load_risk_area_patterns(root)
@@ -1373,10 +1381,7 @@ def _cli(argv):
                 for text in dict.fromkeys(synthetic):
                     print("HIT\t%s\t%s" % (area, text))
                 for path in hits:
-                    # backslashreplace: a path decoded with surrogateescape would raise on a strict
-                    # stdout, and the outer `except` would then drop the rest of this area's hits.
-                    safe = re.sub(r"[\t\r\n]+", " ", path).encode("utf-8", "backslashreplace").decode("utf-8")
-                    print("HIT\t%s\t%s" % (area, safe))
+                    print("HIT\t%s\t%s" % (area, re.sub(r"[\t\r\n]+", " ", path)))
         elif mode == "resource-match":
             tool = argv[3]
             command = sys.stdin.read() if tool == "Bash" else ""

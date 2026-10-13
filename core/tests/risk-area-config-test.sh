@@ -559,10 +559,27 @@ done
 # swallow, dropping EVERY declared area including deny) and split on "\n" only (not splitlines()).
 PK=$(mkproj cli-nonascii)
 printf '%s' $'risk_areas:\n  data:\n    pattern: \'^db/\'\n    decision: deny\n' > "$PK/.agent/hook-config.yml"
-# a lone 0xe9 byte (invalid UTF-8): the whole config must still be reported, deny intact
-CLI_OUT=$({ printf 'db/plain.sql\n'; printf 'db/x\xe9y.sql\n'; } | timeout 10 python3 "$HC" risk-paths "$PK" pre-push 2>/dev/null)
+# a lone 0xe9 byte (invalid UTF-8): the whole config must still be reported, deny intact. PYTHONUTF8=0
+# + a strict io encoding pins stdin to a strict text codec, so the old sys.stdin.read() reader raises
+# deterministically (the byte-safe reader uses stdin.buffer and is unaffected).
+CLI_OUT=$({ printf 'db/plain.sql\n'; printf 'db/x\xe9y.sql\n'; } | PYTHONUTF8=0 PYTHONIOENCODING=utf-8:strict timeout 10 python3 "$HC" risk-paths "$PK" pre-push 2>/dev/null)
 [[ "$CLI_OUT" == *$'AREA\tdata\tdeny'* && "$CLI_OUT" == *$'HIT\tdata\tdb/plain.sql'* ]]
 check "risk-paths: an invalid-UTF-8 path does not drop the config (deny survives)" $?
+# stdout may be ASCII: printing a non-ASCII HIT in the first area must not drop a LATER area's deny
+# HIT. db/한글.sql (data) prints before pay/secret.py (payment); with an ASCII stdout a raising write
+# on the Korean path would lose the payment HIT entirely.
+PA=$(mkproj cli-asciiout)
+printf '%s' $'risk_areas:\n  data:\n    pattern: \'^db/\'\n    decision: deny\n  payment:\n    pattern: \'^pay/\'\n    decision: deny\n' > "$PA/.agent/hook-config.yml"
+CLI_OUT=$(printf 'db/\xed\x95\x9c.sql\npay/secret.py\n' | PYTHONIOENCODING=ascii timeout 10 python3 "$HC" risk-paths "$PA" pre-push 2>/dev/null)
+[[ "$CLI_OUT" == *$'HIT\tpayment\tpay/secret.py'* ]]
+check "risk-paths: an ASCII stdout does not drop a later area's HIT after a non-ASCII one" $?
+# CRLF input (ASCII compatibility): a trailing \r must not defeat an END-anchored pattern (a prefix
+# pattern would match through the stray \r and hide the regression).
+PC=$(mkproj cli-crlf)
+printf '%s' $'risk_areas:\n  payment:\n    pattern: \'^pay/secret\\.py$\'\n    decision: deny\n' > "$PC/.agent/hook-config.yml"
+CLI_OUT=$(printf 'pay/secret.py\r\n' | timeout 10 python3 "$HC" risk-paths "$PC" pre-push 2>/dev/null)
+[[ "$CLI_OUT" == *$'HIT\tpayment\tpay/secret.py'* ]]
+check "risk-paths: a trailing CR does not defeat an anchored match (CRLF compatibility)" $?
 # U+2028 (e2 80 a8) inside a name is ONE path, not two. The pattern matches the whole path but
 # neither fragment a splitlines() split would produce ("db/a" lacks the b.sql tail; "b.sql" lacks
 # the db/ head), so a wrong split yields zero hits and the file would slip the deny.
