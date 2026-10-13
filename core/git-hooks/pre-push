@@ -6,7 +6,7 @@
 #      .git/config secret is invisible to every content scanner)
 #   1. gitleaks on full push range (remote..local) — Layer 1 rerun
 #   2. scan-push-diff.py — bypass-pattern scan on push diff content
-#   3. Risk-area advisory (stderr only — never block)
+#   3. Risk-area advisory (stderr; blocks only on an explicit `decision: deny`)
 #
 # Activated by running `setup.sh --hooks-only` or `setup.sh --project`
 # (which sets `core.hooksPath=core/git-hooks`).
@@ -16,11 +16,19 @@
 # Exit codes (align with auto-ship.sh):
 #   0  = PASS
 #   1  = gitleaks fail (Layer 1)
+#   12 = risk area `data` declared `decision: deny` and matched
+#   13 = risk area `deploy` declared `decision: deny` and matched
+#   14 = risk area `payment` declared `decision: deny` and matched
 #   15 = secret diff fail (Layer 6)
 #
-# Risk-area paths customizable via env vars:
+# Risk-area paths — built-in defaults, operator env override, project extension:
 #   AGENT_RISK_DATA_PATTERN     (default: ^.*/migrations/.*\.sql$)
 #   AGENT_RISK_DEPLOY_PATTERN   (default: ^.*/functions/.*/index\.ts$)
+#   .agent/hook-config.yml|json risk_areas.<data|deploy|payment>.pattern — read through
+#     core/hooks/hook_config.py and UNIONed with the above (extension-only: it can add files to
+#     the report, never remove a built-in match). `payment` has no built-in default here.
+#     `decision` is advisory (default) | ask | deny; it can only raise the floor. A push is
+#     blocked only when the project explicitly declares `decision: deny`.
 
 set -euo pipefail
 
@@ -129,26 +137,52 @@ else
   echo "${YELLOW}⚠ python3 or scan-push-diff.py unavailable — skipping diff scan.${NC}" >&2
 fi
 
-# 3) Risk-area advisory (stderr only — never block)
+# 3) Risk-area report (stderr). Built-in patterns via grep; project extensions via the one
+#    hook_config.py loader, unioned per area. Advisory unless the project declared `deny`.
+HC_PY=""
+for _cand in "$(dirname "${BASH_SOURCE[0]}")/../hooks/hook_config.py" "$ROOT/core/hooks/hook_config.py"; do
+  if [ -f "$_cand" ]; then HC_PY="$_cand"; break; fi
+done
+CFG_OUT=""
+if command -v python3 >/dev/null 2>&1 && [ -n "$HC_PY" ]; then
+  CFG_OUT="$(printf '%s\n' "$DIFF_FILES" | python3 "$HC_PY" risk-paths "$ROOT" pre-push || true)"
+else
+  echo "${YELLOW}⚠ python3 or hook_config.py unavailable — .agent/hook-config risk_areas skipped (built-in patterns only).${NC}" >&2
+fi
+
+risk_fail=0
+report_area() { # report_area <area> <title> <hint> <builtin-files>
+  local area="$1" title="$2" hint="$3" builtin="$4" decision files
+  decision="$(printf '%s\n' "$CFG_OUT" | awk -F'\t' -v a="$area" '$1=="AREA" && $2==a {print $3}')"
+  files="$({ printf '%s\n' "$builtin"; printf '%s\n' "$CFG_OUT" | awk -F'\t' -v a="$area" '$1=="HIT" && $2==a {print $3}'; } | awk 'NF && !seen[$0]++')"
+  [ -z "$files" ] && return 0
+  if [ "$decision" = "deny" ]; then
+    echo "${RED}[BLOCK $area] $title (project declared decision: deny):${NC}" >&2
+    printf '%s\n' "$files" | sed 's/^/  /' >&2
+    echo "  → WHY: .agent/hook-config risk_areas.$area.decision is deny." >&2
+    echo "  → FIX: land this change through a reviewed PR, or lower the decision to ask in the project config (a human edit)." >&2
+    case "$area" in data) risk_fail=12 ;; deploy) risk_fail=13 ;; *) risk_fail=14 ;; esac
+  else
+    echo "${BLUE}[ADVISORY $area] $title:${NC}" >&2
+    printf '%s\n' "$files" | sed 's/^/  /' >&2
+    echo "  → $hint" >&2
+  fi
+}
+
 DATA_FILES=$(echo "$DIFF_FILES" | { grep -E "$RISK_DATA_PATTERN" || true; })
 DEPLOY_FILES=$(echo "$DIFF_FILES" | { grep -E "$RISK_DEPLOY_PATTERN" || true; })
-
-if [ -n "$DATA_FILES" ]; then
-  echo "${BLUE}[ADVISORY data] production data migration files in push:${NC}" >&2
-  echo "$DATA_FILES" | sed 's/^/  /' >&2
-  echo "  → Resource mutex 'ask' decision. Confirm before merge." >&2
-fi
-if [ -n "$DEPLOY_FILES" ]; then
-  echo "${BLUE}[ADVISORY deploy] function/worker deploy files in push:${NC}" >&2
-  echo "$DEPLOY_FILES" | sed 's/^/  /' >&2
-  echo "  → Resource mutex 'ask' decision. Confirm before deploy." >&2
-fi
+report_area data "production data migration files in push" "Resource mutex 'ask' decision. Confirm before merge." "$DATA_FILES"
+report_area deploy "function/worker deploy files in push" "Resource mutex 'ask' decision. Confirm before deploy." "$DEPLOY_FILES"
+report_area payment "billing/payment files in push" "Project-declared payment area. Confirm before merge." ""
 
 if [ "$fail" -eq 15 ]; then
   exit 15
 fi
 if [ "$fail" -ne 0 ]; then
   exit 1
+fi
+if [ "$risk_fail" -ne 0 ]; then
+  exit "$risk_fail"
 fi
 
 echo "${GREEN}✓ pre-push checks passed${NC}" >&2

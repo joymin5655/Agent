@@ -2,7 +2,8 @@
 
 5 risk areas that the framework's automation **must never act on
 unilaterally**. The user is always in the loop. The patterns here are
-defaults; consumers override via `hook-config.yml`.
+defaults; consumers EXTEND them via `.agent/hook-config.yml|json` (extension-only — see
+"Overriding defaults").
 
 ## 1. Production Data (`data`)
 
@@ -60,19 +61,27 @@ defaults; consumers override via `hook-config.yml`.
 - **Decision**: advisory only — never blocks. Reviewer enforces
   in PR review.
 
-## Overriding defaults
+## Extending defaults (extension-only)
 
-Edit `hook-config.yml`:
+Put this in `.agent/hook-config.yml` (or `.json`). `data`, `deploy` and `payment` are LIVE:
+`pre-tool-guard.sh` asks when a Bash command modifies a matching path, `core/git-hooks/pre-push`
+reports matching files (advisory), and `core/infra/auto-ship.sh` aborts the admin merge.
 
 ```yaml
 risk_areas:
   data:
-    pattern: '^db/migrations/.*\.sql$'
+    pattern: '^db/migrations/.*\.sql$'   # a regex or a list; ADDED to the built-ins
   deploy:
     pattern: '^workers/.*\.ts$'
-  domain-output:
-    pattern: '(uncertainty|confidence_p\d+|grade_letter)'
+    decision: ask            # advisory | ask | deny — can only raise a consumer's floor
 ```
+
+Rules that never change: a config pattern is unioned with the built-in one (nothing can be removed
+or narrowed), a `decision` is `max(consumer floor, declared)`, and `deny` appears only when the
+config writes it. Without PyYAML the yml is skipped with a warning and the built-ins apply (json
+still works). A bad regex is ignored with a warning. `domain-output` is NOT wired (documentation of
+intent; auto-ship reads `RISK_DOMAIN_OUTPUT_PATTERN` from the environment). Full schema:
+[`docs/hook-config.md`](../../docs/hook-config.md).
 
 ## Violation log
 

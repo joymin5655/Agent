@@ -79,15 +79,13 @@ The 6 layers stack defense in depth. Layers 1-2 catch most. Layer 3 catches what
 
 ## How to extend
 
-`risk_areas:` in `hook-config.yml` is declarative — a documented record of
-your project's policy shape. Today, `pre-tool-guard.sh` matches against
-patterns hardcoded in the script itself, not a dynamic read of this file.
-To add a project-specific risk area, fork `pre-tool-guard.sh` and add your
-pattern there; keep the corresponding `risk_areas:` entry as a record of
-intent:
-
+`risk_areas.secrets.paths`, `risk_areas.data/deploy/payment.pattern` (+ `decision`) and
+`resources.<name>.triggers` in `.agent/hook-config.yml|json` are read at runtime, extension-only
+(see [`../hook-config.md`](../hook-config.md)). A NEW risk area with its own id (the shape below)
+is not read by any hook: to enforce one, fork `pre-tool-guard.sh` and add your pattern there, and
+keep the `risk_areas:` entry as a record of intent:
 ```yaml
-# hook-config.yml — documents intent; pre-tool-guard.sh itself must be
+# hook-config.yml — documents intent for a NEW area; pre-tool-guard.sh itself must be
 # forked to actually enforce it (see docs/customization.md)
 risk_areas:
   - id: legacy-system-api
@@ -97,8 +95,9 @@ risk_areas:
     decision: ask
 ```
 
-The one mechanism that *is* dynamically loaded per project — no fork
-required — is the secret-scan pattern extension via `.agent/hook-config.yml`.
+The mechanisms that *are* dynamically loaded per project — no fork
+required — are the secret-scan extension, the live `risk_areas` fields and the
+`resources` triggers, all via `.agent/hook-config.yml|json`.
 See [`../customization.md`](../customization.md) for the full
 real-vs-documented split.
 

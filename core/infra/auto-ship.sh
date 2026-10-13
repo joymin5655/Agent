@@ -4,13 +4,14 @@
 # Usage:
 #   bash core/infra/auto-ship.sh <pr-number> [--watch-timeout SECONDS]
 #
-# Policy (consumer project defines risk areas in hook-config.yml — see docs/customization.md):
+# Policy (consumer project extends risk areas in .agent/hook-config.yml|json — docs/hook-config.md):
 #   1. CI all SUCCESS — or secret-scan billing-fail branch (Layer 1 leak detection still required)
 #   2. Risk-area grep on PR diff (data / secrets / deploy / payment / domain-output)
 #   3. Explicit user invocation (caller responsibility — supervisor / direct invoke)
 #   4. (Optional) Actions billing-hit signal
 #
-# Risk areas (configurable via hook-config.yml `risk_areas:` block; defaults below):
+# Risk areas (built-in defaults below; `data`/`deploy`/`payment` can be EXTENDED — never reduced —
+# by `.agent/hook-config.yml|json` risk_areas.<area>.pattern, read through core/hooks/hook_config.py):
 #   data            — production data migration files (e.g., supabase/migrations/*.sql)
 #   secrets         — secret keyword diff (sk-*, JWT, KEY= literals)
 #   deploy          — deploy bundle files (e.g., supabase/functions/*/index.ts)
@@ -35,6 +36,11 @@
 #   16 risk-area `domain-output` violated (net removal)
 #   17 admin merge fail
 #
+# Config extension rules: a config pattern is UNIONed with the default (env override or built-in);
+# every area already aborts, so a declared `decision` can only match or exceed that. PyYAML
+# missing -> the yml is skipped with a warning (json still read); a bad regex is ignored with a
+# warning. `secrets` and `domain-output` are not read from config (env / built-in only).
+#
 # Evidence: $REPO_ROOT/.agent/logs/admin-merge.jsonl (admin-merge-track.py hook).
 
 set -euo pipefail
@@ -50,10 +56,14 @@ fi
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$REPO_ROOT"
 
-# Load risk-area config (consumer project may override defaults via hook-config.yml).
-HOOK_CONFIG="${HOOK_CONFIG_PATH:-$REPO_ROOT/hook-config.yml}"
+# Project extensions come from the one loader (.agent/hook-config.yml|json). A hook-config.yml at
+# the repo ROOT (where `setup.sh --project` scaffolds it) is not read by any hook.
+HC_PY="$(cd "$(dirname "${BASH_SOURCE[0]}")/../hooks" 2>/dev/null && pwd)/hook_config.py"
+if [[ -f "$REPO_ROOT/hook-config.yml" ]]; then
+    echo "NOTE: $REPO_ROOT/hook-config.yml is not read — move risk_areas to .agent/hook-config.yml (or .json)." >&2
+fi
 
-# Default risk-area patterns (overridable via env vars or hook-config.yml).
+# Default risk-area patterns (env var overrides replace these; config only ADDS to them).
 RISK_DATA_PATTERN="${RISK_DATA_PATTERN:-^.*/migrations/.*\.sql$}"
 RISK_DEPLOY_PATTERN="${RISK_DEPLOY_PATTERN:-^.*/functions/.*/index\.ts$}"
 RISK_PAYMENT_PATTERN="${RISK_PAYMENT_PATTERN:-(billing/|stripe|polar|iap|revenue-cat)}"
@@ -156,9 +166,17 @@ DIFF_FILES=$(gh pr diff "$PR_NUM" --name-only 2>/dev/null) || {
     exit 11
 }
 
+# Project extensions (data / deploy / payment) via hook_config.py, unioned with the defaults below.
+CFG_OUT=""
+if command -v python3 >/dev/null 2>&1 && [[ -f "$HC_PY" ]]; then
+    CFG_OUT=$(printf '%s\n' "$DIFF_FILES" | python3 "$HC_PY" risk-paths "$REPO_ROOT" auto-ship || true)
+fi
+cfg_hits() { printf '%s\n' "$CFG_OUT" | awk -F'\t' -v a="$1" '$1=="HIT" && $2==a {print $3}'; }
+union_files() { { printf '%s\n' "$1"; printf '%s\n' "$2"; } | awk 'NF && !seen[$0]++'; }
+
 # data — production data migration
 if [[ -n "$RISK_DATA_PATTERN" ]]; then
-    DATA_FILES=$(echo "$DIFF_FILES" | { grep -E "$RISK_DATA_PATTERN" || true; })
+    DATA_FILES=$(union_files "$(echo "$DIFF_FILES" | { grep -E "$RISK_DATA_PATTERN" || true; })" "$(cfg_hits data)")
     if [[ -n "$DATA_FILES" ]]; then
         echo "BLOCK: risk-area 'data' violated. abort admin merge." >&2
         echo "  matched: $DATA_FILES" >&2
@@ -170,7 +188,7 @@ fi
 
 # deploy — function/worker deploy bundle
 if [[ -n "$RISK_DEPLOY_PATTERN" ]]; then
-    DEPLOY_FILES=$(echo "$DIFF_FILES" | { grep -E "$RISK_DEPLOY_PATTERN" || true; })
+    DEPLOY_FILES=$(union_files "$(echo "$DIFF_FILES" | { grep -E "$RISK_DEPLOY_PATTERN" || true; })" "$(cfg_hits deploy)")
     if [[ -n "$DEPLOY_FILES" ]]; then
         echo "BLOCK: risk-area 'deploy' violated. abort admin merge." >&2
         echo "  matched: $DEPLOY_FILES" >&2
@@ -182,7 +200,7 @@ fi
 
 # payment — billing/payment code
 if [[ -n "$RISK_PAYMENT_PATTERN" ]]; then
-    PAYMENT_FILES=$(echo "$DIFF_FILES" | { grep -iE "$RISK_PAYMENT_PATTERN" || true; })
+    PAYMENT_FILES=$(union_files "$(echo "$DIFF_FILES" | { grep -iE "$RISK_PAYMENT_PATTERN" || true; })" "$(cfg_hits payment)")
     if [[ -n "$PAYMENT_FILES" ]]; then
         echo "BLOCK: risk-area 'payment' violated. abort admin merge." >&2
         echo "  matched: $PAYMENT_FILES" >&2

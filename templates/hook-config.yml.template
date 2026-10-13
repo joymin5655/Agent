@@ -1,9 +1,18 @@
 # hook-config.yml — per-project customisation for the agent framework.
 #
-# Copy this file to your project root and edit. The framework's hooks
-# read it on every invocation, so changes take effect immediately.
+# Copy this file to `.agent/hook-config.yml` (or `.agent/hook-config.json` for the same
+# keys without PyYAML) in your project root and edit. The hooks read it on every invocation, so
+# changes take effect immediately. A copy at the project root is NOT read by any hook.
 #
-# All fields are OPTIONAL — defaults are documented inline.
+# All fields are OPTIONAL — defaults are documented inline. Each field says whether it is LIVE
+# (a hook reads it) or NOT WIRED (documentation of intent only).
+#
+# EXTENSION-ONLY: every live field here ADDS to the built-in patterns. Nothing in this file can
+# remove a built-in pattern, lower a decision below a consumer's floor, or turn an advisory off.
+# Regexes are Python `re` syntax, at most 200 chars, tested with `search` against a repo-relative
+# path; a bad one (invalid, nested quantifier such as `(a+)+` or a character class followed by
+# + or *, or one that matches the empty string) is ignored with a stderr warning.
+# PyYAML missing: the yml is skipped with a warning and the built-ins apply (json still works).
 
 # ---------------------------------------------------------------------------
 # Risk areas — the 5 areas that automation must never act on unilaterally.
@@ -11,18 +20,26 @@
 # ---------------------------------------------------------------------------
 risk_areas:
   data:
-    # Production data migrations. Regex applied to changed file paths.
+    # LIVE — read by pre-tool-guard (a Bash command that modifies a matching path asks),
+    # pre-push (advisory report) and auto-ship (aborts, exit 12). A string or a list; UNIONed
+    # with the built-in `^.*/migrations/.*\.sql$` (pre-push, auto-ship) and the built-in
+    # DROP/TRUNCATE TABLE ask (pre-tool-guard) — it never replaces them.
     pattern: '^.*/migrations/.*\.sql$'
-    decision: ask   # ask | deny  (default: ask)
+    # advisory | ask | deny. Raises the consumer's floor, never lowers it: pre-push is advisory
+    # by default, pre-tool-guard asks by default, auto-ship already aborts. `deny` happens ONLY
+    # when written here (pre-push then blocks the push, exit 12; pre-tool-guard denies).
+    decision: ask
 
   secrets:
-    # Files / patterns that constitute secret leak. ALWAYS deny — no override.
+    # LIVE — Files / patterns that constitute secret leak. ALWAYS deny — no override.
+    # (read by the Bash guard 11b and tdd-guard; fails closed without PyYAML — P1-9.)
     paths:
       - 'secrets/**'
       - '.env'
       - '.env.local'
       - '.env.production'
-    # Keyword identifiers that trigger secret-content-scan.py.
+    # NOT WIRED — `keywords` is documentation of intent only. secret-content-scan.py takes extra
+    # key names from `python_hooks.credential_key_names` (see the secret-scan block below).
     keywords:
       - SERVICE_ROLE_KEY
       - API_TOKEN
@@ -33,16 +50,19 @@ risk_areas:
     decision: deny
 
   deploy:
-    # Function / worker / deploy bundles.
+    # LIVE — Function / worker / deploy bundles. Same consumers and rules as `data`.
     pattern: '^.*/functions/.*/index\.ts$'
     decision: ask
 
   payment:
-    # Billing / payment code.
+    # LIVE — Billing / payment code. pre-tool-guard and pre-push have no built-in payment
+    # pattern, so this one only takes effect when you list it; auto-ship also has a built-in
+    # `(billing/|stripe|polar|iap|revenue-cat)` this is added to.
     pattern: '(billing/|stripe|polar|iap|revenue-cat)'
     decision: ask
 
   domain-output:
+    # NOT WIRED — auto-ship reads RISK_DOMAIN_OUTPUT_PATTERN (env) only, not this field.
     # Project-specific: uncertainty / quality / signed-prediction fields
     # whose net removal should block. Empty = no check.
     pattern: '(uncertainty|confidence_p\d+|grade_letter)'
@@ -50,7 +70,13 @@ risk_areas:
 
 # ---------------------------------------------------------------------------
 # Resource mutex — see rules/multi-agent-worktree.md R4.
-# Maps Bash commands / MCP tools to a mutex name. Concurrent sessions block.
+# LIVE — read by r4-mutex-check.sh. `triggers` are regexes tested against a Bash command or an
+# MCP tool name; a match makes the call contend for the lock named by the key (name:
+# [a-z0-9][a-z0-9_.-]*). Triggers are consulted only when no BUILT-IN trigger matched, so they
+# add resources; they cannot re-route or suppress a built-in one. The names below mirror the
+# built-ins, so these entries are examples; add your own resource names here.
+# `auto_expire_minutes` is NOT honoured (removed): an expiry would shorten a lock's hold, which
+# weakens the mutex. Locks are released with `agent-session.sh release` / gc.
 # ---------------------------------------------------------------------------
 resources:
   production-db:
@@ -58,20 +84,17 @@ resources:
       - 'supabase db push'
       - 'supabase migration (up|apply)'
       - 'mcp__supabase__apply_migration'
-    auto_expire_minutes: 60
 
   edge-function-deploy:
     triggers:
       - 'supabase functions deploy'
       - 'mcp__supabase__deploy_edge_function'
-    auto_expire_minutes: 30
 
   production-deploy:
     triggers:
       - 'wrangler pages deploy'
       - 'fly deploy'
       - 'gh workflow run .*deploy.*'
-    auto_expire_minutes: 30
 
 # ---------------------------------------------------------------------------
 # Hardcoding policy — paths exempt from check-hardcoding.py / check-staged.py.
@@ -143,11 +166,11 @@ goal_mode:
 
 # ---------------------------------------------------------------------------
 # Secret-scan extensions — loaded at runtime by core/hooks/hook_config.py from
-# `.agent/hook-config.yml` (copy this file there to activate). This block and
-# `session.completion_tests` (above) are the runtime-live parts of this file;
-# everything else (risk_areas: / resources: / hardcoding: / the rest of
-# session:) is declarative documentation only, not read by any hook. See
-# docs/customization.md part 2.
+# `.agent/hook-config.yml` (copy this file there to activate). The runtime-live
+# parts of this file are this block, `session.completion_tests`, `risk_areas.secrets.paths`,
+# `risk_areas.data/deploy/payment` and `resources.<name>.triggers`; everything else
+# (`secrets.keywords`, `domain-output`, `hardcoding:`, the rest of `session:`) is
+# declarative documentation only, not read by any hook. See docs/customization.md part 2.
 #
 # ADDITIVE ONLY: these entries can only ADD secret patterns / exempt paths /
 # credential key names on top of secret-content-scan.py's built-ins. There is
