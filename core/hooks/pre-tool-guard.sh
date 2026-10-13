@@ -2235,7 +2235,10 @@ fi
 # whole evaluation by one process-wide deadline. Only projects that declare an area pay for this
 # second python start (line 2 of the 11b call).
 _RISK_RECORDS=""
-if [[ "${_RISK_DECLARED:-0}" == 1 && -n "${_HOOK_DIR:-}" && -n "${_PROJ_ROOT:-}" ]]; then
+# Cheap pre-filter (bash builtin regex, no fork): only a command that mentions a path-modifying
+# verb or a redirect can have a target to evaluate, so `git status` / `ls` never start python.
+_RISK_MUT='(>|(^|[^[:alnum:]_.-])(cp|mv|rm|tee|touch|install|ln|truncate|unlink|sed|perl|dd|sh|bash|zsh|dash|eval)([^[:alnum:]_-]|$)|git[^;&|]*[[:space:]](add|rm|mv|restore|checkout)([^[:alnum:]_-]|$))'
+if [[ "${_RISK_DECLARED:-0}" == 1 && -n "${_HOOK_DIR:-}" && -n "${_PROJ_ROOT:-}" && "$SCAN_CMD" =~ $_RISK_MUT ]]; then
   # Belt and braces: hook_config has its own deadline; this outer bound covers a non-POSIX or
   # otherwise signal-less python. Where no timeout binary exists the in-process deadline stands.
   _RISK_TMO=()
