@@ -541,7 +541,7 @@ json.dump(cfg, open(root + "/.agent/hook-config.json", "w"))
 PY
 LONGA=$(python3 -c 'print("a"*900+"!")')
 t0=$(now_ms); PTG_TIMEOUT=12 ptg "$P" "git add $LONGA"; el=$(( $(now_ms) - t0 ))
-[[ "$PTG_DEC" == allow && $el -le 4500 ]]; check "pre-tool-guard: 3 areas x 20 slow patterns x long path <= 4.5s (${el}ms)" $?
+[[ "$PTG_DEC" == ask && $el -le 4500 ]]; check "pre-tool-guard: 3 areas x 20 slow patterns x long path <= 4.5s, exhausted budget fails closed to ask (${el}ms)" $?
 [[ "$PTG_ERR" == *budget* ]]; check "pre-tool-guard: exhausted budget is warned" $?
 P=$(mkgit r4-l); r4lock "$P" res0 "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 python3 - "$P" <<'PY'
@@ -584,6 +584,15 @@ ptg_cwd "redirect 1>>"                              "$P" 'make 1>>db/migrations/
 ptg_cwd "sed --in-place=.bak"                       "$P" "sed --in-place=.bak 's/a/b/' db/migrations/a.sql" ask
 ptg_cwd "sed --in-place"                            "$P" "sed --in-place 's/a/b/' db/migrations/a.sql" ask
 ptg_cwd "sed -i -e script"                          "$P" "sed -i -e 's/a/b/' db/migrations/a.sql" ask
+ptg_cwd "sed -i --expression=SCRIPT (attached)"      "$P" "sed -i --expression='s/a/b/' db/migrations/a.sql" ask
+ptg_cwd "sed -i --expression SCRIPT (separate)"      "$P" "sed -i --expression 's/a/b/' db/migrations/a.sql" ask
+ptg_cwd "sed -i -f script.sed"                       "$P" "sed -i -f s.sed db/migrations/a.sql" ask
+ptg_cwd "sed -i --file=script.sed"                   "$P" "sed -i --file=s.sed db/migrations/a.sql" ask
+ptg_cwd "sed -i -es/a/b/ (attached short)"           "$P" "sed -i -es/a/b/ db/migrations/a.sql" ask
+ptg_cwd "unquoted heredoc: command substitution runs" "$P" $'cat <<EOF\n$(touch db/migrations/a.sql)\nEOF' ask
+ptg_cwd "unquoted heredoc: backtick body runs"       "$P" $'cat <<EOF\n`touch db/migrations/a.sql`\nEOF' ask
+ptg_cwd "unquoted <<-EOF with tab-indented end"      "$P" $'cat <<-EOF\n\t$(touch db/migrations/a.sql)\n\tEOF' ask
+ptg_cwd "unquoted heredoc, command after it"         "$P" $'cat <<EOF >/dev/null\nplain\nEOF\ntouch db/migrations/a.sql' ask
 ptg_cwd "perl -pi -e"                               "$P" "perl -pi -e 's/a/b/' db/migrations/a.sql" ask
 ptg_cwd "git checkout -- path"                      "$P" 'git checkout -- db/migrations/a.sql' ask
 ptg_cwd "git restore path"                          "$P" 'git restore db/migrations/a.sql' ask
@@ -604,6 +613,11 @@ ptg_cwd "sed -n without -i only reads"              "$P" "sed -n -e p db/migrati
 ptg_cwd "< input redirect is not a target (tee)"    "$P" 'tee out.txt < db/migrations/a.sql' allow
 ptg_cwd "< input redirect is not a target (xargs)"  "$P" 'xargs rm < db/migrations/list.sql' allow
 ptg_cwd "git checkout <ref> (no --) is no path"     "$P" 'git checkout db/migrations/a.sql' allow
+ptg_cwd "quoted heredoc single: substitution stays data" "$P" $'cat <<\'EOF\'\n$(touch db/migrations/a.sql)\nEOF' allow
+ptg_cwd "quoted heredoc double: backtick stays data"  "$P" $'cat <<"EOF"\n`touch db/migrations/a.sql`\nEOF' allow
+ptg_cwd "unquoted heredoc without substitution"      "$P" $'cat <<EOF\ntouch db/migrations/a.sql\nEOF' allow
+ptg_cwd "unquoted heredoc: escaped dollar-paren is data" "$P" $'cat <<EOF\n\\$(touch db/migrations/a.sql)\nEOF' allow
+ptg_cwd "sed -n with --expression only reads"        "$P" "sed -n --expression='p' db/migrations/a.sql" allow
 ptg_cwd "perl script file operand is not a target"  "$P" 'perl -i db/migrations/s.pl f.txt' allow
 
 echo
@@ -694,6 +708,82 @@ t0=$(now_ms); PTG_SCRIPT="$HANG/pre-tool-guard.sh" PTG_TIMEOUT=20 ptg "$P" 'cp v
 [[ "$PTG_DEC" == deny && $el -le 3000 ]]; check "hung config evaluation: cp vault/k is still denied at once (${el}ms)" $?
 t0=$(now_ms); PTG_SCRIPT="$HANG/pre-tool-guard.sh" PTG_TIMEOUT=20 ptg "$P" 'cp a src/x.txt'; el=$(( $(now_ms) - t0 ))
 [[ "$PTG_DEC" == allow && $el -le 8000 ]]; check "hung config evaluation: outer timeout lets other commands through (${el}ms)" $?
+
+
+echo
+echo "=== (Q) r2: an exhausted regex budget never lowers a declared decision ==="
+SLOW_YML=$'risk_areas:\n  data:\n    pattern:\n'
+for n in 40 41 42 43 44 45 46; do SLOW_YML+="      - '(?:|){$n}(?!)'"$'\n'; done
+SLOW_JSON='{"risk_areas":{"data":{"pattern":["(?:|){40}(?!)","(?:|){41}(?!)","(?:|){42}(?!)","(?:|){43}(?!)","(?:|){44}(?!)","(?:|){45}(?!)","(?:|){46}(?!)"]}}}'
+DENY_JSON='{"risk_areas":{"data":{"pattern":"^zzz/","decision":"deny"}}}'
+DENY_YML=$'risk_areas:\n  data:\n    pattern: \'^zzz/\'\n    decision: deny\n'
+W=$(mkrepo pp-q1); commit_files "$W" app/migrations/x.sql
+printf '%s' "$SLOW_YML" > "$W/.agent/hook-config.yml"
+printf '%s' "$DENY_JSON" > "$W/.agent/hook-config.json"
+pp "$W"
+[[ $PP_RC -eq 12 && "$PP_ERR" == *"[BLOCK data]"* && "$PP_ERR" == *budget* ]]; check "pre-push: yml burns the budget, json's deny still blocks (exit 12)" $?
+rm "$W/.agent/hook-config.yml"
+pp "$W"
+[[ $PP_RC -eq 12 ]]; check "pre-push: control without the slow yml also blocks (exit 12)" $?
+W=$(mkrepo pp-q2); commit_files "$W" app/migrations/x.sql
+printf '%s' "$DENY_YML" > "$W/.agent/hook-config.yml"
+printf '%s' "$SLOW_JSON" > "$W/.agent/hook-config.json"
+pp "$W"
+[[ $PP_RC -eq 12 ]]; check "pre-push: deny in yml, slow patterns in json: still blocks" $?
+W=$(mkrepo pp-q3); commit_files "$W" app/migrations/x.sql
+printf '%s' "$SLOW_YML" > "$W/.agent/hook-config.yml"
+printf '{"risk_areas":{"data":{"pattern":"^zzz/"}}}' > "$W/.agent/hook-config.json"
+pp "$W"
+[[ $PP_RC -eq 0 && "$PP_ERR" == *"[ADVISORY data]"* && "$PP_ERR" == *"not fully evaluated"* ]]; check "pre-push: exhausted budget without a declared deny is an advisory, not a block" $?
+P=$(mkgit as-q)
+printf '%s' "$SLOW_YML" > "$P/.agent/hook-config.yml"
+printf '%s' "$DENY_JSON" > "$P/.agent/hook-config.json"
+as "$P" "" src/app.py
+[[ $AS_RC -eq 12 ]]; check "auto-ship: exhausted budget on a declared area aborts (exit 12)" $?
+rm "$P/.agent/hook-config.yml" "$P/.agent/hook-config.json"
+as "$P" "" src/app.py
+[[ $AS_RC -eq 17 ]]; check "auto-ship: control without config reaches merge (exit 17)" $?
+CLI_OUT=$(printf 'a\n' | timeout 10 python3 "$HC" risk-paths "$(mkproj cli-q)" auto-ship 2>&1)
+[[ "$CLI_OUT" != *"not fully evaluated"* ]]; check "no declared patterns: nothing is reported as unevaluated" $?
+
+echo
+echo "=== (R) r2: pre-tool-guard caps synthetic (truncated / exhausted) hits at ask and names the right area ==="
+P=$(mkproj ptg-r)
+printf '%s' $'risk_areas:\n  data:\n    pattern: \'^zzz/\'\n    decision: ask\n  deploy:\n    pattern: \'^zzz/\'\n    decision: deny\n' > "$P/.agent/hook-config.yml"
+ptg "$P" "$(python3 -c 'print("echo x; " * 600)')echo done"
+[[ "$PTG_DEC" == ask ]]; check "600 echo commands (truncated): ask, never deny" $?
+BIGDOC="cat <<EOF
+$(python3 -c 'print("x" * 78000)')
+EOF
+touch src/x"
+ptg "$P" "$BIGDOC"
+[[ "$PTG_DEC" == ask ]]; check "78 KB heredoc (truncated): ask, never deny" $?
+ptg "$P" 'touch zzz/real.txt'
+[[ "$PTG_DEC" == deny && "$PTG_OUT" == *"deploy"* ]]; check "a REAL deploy path match is deny and the message names deploy" $?
+printf '%s' $'risk_areas:\n  data:\n    pattern: \'^qqq/\'\n    decision: ask\n  deploy:\n    pattern: \'^zzz/\'\n    decision: deny\n  payment:\n    pattern: \'^qqq/\'\n' > "$P/.agent/hook-config.yml"
+ptg "$P" 'touch zzz/a.txt; touch qqq/b.txt'
+[[ "$PTG_DEC" == deny && "$PTG_OUT" == *"deploy"* && "$PTG_OUT" == *"zzz/a.txt"* && "$PTG_OUT" != *"qqq/b.txt"* ]]; check "mixed hits: message points at the area that decided (deploy), not the first" $?
+printf '%s' "$SLOW_YML" > "$P/.agent/hook-config.yml"
+printf '{"risk_areas":{"deploy":{"pattern":"^zzz/","decision":"deny"}}}' > "$P/.agent/hook-config.json"
+ptg "$P" 'git add src/x'
+[[ "$PTG_DEC" == ask && "$PTG_OUT" == *"deploy"* ]]; check "budget exhaustion: deploy is declared deny but the unevaluated hit is capped at ask" $?
+rm "$P/.agent/hook-config.json"
+
+echo
+echo "=== (S) r2: small robustness cases ==="
+python3 - "$HC" "$TMP_ROOT" <<'PY'
+import os, sys
+sys.path.insert(0, os.path.dirname(sys.argv[1]))
+import hook_config as hc
+root = os.path.join(sys.argv[2], "nul-root")
+os.makedirs(os.path.join(root, "db", "migrations"), exist_ok=True)
+paths, trunc = hc.command_paths("touch db/migrations/a.sql; touch /etc/x\x00y", root, root)
+sys.exit(0 if "db/migrations/a.sql" in paths else 1)
+PY
+check "a NUL byte in one operand does not lose the other hits" $?
+P=$(mkproj cli-s)
+CLI_ERR=$(python3 -c 'print("\n".join("src/f%d" % i for i in range(20001)))' | timeout 10 python3 "$HC" risk-paths "$P" auto-ship 2>&1 >/dev/null)
+[[ "$CLI_ERR" != *truncat* ]]; check "no area declared: a big file list produces no truncation warning" $?
 
 echo
 echo "=== (J) docs and schema claims match the wiring ==="
