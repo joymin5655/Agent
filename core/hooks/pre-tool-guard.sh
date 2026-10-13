@@ -55,8 +55,24 @@ elif not isinstance(command, str):
 sys.stdout.buffer.write(command.encode("utf-8", "backslashreplace"))
 '); _DECODE_RC=$?
 
+# The guard finds event_decode.sh next to its real file, however it was started: a bare relative
+# path has no slash in BASH_SOURCE (so ${x%/*} would be the file name itself) and a symlink points
+# elsewhere. If the helper cannot be loaded the guard cannot decide anything, and an empty stdout
+# would read as allow: print a minimal deny (no helper, no python3 needed) and stop.
+_GUARD_SRC="${BASH_SOURCE[0]}"
+while [[ -L "$_GUARD_SRC" ]]; do
+  _GUARD_LINK=$(readlink "$_GUARD_SRC") || break
+  case "$_GUARD_LINK" in
+    /*) _GUARD_SRC="$_GUARD_LINK" ;;
+    *)  _GUARD_SRC="$(dirname "$_GUARD_SRC")/$_GUARD_LINK" ;;
+  esac
+done
+case "$_GUARD_SRC" in */*) _GUARD_DIR="${_GUARD_SRC%/*}" ;; *) _GUARD_DIR="." ;; esac
 # shellcheck source=event_decode.sh
-source "${BASH_SOURCE[0]%/*}/event_decode.sh"
+if ! source "$_GUARD_DIR/event_decode.sh" 2>/dev/null; then
+  printf '%s\n' '{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": "pre-tool-guard.sh could not load event_decode.sh from its own directory (blocked fail-closed).\nWHY: without the helper no guard can read or answer the command, and an empty answer would read as allow.\nFIX: restore core/hooks/event_decode.sh next to pre-tool-guard.sh (re-run setup.sh or git checkout the file)."}}'
+  exit 0
+fi
 
 emit_deny() { hook_emit_decision deny "$1"; }
 

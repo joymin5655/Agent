@@ -16,7 +16,8 @@
 # Usage: decode_event_input <hook-name> <ask|deny>      (INPUT must already hold the event)
 
 # _hook_json_escape <text> -> JSON string body on stdout (no surrounding quotes). Pure bash + tr, so
-# it works on bash 3.2 without python3; any control character left after \n \r \t becomes a space.
+# it works on bash 3.2 without python3; any control character left after \n \r \t becomes a space and
+# every non-ASCII byte becomes ?, so invalid UTF-8 in a reason can never make the JSON invalid.
 _hook_json_escape() {
   local s="$1"
   s="${s//\\/\\\\}"
@@ -24,7 +25,7 @@ _hook_json_escape() {
   s="${s//$'\n'/\\n}"
   s="${s//$'\r'/\\r}"
   s="${s//$'\t'/\\t}"
-  printf '%s' "$s" | LC_ALL=C tr '\001-\010\013\014\016-\037\177' ' '
+  printf '%s' "$s" | LC_ALL=C tr '\001-\010\013\014\016-\037\177' ' ' | LC_ALL=C tr '\200-\377' '?'
 }
 
 # hook_emit_decision <deny|ask> <reason> -> the PreToolUse decision JSON (one line) on stdout.
