@@ -52,19 +52,43 @@ declared `deny` blocks the push (pre-push exit 12/13/14 for data/deploy/payment)
 command (pre-tool-guard); it is the only way `deny` is reached. Built-in guards keep their own
 fixed decisions (DROP/TRUNCATE TABLE stays `ask`, `data/artifacts/` add stays `deny`).
 
-- **What pre-tool-guard matches.** A heuristic list of the paths a Bash command would modify:
-  `git add|rm|mv` arguments, `cp mv rm tee touch install ln truncate unlink`, `sed|perl -i`,
-  `dd of=`, redirect targets, and `sh -c '...'` bodies. `git add .` / `-A` expose no file names, so
-  pre-push is the backstop there. It can over-ask, never skips a built-in; it runs last, so a
-  built-in deny/ask always wins.
+- **What pre-tool-guard matches.** The paths a Bash command would *modify*, found with a small
+  shell tokenizer (quotes, heredoc bodies and comments are data; `;` `&&` `||` `|`, redirects and
+  `$(...)` / backtick bodies are interpreted): `git add|rm|mv` arguments (honouring `git -C DIR`),
+  `git restore <path>` and `git checkout -- <path>`, the arguments of `rm unlink touch truncate
+  tee`, the destination of `cp install ln` (a destination directory also yields `dir/<basename>`;
+  `-t DIR` works) plus the sources of `mv`, `sed|perl -i` / `--in-place[=SUF]` file operands (the
+  script operand is skipped), `dd of=`, write redirects (`>` `>>` `>|` `&>` `&>>` `N>` `<>`), and
+  the bodies of `sh|bash|zsh|dash -c '...'` and `eval`. Relative paths are resolved against the
+  event's `cwd` (default: the hook's), `..` is normalised, and paths outside the project are
+  ignored. It runs last, so a built-in deny/ask always wins.
+- **What it does not see (limits).** `git add .` / `-A` and globs (no file names), `rsync`,
+  `find -delete|-exec`, `patch`, `git apply`, `git stash`, `awk -i inplace`, an interpreter
+  one-liner that writes (`python -c "open(...)"`), a script body fed through a heredoc or a pipe
+  (`bash <<EOF`), variables and command results (`"$F"`), and anything past the analysis caps. The
+  caps are never silent: a command over 64 KiB / 512 simple commands / 2000 paths, or a file list
+  over 20000 entries, produces a warning and a fail-closed hit on every area that declares a
+  pattern (pre-tool-guard asks, auto-ship aborts, pre-push blocks only if that area declares
+  `deny`). pre-push, which sees the real changed-file list, is the backstop for what the Bash guard
+  cannot see.
+- **Over-asking.** The extraction is a heuristic. Where a project declares `decision: deny`, a
+  residual false positive (for example a quoted path inside a `-c` string the tokenizer cannot
+  tell from code, or a path written through an unusual option form) becomes a false BLOCK, not
+  just an extra prompt. Prefer `ask` unless the area is truly never edited by automation.
 - **PyYAML missing.** The `.yml` is skipped with ONE stderr line, `hook_config: PyYAML not installed
   ...`, and the built-ins apply — no new refusal. `.json` still works. (`risk_areas.secrets.paths`
   keeps its P1-9 fail-closed behaviour.)
-- **Bad entries.** A regex that is invalid, over 200 chars, nested-quantified (`(a+)+`, or a
-  character class followed by `+`/`*`) or that matches the empty string is ignored with
-  `hook_config: ignored ...`; siblings still apply. At most 20 patterns per area and 20 resources.
-  Matching sees at most 1024 chars per path and runs under a 0.5 s per-pattern watchdog, so a
-  catastrophic pattern is dropped, never a hang. A resource name must match `[a-z0-9][a-z0-9_.-]*`.
+- **Bad entries and the deadline.** A regex that is invalid, over 200 chars, nested-quantified
+  (`(a+)+`, or a character class followed by `+`/`*`) or that matches the empty string is ignored
+  with `hook_config: ignored ...`; siblings still apply. At most 20 patterns per area and 20
+  resources x 20 triggers; matching sees at most 1024 chars per path. Every regex execution, the
+  empty-string screen included, runs under a 0.25 s watchdog and ONE process-wide 1.5 s deadline
+  shared by all areas and resources: a catastrophic pattern is ignored with a warning, and once the
+  deadline is spent the remaining config is skipped with a single `regex budget ... exhausted`
+  warning. So a config can delay a guard by at most ~1.5 s (pre-tool-guard additionally wraps the
+  evaluation in a 5 s `timeout` where available), and the secrets check (11b) and every other
+  built-in verdict are settled before the config is evaluated. A resource name must match
+  `[a-z0-9][a-z0-9_.-]*`; `decision` is case-insensitive.
 - **Not read.** `resources.<name>.auto_expire_minutes` (an expiry would shorten a lock's hold, so it
   would weaken the mutex; stale locks are `agent-session.sh gc`'s job), `secrets.keywords`,
   `domain-output`, and a `hook-config.yml` at the project root.

@@ -59,7 +59,7 @@ ptg() { # ptg <project> <command> [pythonpath]
   ev=$(CMD="$cmd" python3 -c 'import os,json; e={"event":"PreToolUse","tool_name":"Bash","tool_input":{"command":os.environ["CMD"]}}
 if os.environ.get("EVCWD"): e["cwd"]=os.environ["EVCWD"]
 print(json.dumps(e))')
-  PTG_OUT=$(cd "$proj" || exit 1; printf '%s' "$ev" | PYTHONPATH="$pp" AGENT_PROJECT_DIR="$proj" timeout "${PTG_TIMEOUT:-60}" bash "$PTG" 2>"$TMP_ROOT/ptg.err" || true)
+  PTG_OUT=$(cd "$proj" || exit 1; printf '%s' "$ev" | PYTHONPATH="$pp" AGENT_PROJECT_DIR="$proj" timeout "${PTG_TIMEOUT:-60}" bash "${PTG_SCRIPT:-$PTG}" 2>"$TMP_ROOT/ptg.err" || true)
   PTG_ERR=$(cat "$TMP_ROOT/ptg.err")
   PTG_DEC=$(decision_of "$PTG_OUT")
 }
@@ -396,7 +396,7 @@ r4lock() { # r4lock <project> <resource> <claimed_at>  -> lock file owned by ano
 r4() { # r4 <project> <tool> <command> [pythonpath]  -> R4_DEC / R4_ERR / R4_OUT
   local proj="$1" tool="$2" cmd="$3" pyp="${4:-}" ev
   ev=$(T="$tool" CMD="$cmd" python3 -c 'import os,json; print(json.dumps({"event":"PreToolUse","tool_name":os.environ["T"],"tool_input":{"command":os.environ["CMD"]}}))')
-  R4_OUT=$(cd "$proj" || exit 1; printf '%s' "$ev" | PYTHONPATH="$pyp" AGENT_SESSION_ID=mine AGENT_PROJECT_DIR="$proj" bash "$R4" 2>"$TMP_ROOT/r4.err" || true)
+  R4_OUT=$(cd "$proj" || exit 1; printf '%s' "$ev" | PYTHONPATH="$pyp" AGENT_SESSION_ID=mine AGENT_PROJECT_DIR="$proj" timeout 12 bash "$R4" 2>"$TMP_ROOT/r4.err" || true)
   R4_ERR=$(cat "$TMP_ROOT/r4.err")
   R4_DEC=$(decision_of "$R4_OUT")
 }
@@ -467,7 +467,7 @@ echo "=== (K) r1: catastrophic regex in the SCREENING stage is bounded and ignor
 PATHO=('(?:|){40}(?!)' "$(python3 -c 'print("(|)"*40+"(?!)")')" '(?:(|)|(|)){16}')
 now_ms() { echo $(( $(date +%s%N) / 1000000 )); }
 timed_ptg() { # timed_ptg <project> <cmd>  -> PTG_* and ELAPSED_MS
-  local t0; t0=$(now_ms); PTG_TIMEOUT=30 ptg "$1" "$2"; ELAPSED_MS=$(( $(now_ms) - t0 ))
+  local t0; t0=$(now_ms); PTG_TIMEOUT=12 ptg "$1" "$2"; ELAPSED_MS=$(( $(now_ms) - t0 ))
 }
 for area in data deploy payment; do
   for pi in 0 1 2; do
@@ -526,7 +526,7 @@ risk_areas:
       - '${PATHO[$pi]}'
       - '^pay/'
 YML
-  t0=$(now_ms); CLI_OUT=$(printf 'a\npay/x\n' | timeout 30 python3 "$HC" risk-paths "$P" auto-ship 2>/dev/null); el=$(( $(now_ms) - t0 ))
+  t0=$(now_ms); CLI_OUT=$(printf 'a\npay/x\n' | timeout 10 python3 "$HC" risk-paths "$P" auto-ship 2>/dev/null); el=$(( $(now_ms) - t0 ))
   [[ "$CLI_OUT" == *$'HIT\tpayment\tpay/x'* && $el -le 3000 ]]; check "risk-paths/P$pi (pre-push, auto-ship loader): bounded, good sibling HIT (${el}ms)" $?
 done
 
@@ -540,7 +540,7 @@ cfg = {"risk_areas": dict((a, {"pattern": ["^(a|aa|%d)+$" % i for i in range(20)
 json.dump(cfg, open(root + "/.agent/hook-config.json", "w"))
 PY
 LONGA=$(python3 -c 'print("a"*900+"!")')
-t0=$(now_ms); PTG_TIMEOUT=30 ptg "$P" "git add $LONGA"; el=$(( $(now_ms) - t0 ))
+t0=$(now_ms); PTG_TIMEOUT=12 ptg "$P" "git add $LONGA"; el=$(( $(now_ms) - t0 ))
 [[ "$PTG_DEC" == allow && $el -le 4500 ]]; check "pre-tool-guard: 3 areas x 20 slow patterns x long path <= 4.5s (${el}ms)" $?
 [[ "$PTG_ERR" == *budget* ]]; check "pre-tool-guard: exhausted budget is warned" $?
 P=$(mkgit r4-l); r4lock "$P" res0 "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -611,10 +611,10 @@ echo "=== (N) r1: truncation is never silent ==="
 P=$(mkproj cli-n)
 printf 'risk_areas:\n  payment:\n    pattern: "^pay/"\n' > "$P/.agent/hook-config.yml"
 python3 -c 'print("\n".join("src/f%d" % i for i in range(2100)) + "\npay/secret.py")' > "$TMP_ROOT/files-2100"
-CLI_OUT=$(timeout 30 python3 "$HC" risk-paths "$P" auto-ship < "$TMP_ROOT/files-2100" 2>/dev/null)
+CLI_OUT=$(timeout 10 python3 "$HC" risk-paths "$P" auto-ship < "$TMP_ROOT/files-2100" 2>/dev/null)
 [[ "$CLI_OUT" == *$'HIT\tpayment\tpay/secret.py'* ]]; check "2100 paths, match LAST: still a HIT (processed in full)" $?
 python3 -c 'print("\n".join("src/f%d" % i for i in range(20001)))' > "$TMP_ROOT/files-20001"
-CLI_OUT=$(timeout 30 python3 "$HC" risk-paths "$P" auto-ship < "$TMP_ROOT/files-20001" 2>"$TMP_ROOT/cli.err")
+CLI_OUT=$(timeout 10 python3 "$HC" risk-paths "$P" auto-ship < "$TMP_ROOT/files-20001" 2>"$TMP_ROOT/cli.err")
 [[ "$CLI_OUT" == *$'HIT\tpayment\t(file list too large'* && "$(cat "$TMP_ROOT/cli.err")" == *truncat* ]]
 check "20001 paths: warned + fail-closed HIT on every area with a pattern" $?
 [[ "$CLI_OUT" != *$'HIT\tdata'* ]]; check "areas without a pattern are not marked" $?
@@ -666,6 +666,32 @@ W=$(mkrepo pp-o); commit_files "$W" app/migrations/1.sql
 printf '%s' $'risk_areas:\n  data:\n    pattern: \'^zzz/\'\n    decision: DENY\n' > "$W/.agent/hook-config.yml"
 pp "$W"
 [[ $PP_RC -eq 12 ]]; check "pre-push: decision: DENY blocks (exit 12)" $?
+
+
+echo
+echo "=== (P) r1: the secrets verdict (11b) is settled BEFORE any config evaluation ==="
+HANG="$TMP_ROOT/hooks-hang"
+cp -r "$REPO_ROOT/core/hooks" "$HANG"
+cat >> "$HANG/hook_config.py" <<'PY'
+
+
+def risk_command_report(repo_root, command, cwd=""):  # test double: config evaluation that never returns
+    import time
+    time.sleep(120)
+PY
+P=$(mkproj ptg-p)
+cat > "$P/.agent/hook-config.yml" <<'YML'
+risk_areas:
+  secrets:
+    paths:
+      - 'vault/**'
+  data:
+    pattern: '^db/.*'
+YML
+t0=$(now_ms); PTG_SCRIPT="$HANG/pre-tool-guard.sh" PTG_TIMEOUT=20 ptg "$P" 'cp vault/k src/x.txt'; el=$(( $(now_ms) - t0 ))
+[[ "$PTG_DEC" == deny && $el -le 3000 ]]; check "hung config evaluation: cp vault/k is still denied at once (${el}ms)" $?
+t0=$(now_ms); PTG_SCRIPT="$HANG/pre-tool-guard.sh" PTG_TIMEOUT=20 ptg "$P" 'cp a src/x.txt'; el=$(( $(now_ms) - t0 ))
+[[ "$PTG_DEC" == allow && $el -le 8000 ]]; check "hung config evaluation: outer timeout lets other commands through (${el}ms)" $?
 
 echo
 echo "=== (J) docs and schema claims match the wiring ==="

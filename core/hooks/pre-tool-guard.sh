@@ -2086,11 +2086,10 @@ fi
 _HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null)"
 _PROJ_ROOT="${AGENT_PROJECT_DIR:-${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null)}}"
 if [[ -n "$_PROJ_ROOT" && -n "$_HOOK_DIR" ]]; then
-  # One python start serves both consumers of hook_config: line 1 is the secrets-path
-  # alternation (unchanged), every further line is a T-4 risk-pattern record (WARN/HIT, tab-
-  # separated) for guard 15 below. SCAN_CMD is the message-stripped command, so a commit
-  # message that merely mentions a path cannot trigger a hit.
-  _PY_OUT=$(_HD="$_HOOK_DIR" _PR="$_PROJ_ROOT" _CMD="$SCAN_CMD" python3 - <<'PY' 2>/dev/null || true
+  # Secrets-path alternation ONLY (guard 11b): no config regex runs in this call, so the secrets
+  # verdict below is settled before any T-4 risk-pattern evaluation (guard 15, last) can run
+  # slowly or fail. Line 2, when present, says a data/deploy/payment extension is declared.
+  _PY_OUT=$(_HD="$_HOOK_DIR" _PR="$_PROJ_ROOT" python3 - <<'PY' 2>/dev/null || true
 import os, sys
 # `python3 -` puts the working directory first on sys.path; drop it so a stray
 # yaml.py / yaml/ in the repo cannot stand in for PyYAML.
@@ -2118,15 +2117,15 @@ else:
     # dot so a config '.env.prod' matches literally, then join into an ERE group.
     print("|".join(t.replace(".", "[.]") for t in toks))
 try:
-    for line in hook_config.risk_command_report(os.environ.get("_PR", ""), os.environ.get("_CMD", "")):
-        print(line)
+    if hook_config.risk_config_declared(os.environ.get("_PR", "")):
+        print("RISKCFG")
 except Exception:
     pass
 PY
 )
   _EXTRA_SECRET_ALT=${_PY_OUT%%$'\n'*}
-  _RISK_RECORDS=""
-  [[ "$_PY_OUT" == *$'\n'* ]] && _RISK_RECORDS=${_PY_OUT#*$'\n'}
+  _RISK_DECLARED=0
+  [[ "$_PY_OUT" == *$'\nRISKCFG' ]] && _RISK_DECLARED=1
   _SECRET_READ_VERBS='cat|tac|nl|head|tail|less|more|awk|sed|grep|egrep|fgrep|rg|ag|bat|hexdump|xxd|od|strings|dd|fold|rev|tee|cp|mv|ln|md5sum|shasum|sha256sum|sha512sum|diff|cmp|gunzip|bunzip2|bzip2|bzcat|xz|xzcat|unxz|lzma|lz4cat|tar|unzip|7z|zip|gpg|openssl|age|rsync|scp|curl|wget|source|\.|'"$_SECRET_MORE_READERS"
   # P1-9: risk_areas declared but PyYAML absent -> the declared paths are unknown,
   # so deny anything the token match below could deny for SOME path: the same
@@ -2230,9 +2229,39 @@ fi
 
 # 15. Project-declared risk-area paths (T-4) - hook-config.yml/json
 # risk_areas.<data|deploy|payment>.pattern. EXTENSION-ONLY: this runs after every built-in
-# guard above, so a built-in deny/ask always wins; a config pattern can only ADD an `ask`
-# (or an explicit `decision: deny`) for a command that modifies a matching path. It is never
-# consulted to relax anything. Records come from the single hook_config call in 11b.
+# guard above (secrets 11b included), so a built-in deny/ask is always settled first and a slow
+# or broken config can never delay or suppress it; a config pattern can only ADD an `ask` (or an
+# explicit `decision: deny`) for a command that modifies a matching path. hook_config bounds the
+# whole evaluation by one process-wide deadline. Only projects that declare an area pay for this
+# second python start (line 2 of the 11b call).
+_RISK_RECORDS=""
+if [[ "${_RISK_DECLARED:-0}" == 1 && -n "${_HOOK_DIR:-}" && -n "${_PROJ_ROOT:-}" ]]; then
+  # Belt and braces: hook_config has its own deadline; this outer bound covers a non-POSIX or
+  # otherwise signal-less python. Where no timeout binary exists the in-process deadline stands.
+  _RISK_TMO=()
+  if command -v timeout >/dev/null 2>&1; then _RISK_TMO=(timeout 5); fi
+  _RISK_RECORDS=$(_HD="$_HOOK_DIR" _PR="$_PROJ_ROOT" _CMD="$SCAN_CMD" _EVT="$INPUT" "${_RISK_TMO[@]}" python3 - <<'PY' 2>/dev/null || true
+import json, os, sys
+try:
+    _cwd = os.getcwd()
+except OSError:
+    _cwd = ""
+sys.path[:] = [p for p in sys.path if p not in ("", ".", _cwd)]
+sys.path.insert(0, os.environ.get("_HD", ""))
+try:
+    import hook_config
+    try:
+        ev_cwd = json.loads(os.environ.get("_EVT", "") or "{}").get("cwd", "")
+    except Exception:
+        ev_cwd = ""
+    for line in hook_config.risk_command_report(os.environ.get("_PR", ""), os.environ.get("_CMD", ""),
+                                                ev_cwd if isinstance(ev_cwd, str) else ""):
+        print(line)
+except Exception:
+    pass
+PY
+)
+fi
 if [[ -n "${_RISK_RECORDS:-}" ]]; then
   _RISK_HIT_AREA="" _RISK_HIT_DEC="" _RISK_HIT_PATHS=""
   while IFS=$'\t' read -r _rk_kind _rk_a _rk_b _rk_c; do

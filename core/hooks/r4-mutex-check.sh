@@ -165,7 +165,9 @@ if [[ -z "$RESOURCE" ]] && [[ "$TOOL_NAME" == "Bash" || "$TOOL_NAME" == mcp__* ]
   if [[ -f "$_HC_PY" ]] && command -v python3 >/dev/null 2>&1; then
     for _cfg in "$ROOT/.agent/hook-config.yml" "$ROOT/.agent/hook-config.json"; do
       if [[ -f "$_cfg" ]] && grep -q 'resources' "$_cfg" 2>/dev/null; then
-        RESOURCE=$(printf '%s' "$COMMAND" | python3 "$_HC_PY" resource-match "$ROOT" "$TOOL_NAME" || true)
+        _R4_TMO=()
+        if command -v timeout >/dev/null 2>&1; then _R4_TMO=(timeout 5); fi
+        RESOURCE=$(printf '%s' "$COMMAND" | "${_R4_TMO[@]}" python3 "$_HC_PY" resource-match "$ROOT" "$TOOL_NAME" || true)
         break
       fi
     done
