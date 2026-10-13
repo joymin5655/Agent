@@ -2274,7 +2274,11 @@ _RISK_RECORDS=""
 # Cheap pre-filter (bash builtin regex, no fork): only a command that mentions a path-modifying
 # verb or a redirect can have a target to evaluate, so `git status` / `ls` never start python.
 _RISK_MUT='(>|(^|[^[:alnum:]_.-])(cp|mv|rm|tee|touch|install|ln|truncate|unlink|sed|perl|dd|sh|bash|zsh|dash|eval)([^[:alnum:]_-]|$)|git[^;&|]*[[:space:]](add|rm|mv|restore|checkout)([^[:alnum:]_-]|$))'
-if [[ "${_RISK_DECLARED:-0}" == 1 && -n "${_HOOK_DIR:-}" && -n "${_PROJ_ROOT:-}" && "$SCAN_CMD" =~ $_RISK_MUT ]]; then
+# A command so large or so full of separators that hook_config would truncate it is analysed even
+# without a verb: truncation is a fail-closed hit, never a silent skip.
+_RISK_SEPS=${SCAN_CMD//[;&|$'\n']/}
+if [[ "${_RISK_DECLARED:-0}" == 1 && -n "${_HOOK_DIR:-}" && -n "${_PROJ_ROOT:-}" ]] \
+   && [[ "$SCAN_CMD" =~ $_RISK_MUT || ${#SCAN_CMD} -gt 60000 || $(( ${#SCAN_CMD} - ${#_RISK_SEPS} )) -gt 400 ]]; then
   # Belt and braces: hook_config has its own deadline; this outer bound covers a non-POSIX or
   # otherwise signal-less python. Where no timeout binary exists the in-process deadline stands.
   _RISK_TMO=()
@@ -2302,22 +2306,32 @@ PY
 )
 fi
 if [[ -n "${_RISK_RECORDS:-}" ]]; then
-  _RISK_HIT_AREA="" _RISK_HIT_DEC="" _RISK_HIT_PATHS=""
+  # The strongest decision wins and the message names the area(s) that reached it, with only their
+  # paths. Synthetic hits (truncated / unevaluated) arrive already capped at `ask`.
+  _RISK_HIT_RANK=-1
   while IFS=$'\t' read -r _rk_kind _rk_a _rk_b _rk_c; do
     case "$_rk_kind" in
       WARN) echo "hook_config: $_rk_a" >&2 ;;
       HIT)
-        [[ -z "$_RISK_HIT_AREA" ]] && _RISK_HIT_AREA="$_rk_a"
-        if [[ "$_rk_b" == "deny" ]]; then _RISK_HIT_DEC=deny
-        elif [[ -z "$_RISK_HIT_DEC" ]]; then _RISK_HIT_DEC="$_rk_b"; fi
-        _RISK_HIT_PATHS="${_RISK_HIT_PATHS:+$_RISK_HIT_PATHS, }$_rk_c"
+        case "$_rk_b" in deny) _rk_rank=2 ;; ask) _rk_rank=1 ;; *) _rk_rank=0 ;; esac
+        if (( _rk_rank > _RISK_HIT_RANK )); then _RISK_HIT_RANK=$_rk_rank; fi
         ;;
     esac
   done <<< "$_RISK_RECORDS"
+  _RISK_HIT_AREA="" _RISK_HIT_DEC="" _RISK_HIT_PATHS=""
+  if (( _RISK_HIT_RANK >= 0 )); then
+    case "$_RISK_HIT_RANK" in 2) _RISK_HIT_DEC=deny ;; 1) _RISK_HIT_DEC=ask ;; *) _RISK_HIT_DEC=advisory ;; esac
+    while IFS=$'\t' read -r _rk_kind _rk_a _rk_b _rk_c; do
+      if [[ "$_rk_kind" == HIT && "$_rk_b" == "$_RISK_HIT_DEC" ]]; then
+        case ",$_RISK_HIT_AREA," in *",$_rk_a,"*) ;; *) _RISK_HIT_AREA="${_RISK_HIT_AREA:+$_RISK_HIT_AREA,}$_rk_a" ;; esac
+        _RISK_HIT_PATHS="${_RISK_HIT_PATHS:+$_RISK_HIT_PATHS, }$_rk_c"
+      fi
+    done <<< "$_RISK_RECORDS"
+  fi
   if [[ -n "$_RISK_HIT_AREA" ]]; then
     log_violation project-risk-area "project $_RISK_HIT_AREA path modified: ${_RISK_HIT_PATHS:0:200}" "$_RISK_HIT_DEC"
     _RISK_MSG="Command modifies a project-declared $_RISK_HIT_AREA path (Risk Area: $_RISK_HIT_AREA): ${_RISK_HIT_PATHS:0:200}
-WHY: .agent/hook-config risk_areas.$_RISK_HIT_AREA.pattern marks these paths as high-risk; automation must not change them without a human decision.
+WHY: .agent/hook-config risk_areas ($_RISK_HIT_AREA) marks these paths as high-risk; automation must not change them without a human decision.
 FIX: confirm only if this change is intended; otherwise leave the file to a reviewed change, or narrow the pattern in .agent/hook-config.yml."
     if [[ "$_RISK_HIT_DEC" == "deny" ]]; then emit_deny "$_RISK_MSG"; else emit_ask "$_RISK_MSG"; fi
     exit 0

@@ -83,12 +83,21 @@ fixed decisions (DROP/TRUNCATE TABLE stays `ask`, `data/artifacts/` add stays `d
   with `hook_config: ignored ...`; siblings still apply. At most 20 patterns per area and 20
   resources x 20 triggers; matching sees at most 1024 chars per path. Every regex execution, the
   empty-string screen included, runs under a 0.25 s watchdog and ONE process-wide 1.5 s deadline
-  shared by all areas and resources: a catastrophic pattern is ignored with a warning, and once the
-  deadline is spent the remaining config is skipped with a single `regex budget ... exhausted`
-  warning. So a config can delay a guard by at most ~1.5 s (pre-tool-guard additionally wraps the
-  evaluation in a 5 s `timeout` where available), and the secrets check (11b) and every other
-  built-in verdict are settled before the config is evaluated. A resource name must match
-  `[a-z0-9][a-z0-9_.-]*`; `decision` is case-insensitive.
+  shared by all areas and resources. A single pattern that overruns is ignored with a warning. So a
+  config can delay a guard by at most ~1.5 s (pre-tool-guard additionally wraps the evaluation in a
+  5 s `timeout` where available), and the secrets check (11b) and every other built-in verdict are
+  settled before the config is evaluated. A resource name must match `[a-z0-9][a-z0-9_.-]*`;
+  `decision` is case-insensitive and is read from EVERY config file before any regex runs.
+- **Exhausted budget and truncation fail closed.** When the 1.5 s deadline is spent before the
+  patterns of a declared area were all run, that area is treated as *not evaluated* — exactly like
+  an input over an analysis cap — never as "no match" (a slow `.yml` therefore cannot lower a `deny`
+  declared in the `.json`). The consumer then acts on its own rule: pre-push blocks only if that
+  area declares `deny` (otherwise an advisory says "not fully evaluated"), auto-ship aborts, and
+  pre-tool-guard asks. In pre-tool-guard such synthetic hits are capped at `ask`: `deny` is reserved
+  for a real path match, and the message names the area(s) that reached the decision. `resources`
+  triggers are the exception: an exhausted budget skips the remaining triggers with a warning
+  (no resource can be named from an unevaluated trigger). Projects that declare no area see none of
+  this (no warning, no extra hit).
 - **Not read.** `resources.<name>.auto_expire_minutes` (an expiry would shorten a lock's hold, so it
   would weaken the mutex; stale locks are `agent-session.sh gc`'s job), `secrets.keywords`,
   `domain-output`, and a `hook-config.yml` at the project root.

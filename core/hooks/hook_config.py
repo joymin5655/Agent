@@ -480,6 +480,7 @@ _TOTAL_BUDGET_S = 1.5         # the whole process: screening + matching, all are
 _RESOURCE_NAME = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,63}$")
 _TRUNCATED_PATHS = "(file list too large to evaluate fully)"
 _TRUNCATED_COMMAND = "(command too large to analyse fully)"
+_UNEVALUATED = "(risk-area config not fully evaluated: regex budget exhausted)"
 
 
 class _MatchTimeout(Exception):
@@ -638,57 +639,69 @@ def _as_list(value):
 
 
 def load_risk_area_patterns(repo_root):
-    """Return {"areas": {area: {"patterns": [regex], "decision": str|None}}, "warnings": [str]}
-    for data/deploy/payment. Missing / malformed config degrades to empty. Never raises."""
-    areas = dict((a, {"patterns": [], "decision": None}) for a in RISK_PATTERN_AREAS)
+    """Return {"areas": {area: {"patterns": [regex], "decision": str|None, "unevaluated": bool}},
+    "warnings": [str]} for data/deploy/payment. Missing / malformed config degrades to empty.
+
+    `decision` metadata is read from EVERY config file before any regex runs, so a spent regex
+    budget can never lose a declared `deny` that lives in another file. When the budget runs out
+    before every declared pattern of an area was screened, that area is `unevaluated`: consumers
+    treat it like a truncated input (fail-closed), never as "no match". Never raises."""
+    areas = dict((a, {"patterns": [], "decision": None, "unevaluated": False}) for a in RISK_PATTERN_AREAS)
     warnings = []
     try:
+        blocks = []
         for doc in _config_docs(repo_root, "risk_areas", warnings):
             risk = doc.get("risk_areas")
-            if not isinstance(risk, dict):
-                continue
-            # decisions first: they need no regex work, so a spent regex budget below can never
-            # lose a declared `deny`
+            if isinstance(risk, dict):
+                blocks.append(risk)
+        for risk in blocks:
             for area in RISK_PATTERN_AREAS:
                 block = risk.get(area)
                 if not isinstance(block, dict):
                     continue
-                slot = areas[area]
                 decl = block.get("decision")
                 if decl is None:
                     continue
+                slot = areas[area]
                 if isinstance(decl, str) and decl.strip().lower() in _DECISION_RANK:
                     decl = decl.strip().lower()
                     if slot["decision"] is None or _DECISION_RANK[decl] > _DECISION_RANK[slot["decision"]]:
                         slot["decision"] = decl
                 else:
                     warnings.append("ignored risk_areas.%s.decision '%s': use advisory, ask or deny" % (area, _short(decl)))
+        declared = []
+        for risk in blocks:
             for area in RISK_PATTERN_AREAS:
                 block = risk.get(area)
-                if not isinstance(block, dict):
-                    continue
-                slot = areas[area]
-                for raw in _as_list(block.get("pattern")):
-                    if raw == "" or raw is None:
-                        continue  # an empty pattern means "no extension"
-                    ok, reason = _screen_regex(raw)
-                    if not ok:
-                        warnings.append("ignored risk_areas.%s.pattern '%s': %s" % (area, _short(raw), reason))
-                    elif raw not in slot["patterns"] and len(slot["patterns"]) < _MAX_AREA_PATTERNS:
-                        slot["patterns"].append(raw)
-    except _BudgetExhausted:
-        warnings.append(_BUDGET_WARNING)
+                if isinstance(block, dict):
+                    declared.extend((area, raw) for raw in _as_list(block.get("pattern")) if raw not in ("", None))
+        for index, (area, raw) in enumerate(declared):
+            slot = areas[area]
+            try:
+                ok, reason = _screen_regex(raw)
+            except _BudgetExhausted:
+                warnings.append(_BUDGET_WARNING)
+                for later_area, _later in declared[index:]:
+                    areas[later_area]["unevaluated"] = True
+                break
+            if not ok:
+                warnings.append("ignored risk_areas.%s.pattern '%s': %s" % (area, _short(raw), reason))
+            elif raw not in slot["patterns"] and len(slot["patterns"]) < _MAX_AREA_PATTERNS:
+                slot["patterns"].append(raw)
     except Exception:
         pass
     return {"areas": areas, "warnings": warnings}
 
 
 def match_paths(patterns, paths, warnings=None):
-    """Paths (order kept) matched by ANY of `patterns` via re.search. Each pattern runs under its
-    own watchdog and the process-wide deadline; one that overruns is ignored with a warning, and
-    once the deadline is spent the rest is skipped with one warning. Never raises."""
+    """(hits, complete): paths (order kept) matched by ANY of `patterns` via re.search.
+    Each pattern runs under its own watchdog and the process-wide deadline; a pattern that
+    overruns is ignored with a warning (the others still count). When the deadline is spent the
+    rest is skipped with one warning and `complete` is False: the caller must treat the
+    patterns it could not run as UNEVALUATED, not as "no match". Never raises."""
     hits = []
     seen = set()
+    complete = True
     sink = warnings if warnings is not None else []
     bounded = [p[:_MAX_MATCH_TEXT] if isinstance(p, str) else "" for p in paths]
     try:
@@ -710,9 +723,10 @@ def match_paths(patterns, paths, warnings=None):
                 sink.append("ignored pattern '%s': exceeded the %.2fs match budget" % (_short(regex), _PATTERN_BUDGET_S))
     except _BudgetExhausted:
         sink.append(_BUDGET_WARNING)
+        complete = False
     except Exception:
         pass
-    return [p for p in paths if p in seen]
+    return [p for p in paths if p in seen], complete
 
 
 # ---- Bash command -> repo-relative paths a command would MODIFY (pre-tool-guard) --------------
@@ -774,6 +788,28 @@ def _match_paren(src, i):
     return n
 
 
+def _heredoc_substitutions(body, on_subst):
+    """Hand the $(...) and `...` spans of an unquoted heredoc body to `on_subst`. A backslash
+    escapes the next character, as in the shell's own expansion of the body."""
+    i = 0
+    n = len(body)
+    while i < n:
+        c = body[i]
+        if c == "\\":
+            i += 2
+        elif body.startswith("$(", i):
+            k = _match_paren(body, i + 1)
+            on_subst(body[i + 2:k])
+            i = k + 1
+        elif c == "`":
+            k = body.find("`", i + 1)
+            k = n if k < 0 else k
+            on_subst(body[i + 1:k])
+            i = k + 1
+        else:
+            i += 1
+
+
 def _lex(src, on_subst):
     """Tokens: ("w", word) with quotes resolved, ("o", op) command separators, ("r", op)
     redirections. Heredoc bodies and comments are skipped; the bodies of $(...) and `...` are
@@ -783,6 +819,7 @@ def _lex(src, on_subst):
     inword = False
     heredocs = []
     pending_hd = [None]
+    quoted = [False]  # did the word being built contain a quote or backslash?
     i = 0
     n = len(src)
 
@@ -792,10 +829,11 @@ def _lex(src, on_subst):
             word = "".join(buf)
             toks.append(("w", word))
             if pending_hd[0] is not None:
-                heredocs.append((word, pending_hd[0]))
+                heredocs.append((word, pending_hd[0], quoted[0]))
                 pending_hd[0] = None
             buf = []
             inword = False
+            quoted[0] = False
 
     while i < n:
         c = src[i]
@@ -804,13 +842,18 @@ def _lex(src, on_subst):
             toks.append(("o", "\n"))
             i += 1
             while heredocs:
-                delim, strip = heredocs.pop(0)
+                delim, strip, was_quoted = heredocs.pop(0)
+                body = []
                 while i < n:
                     j = src.find("\n", i)
                     line = src[i:] if j < 0 else src[i:j]
                     i = n if j < 0 else j + 1
                     if (line.lstrip("\t") if strip else line) == delim:
                         break
+                    body.append(line)
+                if not was_quoted:
+                    # an unquoted heredoc is EXPANDED by the shell: its $(...) and `...` run
+                    _heredoc_substitutions("\n".join(body), on_subst)
             continue
         if c in " \t":
             flush()
@@ -822,6 +865,7 @@ def _lex(src, on_subst):
             elif i + 1 < n:
                 buf.append(src[i + 1])
                 inword = True
+                quoted[0] = True
                 i += 2
             else:
                 i += 1
@@ -832,9 +876,11 @@ def _lex(src, on_subst):
                 j = n
             buf.append(src[i + 1:j])
             inword = True
+            quoted[0] = True
             i = j + 1
             continue
         if c == '"':
+            quoted[0] = True
             j = i + 1
             seg = []
             while j < n and src[j] != '"':
@@ -1078,7 +1124,8 @@ def _word_targets(words, base, depth, out, state):
         if not in_place:
             return
         ops = _operands(args, _VALUE_OPTS[cmd])
-        has_script_opt = any(a in _VALUE_OPTS[cmd] or (a.startswith("-e") and len(a) > 2 and not a.startswith("--"))
+        has_script_opt = any(a in _VALUE_OPTS[cmd] or a.startswith(("--expression=", "--file="))
+                             or (a.startswith(("-e", "-f")) and len(a) > 2 and not a.startswith("--"))
                              for a in args)
         if not has_script_opt and ops:
             ops = ops[1:]  # the first operand is the script (sed) / script file (perl)
@@ -1138,7 +1185,10 @@ def command_paths(command, root="", cwd=""):
     root_real = os.path.realpath(root)
     paths = []
     for raw, b in found:
-        rel = _relative_to_root(raw, b, root_norm, root_real)
+        try:
+            rel = _relative_to_root(raw, b, root_norm, root_real)
+        except Exception:  # e.g. a NUL byte: skip this operand, keep the rest
+            continue
         if rel and rel not in paths:
             paths.append(rel)
     return paths, state["truncated"]
@@ -1146,8 +1196,9 @@ def command_paths(command, root="", cwd=""):
 
 def risk_command_report(repo_root, command, cwd=""):
     """Protocol lines for pre-tool-guard: `WARN\\t<text>` and `HIT\\t<area>\\t<decision>\\t<path>`.
-    Silent (empty) for a command that modifies no path. A command over an analysis cap is a HIT
-    on every area that declares a pattern (fail-closed). Never raises."""
+    Silent (empty) for a command that modifies no path. A command over an analysis cap, or an area
+    whose patterns the regex budget could not evaluate, is a synthetic fail-closed HIT whose
+    decision is capped at `ask`: `deny` is reserved for a REAL path match. Never raises."""
     try:
         _reset_budget()
         paths, truncated = command_paths(command, repo_root, cwd)
@@ -1155,17 +1206,24 @@ def risk_command_report(repo_root, command, cwd=""):
             return []
         cfg = load_risk_area_patterns(repo_root)
         warnings = list(cfg["warnings"])
-        if truncated:
+        declared = [a for a in RISK_PATTERN_AREAS if cfg["areas"][a]["patterns"] or cfg["areas"][a]["unevaluated"]]
+        if truncated and declared:
             warnings.append("command exceeds the analysis caps and was truncated - treated as touching every declared risk area")
         hit_lines = []
-        for area in RISK_PATTERN_AREAS:
+        for area in declared:
             slot = cfg["areas"][area]
-            if not slot["patterns"]:
-                continue
             decision = effective_decision("pre-tool-guard", slot["decision"])
+            synthetic = []
             if truncated:
-                hit_lines.append("HIT\t%s\t%s\t%s" % (area, decision, _TRUNCATED_COMMAND))
-            for path in match_paths(slot["patterns"], paths, warnings)[:5]:
+                synthetic.append(_TRUNCATED_COMMAND)
+            if slot["unevaluated"]:
+                synthetic.append(_UNEVALUATED)
+            hits, complete = match_paths(slot["patterns"], paths, warnings) if slot["patterns"] else ([], True)
+            if not complete:
+                synthetic.append(_UNEVALUATED)
+            for text in dict.fromkeys(synthetic):
+                hit_lines.append("HIT\t%s\task\t%s" % (area, text))
+            for path in hits[:5]:
                 hit_lines.append("HIT\t%s\t%s\t%s" % (area, decision, re.sub(r"[\t\r\n]+", " ", path)))
         return ["WARN\t" + w for w in dict.fromkeys(warnings)] + hit_lines
     except Exception:
@@ -1215,7 +1273,7 @@ def resource_match(repo_root, tool_name, command):
     text = command if tool_name == "Bash" else tool_name
     try:
         for name, triggers in cfg["resources"].items():
-            if triggers and match_paths(triggers, [text or ""], warnings):
+            if triggers and match_paths(triggers, [text or ""], warnings)[0]:
                 return name, warnings
     except Exception:
         pass
@@ -1238,15 +1296,26 @@ def _cli(argv):
             paths = lines[:_MAX_PATH_ITEMS]
             cfg = load_risk_area_patterns(root)
             warnings = list(cfg["warnings"])
-            if truncated:
+            declared = [a for a in RISK_PATTERN_AREAS if cfg["areas"][a]["patterns"] or cfg["areas"][a]["unevaluated"]]
+            if truncated and declared:
                 warnings.append("file list has %d entries and was truncated to the first %d - treated as touching every declared risk area" % (len(lines), _MAX_PATH_ITEMS))
             for area in RISK_PATTERN_AREAS:
                 print("AREA\t%s\t%s" % (area, effective_decision(consumer, cfg["areas"][area]["decision"])))
             for area in RISK_PATTERN_AREAS:
-                pats = cfg["areas"][area]["patterns"]
-                if truncated and pats:
-                    print("HIT\t%s\t%s" % (area, _TRUNCATED_PATHS))
-                for path in (match_paths(pats, paths, warnings) if pats else []):
+                slot = cfg["areas"][area]
+                if area not in declared:
+                    continue
+                synthetic = []
+                if truncated:
+                    synthetic.append(_TRUNCATED_PATHS)
+                if slot["unevaluated"]:
+                    synthetic.append(_UNEVALUATED)
+                hits, complete = match_paths(slot["patterns"], paths, warnings) if slot["patterns"] else ([], True)
+                if not complete:
+                    synthetic.append(_UNEVALUATED)
+                for text in dict.fromkeys(synthetic):
+                    print("HIT\t%s\t%s" % (area, text))
+                for path in hits:
                     print("HIT\t%s\t%s" % (area, re.sub(r"[\t\r\n]+", " ", path)))
         elif mode == "resource-match":
             tool = argv[3]
