@@ -789,6 +789,25 @@ python3 - "$HC" "$TMP_ROOT" <<'PY'
 import os, sys
 sys.path.insert(0, os.path.dirname(sys.argv[1]))
 import hook_config as hc
+root = os.path.join(sys.argv[2], "boom-root")
+os.makedirs(os.path.join(root, "db", "migrations"), exist_ok=True)
+orig = hc._word_targets
+def fake(words, base, depth, out, state):
+    if words and words[0] == "boom":
+        raise RuntimeError("extraction failure")
+    return orig(words, base, depth, out, state)
+hc._word_targets = fake
+ok = True
+for cmd in ("touch db/migrations/a.sql; boom", "touch db/migrations/a.sql; echo $(boom)"):
+    paths, trunc = hc.command_paths(cmd, root, root)
+    ok = ok and "db/migrations/a.sql" in paths and trunc
+sys.exit(0 if ok else 1)
+PY
+check "an exception while extracting (top level or inside a substitution) keeps the hits and reports truncated" $?
+python3 - "$HC" "$TMP_ROOT" <<'PY'
+import os, sys
+sys.path.insert(0, os.path.dirname(sys.argv[1]))
+import hook_config as hc
 root = os.path.join(sys.argv[2], "undeclared-root")
 os.makedirs(os.path.join(root, ".agent"), exist_ok=True)
 lines = hc.risk_command_report(root, "touch a; " + "true; " * 700, root)
