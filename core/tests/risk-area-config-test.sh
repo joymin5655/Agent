@@ -54,12 +54,16 @@ decision_of() { # stdout of a PreToolUse hook -> allow|ask|deny
 }
 
 # ---- pre-tool-guard harness: sets PTG_OUT / PTG_ERR / PTG_DEC --------------------------------
-ptg() { # ptg <project> <command> [pythonpath]
+ptg() { # ptg <project> <command> [pythonpath]   (the command travels via a file: env strings cap near 128 KB)
   local proj="$1" cmd="$2" pp="${3:-}" ev
-  ev=$(CMD="$cmd" python3 -c 'import os,json; e={"event":"PreToolUse","tool_name":"Bash","tool_input":{"command":os.environ["CMD"]}}
-if os.environ.get("EVCWD"): e["cwd"]=os.environ["EVCWD"]
-print(json.dumps(e))')
-  PTG_OUT=$(cd "$proj" || exit 1; printf '%s' "$ev" | PYTHONPATH="$pp" AGENT_PROJECT_DIR="$proj" timeout "${PTG_TIMEOUT:-60}" bash "${PTG_SCRIPT:-$PTG}" 2>"$TMP_ROOT/ptg.err" || true)
+  printf '%s' "$cmd" > "$TMP_ROOT/ptg.cmd"
+  ev=$(python3 -c 'import os,sys,json
+cmd = open(sys.argv[1], encoding="utf-8", errors="surrogateescape").read()
+e = {"event": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": cmd}}
+if os.environ.get("EVCWD"): e["cwd"] = os.environ["EVCWD"]
+sys.stdout.write(json.dumps(e))' "$TMP_ROOT/ptg.cmd")
+  PTG_OUT=$(cd "$proj" || exit 1; if [[ -n "${PTG_LC_ALL:-}" ]]; then export LC_ALL="$PTG_LC_ALL"; fi
+    printf '%s' "$ev" | PYTHONPATH="$pp" AGENT_PROJECT_DIR="$proj" timeout "${PTG_TIMEOUT:-60}" bash "${PTG_SCRIPT:-$PTG}" 2>"$TMP_ROOT/ptg.err" || true)
   PTG_ERR=$(cat "$TMP_ROOT/ptg.err")
   PTG_DEC=$(decision_of "$PTG_OUT")
 }
@@ -846,6 +850,75 @@ ptg "$Pa" $'cat <<EOF\n$(( $(touch db/migrations/a) + 1 ))\nEOF'
 [[ "$PTG_DEC" == ask ]]; check "command substitution INSIDE arithmetic still runs (heredoc, ask)" $?
 ptg "$Pa" 'echo $(( $(touch db/migrations/a) + 1 ))'
 [[ "$PTG_DEC" == ask ]]; check "command substitution INSIDE arithmetic still runs (plain, ask)" $?
+
+
+echo
+echo "=== (W) r4: an extraction failure never discards the hits already found ==="
+BOMB_ARITH="$(python3 -c 'print("touch db/migrations/a.sql; echo " + "$((1+" * 2000 + "0" + "))" * 2000)')"
+BOMB_SUBST="$(python3 -c 'print("touch db/migrations/a.sql; echo " + "$(echo " * 2000 + "x" + ")" * 2000)')"
+BOMB_TICK="$(python3 -c '
+s = "touch db/migrations/b.sql"
+for _ in range(12):
+    s = "echo `" + s.replace("\\", "\\\\").replace("`", "\\`") + "`"
+print("touch db/migrations/a.sql; " + s)')"
+BOMB_EVAL="touch db/migrations/a.sql; eval eval eval eval eval eval eval eval touch db/migrations/b.sql"
+BOMB_SHELL="$(python3 -c '
+import shlex
+s = "touch db/migrations/b.sql"
+for _ in range(6):
+    s = "bash -c " + shlex.quote(s)
+print("touch db/migrations/a.sql; " + s)')"
+for spec in "arithmetic x2000:BOMB_ARITH" "command substitution x2000:BOMB_SUBST" "nested backticks x12:BOMB_TICK" "eval x8:BOMB_EVAL" "bash -c x6:BOMB_SHELL"; do
+  label=${spec%%:*}; var=${spec##*:}; cmd=${!var}
+  t0=$(now_ms); PTG_TIMEOUT=30 ptg "$P" "$cmd"; el=$(( $(now_ms) - t0 ))
+  [[ "$PTG_DEC" == ask && $el -le 5000 ]]; check "$label: ask, not a silent allow (${el}ms)" $?
+  ptg "$Pd" "$cmd"
+  [[ "$PTG_DEC" == deny ]]; check "$label: the REAL touch hit survives the failure (deny project)" $?
+done
+python3 - "$HC" "$TMP_ROOT" <<'PY'
+import os, sys
+sys.path.insert(0, os.path.dirname(sys.argv[1]))
+import hook_config as hc
+root = os.path.join(sys.argv[2], "bomb-root")
+os.makedirs(os.path.join(root, "db", "migrations"), exist_ok=True)
+cmd = "touch db/migrations/a.sql; echo " + "$((1+" * 2000 + "0" + "))" * 2000
+paths, trunc = hc.command_paths(cmd, root, root)
+sys.exit(0 if ("db/migrations/a.sql" in paths and trunc) else 1)
+PY
+check "command_paths: arithmetic bomb keeps the hit and reports truncated" $?
+
+echo
+echo "=== (X) r4: size limits are BYTES, and a python that did not run is never silent ==="
+if locale -a 2>/dev/null | grep -qi 'c.utf'; then
+  KOREAN="$(python3 -c 'print("가" * 50000 + "; touch src/x")')"
+  PTG_LC_ALL=C.UTF-8 ptg "$P" "$KOREAN"
+  [[ "$PTG_DEC" == ask ]]; check "50,000 Korean characters (150 KB): cut by bytes, still fail-closed ask" $?
+  PTG_LC_ALL=C.UTF-8 ptg "$Pu" "$KOREAN"
+  [[ "$PTG_DEC" == allow ]]; check "same command, no area declared: untouched (allow)" $?
+else
+  echo "  skip [no UTF-8 locale installed: byte-vs-character case not runnable here]"
+fi
+HANG2="$TMP_ROOT/hooks-die"
+cp -r "$REPO_ROOT/core/hooks" "$HANG2"
+cat >> "$HANG2/hook_config.py" <<'PY'
+
+
+def risk_command_report(repo_root, command, cwd="", cut=False):  # test double: python exits before finishing
+    raise SystemExit(3)
+PY
+PTG_SCRIPT="$HANG2/pre-tool-guard.sh" ptg "$P" 'touch src/x'
+[[ "$PTG_DEC" == allow && "$PTG_ERR" == *"did not complete"* ]]; check "evaluation that did not run: built-ins stand, and stderr says so (never silent)" $?
+ptg "$P" 'touch src/x'
+[[ "$PTG_ERR" != *"did not complete"* ]]; check "normal run prints no did-not-complete warning" $?
+
+echo
+echo "=== (Y) r4: the event cwd survives a big event ==="
+mkdir -p "$P/db/migrations"
+CWDBOMB="touch a.sql; : '$(python3 -c 'print(chr(34) * 55000)')'"
+EVCWD="$P/db/migrations" ptg "$P" "$CWDBOMB"
+[[ "$PTG_DEC" == ask ]]; check "event > 100000 chars with a small command: cwd db/migrations still resolves a.sql (ask)" $?
+EVCWD="$P/db/migrations" ptg "$P" "touch a.sql"
+[[ "$PTG_DEC" == ask ]]; check "control: small event, same cwd (ask)" $?
 
 echo
 echo "=== (J) docs and schema claims match the wiring ==="
