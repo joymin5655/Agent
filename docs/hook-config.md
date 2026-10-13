@@ -34,6 +34,101 @@ Differences from the Bash guard, which uses the same field:
   works without PyYAML.
 - The PyYAML warning can print once per hook invocation, so once per Edit/Write.
 
+## Risk-area patterns and mutex resources (T-4)
+
+Both files also carry the following. They are read by one loader (`core/hooks/hook_config.py`)
+and follow the same rule as everything else here: **extension-only**.
+
+| Field | Read by | Effect |
+|---|---|---|
+| `risk_areas.data.pattern` | `pre-tool-guard.sh` (guard 15), `core/git-hooks/pre-push`, `core/infra/auto-ship.sh` | a regex or list (Python `re`, `search` on a repo-relative path), added to the built-in `^.*/migrations/.*\.sql$` |
+| `risk_areas.deploy.pattern` | same three | added to the built-in `^.*/functions/.*/index\.ts$` |
+| `risk_areas.payment.pattern` | same three | added to auto-ship's built-in payment pattern; pre-tool-guard and pre-push have none, so there it only takes effect when listed |
+| `risk_areas.<area>.decision` | same three | `advisory` \| `ask` \| `deny`; effective = `max(consumer floor, declared)` |
+| `resources.<name>.triggers` | `r4-mutex-check.sh` | regexes mapping a Bash command / MCP tool name to the mutex `<name>`; consulted only when no built-in trigger matched |
+
+Consumer floors: `pre-tool-guard` **ask**, `pre-push` **advisory**, `auto-ship` **abort**. A
+declared `deny` blocks the push (pre-push exit 12/13/14 for data/deploy/payment) and denies the
+command (pre-tool-guard); it is the only way `deny` is reached. Built-in guards keep their own
+fixed decisions (DROP/TRUNCATE TABLE stays `ask`, `data/artifacts/` add stays `deny`).
+
+- **What pre-tool-guard matches.** The paths a Bash command would *modify*, found with a small
+  shell tokenizer (quotes, heredoc bodies and comments are data; `;` `&&` `||` `|`, redirects and
+  `$(...)` / backtick bodies are interpreted): `git add|rm|mv` arguments (honouring `git -C DIR`),
+  `git restore <path>` and `git checkout -- <path>`, the arguments of `rm unlink touch truncate
+  tee`, the destination of `cp install ln` (a destination directory also yields `dir/<basename>`;
+  `-t DIR` works) plus the sources of `mv`, `sed|perl -i` / `--in-place[=SUF]` file operands (the
+  script operand is skipped), `dd of=`, write redirects (`>` `>>` `>|` `&>` `&>>` `N>` `<>`), and
+  the bodies of `sh|bash|zsh|dash -c '...'` and `eval`, plus command substitutions anywhere —
+  `$(...)`, backticks (a backslash-escaped backtick nests, as in the shell), the same inside double
+  quotes and inside an UNQUOTED heredoc body (a quoted `<<'EOF'` body is data). `$((...))` is
+  arithmetic, not a command, but a `$(...)` nested inside it still counts. Relative paths are resolved against the
+  event's `cwd` (default: the hook's), `..` is normalised, and paths outside the project are
+  ignored. It runs last, so a built-in deny/ask always wins. A project that declared an area
+  evaluates EVERY Bash command (one extra python start, ~30 ms; there is deliberately no verb
+  pre-filter, which could not be a safe superset of the tokenizer: `to\uch`, `git -c 'x=;' add`);
+  a project that declared none never starts python for this. The command goes to python in an env
+  var, and one string is capped near 128 KB by exec **in bytes** (50,000 Korean characters are
+  150 KB), so the size test runs under `LC_ALL=C`; a command over 100,000 bytes is cut and reported
+  as truncated (fail-closed, below). The event goes over stdin whatever its size, so its `cwd`
+  always arrives. If the python call does not run to its final `END` line (exec failure, crash, the
+  outer 5 s timeout), stderr says `risk-area evaluation did not complete` and the built-in verdicts
+  stand: this is deliberately fail-open, because the config is an extension — failing closed would
+  ask on every command of a declared project whenever the interpreter hiccups — and pre-push /
+  auto-ship, which read the real changed-file list, are the backstop. An extraction error inside a
+  command (for example a pathological `$((...))` nest) is a truncation too: the hits already found
+  are kept, the rest is reported as unevaluated.
+- **What it does not see (limits).** `git add .` / `-A` and globs (no file names), `rsync`,
+  `find -delete|-exec`, `patch`, `git apply`, `git stash`, `awk -i inplace`, an interpreter
+  one-liner that writes (`python -c "open(...)"`), a script body fed through a heredoc or a pipe
+  (`bash <<EOF`), variables and command results (`"$F"`), and anything past the analysis caps. The
+  caps are never silent: a command over 64 KiB / 512 simple commands / 2000 paths, or a file list
+  over 20000 entries, produces a warning and a fail-closed hit on every area that declares a
+  pattern (pre-tool-guard asks, auto-ship aborts, pre-push blocks only if that area declares
+  `deny`). pre-push, which sees the real changed-file list, is the backstop for what the Bash guard
+  cannot see.
+- **Over-asking.** The extraction is a heuristic. Where a project declares `decision: deny`, a
+  residual false positive (for example a quoted path inside a `-c` string the tokenizer cannot
+  tell from code, or a path written through an unusual option form) becomes a false BLOCK, not
+  just an extra prompt. Prefer `ask` unless the area is truly never edited by automation.
+- **PyYAML missing.** The `.yml` is skipped with ONE stderr line, `hook_config: PyYAML not installed
+  ...`, and the built-ins apply — no new refusal. `.json` still works. (`risk_areas.secrets.paths`
+  keeps its P1-9 fail-closed behaviour.)
+- **Bad entries and the deadline.** A regex that is invalid, over 200 chars, nested-quantified
+  (`(a+)+`, or a character class followed by `+`/`*`) or that matches the empty string is ignored
+  with `hook_config: ignored ...`; siblings still apply. At most 20 patterns per area and 20
+  resources x 20 triggers; matching sees at most 1024 chars per path. Every regex execution, the
+  empty-string screen included, runs under a 0.25 s watchdog and ONE process-wide 1.5 s deadline
+  shared by all areas and resources. A single pattern that overruns is ignored with a warning. So a
+  config can delay a guard by at most ~1.5 s (pre-tool-guard additionally wraps the evaluation in a
+  5 s `timeout` where available), and the secrets check (11b) and every other built-in verdict are
+  settled before the config is evaluated. A resource name must match `[a-z0-9][a-z0-9_.-]*`;
+  `decision` is case-insensitive and is read from EVERY config file before any regex runs.
+- **Exhausted budget and truncation fail closed.** When the 1.5 s deadline is spent before the
+  patterns of a declared area were all run, that area is treated as *not evaluated* — exactly like
+  an input over an analysis cap — never as "no match" (a slow `.yml` therefore cannot lower a `deny`
+  declared in the `.json`). The consumer then acts on its own rule: pre-push blocks only if that
+  area declares `deny` (otherwise an advisory says "not fully evaluated"), auto-ship aborts, and
+  pre-tool-guard asks. In pre-tool-guard such synthetic hits are capped at `ask`: `deny` is reserved
+  for a real path match, and the message names the area(s) that reached the decision. `resources`
+  triggers are the exception: an exhausted budget skips the remaining triggers with a warning
+  (no resource can be named from an unevaluated trigger). Projects that declare no area see none of
+  this (no warning, no extra hit).
+- **Not read.** `resources.<name>.auto_expire_minutes` (an expiry would shorten a lock's hold, so it
+  would weaken the mutex; stale locks are `agent-session.sh gc`'s job), `secrets.keywords`,
+  `domain-output`, and a `hook-config.yml` at the project root.
+
+```yaml
+# .agent/hook-config.yml
+risk_areas:
+  data:    {pattern: '^db/migrations/.*\.sql$', decision: ask}
+  payment: {pattern: ['(billing/|stripe)', '^pay/']}
+resources:
+  ship-it: {triggers: ['make ship', '^release\.sh']}
+```
+
+Tests: `bash core/tests/risk-area-config-test.sh`.
+
 ## Schema
 
 All keys live under a top-level `python_hooks:` mapping (a bare top-level mapping

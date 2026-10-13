@@ -2322,7 +2322,10 @@ fi
 _HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null)"
 _PROJ_ROOT="${AGENT_PROJECT_DIR:-${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null)}}"
 if [[ -n "$_PROJ_ROOT" && -n "$_HOOK_DIR" ]]; then
-  _EXTRA_SECRET_ALT=$(_HD="$_HOOK_DIR" _PR="$_PROJ_ROOT" python3 - <<'PY' 2>/dev/null || true
+  # Secrets-path alternation ONLY (guard 11b): no config regex runs in this call, so the secrets
+  # verdict below is settled before any T-4 risk-pattern evaluation (guard 15, last) can run
+  # slowly or fail. Line 2, when present, says a data/deploy/payment extension is declared.
+  _PY_OUT=$(_HD="$_HOOK_DIR" _PR="$_PROJ_ROOT" python3 - <<'PY' 2>/dev/null || true
 import os, sys
 # `python3 -` puts the working directory first on sys.path; drop it so a stray
 # yaml.py / yaml/ in the repo cannot stand in for PyYAML.
@@ -2332,20 +2335,33 @@ except OSError:  # deleted working directory
     _cwd = ""
 sys.path[:] = [p for p in sys.path if p not in ("", ".", _cwd)]
 sys.path.insert(0, os.environ.get("_HD", ""))
+unparseable = False
+toks = []
+hook_config = None
 try:
     import hook_config
-    if hook_config.risk_areas_unparseable(os.environ.get("_PR", "")):
-        # '!' can never appear in a safe token, so this sentinel is unambiguous.
-        print("!UNPARSEABLE")
-        sys.exit(0)
-    toks = hook_config.load_risk_area_secret_paths(os.environ.get("_PR", ""))
+    unparseable = hook_config.risk_areas_unparseable(os.environ.get("_PR", ""))
+    if not unparseable:
+        toks = hook_config.load_risk_area_secret_paths(os.environ.get("_PR", ""))
 except Exception:
     toks = []
-# tokens are already a safe literal set (^[A-Za-z0-9._/\-]+$); escape the regex
-# dot so a config '.env.prod' matches literally, then join into an ERE group.
-print("|".join(t.replace(".", "[.]") for t in toks))
+if unparseable:
+    # '!' can never appear in a safe token, so this sentinel is unambiguous.
+    print("!UNPARSEABLE")
+else:
+    # tokens are already a safe literal set (^[A-Za-z0-9._/\-]+$); escape the regex
+    # dot so a config '.env.prod' matches literally, then join into an ERE group.
+    print("|".join(t.replace(".", "[.]") for t in toks))
+try:
+    if hook_config.risk_config_declared(os.environ.get("_PR", "")):
+        print("RISKCFG")
+except Exception:
+    pass
 PY
 )
+  _EXTRA_SECRET_ALT=${_PY_OUT%%$'\n'*}
+  _RISK_DECLARED=0
+  [[ "$_PY_OUT" == *$'\nRISKCFG' ]] && _RISK_DECLARED=1
   _SECRET_READ_VERBS='cat|tac|nl|head|tail|less|more|awk|sed|grep|egrep|fgrep|rg|ag|bat|hexdump|xxd|od|strings|dd|fold|rev|tee|cp|mv|ln|md5sum|shasum|sha256sum|sha512sum|diff|cmp|gunzip|bunzip2|bzip2|bzcat|xz|xzcat|unxz|lzma|lz4cat|tar|unzip|7z|zip|gpg|openssl|age|rsync|scp|curl|wget|source|\.|'"$_SECRET_MORE_READERS"
   # P1-9: risk_areas declared but PyYAML absent -> the declared paths are unknown,
   # so deny anything the token match below could deny for SOME path: the same
@@ -2446,5 +2462,101 @@ FIX: fix the flagged code itself; edit the config only when the rule change is t
   exit 0
 fi
 
+# 15. Project-declared risk-area paths (T-4) - hook-config.yml/json
+# risk_areas.<data|deploy|payment>.pattern. EXTENSION-ONLY: this runs after every built-in
+# guard above (secrets 11b included), so a built-in deny/ask is always settled first and a slow
+# or broken config can never delay or suppress it; a config pattern can only ADD an `ask` (or an
+# explicit `decision: deny`) for a command that modifies a matching path. hook_config bounds the
+# whole evaluation by one process-wide deadline. Only projects that declare an area pay for this
+# second python start (line 2 of the 11b call).
+_RISK_RECORDS=""
+# No verb pre-filter: any text-level filter must be a superset of what the tokenizer reads
+# (`to\uch`, `s\ed`, `git -c 'x=;' add`, a line continuation all reach a writer), and a global
+# pattern substitution over the command is super-linear on bash 3.2. A project that declared an
+# area simply evaluates every Bash command; a project that declared none never starts python.
+# The command travels in an env var, and exec caps ONE string near 128 KB — counted in BYTES, so
+# the size test runs under LC_ALL=C (a UTF-8 shell counts characters: 50,000 Korean characters
+# are 150 KB). A bigger command is cut by bytes and flagged, and hook_config then reports it as
+# truncated (fail-closed), never as clean. The event itself goes over stdin, whatever its size,
+# so its cwd always arrives.
+_RISK_CUT=0
+_RISK_ARG="$SCAN_CMD"
+_rk_lc=${LC_ALL-__unset__}
+LC_ALL=C
+if (( ${#SCAN_CMD} > 100000 )); then
+  _RISK_ARG=${SCAN_CMD:0:100000}
+  _RISK_CUT=1
+fi
+if [[ "$_rk_lc" == __unset__ ]]; then unset LC_ALL; else LC_ALL="$_rk_lc"; fi
+if [[ "${_RISK_DECLARED:-0}" == 1 && -n "${_HOOK_DIR:-}" && -n "${_PROJ_ROOT:-}" ]]; then
+  # Belt and braces: hook_config has its own deadline; this outer bound covers a non-POSIX or
+  # otherwise signal-less python. Where no timeout binary exists the in-process deadline stands.
+  _RISK_TMO=()
+  if command -v timeout >/dev/null 2>&1; then _RISK_TMO=(timeout 5); fi
+  read -r -d '' _RISK_PY <<'PY' || true
+import json, os, sys
+try:
+    _cwd = os.getcwd()
+except OSError:
+    _cwd = ""
+sys.path[:] = [p for p in sys.path if p not in ("", ".", _cwd)]
+sys.path.insert(0, os.environ.get("_HD", ""))
+try:
+    import hook_config
+    try:
+        ev = json.loads(sys.stdin.read() or "{}")
+        ev_cwd = ev.get("cwd", "") if isinstance(ev, dict) else ""
+    except Exception:
+        ev_cwd = ""
+    for line in hook_config.risk_command_report(os.environ.get("_PR", ""), os.environ.get("_CMD", ""),
+                                                ev_cwd if isinstance(ev_cwd, str) else "",
+                                                os.environ.get("_CUT") == "1"):
+        print(line)
+    print("END")
+except Exception:
+    pass
+PY
+  _RISK_RECORDS=$(printf '%s' "$INPUT" | _HD="$_HOOK_DIR" _PR="$_PROJ_ROOT" _CMD="$_RISK_ARG" _CUT="$_RISK_CUT" "${_RISK_TMO[@]}" python3 -c "$_RISK_PY" 2>/dev/null)
+  # A python that did not run to the end (exec failure, crash, outer timeout) is reported, never
+  # silent. Extension-only: the built-in verdicts above stand; pre-push / auto-ship, which read the
+  # real changed-file list, are the backstop. Failing closed here would ask on EVERY command of a
+  # declared project whenever the interpreter hiccups.
+  case "$_RISK_RECORDS" in
+    *END) ;;
+    *) echo "hook_config: risk-area evaluation did not complete - project risk_areas not applied to this command (built-in guards unaffected)" >&2 ;;
+  esac
+fi
+if [[ -n "${_RISK_RECORDS:-}" ]]; then
+  # The strongest decision wins and the message names the area(s) that reached it, with only their
+  # paths. Synthetic hits (truncated / unevaluated) arrive already capped at `ask`.
+  _RISK_HIT_RANK=-1
+  while IFS=$'\t' read -r _rk_kind _rk_a _rk_b _rk_c; do
+    case "$_rk_kind" in
+      WARN) echo "hook_config: $_rk_a" >&2 ;;
+      HIT)
+        case "$_rk_b" in deny) _rk_rank=2 ;; ask) _rk_rank=1 ;; *) _rk_rank=0 ;; esac
+        if (( _rk_rank > _RISK_HIT_RANK )); then _RISK_HIT_RANK=$_rk_rank; fi
+        ;;
+    esac
+  done <<< "$_RISK_RECORDS"
+  _RISK_HIT_AREA="" _RISK_HIT_DEC="" _RISK_HIT_PATHS=""
+  if (( _RISK_HIT_RANK >= 0 )); then
+    case "$_RISK_HIT_RANK" in 2) _RISK_HIT_DEC=deny ;; 1) _RISK_HIT_DEC=ask ;; *) _RISK_HIT_DEC=advisory ;; esac
+    while IFS=$'\t' read -r _rk_kind _rk_a _rk_b _rk_c; do
+      if [[ "$_rk_kind" == HIT && "$_rk_b" == "$_RISK_HIT_DEC" ]]; then
+        case ",$_RISK_HIT_AREA," in *",$_rk_a,"*) ;; *) _RISK_HIT_AREA="${_RISK_HIT_AREA:+$_RISK_HIT_AREA,}$_rk_a" ;; esac
+        _RISK_HIT_PATHS="${_RISK_HIT_PATHS:+$_RISK_HIT_PATHS, }$_rk_c"
+      fi
+    done <<< "$_RISK_RECORDS"
+  fi
+  if [[ -n "$_RISK_HIT_AREA" ]]; then
+    log_violation project-risk-area "project $_RISK_HIT_AREA path modified: ${_RISK_HIT_PATHS:0:200}" "$_RISK_HIT_DEC"
+    _RISK_MSG="Command modifies a project-declared $_RISK_HIT_AREA path (Risk Area: $_RISK_HIT_AREA): ${_RISK_HIT_PATHS:0:200}
+WHY: .agent/hook-config risk_areas ($_RISK_HIT_AREA) marks these paths as high-risk; automation must not change them without a human decision.
+FIX: confirm only if this change is intended; otherwise leave the file to a reviewed change, or narrow the pattern in .agent/hook-config.yml."
+    if [[ "$_RISK_HIT_DEC" == "deny" ]]; then emit_deny "$_RISK_MSG"; else emit_ask "$_RISK_MSG"; fi
+    exit 0
+  fi
+fi
 
 exit 0
