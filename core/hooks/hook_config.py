@@ -60,11 +60,7 @@ pattern is unioned with the built-ins, a declared decision can only raise a cons
 import json
 import os
 import re
-import shlex
-import signal
 import sys
-import threading
-import time
 
 # Defensive caps — bound config influence so a pathological config cannot
 # explode scan cost or memory.
@@ -599,6 +595,8 @@ def load_risk_area_patterns(repo_root):
 def _run_budgeted(fn, seconds):
     """Run fn() under a SIGALRM budget (main thread, POSIX). Raises _MatchTimeout on overrun.
     Where signals are unavailable the inputs are still length-capped; fn runs unguarded."""
+    import signal  # lazy: only paths that run a config regex pay for it
+    import threading
     usable = hasattr(signal, "setitimer") and threading.current_thread() is threading.main_thread()
     if not usable:
         return fn()
@@ -618,6 +616,7 @@ def _run_budgeted(fn, seconds):
 def match_paths(patterns, paths, warnings=None):
     """Paths (order kept) matched by ANY of `patterns` via re.search. Each pattern runs under its
     own time budget; one that overruns (or is invalid) is ignored with a warning. Never raises."""
+    import time
     hits = []
     seen = set()
     sink = warnings if warnings is not None else []
@@ -728,6 +727,7 @@ def _command_targets(command, out, depth):
         if not seg:
             continue
         try:
+            import shlex
             tokens = shlex.split(seg)
         except ValueError:
             tokens = seg.split()
