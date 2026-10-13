@@ -55,37 +55,12 @@ elif not isinstance(command, str):
 sys.stdout.buffer.write(command.encode("utf-8", "backslashreplace"))
 '); _DECODE_RC=$?
 
-emit_deny() {
-  local reason="$1"
-  python3 -I - "$reason" <<'PY'
-import json
-import sys
-reason = sys.argv[1]
-print(json.dumps({
-    "hookSpecificOutput": {
-        "hookEventName": "PreToolUse",
-        "permissionDecision": "deny",
-        "permissionDecisionReason": reason,
-    }
-}, ensure_ascii=False))
-PY
-}
+# shellcheck source=event_decode.sh
+source "${BASH_SOURCE[0]%/*}/event_decode.sh"
 
-emit_ask() {
-  local reason="$1"
-  python3 -I - "$reason" <<'PY'
-import json
-import sys
-reason = sys.argv[1]
-print(json.dumps({
-    "hookSpecificOutput": {
-        "hookEventName": "PreToolUse",
-        "permissionDecision": "ask",
-        "permissionDecisionReason": reason,
-    }
-}, ensure_ascii=False))
-PY
-}
+emit_deny() { hook_emit_decision deny "$1"; }
+
+emit_ask() { hook_emit_decision ask "$1"; }
 
 # Append to .agent/logs/security-violations.jsonl (silent-fail).
 log_violation() {
@@ -149,7 +124,9 @@ cmd = re.sub(r"(?s)" + FLAG +
              r"\x22\$\(\s*cat\s+<<-?[\x27\x22](\w+)[\x27\x22]\n.*?\n\2\n?\s*\)\x22",
              r"\1<msg>", cmd)
 cmd = re.sub(FLAG + r"\x27[^\x27]*\x27", r"\1<msg>", cmd)
-cmd = re.sub(FLAG + r"\x22[^\x22$\x60\\]*\x22", r"\1<msg>", cmd)
+# AG22: the decode above spells a lone surrogate as the text \udXXX; allow exactly that spelling
+# (not any other backslash) so a surrogate in a message does not keep the message scannable.
+cmd = re.sub(FLAG + r"\x22(?:[^\x22$\x60\\]|\\u[dD][89a-fA-F][0-9a-fA-F]{2})*\x22", r"\1<msg>", cmd)
 sys.stdout.write(cmd)
 PY
 ) || SCAN_CMD="$COMMAND"
@@ -2155,8 +2132,7 @@ PY
   # Inline code and a here-string may span lines (python3 -c "<newline>open('p')<newline>"): look at
   # a copy with backslash-newline joined and newlines turned into blanks. Only the two interpreter
   # clauses use it; every other clause keeps its line-by-line match.
-  _CMD_FLAT=${COMMAND//\\$'\n'/}
-  _CMD_FLAT=${_CMD_FLAT//$'\n'/ }
+  _CMD_FLAT=$(hook_flatten_lines "$COMMAND")
   if [[ "$_EXTRA_SECRET_ALT" == "!UNPARSEABLE" ]]; then
     if echo "$COMMAND" | grep -qiE "($_SECRET_READ_VERBS)\s+" \
        || echo "$COMMAND" | grep -qiE "$_SECRET_CMD_START" \

@@ -121,7 +121,10 @@ declare -a CASES=(
   $'trailing newline\n'
   $'trailing backslash\\'
   $'\\\n'
+  $'\xff'
+  $' \xc3 '
 )
+export LC_ALL="${LOC:-C}"   # invalid bytes only matter in a multibyte locale
 for c in "${CASES[@]}"; do
   label=$(printf '%q' "$c")
   o=0; n=0
@@ -131,6 +134,9 @@ for c in "${CASES[@]}"; do
   o=$(old_flat "$c"; printf x); n=$(hook_flatten_lines "$c"; printf x)
   [[ "$o" == "$n" ]] && ok "equiv/flat $label" || bad "equiv/flat $label" "old=$(printf '%q' "${o%x}") new=$(printf '%q' "${n%x}")"
 done
+
+# the one deliberate difference: non-ASCII spaces only is not blank (decoded and refused, not passed)
+if hook_input_is_blank $'\u3000'; then bad "blank/unicode-space-only" "treated as blank"; else ok "blank/unicode-space-only is not blank"; fi
 
 echo
 echo "hook-input-perf-test: $PASS passed, $FAIL failed"
