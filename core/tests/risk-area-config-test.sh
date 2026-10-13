@@ -695,7 +695,7 @@ cp -r "$REPO_ROOT/core/hooks" "$HANG"
 cat >> "$HANG/hook_config.py" <<'PY'
 
 
-def risk_command_report(repo_root, command, cwd=""):  # test double: config evaluation that never returns
+def risk_command_report(repo_root, command, cwd="", cut=False):  # test double: config evaluation that never returns
     import time
     time.sleep(120)
 PY
@@ -785,6 +785,16 @@ paths, trunc = hc.command_paths("touch db/migrations/a.sql; touch /etc/x\x00y", 
 sys.exit(0 if "db/migrations/a.sql" in paths else 1)
 PY
 check "a NUL byte in one operand does not lose the other hits" $?
+python3 - "$HC" "$TMP_ROOT" <<'PY'
+import os, sys
+sys.path.insert(0, os.path.dirname(sys.argv[1]))
+import hook_config as hc
+root = os.path.join(sys.argv[2], "undeclared-root")
+os.makedirs(os.path.join(root, ".agent"), exist_ok=True)
+lines = hc.risk_command_report(root, "touch a; " + "true; " * 700, root)
+sys.exit(0 if lines == [] else 1)
+PY
+check "no area declared: an oversized command yields no warning and no hit" $?
 P=$(mkproj cli-s)
 CLI_ERR=$(python3 -c 'print("\n".join("src/f%d" % i for i in range(20001)))' | timeout 10 python3 "$HC" risk-paths "$P" auto-ship 2>&1 >/dev/null)
 [[ "$CLI_ERR" != *truncat* ]]; check "no area declared: a big file list produces no truncation warning" $?
