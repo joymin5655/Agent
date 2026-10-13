@@ -593,13 +593,13 @@ ptg_cwd "mv: the SOURCE disappears"                 "$P" 'mv db/migrations/a.sql
 ptg_cwd "ln -s into the directory"                  "$P" 'ln -s ../x db/migrations/l.sql' ask
 ptg_cwd "dd of="                                    "$P" 'dd if=/dev/zero of=db/migrations/a.sql' ask
 echo "  -- over-asks that must stay allowed --"
-ptg_cwd "quoted '> path' is data"                   "$P" "printf '%s\n' '> db/migrations/a.sql'" allow
-ptg_cwd "quoted '; touch path' is data"             "$P" "printf '%s\n' '; touch db/migrations/a.sql'" allow
+ptg_cwd "quoted '> path' is data"                   "$P" "printf '%s\n' '> db/migrations/a.sql x'" allow
+ptg_cwd "quoted '; touch path' is data"             "$P" "printf '%s\n' '; touch db/migrations/a.sql x'" allow
 ptg_cwd "heredoc body is data"                      "$P" $'cat <<\'EOF\'\ntouch db/migrations/a.sql\nEOF' allow
-ptg_cwd "quoted echo with >"                        "$P" "echo 'a > db/migrations/x.sql'" allow
+ptg_cwd "quoted echo with >"                        "$P" "echo 'a > db/migrations/x.sql y'" allow
 ptg_cwd "../ is normalised (db/a.sql)"              "$P" 'touch db/migrations/../a.sql' allow
 ptg_cwd "cp SOURCE is only read"                    "$P" 'cp db/migrations/a.sql /tmp/copy.sql' allow
-ptg_cwd "sed -i script text is not a path"          "$P" "sed -i 's#db/migrations/a.sql#x#' f" allow
+ptg_cwd "sed -i script operand is not a path"      "$P" "sed -i 'db/migrations/x.sql' f" allow
 ptg_cwd "sed -n without -i only reads"              "$P" "sed -n -e p db/migrations/a.sql" allow
 ptg_cwd "< input redirect is not a target (tee)"    "$P" 'tee out.txt < db/migrations/a.sql' allow
 ptg_cwd "< input redirect is not a target (xargs)"  "$P" 'xargs rm < db/migrations/list.sql' allow
@@ -649,6 +649,8 @@ ptg "$P" "${FILLER}touch src/x"
 [[ "$PTG_DEC" == allow ]]; check "pre-tool-guard: moderate command is fully analysed (allow)" $?
 ptg "$P" "${FILLER}touch db/migrations/a.sql"
 [[ "$PTG_DEC" == ask ]]; check "pre-tool-guard: match at the END of a moderate command is found" $?
+ptg "$P" ": $(python3 -c 'print("x" * 70000)'); touch src/x"
+[[ "$PTG_DEC" == ask && "$PTG_ERR" == *truncat* ]]; check "pre-tool-guard: command over 64 KiB asks (and warns), never silently cut" $?
 Q=$(mkproj ptg-n0)
 ptg "$Q" "$(python3 -c 'print("true; " * 700)')touch src/x"
 [[ "$PTG_DEC" == allow ]]; check "pre-tool-guard: oversized command without declared areas is unaffected" $?
