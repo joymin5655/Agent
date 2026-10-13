@@ -318,7 +318,7 @@ def strip(s):
         return s
     try:
         commands = lex(s)
-    except Unreadable:
+    except (Unreadable, RecursionError):
         return s
     edits = []
     for words in commands:
