@@ -56,7 +56,9 @@ decision_of() { # stdout of a PreToolUse hook -> allow|ask|deny
 # ---- pre-tool-guard harness: sets PTG_OUT / PTG_ERR / PTG_DEC --------------------------------
 ptg() { # ptg <project> <command> [pythonpath]
   local proj="$1" cmd="$2" pp="${3:-}" ev
-  ev=$(CMD="$cmd" python3 -c 'import os,json; print(json.dumps({"event":"PreToolUse","tool_name":"Bash","tool_input":{"command":os.environ["CMD"]}}))')
+  ev=$(CMD="$cmd" python3 -c 'import os,json; e={"event":"PreToolUse","tool_name":"Bash","tool_input":{"command":os.environ["CMD"]}}
+if os.environ.get("EVCWD"): e["cwd"]=os.environ["EVCWD"]
+print(json.dumps(e))')
   PTG_OUT=$(cd "$proj" || exit 1; printf '%s' "$ev" | PYTHONPATH="$pp" AGENT_PROJECT_DIR="$proj" timeout "${PTG_TIMEOUT:-60}" bash "$PTG" 2>"$TMP_ROOT/ptg.err" || true)
   PTG_ERR=$(cat "$TMP_ROOT/ptg.err")
   PTG_DEC=$(decision_of "$PTG_OUT")
@@ -458,6 +460,212 @@ r4lock "$P" mcp-thing "$NOW"
 r4 "$P" mcp__vendor__push ''
 [[ $R4_DEC == ask && "$R4_OUT" == *mcp-thing* ]]; check "consume: trigger matches an MCP tool name" $?
 rm -f "$P/.agent/hook-config.json"
+
+
+echo
+echo "=== (K) r1: catastrophic regex in the SCREENING stage is bounded and ignored ==="
+PATHO=('(?:|){40}(?!)' "$(python3 -c 'print("(|)"*40+"(?!)")')" '(?:(|)|(|)){16}')
+now_ms() { echo $(( $(date +%s%N) / 1000000 )); }
+timed_ptg() { # timed_ptg <project> <cmd>  -> PTG_* and ELAPSED_MS
+  local t0; t0=$(now_ms); PTG_TIMEOUT=30 ptg "$1" "$2"; ELAPSED_MS=$(( $(now_ms) - t0 ))
+}
+for area in data deploy payment; do
+  for pi in 0 1 2; do
+    P=$(mkproj "ptg-k-$area-$pi")
+    cat > "$P/.agent/hook-config.yml" <<YML
+risk_areas:
+  secrets:
+    paths:
+      - 'vault/**'
+  $area:
+    pattern:
+      - '${PATHO[$pi]}'
+      - '^db/migrations/.*\.sql\$'
+YML
+    timed_ptg "$P" 'cp a src/x.txt'
+    [[ "$PTG_DEC" == allow && $ELAPSED_MS -le 3000 ]]; check "$area/P$pi: cp a src/x.txt allow within 3s (${ELAPSED_MS}ms)" $?
+    if [[ $pi -eq 2 ]]; then   # P2 matches "" at once: dropped by the universe screen, no budget involved
+      [[ "$PTG_ERR" == *ignored* ]]; check "$area/P2: pattern ignored + warned" $?
+    else
+      [[ "$PTG_ERR" == *ignored* && "$PTG_ERR" == *budget* ]]; check "$area/P$pi: pattern ignored + warned (budget)" $?
+    fi
+    timed_ptg "$P" 'cp vault/k src/x.txt'
+    [[ "$PTG_DEC" == deny && $ELAPSED_MS -le 3000 ]]; check "$area/P$pi: cp vault/k deny, 11b not delayed or suppressed (${ELAPSED_MS}ms)" $?
+    if [[ $pi -eq 0 ]]; then
+      timed_ptg "$P" 'echo hi > src/x.txt'
+      [[ "$PTG_DEC" == allow && $ELAPSED_MS -le 3000 ]]; check "$area/P0: redirect write allow within 3s" $?
+      timed_ptg "$P" 'git add src/x.txt'
+      [[ "$PTG_DEC" == allow && $ELAPSED_MS -le 3000 ]]; check "$area/P0: git add allow within 3s" $?
+      timed_ptg "$P" 'touch db/migrations/a.sql'
+      [[ "$PTG_DEC" == ask ]]; check "$area/P0: good sibling pattern still effective" $?
+    fi
+  done
+done
+for pi in 0 1 2; do
+  P=$(mkgit "r4-k-$pi"); r4lock "$P" ship-it "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  cat > "$P/.agent/hook-config.yml" <<YML
+resources:
+  ship-it:
+    triggers:
+      - '${PATHO[$pi]}'
+      - 'make ship'
+YML
+  t0=$(now_ms); r4 "$P" Bash 'make ship'; el=$(( $(now_ms) - t0 ))
+  [[ $R4_DEC == ask && $el -le 3000 ]]; check "r4/P$pi: good sibling trigger effective within 3s (${el}ms)" $?
+  if [[ $pi -eq 2 ]]; then [[ "$R4_ERR" == *ignored* ]]; else [[ "$R4_ERR" == *ignored* && "$R4_ERR" == *budget* ]]; fi
+  check "r4/P$pi: pattern ignored + warned" $?
+  t0=$(now_ms); r4 "$P" Bash 'cp a b'; el=$(( $(now_ms) - t0 ))
+  [[ $R4_DEC == allow && $el -le 3000 ]]; check "r4/P$pi: unrelated command allow within 3s (${el}ms)" $?
+done
+for pi in 0 1 2; do
+  P=$(mkproj "cli-k-$pi")
+  cat > "$P/.agent/hook-config.yml" <<YML
+risk_areas:
+  payment:
+    pattern:
+      - '${PATHO[$pi]}'
+      - '^pay/'
+YML
+  t0=$(now_ms); CLI_OUT=$(printf 'a\npay/x\n' | timeout 30 python3 "$HC" risk-paths "$P" auto-ship 2>/dev/null); el=$(( $(now_ms) - t0 ))
+  [[ "$CLI_OUT" == *$'HIT\tpayment\tpay/x'* && $el -le 3000 ]]; check "risk-paths/P$pi (pre-push, auto-ship loader): bounded, good sibling HIT (${el}ms)" $?
+done
+
+echo
+echo "=== (L) r1: worst-case config volume finishes inside ONE process-wide deadline ==="
+P=$(mkproj ptg-l)
+python3 - "$P" <<'PY'
+import json, sys
+root = sys.argv[1]
+cfg = {"risk_areas": dict((a, {"pattern": ["^(a|aa|%d)+$" % i for i in range(20)]}) for a in ("data", "deploy", "payment"))}
+json.dump(cfg, open(root + "/.agent/hook-config.json", "w"))
+PY
+LONGA=$(python3 -c 'print("a"*900+"!")')
+t0=$(now_ms); PTG_TIMEOUT=30 ptg "$P" "git add $LONGA"; el=$(( $(now_ms) - t0 ))
+[[ "$PTG_DEC" == allow && $el -le 4500 ]]; check "pre-tool-guard: 3 areas x 20 slow patterns x long path <= 4.5s (${el}ms)" $?
+[[ "$PTG_ERR" == *budget* ]]; check "pre-tool-guard: exhausted budget is warned" $?
+P=$(mkgit r4-l); r4lock "$P" res0 "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+python3 - "$P" <<'PY'
+import json, sys
+root = sys.argv[1]
+cfg = {"resources": dict(("res%d" % i, {"triggers": ["^(a|aa|%d)+$" % (i * 20 + j) for j in range(20)]}) for i in range(20))}
+json.dump(cfg, open(root + "/.agent/hook-config.json", "w"))
+PY
+t0=$(now_ms); r4 "$P" Bash "$LONGA"; el=$(( $(now_ms) - t0 ))
+[[ $R4_DEC == allow && $el -le 4500 ]]; check "r4: 20 resources x 20 slow triggers x long command <= 4.5s (${el}ms)" $?
+[[ "$R4_ERR" == *budget* ]]; check "r4: exhausted budget is warned" $?
+
+echo
+echo "=== (M) r1: write-target extraction (full hook, event cwd) ==="
+P=$(mkproj ptg-m); mkdir -p "$P/db/migrations" "$P/src"
+printf '%s' $'risk_areas:\n  data:\n    pattern: \'^.*/migrations/.*\\.sql$\'\n' > "$P/.agent/hook-config.yml"
+ptg_cwd() { # ptg_cwd <name> <event-cwd> <command> <expect>
+  EVCWD="$2" ptg "$P" "$3"
+  [[ "$PTG_DEC" == "$4" ]]; local rc=$?
+  [[ $rc -ne 0 ]] && echo "       got=$PTG_DEC cmd=$3 err=$PTG_ERR"
+  check "$1 ($4)" $rc
+}
+ptg_cwd "cwd=db/migrations: touch a.sql"            "$P/db/migrations" 'touch a.sql' ask
+ptg_cwd "cwd=db/migrations: redirect > a.sql"       "$P/db/migrations" 'echo x > a.sql' ask
+ptg_cwd "cwd=db: git add migrations/a.sql"          "$P/db" 'git add migrations/a.sql' ask
+ptg_cwd "cwd=src: ../db/migrations/a.sql"           "$P/src" 'touch ../db/migrations/a.sql' ask
+ptg_cwd "cwd outside repo: touch a.sql is not ours" "/tmp" 'touch a.sql' allow
+ptg_cwd "cwd outside repo: absolute path inside"    "/tmp" "touch $P/db/migrations/a.sql" ask
+ptg_cwd "git -C db add migrations/a.sql"            "$P" 'git -C db add migrations/a.sql' ask
+ptg_cwd "git -C db/migrations add a.sql"           "$P" 'git -C db/migrations add a.sql' ask
+ptg_cwd "bash -c with a trailing ; true"            "$P" "bash -c 'touch db/migrations/a.sql; true'" ask
+ptg_cwd "bash -c control (no trailing command)"     "$P" "bash -c 'touch db/migrations/a.sql'" ask
+ptg_cwd "sh -c nested quotes"                       "$P" "sh -c \"cp x.sql db/migrations/b.sql && true\"" ask
+ptg_cwd "command substitution body"                 "$P" 'echo $(touch db/migrations/a.sql)' ask
+ptg_cwd "redirect >|"                               "$P" 'printf x >| db/migrations/a.sql' ask
+ptg_cwd "redirect &>"                               "$P" 'make &> db/migrations/a.sql' ask
+ptg_cwd "redirect &>>"                              "$P" 'make &>> db/migrations/a.sql' ask
+ptg_cwd "redirect 2>"                               "$P" 'make 2> db/migrations/a.sql' ask
+ptg_cwd "redirect 1>>"                              "$P" 'make 1>>db/migrations/a.sql' ask
+ptg_cwd "sed --in-place=.bak"                       "$P" "sed --in-place=.bak 's/a/b/' db/migrations/a.sql" ask
+ptg_cwd "sed --in-place"                            "$P" "sed --in-place 's/a/b/' db/migrations/a.sql" ask
+ptg_cwd "sed -i -e script"                          "$P" "sed -i -e 's/a/b/' db/migrations/a.sql" ask
+ptg_cwd "perl -pi -e"                               "$P" "perl -pi -e 's/a/b/' db/migrations/a.sql" ask
+ptg_cwd "git checkout -- path"                      "$P" 'git checkout -- db/migrations/a.sql' ask
+ptg_cwd "git restore path"                          "$P" 'git restore db/migrations/a.sql' ask
+ptg_cwd "cp into a directory"                       "$P" 'cp x.sql db/migrations/' ask
+ptg_cwd "cp -t DIR"                                 "$P" 'cp -t db/migrations x.sql' ask
+ptg_cwd "mv: the SOURCE disappears"                 "$P" 'mv db/migrations/a.sql /tmp/gone.sql' ask
+ptg_cwd "ln -s into the directory"                  "$P" 'ln -s ../x db/migrations/l.sql' ask
+ptg_cwd "dd of="                                    "$P" 'dd if=/dev/zero of=db/migrations/a.sql' ask
+echo "  -- over-asks that must stay allowed --"
+ptg_cwd "quoted '> path' is data"                   "$P" "printf '%s\n' '> db/migrations/a.sql'" allow
+ptg_cwd "quoted '; touch path' is data"             "$P" "printf '%s\n' '; touch db/migrations/a.sql'" allow
+ptg_cwd "heredoc body is data"                      "$P" $'cat <<\'EOF\'\ntouch db/migrations/a.sql\nEOF' allow
+ptg_cwd "quoted echo with >"                        "$P" "echo 'a > db/migrations/x.sql'" allow
+ptg_cwd "../ is normalised (db/a.sql)"              "$P" 'touch db/migrations/../a.sql' allow
+ptg_cwd "cp SOURCE is only read"                    "$P" 'cp db/migrations/a.sql /tmp/copy.sql' allow
+ptg_cwd "sed -i script text is not a path"          "$P" "sed -i 's#db/migrations/a.sql#x#' f" allow
+ptg_cwd "sed -n without -i only reads"              "$P" "sed -n -e p db/migrations/a.sql" allow
+ptg_cwd "< input redirect is not a target (tee)"    "$P" 'tee out.txt < db/migrations/a.sql' allow
+ptg_cwd "< input redirect is not a target (xargs)"  "$P" 'xargs rm < db/migrations/list.sql' allow
+ptg_cwd "git checkout <ref> (no --) is no path"     "$P" 'git checkout db/migrations/a.sql' allow
+ptg_cwd "perl script file operand is not a target"  "$P" 'perl -i db/migrations/s.pl f.txt' allow
+
+echo
+echo "=== (N) r1: truncation is never silent ==="
+P=$(mkproj cli-n)
+printf 'risk_areas:\n  payment:\n    pattern: "^pay/"\n' > "$P/.agent/hook-config.yml"
+python3 -c 'print("\n".join("src/f%d" % i for i in range(2100)) + "\npay/secret.py")' > "$TMP_ROOT/files-2100"
+CLI_OUT=$(timeout 30 python3 "$HC" risk-paths "$P" auto-ship < "$TMP_ROOT/files-2100" 2>/dev/null)
+[[ "$CLI_OUT" == *$'HIT\tpayment\tpay/secret.py'* ]]; check "2100 paths, match LAST: still a HIT (processed in full)" $?
+python3 -c 'print("\n".join("src/f%d" % i for i in range(20001)))' > "$TMP_ROOT/files-20001"
+CLI_OUT=$(timeout 30 python3 "$HC" risk-paths "$P" auto-ship < "$TMP_ROOT/files-20001" 2>"$TMP_ROOT/cli.err")
+[[ "$CLI_OUT" == *$'HIT\tpayment\t(file list too large'* && "$(cat "$TMP_ROOT/cli.err")" == *truncat* ]]
+check "20001 paths: warned + fail-closed HIT on every area with a pattern" $?
+[[ "$CLI_OUT" != *$'HIT\tdata'* ]]; check "areas without a pattern are not marked" $?
+P=$(mkgit as-n)
+printf 'risk_areas:\n  payment:\n    pattern: "^pay/"\n' > "$P/.agent/hook-config.yml"
+as "$P" "" $(python3 -c 'print(" ".join("src/f%d" % i for i in range(20001)))')
+[[ $AS_RC -eq 14 ]]; check "auto-ship: truncated list aborts (exit 14, fail-closed)" $?
+rm "$P/.agent/hook-config.yml"
+as "$P" "" $(python3 -c 'print(" ".join("src/f%d" % i for i in range(20001)))')
+[[ $AS_RC -eq 17 ]]; check "auto-ship: same big list without config is unaffected" $?
+W=$(mkrepo pp-n)
+(cd "$W" && git checkout -q -B feat origin/main && python3 - <<'PY'
+import os
+os.makedirs("big", exist_ok=True)
+for i in range(20001):
+    open("big/f%d" % i, "w").write("x")
+PY
+git add big && git commit -q -m big)
+printf 'risk_areas:\n  payment:\n    pattern: "^pay/"\n    decision: deny\n' > "$W/.agent/hook-config.yml"
+pp "$W"
+[[ $PP_RC -eq 14 && "$PP_ERR" == *"[BLOCK payment]"* ]]; check "pre-push: truncation + declared deny blocks (exit 14)" $?
+printf 'risk_areas:\n  payment:\n    pattern: "^pay/"\n' > "$W/.agent/hook-config.yml"
+pp "$W"
+[[ $PP_RC -eq 0 && "$PP_ERR" == *"[ADVISORY payment]"* ]]; check "pre-push: truncation without deny is an advisory, not a block" $?
+P=$(mkproj ptg-n)
+printf '%s' $'risk_areas:\n  data:\n    pattern: \'^db/migrations/.*\\.sql$\'\n' > "$P/.agent/hook-config.yml"
+FILLER=$(python3 -c 'print("true; " * 700)')
+ptg "$P" "${FILLER}touch src/x"
+[[ "$PTG_DEC" == ask && "$PTG_ERR" == *truncat* ]]; check "pre-tool-guard: oversized command asks (and warns) when an area is declared" $?
+FILLER=$(python3 -c 'print("true; " * 50)')
+ptg "$P" "${FILLER}touch src/x"
+[[ "$PTG_DEC" == allow ]]; check "pre-tool-guard: moderate command is fully analysed (allow)" $?
+ptg "$P" "${FILLER}touch db/migrations/a.sql"
+[[ "$PTG_DEC" == ask ]]; check "pre-tool-guard: match at the END of a moderate command is found" $?
+Q=$(mkproj ptg-n0)
+ptg "$Q" "$(python3 -c 'print("true; " * 700)')touch src/x"
+[[ "$PTG_DEC" == allow ]]; check "pre-tool-guard: oversized command without declared areas is unaffected" $?
+
+echo
+echo "=== (O) r1: decision keyword is case-insensitive ==="
+P=$(mkproj ptg-o)
+printf '%s' $'risk_areas:\n  data:\n    pattern: \'^db/migrations/.*\\.sql$\'\n    decision: DENY\n' > "$P/.agent/hook-config.yml"
+ptg_expect "decision: DENY -> deny"   "$P" 'git add db/migrations/001.sql' deny
+printf '%s' $'risk_areas:\n  data:\n    pattern: \'^db/migrations/.*\\.sql$\'\n    decision: Deny\n' > "$P/.agent/hook-config.yml"
+ptg_expect "decision: Deny -> deny"   "$P" 'git add db/migrations/001.sql' deny
+printf '%s' $'risk_areas:\n  data:\n    pattern: \'^db/migrations/.*\\.sql$\'\n    decision: ASK\n' > "$P/.agent/hook-config.yml"
+ptg_expect "decision: ASK -> ask"     "$P" 'git add db/migrations/001.sql' ask
+W=$(mkrepo pp-o); commit_files "$W" app/migrations/1.sql
+printf '%s' $'risk_areas:\n  data:\n    pattern: \'^zzz/\'\n    decision: DENY\n' > "$W/.agent/hook-config.yml"
+pp "$W"
+[[ $PP_RC -eq 12 ]]; check "pre-push: decision: DENY blocks (exit 12)" $?
 
 echo
 echo "=== (J) docs and schema claims match the wiring ==="
