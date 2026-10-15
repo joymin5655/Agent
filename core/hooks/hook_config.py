@@ -1341,7 +1341,22 @@ def _cli(argv):
         _reset_budget()
         if mode == "risk-paths":
             consumer = argv[3]
-            lines = [p for p in sys.stdin.read().splitlines() if p]
+            # Read bytes, not text: pre-push now passes paths with core.quotepath=off, so a name
+            # may carry non-ASCII or even invalid UTF-8 bytes. A strict stdin decode would raise and
+            # the outer `except` would swallow it, silently dropping EVERY declared area (deny too).
+            # surrogateescape round-trips any byte. Split on "\n" only: git still quotes a real
+            # newline in a path, and str.splitlines() would also break on U+2028/U+2029/U+0085,
+            # inventing a second path from one filename.
+            raw = sys.stdin.buffer.read().decode("utf-8", "surrogateescape")
+            lines = [ln for ln in (p.rstrip("\r") for p in raw.split("\n")) if ln]
+            # stdout may be ASCII (C locale, PYTHONIOENCODING=ascii); a HIT path with a non-ASCII or
+            # surrogate char would raise there and the outer `except` would drop the hits that follow
+            # it, including a later area's deny. Make every write non-raising. pre-push matches on the
+            # bytes regardless; only the rare ASCII-stdout display is escaped.
+            try:
+                sys.stdout.reconfigure(errors="backslashreplace")
+            except Exception:
+                pass
             truncated = len(lines) > _MAX_PATH_ITEMS
             paths = lines[:_MAX_PATH_ITEMS]
             cfg = load_risk_area_patterns(root)
