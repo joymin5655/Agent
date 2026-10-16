@@ -1,0 +1,21 @@
+# verify-all-weights.txt — per-check cost in seconds, consumed by `verify-all.sh --shard K/N`
+# (deterministic LPT bin-packing; see the header of verify-all.sh). Format: `<label> <seconds>`;
+# blank lines and `#` comments are ignored. A label not listed here weighs 1, which is right for
+# the ~95 checks that each finish in <= 8 s.
+#
+# Source: GitHub Actions run 38833730566 (ubuntu-latest, single serial verify job, 1869 s total),
+# per-step timestamps from the job log, 2026-10-16. Re-measure from the `PASS <label> (Ns)`
+# lines of a sharded run and update when a battery grows or shrinks materially; a stale weight
+# only costs shard balance, never correctness (every check still runs in exactly one shard).
+call-worker-test.sh 640
+pre-tool-guard-test.sh 509
+log-origin-test.sh 278
+risk-area-config-test.sh 71
+risk-area-wiring-test.sh 66
+oob-label-guard-test.sh 46
+setup-doctor-test.sh 33
+adapter-parity.sh 19
+reorg-sync-test.sh 18
+antigravity-adapter-test.sh 14
+circuit-breaker-test.sh 13
+pipefail-idiom-scan.sh 11

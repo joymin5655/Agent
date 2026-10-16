@@ -23,10 +23,12 @@
 # stdout: ALWAYS one line —
 #   "tier=<0|1|2> lines=<N> files=<M> code_lines=<K> risk=<comma-list|none>"
 #   lines/files/risk are council-threshold.sh's own numbers, parsed from its
-#   output line rather than recomputed — one SSOT for those three. code_lines
-#   is computed here: changed lines in files that are NOT docs-shaped
-#   (council-threshold's own line total intentionally includes docs changes —
-#   it judges "how big is this diff", not "how much code is this").
+#   output line rather than recomputed — one SSOT for those three. Since the
+#   2026-10 change those lines/files EXCLUDE test and docs paths (its trailing
+#   excluded=<n> field is ignored here): size alone escalates to tier 2 only on
+#   non-test, non-docs code. code_lines is computed here: changed lines in files
+#   that are NOT docs-shaped — tests still count, so a test-only diff above
+#   AGENT_REVIEW_SKIP_LINES gets the tier-1 reviewer pass instead of tier 0.
 # exit:   0  = tier 0 (skip)
 #         5  = tier 1 (standard review)
 #         10 = tier 2 (council-scale — same exit code council-threshold.sh
@@ -41,6 +43,9 @@
 set -u
 
 THRESHOLD_SCRIPT="$(dirname "${BASH_SOURCE[0]}")/council-threshold.sh"
+# is_docs_path — shared with council-threshold.sh so both use ONE docs definition
+# shellcheck source=core/infra/path-kinds.sh
+. "$(dirname "${BASH_SOURCE[0]}")/path-kinds.sh"
 SKIP_LINES="${AGENT_REVIEW_SKIP_LINES:-50}"
 ARG="${1:---staged}"
 
@@ -53,29 +58,19 @@ THRESHOLD_RC=$?
 LINES=0
 FILES=0
 RISK="none"
-if [[ "$THRESHOLD_OUT" =~ lines=([0-9]+)\ files=([0-9]+)\ risk=(.*) ]]; then
+# risk= is one token: council-threshold.sh appends " excluded=<n>" after it.
+if [[ "$THRESHOLD_OUT" =~ lines=([0-9]+)\ files=([0-9]+)\ risk=([^\ ]*) ]]; then
   LINES="${BASH_REMATCH[1]}"
   FILES="${BASH_REMATCH[2]}"
   RISK="${BASH_REMATCH[3]}"
 fi
 
-# Docs patterns — this repo's notion of non-code (.json/.toml/.sh/.py and
-# templates are CODE here — hooks.json/templates are behavior in this repo).
-is_docs_path() {
-  local path="$1"
-  printf '%s' "$path" | grep -qE '\.md$' && return 0
-  printf '%s' "$path" | grep -qE '\.css$|\.scss$' && return 0
-  printf '%s' "$path" | grep -qE '(^|/)(docs|assets)/' && return 0
-  printf '%s' "$path" | grep -qE '(^|/)LICENSE$' && return 0
-  printf '%s' "$path" | grep -qE '\.txt$' && return 0
-  return 1
-}
-
 # Same --numstat call council-threshold.sh makes (same hardening flags —
 # core.fsmonitor=, --no-ext-diff --no-textconv --no-renames, --end-of-options
 # for a caller-supplied range — see that script's header for why each one is
 # there), recomputed here (rather than reusing council-threshold's line
-# total) because that total intentionally includes docs changes.
+# total) because that total now excludes test paths too, while code_lines
+# must keep counting them (tier 0 vs 1 is about "is there anything to review").
 case "$ARG" in
   --staged)
     NUMSTAT="$(git -c core.fsmonitor= diff --no-ext-diff --no-textconv --no-renames --staged --numstat 2>/dev/null)"

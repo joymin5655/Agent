@@ -33,6 +33,25 @@ Antigravity quota) surfaces `status: rate-limited` and the council **fails
 open** — the review proceeds without that lane, the lane status line says
 "rate-limited, retry later", and no upgrade prompt is put to the user.
 
+## Round cap
+
+Review rounds on one PR/diff are capped so a guard-heavy change cannot loop for hours:
+
+- **Rounds 1-2**: a full council and a `security-reviewer` re-review each run at most twice
+  for the same PR/diff.
+- **Round 3 onward**: confirm only the fix delta (the commits since the last round) with one
+  `code-reviewer` dispatch. If the delta touches a risk-area file, add exactly one external
+  lane via a single-lane `call-worker.sh` call — the pre-commit hook matches evidence to the
+  staged risk files' blob hashes (`core/infra/review-evidence.py`), so a changed risk file
+  needs fresh evidence. No third full council. `council-escalation-gate.py` still denies a
+  plain `code-reviewer` dispatch when the delta is council-scale or touches a risk file, so
+  wrap that one dispatch in the Step 0.5 council-active flag (`--council-flag set`) and clear
+  it as in Step 6 — the cap narrows the review, it does not bypass the gate's evidence rules.
+- **Leftover findings** go to the PR body under "Deferred findings" or to the backlog; they do
+  not block the merge decision.
+- **Exception**: a leftover finding that is Critical (security-incident class) earns another
+  round. Record the reason in the PR body.
+
 ## Steps
 
 ### 0.5. Mark council-active before dispatching the Claude lane
@@ -180,7 +199,7 @@ sleep-polling.
 Security-shaped findings (auth, injection, secrets, crypto) are LISTED but
 not adjudicated here — route them to `security-reviewer` (the
 no-double-reporting contract in agents/code-reviewer.md applies to the
-council too). Dispatch that security lens at `effort: max` (advisory;
+council too). Dispatch that security lens at `effort: high` (advisory;
 `docs/model-routing.md` → The effort axis).
 
 ### 5. Report

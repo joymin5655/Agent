@@ -500,6 +500,9 @@ Agent/
 # 한 명령으로 전부 실행 (모든 게이트 + 배터리 + 평가 + gitleaks):
 bash core/tests/verify-all.sh
 # → === verify-all: N passed, 0 failed, 0 skipped ===
+
+# CI는 같은 검사 집합을 4개 병렬 잡으로 나눠 돌린다. 샤드 하나만 로컬에서 실행할 수도 있다:
+bash core/tests/verify-all.sh --shard 1/4          # --list를 붙이면 그 샤드의 검사 목록만 출력
 ```
 
 개별 검사를 따로 실행하려면:

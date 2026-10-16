@@ -120,21 +120,34 @@ jobs:
         run: bash core/tests/reference-judge-test.sh
 
   verify:
-    name: verify-all (unified runner — every core/tests check, no silent omission)
+    name: verify-all (shard ${{ matrix.shard }}/4 — unified runner, every core/tests check, no silent omission)
     runs-on: ubuntu-latest
+    # The serial run took ~31 min (call-worker-test.sh 640 s, pre-tool-guard-test.sh 509 s,
+    # log-origin-test.sh 278 s, ~100 more). `--shard K/N` splits it deterministically by the
+    # measured weights in core/tests/verify-all-weights.txt; the union of the 4 shards is
+    # exactly the full set (proven by verify-all-test.sh case 14). fail-fast is off so one red
+    # shard does not hide failures in the others.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       # Anti-lying self-test first: proves the runner enumerates every core/tests
-      # script (a battery/gate dropped from the runner fails here) before we trust
-      # its all-green. Without this step the completeness guarantee gates nothing.
-      - name: Verify the runner enumerates every check (completeness / fail-propagation)
+      # script (a battery/gate dropped from the runner fails here) and that the shards
+      # partition the set before we trust their all-green. It is deterministic and does not
+      # depend on the shard, so it runs once — on shard 4, not shard 1, because shard 1
+      # holds the longest single battery and is the critical path.
+      - name: Verify the runner enumerates every check (completeness / fail-propagation / sharding)
+        if: matrix.shard == 4
         run: bash core/tests/verify-all-test.sh
-      # Then execute the full discovered set. This is the SOLE CI executor of the
-      # checks that have no dedicated job, and auto-includes any future core/tests
-      # script with no edit here. gitleaks is not installed on this runner, so the
-      # runner reports it as a loud SKIP (the dedicated secret-scan job enforces it).
-      - name: Run the full discovered check set
-        run: bash core/tests/verify-all.sh
+      # Then execute this shard of the discovered set. Together the shards are the SOLE CI
+      # executor of the checks that have no dedicated job, and auto-include any future
+      # core/tests script with no edit here (a label missing from the weights file weighs 1).
+      # gitleaks is not installed on this runner, so the runner reports it as a loud SKIP
+      # (the dedicated secret-scan job enforces it).
+      - name: Run this shard of the discovered check set
+        run: bash core/tests/verify-all.sh --shard ${{ matrix.shard }}/4
 
   plugin-path-install:
     name: plugin-path install smoke (marketplace/plugin cache → doctor guidance)

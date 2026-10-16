@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **CI `verify-all` is sharded (4 parallel jobs).** `core/tests/verify-all.sh` gained
+  `--shard K/N` (combinable with `--list`, bad values exit 1). Checks are assigned by
+  deterministic longest-processing-time packing over the measured seconds in
+  `core/tests/verify-all-weights.txt` (unlisted checks weigh 1); each shard keeps the original
+  run order and the union of the shards is exactly the full set. Declared-SKIP lines now also
+  show `(Ns)` like PASS lines. No flag = the unchanged full run. The serial run took about 31
+  min (`call-worker-test.sh` 640 s, `pre-tool-guard-test.sh` 509 s, `log-origin-test.sh`
+  278 s); `verify-all-test.sh` runs once, on shard 4. Unknown arguments now exit 1 instead of
+  being ignored.
+- **Council size signal ignores tests and docs.** `core/infra/council-threshold.sh` no longer
+  counts test paths (`tests/` `test/` `__tests__/` `spec/` `evals/`, `*-test.*` `*_test.*`
+  `*.test.*` `*.spec.*` `test_*.py`) or docs paths toward `AGENT_COUNCIL_LINES` /
+  `AGENT_COUNCIL_FILES`; risk-area paths are still classified everywhere, so
+  `tests/auth_helper.py` still escalates. The summary line gains a trailing `excluded=<n>`;
+  `review-tier.sh` now parses `risk=` as a single token. The docs/test predicates moved to
+  the shared `core/infra/path-kinds.sh`. Fixtures that used `.txt` as "code" in the affected
+  batteries now use `.dat`.
+- **Review round cap.** `skills/council-review/SKILL.md` "Round cap": at most 2 full-council /
+  `security-reviewer` rounds per PR/diff; from round 3 only the fix delta is re-reviewed
+  (`code-reviewer`, plus one external lane when a risk file changed); leftovers go to
+  "Deferred findings" unless Critical. Referenced from `skills/wrap/SKILL.md` and
+  `docs/model-routing.md`.
+- **`security-reviewer` pin: `fable`/`max` to `opus`/`high`.** Maintainer decision
+  2026-10-16, latency vs benefit (review passes took 22-26 min). Updated in
+  `agents/security-reviewer.md`, `agents/master-registry.json` (registry-drift pairs them) and
+  `docs/model-routing.md`; TOP-F is now reserved for completion verdicts only. The earlier
+  64%->87% vendor-study rationale is kept in the docs as history.
+
 ## [0.10.0] - 2026-10-16
 
 A human reading-path skill, plus a batch of guard hardening (#184–#194).

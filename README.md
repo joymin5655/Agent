@@ -534,6 +534,9 @@ tail is delegated to broader stacks. Full method and raw findings:
 # Run everything in one command (every gate + battery + evals + gitleaks):
 bash core/tests/verify-all.sh
 # → === verify-all: N passed, 0 failed, 0 skipped ===
+
+# CI fans the same set out over 4 parallel jobs; any shard can be run locally:
+bash core/tests/verify-all.sh --shard 1/4          # add --list to print its checks only
 ```
 
 The individual checks, run on their own:
