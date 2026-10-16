@@ -828,6 +828,20 @@ else
     bad "evidence separate warnings" "$errw"
 fi
 
+# --- empty output (rc 0) is a failed lane, not complete ----------------
+
+EMPTY_DIR="$WORK/bin-empty"
+mkdir -p "$EMPTY_DIR"
+printf '#!/usr/bin/env bash\ncat >/dev/null\nprintf "  \\n\\n"\n' > "$EMPTY_DIR/codex"
+chmod +x "$EMPTY_DIR/codex"
+out="$(run_v2 "$EMPTY_DIR" review 2>"$WORK/err-empty")"; rc=$?
+cap="$(ls -t "$WORK/workers"/*-review.md 2>/dev/null | head -n 1)"
+if [[ $rc -eq 1 && -z "$out" ]] && grep -q "^status: failed$" "$cap" && grep -q "empty output" "$WORK/err-empty"; then
+    ok "empty output — rc 0 + whitespace-only body captured as failed, exit 1"
+else
+    bad "empty output" "rc=$rc out=$out cap=$cap err=$(cat "$WORK/err-empty")"
+fi
+
 # --- tally ---------------------------------------------------------------
 
 echo

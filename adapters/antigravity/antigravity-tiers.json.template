@@ -3,6 +3,6 @@
   "model": "gemini-3.8-flash-medium",
   "tiers": {
     "MID": [],
-    "TOP": ["--model", "gemini-3.1-pro-high"]
+    "TOP": ["--model", "gemini-3.8-flash-high"]
   }
 }
