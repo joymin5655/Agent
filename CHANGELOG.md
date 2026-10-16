@@ -7,21 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-16
+
+A human reading-path skill, plus a batch of guard hardening (#184–#194).
+
 ### Added
 - **`/code-tour` skill.** Writes a human reading path through a codebase or a finished
   build: stack, file-role rules, one flow traced end to end with cited links, 1–3 safe
   experiments, run steps and a glossary (`--audience self|teammate|non-dev`). The source
   tree is never edited, and every cited path is checked before the tour is done.
-
-### Added
 - **Out-of-band label principle + guard (X-2).** `docs/hook-protocol.md` defines
   measurement labels narrowly and bars them from `additionalContext` / `systemMessage`;
   `core/tests/oob-label-guard-test.sh` scans the text `core/hooks` emit (0 violations today).
 - **circuit-breaker firing sink (X-3).** Each fire appends a line to
   `.agent/logs/circuit-breaker.jsonl` (failures to write are ignored) and the gate has a
   `docs/gate-registry.md` row, so `telemetry-digest --gates` can count it. Verdict unchanged.
+- **risk_areas triggers consumed at runtime, extend-only (#189, AG14).** The
+  `risk_areas` data/deploy/payment and `resources` triggers in hook-config now take effect
+  at runtime as additions only.
 
 ### Fixed
+- **pre-push: risk-area scan missed non-ASCII paths (#192, AG23).**
+- **pre-tool-guard: hook-input decode no longer fails open on surrogates or malformed JSON (#190, AG21).**
+- **pre-tool-guard: `timeout`/`gtimeout` with a non-numeric duration no longer hides the wrapped command (#187, AG17).**
+- **oob-label-guard: line continuations, computed keys, shell function definitions, a combination budget and test-environment isolation (#188, AG18).**
 - **plan-gate: approval-flag readers and cleanup paths hardened (AG16).** `spec-gate` and `plan-scope-allow` accept the flag only as a regular, own, single-link file (`lstat`); `_restore_claim` keeps a claim it cannot preserve, `is_withheld` reads it and `clear_withheld` drops it; failed-write cleanup unlinks only the file it created (same dev/ino, fd still open); short writes are completed; `flag_session` cannot block on a FIFO flag. The reader tests now run a copy of the hooks against a throwaway flag path instead of the real `/tmp/agent-plan-approved`.
 - **pre-tool-guard: secret reads through readers outside the verb list, and declared paths through redirects and inline code (P1-12).** `base64`, `sort`, `cut`, `jq`, `vim` and ~30 more readers now nominate guard 5 (one shared list, also used by stage 2 and guard 11b); guard 11b also denies `cat<p`, `< p cat`, `$(<p)` and `python3 -c`/`node -e`/`perl -e` naming a declared path. P1-11 (cwd module shadowing) was already closed by #176; its test is `shadow-json-*` in `pre-tool-guard-test.sh`. Council r1: `<>` opens a file for reading and is denied too; 11b inline-code detection accepts options before the flag, glued flags and quotes, `$'…'`, `-p`, `--eval=` and `deno eval`; `zgrep`/`bzgrep`/`xzgrep` keep grep's pattern handling; the 11b redirect clause skips `<<`/`<<<`. Council r2: an interpreter fed a here-string and multi-line or unquoted inline code on a declared path are denied, `install` behind a wrapper or path is recognised, and the PyYAML-less branch stays a superset.
 
