@@ -161,8 +161,8 @@ New to this space? These ten terms are all you need to read the rest of this pag
 | **harness** | The whole safety layer: agents + hooks + skills + rules, wrapped around your AI. |
 | **hook** | A small script your AI runtime runs automatically before/after an action. It answers **allow**, **ask**, or **deny**. 27 scripts wired via `hooks/hooks.json` (31 incl. shared modules) live in [`core/hooks/`](core/hooks/). |
 | **adapter** | A translator from a runtime hook or controlled wrapper event to the harness's canonical JSON. There are 3 runtime adapters (claude-code, codex, antigravity) in [`adapters/`](adapters/). |
-| **agent** | A specialist your AI delegates to — e.g. a security reviewer that only reviews and never writes. 3 ship here ([`agents/`](agents/)). |
-| **skill** | A reusable step-by-step workflow the AI follows, e.g. the commit + PR flow. 14 ship here ([`skills/`](skills/)). |
+| **agent** | A specialist your AI delegates to — e.g. a security reviewer that only reviews and never writes. 4 ship here ([`agents/`](agents/)). |
+| **skill** | A reusable step-by-step workflow the AI follows, e.g. the commit + PR flow. 15 ship here ([`skills/`](skills/)). |
 | **gate** | A hook decision point (deny / ask / block). Every gate is registered with the model weakness it assumes — [`docs/gate-registry.md`](docs/gate-registry.md). |
 | **wave** | One batch of work inside a `/supervise` plan — dispatched, executed, and audited before the next wave starts. |
 | **verdict** | The shared CONFIRMED / REFUTED result schema every verifier emits — [`docs/scoring-convention.md`](docs/scoring-convention.md). |
@@ -256,7 +256,7 @@ Then:
 4. *(Optional)* In a repo that already runs another hook-heavy plugin, disable agent-harness there via `/plugin` — agents stay namespaced as `agent-harness:*`, so there's no collision either way.
 5. *(Optional)* Want the cross-vendor worker lanes (codex/antigravity second opinions)? Run `/agent-harness:worker-setup` for a guided install → auth → verify walkthrough with an upfront cost briefing.
 
-The plugin bundles: **4 agents**, **14 skills**, the hook set, and the
+The plugin bundles: **4 agents**, **15 skills**, the hook set, and the
 `/agent-harness:project-init` command.
 See the
 [plugin installation lifecycle](docs/claude-plugin-install-lifecycle.md) for
@@ -459,6 +459,7 @@ Model is cost-tiered per work class ([`docs/model-routing.md`](docs/model-routin
 | `manager-audit` | Meta-audit of a `/supervise` run — restatement quality, model-routing waste, relative token spend, role compliance; findings become patch proposals for user approval |
 | `persona-review` | Seat a panel of distribution-grounded user personas in front of UX/copy and report how ordinary users react |
 | `reorg-sync` | After a tree move, sweep orphaned absolute-path references (shebangs, worktree gitfiles, crontab, doc anchors, memory keys); dry-run report first, `--apply` after confirmation |
+| `code-tour` | Write a human reading path through a codebase or a finished build — stack, file roles, one traced flow, safe experiments, run steps, glossary; every path checked, source untouched |
 | `harness-help` | Router — which skill fits the situation, and the main flow through them |
 
 | Hooks — 27 wired via `hooks/hooks.json` → `core/hooks/` (31 scripts incl. shared modules) | Event |
@@ -486,8 +487,8 @@ Agent/
 ├── AGENTS.md           # operating rules for AIs working on this repo
 ├── CHANGELOG.md
 │
-├── agents/             # 3 agent definitions + master-registry.json
-├── skills/             # 14 skills (spec · supervise · verify-completion · wrap · brain-ingest · harness-audit · manager-audit · persona-review · harness-help · loop · harness-loop · council-review · worker-setup · reorg-sync)
+├── agents/             # 4 agent definitions + master-registry.json
+├── skills/             # 15 skills (spec · supervise · verify-completion · wrap · brain-ingest · harness-audit · manager-audit · persona-review · harness-help · loop · harness-loop · council-review · worker-setup · reorg-sync · code-tour)
 ├── commands/           # 1 namespaced project-init command
 ├── hooks/              # plugin hook wiring (hooks.json)
 │
