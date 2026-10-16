@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`/code-tour` skill.** Writes a human reading path through a codebase or a finished
+  build: stack, file-role rules, one flow traced end to end with cited links, 1–3 safe
+  experiments, run steps and a glossary (`--audience self|teammate|non-dev`). The source
+  tree is never edited, and every cited path is checked before the tour is done.
+
+### Added
 - **Out-of-band label principle + guard (X-2).** `docs/hook-protocol.md` defines
   measurement labels narrowly and bars them from `additionalContext` / `systemMessage`;
   `core/tests/oob-label-guard-test.sh` scans the text `core/hooks` emit (0 violations today).

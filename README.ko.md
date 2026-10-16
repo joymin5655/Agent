@@ -152,7 +152,7 @@ flowchart LR
 | **훅(hook)** | AI 런타임이 어떤 행동 전/후에 자동으로 실행하는 작은 스크립트. **allow**, **ask**, **deny** 중 하나로 답합니다. [`core/hooks/`](core/hooks/)에 `hooks/hooks.json`으로 배선된 스크립트 27개(공유 모듈 포함 31개)가 있습니다. |
 | **어댑터(adapter)** | 각 AI CLI의 고유 이벤트 형식과 하네스의 표준 JSON 사이를 번역하는 얇은 계층. 런타임 어댑터 3개(claude-code, codex, antigravity)가 [`adapters/`](adapters/)에 있습니다. |
 | **에이전트(agent)** | AI가 일을 위임하는 전문가 — 예: 리뷰만 하고 절대 코드를 쓰지 않는 보안 리뷰어. 4종이 포함됩니다([`agents/`](agents/)). |
-| **스킬(skill)** | AI가 따라가는 재사용 가능한 단계별 워크플로우 — 예: 커밋+PR 자동화 흐름. 14종이 포함됩니다([`skills/`](skills/)). |
+| **스킬(skill)** | AI가 따라가는 재사용 가능한 단계별 워크플로우 — 예: 커밋+PR 자동화 흐름. 15종이 포함됩니다([`skills/`](skills/)). |
 | **게이트(gate)** | 훅의 결정 지점(deny / ask / block). 모든 게이트는 자신이 가정하는 모델 약점과 함께 등록됩니다 — [`docs/gate-registry.md`](docs/gate-registry.md). |
 | **웨이브(wave)** | `/supervise` 플랜 안의 작업 묶음 하나 — 디스패치·실행·감사를 마쳐야 다음 웨이브가 시작됩니다. |
 | **판정(verdict)** | 모든 검증기가 뱉는 공용 CONFIRMED / REFUTED 결과 스키마 — [`docs/scoring-convention.md`](docs/scoring-convention.md). |
@@ -235,7 +235,7 @@ Antigravity(agy 1.2.12)는 훅의 `{}`를 deny로 처리하므로 통과는 `ask
 4. *(선택)* 훅이 많은 다른 플러그인을 쓰는 저장소에서는 `/plugin`으로 agent-harness를 꺼도 됩니다 — 에이전트는 `agent-harness:*` 네임스페이스라 어느 쪽이든 충돌하지 않습니다.
 5. *(선택)* 크로스벤더 워커 레인(codex/antigravity 세컨드 오피니언)을 쓰려면 `/agent-harness:worker-setup`을 실행하세요 — 설치→인증→검증을 비용 안내와 함께 안내합니다.
 
-플러그인에 포함: **에이전트 4종**, **스킬 14종**, 훅 세트, `/project-init` 커맨드.
+플러그인에 포함: **에이전트 4종**, **스킬 15종**, 훅 세트, `/project-init` 커맨드.
 
 ### Path B — 셸 설치 (Codex CLI / Antigravity CLI / 전부)
 
@@ -427,6 +427,7 @@ manager-audit의 발견은 절대 스스로 적용되지 않습니다 — `PROPO
 | `manager-audit` | `/supervise` 실행의 메타 감사 — 재구성 품질, 모델 라우팅 낭비, 상대 토큰 지출, 역할 준수; 발견은 사용자 승인용 패치 제안이 됨 |
 | `persona-review` | 분포 근거 사용자 페르소나 패널을 UX/카피 앞에 앉혀 일반 사용자 반응을 보고 |
 | `reorg-sync` | 트리 이동 후 남은 절대경로 참조(셔뱅·worktree gitfile·crontab·문서 앵커·메모리 키) 일괄 스윕; 기본 dry-run 리포트, 확인 후 `--apply` |
+| `code-tour` | 코드베이스나 끝난 빌드를 사람이 읽는 순서로 안내하는 투어 문서 작성 — 스택·파일 역할·흐름 하나 추적·안전한 실습·실행 단계·용어 사전, 인용 경로 전부 검사, 소스는 수정하지 않음 |
 | `harness-help` | 라우터 — 상황에 맞는 스킬 안내와 전체 흐름 |
 
 | 훅 — 27개 배선(`hooks/hooks.json` → `core/hooks/`, 공유 모듈 포함 스크립트 31개) | 이벤트 |
@@ -453,7 +454,7 @@ Agent/
 ├── CHANGELOG.md
 │
 ├── agents/             # 에이전트 정의 4종 + master-registry.json
-├── skills/             # 스킬 14종 (spec · supervise · verify-completion · wrap · brain-ingest · harness-audit · manager-audit · persona-review · harness-help · loop · harness-loop · council-review · worker-setup · reorg-sync)
+├── skills/             # 스킬 15종 (spec · supervise · verify-completion · wrap · brain-ingest · harness-audit · manager-audit · persona-review · harness-help · loop · harness-loop · council-review · worker-setup · reorg-sync · code-tour)
 ├── commands/           # 슬래시 커맨드 1개 (/project-init)
 ├── hooks/              # 플러그인 훅 배선 (hooks.json)
 │
