@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-10-16
+
+Review-cycle speedup: sharded CI verify-all, code-only council size signal, a review round
+cap and a lighter security-reviewer pin (#196).
+
 ### Changed
 - **CI `verify-all` is sharded (4 parallel jobs).** `core/tests/verify-all.sh` gained
   `--shard K/N` (combinable with `--list`, bad values exit 1). Checks are assigned by
