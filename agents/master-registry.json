@@ -37,8 +37,8 @@
         "file_globs": ["**/auth/**", "**/secrets/**", "**/.env*"]
       },
       "aliases": [],
-      "model": "fable",
-      "effort": "max",
+      "model": "opus",
+      "effort": "high",
       "memory_scope": "local"
     },
     {

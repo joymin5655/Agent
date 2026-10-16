@@ -25,6 +25,14 @@
 #   8. GITLEAKS SKIP-NOT-PASS: when the gitleaks binary is absent the check is a
 #      loud SKIP counted as skipped (never as passed), and a SKIP does not fail
 #      the run. This guards the runner's headline security-scan promise.
+#   9-13. SKIP lane, undeclared/partial skip, all-skip floor, no exit-0 skips (see below).
+#   14. SHARDING PARTITION: for every N in 1..5, the union of `--shard k/N --list` over
+#       k=1..N equals `--list` exactly, with no label in two shards.
+#   15. SHARD ARGUMENT VALIDATION: 0/4, 5/4, abc, 2/0 (and a missing value / unknown flag)
+#       exit 1 with an error message; --list and --shard combine in either order.
+#   16. WEIGHTS ARE HONOURED: with VERIFY_ALL_WEIGHTS pointing at a fixture, the two heavy
+#       checks land in different shards, run order inside a shard is kept (gates first),
+#       and a shard run executes only its own checks.
 #
 # Uses VERIFY_ALL_TESTS_DIR to point the glob at a hermetic fixture dir and
 # VERIFY_ALL_SKIP_FIXED=1 to drop the evals + gitleaks checks so logic cases run
@@ -341,6 +349,91 @@ if skip_declared_with_exit_0 "$D/prose.sh"; then fp=1; else fp=0; fi
 # the cost of the mistake; it does not make it impossible. The contract in
 # verify-all.sh's header is the actual rule.
 echo "    (heuristic: exit-code indirection and distant exits are NOT detected)"
+
+echo
+echo "=== (14) SHARDING PARTITION: union of shards == full --list, no overlap ==="
+FULL_SORTED="$(bash "$RUNNER" --list 2>&1 | sort)"
+for n in 1 2 3 4 5; do
+  union=""
+  shard_rc=0
+  for k in $(seq 1 "$n"); do
+    out="$(bash "$RUNNER" --shard "$k/$n" --list 2>&1)" || shard_rc=1
+    union="$union$out"$'\n'
+  done
+  union_sorted="$(printf '%s' "$union" | grep -v '^$' | sort)"
+  [[ $shard_rc -eq 0 ]]; check "shard-N$n-all-exit-0" $?
+  [[ "$union_sorted" == "$FULL_SORTED" ]]; check "shard-N$n-union-equals-full-list" $?
+  [[ -z "$(printf '%s\n' "$union_sorted" | uniq -d)" ]]; check "shard-N$n-no-duplicates" $?
+done
+
+echo
+echo "=== (15) SHARD ARGUMENT VALIDATION: bad K/N -> exit 1 + message; flags combine in any order ==="
+for bad in 0/4 5/4 abc 2/0 1/ /4 -1/4 1.5/4; do
+  err="$(bash "$RUNNER" --shard "$bad" --list 2>&1 >/dev/null)"; rc=$?
+  [[ $rc -eq 1 ]]; check "shard-bad-$bad-exit-1" $?
+  printf '%s\n' "$err" | grep -qF -- '--shard'; check "shard-bad-$bad-has-error-message" $?
+done
+bash "$RUNNER" --shard >/dev/null 2>&1; [[ $? -eq 1 ]]; check "shard-missing-value-exit-1" $?
+bash "$RUNNER" --bogus >/dev/null 2>&1; [[ $? -eq 1 ]]; check "unknown-flag-exit-1" $?
+A="$(bash "$RUNNER" --shard 2/3 --list 2>&1)"; B="$(bash "$RUNNER" --list --shard 2/3 2>&1)"
+C="$(bash "$RUNNER" --shard=2/3 --list 2>&1)"
+[[ -n "$A" && "$A" == "$B" && "$A" == "$C" ]]; check "shard-and-list-order-independent" $?
+# 1/1 is the identity: the whole suite, in run order
+[[ "$(bash "$RUNNER" --shard 1/1 --list 2>&1)" == "$(bash "$RUNNER" --list 2>&1)" ]]
+check "shard-1-of-1-is-identity" $?
+
+echo
+echo "=== (16) WEIGHTS ARE HONOURED: heavy checks split, run order kept, shard runs only its own ==="
+D=$(fresh_dir)
+write_pass_stub "$D/gate-a.sh"          # a gate (non-*-test.sh): runs before batteries
+write_pass_stub "$D/aaa-light-test.sh"
+write_pass_stub "$D/bbb-heavy-test.sh"
+write_pass_stub "$D/ccc-light-test.sh"
+write_pass_stub "$D/ddd-heavy-test.sh"
+write_pass_stub "$D/eee-light-test.sh"
+W="$TMP_ROOT/weights.txt"
+{
+  echo "# fixture weights"
+  echo
+  echo "bbb-heavy-test.sh 100"
+  echo "ddd-heavy-test.sh 90"
+  echo "no-such-check-test.sh 5000"   # stale label: must be ignored
+} > "$W"
+S1="$(VERIFY_ALL_TESTS_DIR="$D" VERIFY_ALL_SKIP_FIXED=1 VERIFY_ALL_WEIGHTS="$W" bash "$RUNNER" --shard 1/2 --list 2>&1)"
+S2="$(VERIFY_ALL_TESTS_DIR="$D" VERIFY_ALL_SKIP_FIXED=1 VERIFY_ALL_WEIGHTS="$W" bash "$RUNNER" --shard 2/2 --list 2>&1)"
+printf '%s\n' "$S1" | grep -qxF 'bbb-heavy-test.sh'; check "heavy-1-in-shard-1" $?
+printf '%s\n' "$S2" | grep -qxF 'ddd-heavy-test.sh'; check "heavy-2-in-shard-2" $?
+# LPT: heavy1 -> s1 (100), heavy2 -> s2 (90); each weight-1 check then goes to the lighter
+# shard, and s2 stays lighter (91..94 < 100) — so s1 holds only heavy1 and s2 the rest,
+# in the ORIGINAL run order (gate first, then batteries sorted; heavy2 slots in by name).
+[[ "$S1" == "bbb-heavy-test.sh" ]]; check "weights-shard-1-is-only-heavy-1" $?
+EXPECT_S2="$(printf '%s\n' gate-a.sh aaa-light-test.sh ccc-light-test.sh ddd-heavy-test.sh eee-light-test.sh)"
+[[ "$S2" == "$EXPECT_S2" ]]; check "weights-shard-2-keeps-run-order-gate-first" $?
+# the same fixture WITHOUT a weights file (missing path -> everything weighs 1) still partitions
+M1="$(VERIFY_ALL_TESTS_DIR="$D" VERIFY_ALL_SKIP_FIXED=1 VERIFY_ALL_WEIGHTS="$TMP_ROOT/none.txt" bash "$RUNNER" --shard 1/2 --list 2>&1)"
+M2="$(VERIFY_ALL_TESTS_DIR="$D" VERIFY_ALL_SKIP_FIXED=1 VERIFY_ALL_WEIGHTS="$TMP_ROOT/none.txt" bash "$RUNNER" --shard 2/2 --list 2>&1)"
+[[ "$(printf '%s\n%s\n' "$M1" "$M2" | grep . | sort | paste -sd, -)" == \
+   "$(VERIFY_ALL_TESTS_DIR="$D" VERIFY_ALL_SKIP_FIXED=1 bash "$RUNNER" --list | sort | paste -sd, -)" ]]
+check "missing-weights-file-still-partitions" $?
+# a shard RUN executes exactly its own checks, and reports PASS lines with a duration
+OUT="$(VERIFY_ALL_TESTS_DIR="$D" VERIFY_ALL_SKIP_FIXED=1 VERIFY_ALL_WEIGHTS="$W" bash "$RUNNER" --shard 1/2 2>&1)"; RC=$?
+[[ $RC -eq 0 ]]; check "shard-run-exit-0" $?
+EXEC="$(printf '%s\n' "$OUT" | awk '/^(PASS|FAIL|SKIP) /{print $2}')"
+[[ "$EXEC" == "$S1" ]]; check "shard-run-executes-exactly-its-listed-checks" $?
+printf '%s\n' "$OUT" | grep -qE '^PASS  bbb-heavy-test\.sh  \([0-9]+s\)$'; check "pass-line-carries-duration" $?
+printf '%s\n' "$OUT" | grep -qF "$(printf '%s' "$S1" | grep -c .) passed, 0 failed"; check "shard-run-summary-counts-own-checks" $?
+
+echo "=== (17) CI MATRIX MATCHES --shard N, AND A REPEATED --shard IS REJECTED ==="
+# A matrix trimmed to [1,2,3] while the command still says /4 would leave shard 4's checks
+# unrun with every job green — the silent omission this runner exists to prevent.
+CI_YML="$REPO_ROOT/.github/workflows/ci.yml"
+MATRIX="$(grep -E '^[[:space:]]+shard:[[:space:]]*\[' "$CI_YML" | head -n 1 | tr -d ' []' | cut -d: -f2)"
+CI_N="$(grep -oE 'verify-all\.sh --shard \$\{\{ matrix\.shard \}\}/[0-9]+' "$CI_YML" | head -n 1 | sed 's#.*/##')"
+WANT=""; i=1   # 1,2,..,N built by hand: BSD seq -s appends a trailing separator
+while [[ -n "$CI_N" && $i -le $CI_N ]]; do WANT="${WANT:+$WANT,}$i"; i=$((i + 1)); done
+[[ -n "$CI_N" && "$MATRIX" == "$WANT" ]]; check "ci-matrix-is-1..N-for-shard-N" $?
+bash "$RUNNER" --shard 1/2 --shard 2/2 --list >/dev/null 2>&1; RC=$?
+[[ $RC -eq 1 ]]; check "repeated-shard-exits-1" $?
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="

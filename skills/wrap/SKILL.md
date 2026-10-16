@@ -93,6 +93,9 @@ d. **Review-tier check** — run the review-cadence script, resolved from the
      a commit on the strength of a Claude-only review that
      `council-escalation-gate.py` never got a chance to catch (e.g. edits
      made without a Task/Agent dispatch).
+   - **Round cap**: at most 2 full-council / `security-reviewer` rounds per PR/diff; from the
+     3rd round only the fix delta is re-reviewed, inside the council-active flag so the
+     escalation gate admits it (see `skills/council-review/SKILL.md` "Round cap").
    - **tier 1** (exit 5, the common case) → if no review artifact exists for
      this diff (the same `reviews.jsonl` diff_key / degrade-note check
      above), add a non-blocking advisory line recommending one

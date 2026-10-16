@@ -39,6 +39,16 @@
 # Flags:
 #   --list   print each check's label (one per line, run order) and exit 0
 #            WITHOUT running anything. gitleaks is listed (it is a declared check).
+#   --shard K/N   run (or, with --list, print) only shard K of N (1 <= K <= N, integers).
+#            Used by CI to fan the ~30 min serial run out over N parallel jobs. Assignment
+#            is deterministic LPT (longest-processing-time-first) over the measured
+#            per-check seconds in core/tests/verify-all-weights.txt (`<label> <seconds>`,
+#            `#` comments; a label with no entry weighs 1): checks are sorted by weight
+#            descending (ties keep run order) and each goes to the currently lightest
+#            shard (ties: lowest shard number). Inside a shard the original run order
+#            (gates first) is kept. The union of shards 1..N is exactly the full check
+#            set, with no overlap. Flags combine in any order. No flag = the full run,
+#            unchanged.
 #
 # Internal test seams:
 #   VERIFY_ALL_TESTS_DIR   override the core/tests glob source
@@ -46,6 +56,9 @@
 #   VERIFY_ALL_SKIP_FIXED=1  omit the evals + gitleaks checks from BOTH --list and
 #                          execution, so hermetic logic tests run fast, offline,
 #                          and gitleaks-independent.
+#   VERIFY_ALL_WEIGHTS     override the --shard weights file
+#                          (default $REPO_ROOT/core/tests/verify-all-weights.txt;
+#                          a missing file means every check weighs 1).
 #   VERIFY_ALL_SKIP_EVALS=1  omit only the two (slow) evals checks, keeping the
 #                          gitleaks check listed — lets a test exercise the
 #                          gitleaks present/absent branch offline without paying
@@ -54,6 +67,8 @@
 # Usage:
 #   bash core/tests/verify-all.sh          # run the full suite
 #   bash core/tests/verify-all.sh --list   # print the check labels only
+#   bash core/tests/verify-all.sh --shard 2/4          # run shard 2 of 4
+#   bash core/tests/verify-all.sh --shard 2/4 --list   # print shard 2's labels only
 set -u
 
 # W1-4: tag every record this run's batteries produce in security-violations.jsonl
@@ -64,10 +79,42 @@ export AGENT_LOG_ORIGIN=test
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TESTS_DIR="${VERIFY_ALL_TESTS_DIR:-$REPO_ROOT/core/tests}"
 
+WEIGHTS_FILE="${VERIFY_ALL_WEIGHTS:-$REPO_ROOT/core/tests/verify-all-weights.txt}"
+
+die_usage() { printf 'verify-all: %s\n' "$1" >&2; exit 1; }
+
+# parse_shard <K/N> — set SHARD_K / SHARD_N, or exit 1 on anything but integers 1<=K<=N.
+# 10# forces base 10 so "08/10" is not an octal error; the 6-digit cap keeps the
+# arithmetic well inside bash's range.
+parse_shard() {
+  local spec="$1"
+  if ! [[ "$spec" =~ ^([0-9]{1,6})/([0-9]{1,6})$ ]]; then
+    die_usage "--shard expects K/N with integers 1 <= K <= N (got '$spec')"
+  fi
+  SHARD_K=$((10#${BASH_REMATCH[1]}))
+  SHARD_N=$((10#${BASH_REMATCH[2]}))
+  if [[ $SHARD_N -lt 1 || $SHARD_K -lt 1 || $SHARD_K -gt $SHARD_N ]]; then
+    die_usage "--shard expects K/N with integers 1 <= K <= N (got '$spec')"
+  fi
+}
+
 LIST_ONLY=0
-if [[ "${1:-}" == "--list" ]]; then
-  LIST_ONLY=1
-fi
+SHARD_K=0
+SHARD_N=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --list) LIST_ONLY=1; shift ;;
+    --shard|--shard=*)
+      [[ $SHARD_N -eq 0 ]] || die_usage "--shard given more than once"
+      if [[ "$1" == "--shard" ]]; then
+        [[ $# -ge 2 ]] || die_usage "--shard requires a K/N argument"
+        parse_shard "$2"; shift 2
+      else
+        parse_shard "${1#--shard=}"; shift
+      fi ;;
+    *) die_usage "unknown argument '$1' (usage: verify-all.sh [--list] [--shard K/N])" ;;
+  esac
+done
 
 # Parallel arrays: LABELS[i] is the display label, CMDS[i] the eval-able command.
 # The gitleaks check carries the sentinel @gitleaks@ so the runner can apply its
@@ -121,6 +168,57 @@ if [[ "${VERIFY_ALL_SKIP_FIXED:-}" != "1" ]]; then
   add_check "gitleaks" "@gitleaks@"
 fi
 
+# --- --shard K/N: keep only this shard's checks (deterministic LPT, see header) ---
+# awk does the bin-packing so no associative array is needed in bash 3.2. Input is
+# the label list in run order; output is `T <est-seconds>` then the 0-based indices
+# that belong to shard K (ascending = original run order).
+SHARD_EST=""
+if [[ $SHARD_N -gt 0 ]]; then
+  SEL="$(
+    { for l in ${LABELS[@]+"${LABELS[@]}"}; do printf '%s\n' "$l"; done; } \
+    | awk -v N="$SHARD_N" -v K="$SHARD_K" -v wfile="$WEIGHTS_FILE" '
+        BEGIN {
+          while ((getline line < wfile) > 0) {
+            if (line ~ /^[ \t]*(#|$)/) continue
+            m = split(line, f, /[ \t]+/)
+            if (m >= 2 && f[2] ~ /^[0-9]+(\.[0-9]+)?$/) w[f[1]] = f[2] + 0
+          }
+          close(wfile)
+        }
+        { lab[n++] = $0; wt[n - 1] = ($0 in w) ? w[$0] : 1 }
+        END {
+          # stable selection sort by weight desc (ties keep run order)
+          for (i = 0; i < n; i++) ord[i] = i
+          for (i = 0; i < n; i++) {
+            b = i
+            for (j = i + 1; j < n; j++) if (wt[ord[j]] > wt[ord[b]]) b = j
+            t = ord[b]
+            # shift (not swap) to keep the remaining order stable
+            for (j = b; j > i; j--) ord[j] = ord[j - 1]
+            ord[i] = t
+          }
+          for (s = 1; s <= N; s++) load[s] = 0
+          for (i = 0; i < n; i++) {
+            c = 1
+            for (s = 2; s <= N; s++) if (load[s] < load[c]) c = s
+            asg[ord[i]] = c
+            load[c] += wt[ord[i]]
+          }
+          printf "T %s\n", load[K]
+          for (i = 0; i < n; i++) if (asg[i] == K) print i
+        }'
+  )"
+  SHARD_EST="$(printf '%s\n' "$SEL" | sed -n 's/^T //p')"
+  SHARDED_LABELS=()
+  SHARDED_CMDS=()
+  for idx in $(printf '%s\n' "$SEL" | grep -E '^[0-9]+$' || true); do
+    SHARDED_LABELS+=("${LABELS[$idx]}")
+    SHARDED_CMDS+=("${CMDS[$idx]}")
+  done
+  LABELS=("${SHARDED_LABELS[@]+"${SHARDED_LABELS[@]}"}")
+  CMDS=("${SHARDED_CMDS[@]+"${SHARDED_CMDS[@]}"}")
+fi
+
 # --- --list: print labels in run order, run nothing ---
 # ${arr[@]+...} guard: same bash-3.2 empty-array-under-set-u case as the discovery
 # loops above — an empty check set must print nothing and exit 0, not abort.
@@ -145,6 +243,11 @@ export AGENT_GATE_SINK_DIR="${AGENT_GATE_SINK_DIR:-$WORK/gate-sink}"
 # matching marker as live-config pollution (a leaked settings.json env value never matches).
 export AGENT_GATE_SINK_TEST_RUN="$AGENT_GATE_SINK_DIR"
 OUTFILE="$WORK/check.out"
+
+if [[ $SHARD_N -gt 0 ]]; then
+  printf '=== verify-all: shard %d/%d — %d checks, ~%ss estimated ===\n' \
+    "$SHARD_K" "$SHARD_N" "${#LABELS[@]}" "${SHARD_EST:-0}"
+fi
 
 passed=0
 failed=0
@@ -216,7 +319,7 @@ while [[ $i -lt $n ]]; do
     # what lets a battery guarded by an optional tool live under core/tests/
     # (inside the guarded surface) instead of being hidden outside discovery.
     reason="$(printf '%s' "$first_line" | sed -E 's/^SKIP[[:space:]]*[:—-]*[[:space:]]*//')"
-    printf 'SKIP  %s  (%s)\n' "$label" "${reason:-check declared itself inapplicable}"
+    printf 'SKIP  %s  (%s)  (%ss)\n' "$label" "${reason:-check declared itself inapplicable}" "$dur"
     skipped=$((skipped + 1))
   elif [[ $rc -eq 0 ]]; then
     printf 'PASS  %s  (%ss)\n' "$label" "$dur"

@@ -19,12 +19,13 @@ budget) that exists on every rung:
 | **LOW** | Mechanical work: build/type/lint cleanup, lookups, searches, fan-out workers | ~0.1–0.2× the workhorse |
 | **MID** (workhorse) | Implementation, code review, verification judges | baseline |
 | **TOP** | Planning, architecture, orchestration judgment, deep design (opus-class @ high effort) | 2–5× the workhorse |
-| **TOP-F** | Security review, completion verdicts only — a reserved sub-rung, not a general escalation target (fable-class @ max effort) | ≥TOP |
+| **TOP-F** | Completion verdicts only — a reserved sub-rung, not a general escalation target (fable-class @ max effort). No shipped agent pins it: `security-reviewer` moved to TOP (opus @ high) on 2026-10-16 | ≥TOP |
 
 TOP and TOP-F are both "the top rung" for cost-intuition purposes; the split
-is about which two verdict-shaped tasks are allowed to reach past TOP into
-the fable-class ceiling, not a new cost tier for everything else (`spec.md`
-§7 Q3). The exact model alias behind each class still lives only in its
+is about which verdict-shaped task may reach past TOP into the fable-class
+ceiling, not a new cost tier for everything else (`spec.md` §7 Q3). Security
+review held a TOP-F pin (fable @ max) from 2026-09-26 until the 2026-10-16
+maintainer decision below. The exact model alias behind each class still lives only in its
 consumer — an agent's `model:` frontmatter, an adapter's tier file — never
 here.
 
@@ -44,12 +45,12 @@ than any doc review cycle).
 |---|---|---|---|---|
 | Planning / architecture | TOP | Session's top model — agents **unpinned** (frontmatter absence = inherit) | `--profile deep` | top-tier model (tiers file TOP `--model`) |
 | Orchestration judgment — work distribution, gate verdicts, result synthesis | TOP | Session's top model, main loop (never dispatched below the session model) | `--profile deep` | top-tier model (tiers file TOP `--model`) |
-| Security review | **TOP-F** | `security-reviewer` pin — see the `model:` pin in `agents/security-reviewer.md` | `--profile deep` | top-tier model (tiers file TOP `--model`) |
+| Security review | **TOP** (opus @ high) | `security-reviewer` pin — see the `model:` pin in `agents/security-reviewer.md` | `--profile deep` | top-tier model (tiers file TOP `--model`) |
 | Code review | MID | `code-reviewer` pin (sonnet-class) | mid model, caller-explicit `-m` + high effort | workhorse model |
 | Persona/citizen review | MID | `persona-review-orchestrator` pin (sonnet-class) | mid model, caller-explicit `-m` + high effort | workhorse model |
 | Implementation | MID | Dispatched at workhorse tier — explicit `model` override on the Agent dispatch; the session keeps judgment and dispatches hands | config default (unprefixed) | workhorse model |
 | Verification judge (interim checks) | **MID floor** | **never below sonnet-class** — see Floors | mid model, high effort or above | workhorse model or above |
-| Completion verdict (`/verify-completion` terminal judge) | **TOP-F reserved** | may escalate past the MID floor to the `security-reviewer`-class pin when the dispatch is the terminal verdict, not an interim check | `--profile deep` | top-tier model |
+| Completion verdict (`/verify-completion` terminal judge) | **TOP-F reserved** | may escalate past the MID floor to a fable-class model (no shipped pin; the `security-reviewer` pin is TOP opus since 2026-10-16) when the dispatch is the terminal verdict, not an interim check | `--profile deep` | top-tier model |
 | Mechanical fixes | LOW | per-call `model` override on the Agent dispatch (no low-tier agent is shipped) | `--profile quick` | lightest model |
 | Lookups / search | LOW | per-call low-tier override | `--profile quick` | lightest model |
 | Fan-out workers | **LOW default** | low-tier override; promote individual workers only when a task demands it | `--profile quick` | lightest model |
@@ -202,7 +203,7 @@ governs promoting effort before promoting tier):
 | `/supervise` implementation waves | low → medium | A wave dispatched against an approved, concrete plan is spec-gated work — the plan already forecloses most hidden edge cases; promote to medium only for a wave with no prior spec-gate pass |
 | Code review (`code-reviewer`, council lanes) | high | Reviewing is exactly the "hidden edge case" shape the vendor study measured gains in — a shallow pass misses the defect it exists to catch |
 | `/verify-completion` terminal verdict | high | A refute-by-default judge that verifies at low effort silently degrades into a rubber stamp — the gate's entire value is in the verification budget |
-| Security review (`security-reviewer`) | max | The domain the vendor study measured the largest gain in (64%→87%); this is also the one TOP-F reservation (see The ladder) — tier and effort both maxed together, deliberately, for the one review class where a missed finding is a security incident |
+| Security review (`security-reviewer`) | high | Pinned `opus` @ `high` by a 2026-10-16 maintainer decision: latency vs benefit — security review passes took 22–26 min at fable @ max. History: the 2026-09-26 `max` pin rested on the vendor study's largest measured gain in this domain (64%→87%) and was the one TOP-F reservation; a missed finding is still a security incident, so `high` effort stays and the tier stays TOP (see The ladder) |
 
 **Advisory nudge.** `core/hooks/model-routing-advisor.py` adds one short note
 (inside its single `additionalContext` object, combined with the missing-`model`
@@ -349,7 +350,11 @@ shared blind spot doesn't survive review.
   council-scale (line/file threshold or a risk-area path) — `/council-review`.
   Risk-area paths (auth/secret/billing/migration) still get immediate review
   regardless of tier — `security-reviewer`'s dispatch timing is unchanged by
-  this policy.
+  this policy. Since 2026-10-16 the tier-2 size signal counts non-test,
+  non-docs paths only (`council-threshold.sh` reports `excluded=<n>`; risk
+  paths are still classified everywhere), and review rounds are capped at 2
+  full-council / `security-reviewer` passes per PR/diff, with the fix delta
+  alone re-reviewed from round 3 (`skills/council-review/SKILL.md` "Round cap").
 - **Lane cost models (2026-08-20).** Onboarding is `/worker-setup`; this is
   its SSOT for what each lane actually costs. **antigravity (gemini lane)** —
   the user's Google account quota (Antigravity free/AI Pro tiers),
