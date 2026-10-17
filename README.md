@@ -612,7 +612,9 @@ Agent is dogfooded: most of its implementation code is written by AI agents runn
 this very harness. The maintainer owns the threat model (what must be blocked), the hook
 protocol and policy rules, the verification design — including the blind benchmark — and
 every release decision. Every AI-written change passes the same machine gates it ships:
-gitleaks, policy hooks, and CI.
+gitleaks, policy hooks, and CI. How the maintainer runs it day to day — delegation, the review
+ladder, the always-ask list, and lessons that became rules — is in
+[`docs/maintainer-workflow.md`](docs/maintainer-workflow.md).
 
 ## Contributing
 
