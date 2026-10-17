@@ -393,4 +393,14 @@ if [[ $rc -ne 0 ]]; then
     exit 1
 fi
 
+# rc 0 with nothing but whitespace is not an answer — every role's contract
+# returns text (reviews reply NO-FINDINGS when clean). Seen 2026-10-17: an agy
+# print timeout exited 0 with an empty body and was captured as complete,
+# letting an absent lane count as seated.
+if ! grep -q '[^[:space:]]' "$OUT_TMP" 2>/dev/null; then
+    echo "call-worker: backend '$BACKEND_USED' exited 0 with empty output for role '$ROLE' — treated as failed." >&2
+    write_capture "failed" >/dev/null
+    exit 1
+fi
+
 write_capture "complete"
