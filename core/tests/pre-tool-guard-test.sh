@@ -2279,14 +2279,14 @@ run_case_in "push-force-abbrev2-main-deny"     "$GBF" 'git push --forc origin ma
 run_case_in "push-plain-no-ref-on-main-allow"  "$GBM" 'git push origin'                allow
 
 echo "--- deny text never echoes the arguments of env"
-G3A_OUT=$(printf '%s' '{"event":"PreToolUse","tool_name":"Bash","tool_input":{"command":"env API_KEY=sk-test-CANARY-0123456789"}}' | AGENT_GATE_SINK_DIR="$AGENT_GATE_SINK_DIR" bash "$HOOK" 2>/dev/null || true)
-if [[ "$G3A_OUT" == *'"permissionDecision": "deny"'* && "$G3A_OUT" != *CANARY* ]]; then
+G3A_OUT=$(printf '%s' '{"event":"PreToolUse","tool_name":"Bash","tool_input":{"command":"env API_KEY=not-a-secret-marker"}}' | AGENT_GATE_SINK_DIR="$AGENT_GATE_SINK_DIR" bash "$HOOK" 2>/dev/null || true)
+if [[ "$G3A_OUT" == *'"permissionDecision": "deny"'* && "$G3A_OUT" != *not-a-secret-marker* ]]; then
   echo "  ok   [env-args-not-echoed]"; PASS=$((PASS + 1))
 else
   echo "  FAIL [env-args-not-echoed] :: $G3A_OUT"; FAIL=$((FAIL + 1))
 fi
 G3A_LOG=$(cat "$AGENT_GATE_SINK_DIR"/security-violations.jsonl 2>/dev/null || true)
-if [[ "$G3A_LOG" != *CANARY* ]]; then
+if [[ "$G3A_LOG" != *not-a-secret-marker* ]]; then
   echo "  ok   [env-args-not-logged]"; PASS=$((PASS + 1))
 else
   echo "  FAIL [env-args-not-logged]"; FAIL=$((FAIL + 1))
