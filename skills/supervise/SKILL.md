@@ -185,6 +185,20 @@ b. **Classify the wave and pick lanes** based on its content:
      context continue the *same* worker rather than fresh-spawning each one
      (a fresh spawn re-pays the full context write uncached). Verifier
      isolation is the standing exception: verifiers are always fresh.
+   **Liveness (`--goal-mode`).** Register each dispatched agent with a `stuck_after`
+   budget (600 s for an edit, more for tests) and its write path:
+   `supervisor-goal.sh agent-spawn <slug> <agent-id> <i> <stuck-after-s> [scope]`.
+   Each tick run `stuck-check <slug>`: STUCK = no new side effect (commit or file
+   change in scope, or `agent-effect <slug> <agent-id> log`) past the budget. It
+   prints only on a transition, so a silent tick needs no narration. An agent
+   awaiting the user is not stuck (`agent-wait`, then `agent-resume`). On STUCK,
+   read its output and message or re-dispatch it; `agent-done` when finished.
+
+   **Decision log.** Record each non-trivial decision (dispatch, abort/advance,
+   waiver): `supervisor-goal-log.sh append <slug> wave-<i> "<decision>" "<why>"
+   <evidence> <result>`. Evidence is a pointer (SHA, path, `path:line`), never prose.
+   Append-only: fix a wrong row with `supersede <slug> <line> …`, never edit it.
+
 c. **Execute** the wave's intended changes — through the dispatched execution
    lane, not inline at the session model (inline is judgment's lane, not
    execution's). Under `--verify-blocking`, the wave's delegation contract
@@ -280,11 +294,17 @@ and the supervise loop exits gracefully.
 
 ### 5. Completion
 
-When wave N passes audit:
+When wave N passes audit, cross-check the decision log against the run record
+**before** declaring the run complete:
 
 ```bash
-core/infra/supervisor-goal.sh complete <slug>     # if --goal-mode
+core/infra/supervisor-goal-log.sh check <slug>    # prints "## Attention"
+core/infra/supervisor-goal.sh complete <slug>     # if --goal-mode (re-runs the check on stderr)
 ```
+
+Copy `## Attention` into the report below (pending/failed decisions, dead evidence
+pointers, waves with no decision row, open agents, unfilled RECORD.md). Resolve what
+you can; leave the rest listed — never report "complete" over it unmentioned.
 
 Report:
 ```
@@ -293,6 +313,8 @@ Waves: N/N
 PRs opened: <list>
 PRs merged: <list>
 Outstanding: <deferred items from the plan>
+## Attention
+<paste from supervisor-goal-log.sh check>
 ```
 
 Also write the same facts to `.agent/plans/<slug>/RECORD.md` — the

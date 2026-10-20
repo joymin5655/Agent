@@ -70,6 +70,70 @@ GATE runtime-currency | runtime-currency.sh | block | - | * | 2026-09-26 | Runti
 GATE circuit-breaker | circuit-breaker.py | advise | circuit-breaker.jsonl | circuit-breaker | 2026-10-12 | Model will retry the same failing Bash command in a loop instead of changing approach. ASSUMPTION (unmeasured until this sink): the text heuristic is the only live failure signal (the runtime sends no exit status, measured 2026-07-30), so its false-positive/negative rate is unknown; the sink's `signal` field separates text vs exit-status vs failure-event fires. Advisory only.
 <!-- gate-registry:end -->
 
+## Rule enforcement map
+
+The gate list above answers "what does each gate assume"; this map answers the reverse
+question: **for each written rule, what actually enforces it?** A rule with no enforcer is
+a wish the model may follow or not, so it is marked `UNENFORCED` and counted, not hidden.
+Prefer building the check over rewording the rule.
+
+`core/tests/rule-map.sh` (a verify-all gate; battery `core/tests/rule-map-test.sh`) reads the
+block below and **fails** on a dead enforcer path, a `hook:` enforcer not registered in
+`hooks/hooks.json`, a malformed or duplicate row, a stray line in the block, an unmapped
+`operating-contract.md` bullet, or an exception that is missing a reason / expiry / approver,
+has an impossible date, or has expired. It only **warns** with the `PARTIAL` and `UNENFORCED`
+counts — the numbers are the pressure.
+
+Strict format, one row per line, `|`-separated, no `|` inside a field:
+
+```
+RULE <id> | <file> [§ section] | <rule, short> | <kind:path[,kind:path]>
+RULE <id> | <file> [§ section] | <rule, short> | PARTIAL <kind:path[,kind:path]> ~ <what is NOT covered>
+RULE <id> | <file> [§ section] | <rule, short> | UNENFORCED
+EXCEPT <id> | <reason> | <YYYY-MM-DD expiry> | <approver>
+```
+
+`kind` is `hook`, `test`, `ci`, `lint`, `git-hook` or `script`; paths are repo-relative and
+must exist. A plain enforcer list means the rule is fully covered in the modes this repo
+ships (a gate that defaults to dryrun, or watches other paths, is not full coverage).
+`PARTIAL` names the file that covers part of the rule and states the gap after ` ~ `. An
+`EXCEPT` may only target a `PARTIAL` or `UNENFORCED` row and lapses on its expiry date.
+
+<!-- rule-map:begin -->
+RULE AG-1 | AGENTS.md § 1 | Plan before editing 3+ files or hooks/adapters/rules | PARTIAL hook:core/hooks/spec-gate.py,hook:core/hooks/plan-gate.py ~ spec-gate defaults to dryrun (logs only) and watches only src/app/pages/lib/server/components paths; no 3-file or hooks/adapters/rules trigger; plan-gate only records an approval flag
+RULE AG-2 | AGENTS.md § 2 | Domain-neutral tree: sanitize audit returns zero matches outside legacy/ | test:core/tests/sanitize-audit.sh,ci:.github/workflows/ci.yml
+RULE AG-3 | AGENTS.md § 3 | Core hook changes keep the canonical hook protocol; all adapters return the same decision | test:core/tests/adapter-parity.sh
+RULE AG-4 | AGENTS.md § 4 | New hook gets a failing reproduce test first | PARTIAL hook:core/hooks/tdd-guard.py ~ defaults to dryrun and its scope is src/ only, which this repo does not have, so core/hooks edits are not covered
+RULE AG-5a | AGENTS.md § 5 | Conventional commit prefixes | UNENFORCED
+RULE AG-5b | AGENTS.md § 5 | One logical change per commit | UNENFORCED
+RULE AG-5c | AGENTS.md § 5 | Pre-commit gitleaks and staged-file scan run on every commit | PARTIAL git-hook:core/git-hooks/pre-commit,git-hook:core/git-hooks/check-staged.py ~ runs only where core.hooksPath is set by setup.sh and is skipped by git commit --no-verify; gitleaks is skipped when not installed
+RULE AG-5d | AGENTS.md § 5 | Never bypass hooks with --no-verify | PARTIAL hook:core/hooks/pre-tool-guard.sh ~ the verify-bypass gate asks (does not deny) and only sees commands run through a Claude Bash tool
+RULE AG-5e | AGENTS.md § 5 | AI commits carry a Co-Authored-By tag | UNENFORCED
+RULE AG-6a | AGENTS.md § 6 | Branch naming agent/task-slug | UNENFORCED
+RULE AG-6b | AGENTS.md § 6 | Never push to main | PARTIAL hook:core/hooks/pre-tool-guard.sh ~ blocks only a force-push to main or master from a Claude Bash tool; a plain push to main is not stopped here (relies on host branch protection)
+RULE AG-6c | AGENTS.md § 6 | PR carries what, why, how tested | UNENFORCED
+RULE AG-6d | AGENTS.md § 6 | Hook, guard, permission or deploy PRs wait for human review and merge; other agents never merge | UNENFORCED
+RULE AG-7 | AGENTS.md § Multi-session | Concurrent sessions register and take file mutexes before editing shared files | PARTIAL hook:core/hooks/r4-file-mutex-check.sh,hook:core/hooks/r4-mutex-check.sh,hook:core/hooks/agent-session-start.sh ~ the mutex hooks only ask when another session already holds the resource; registering a session is not forced (a failed start is ignored)
+RULE AG-8 | AGENTS.md § Agent brain | Agents write only the raw/ quarantine, never curated notes or the vault | PARTIAL script:core/brain/brain-mcp.py,test:core/tests/brain-capture-test.sh ~ the MCP server exposes only the capture tool, but a direct file write into notes/ or the vault is not blocked
+RULE AG-9a | AGENTS.md § Style | Guarded grep-count idiom in strict-mode shell | PARTIAL test:core/tests/pipefail-idiom-scan.sh ~ scans only core/hooks, core/infra, adapters, evals and setup.sh, only for the counting idiom, and skips scripts that lack set -e or pipefail
+RULE AG-9c | AGENTS.md § Style | Every shell script starts with set -euo pipefail | UNENFORCED
+RULE AG-9b | AGENTS.md § Style | Shell scripts are shellcheck clean (no CI step runs it) | UNENFORCED
+RULE AG-10 | AGENTS.md § Style | Python is ruff clean and type-hinted (no CI step runs it) | UNENFORCED
+RULE AG-11 | AGENTS.md § Style | Hook stdout is strict json.dumps, never print | UNENFORCED
+RULE AG-12 | AGENTS.md § Style | Markdown prose at most 100 columns, no trailing whitespace | UNENFORCED
+RULE AG-13 | AGENTS.md § Style | Comments only where the why is non-obvious | UNENFORCED
+RULE OC-1 | rules/policy/operating-contract.md | Follow current scope and project guidance; ask about material decisions | UNENFORCED
+RULE OC-2 | rules/policy/operating-contract.md | Back codebase claims with file:line or command output; say unverified otherwise | UNENFORCED
+RULE OC-3 | rules/policy/operating-contract.md | Read before changing; verify ownership before touching shared branches or jobs | PARTIAL hook:core/hooks/r4-file-mutex-check.sh ~ only detects two sessions editing the same file; read-before-edit and process or branch ownership are not checked
+RULE OC-4 | rules/policy/operating-contract.md | Run checks and review proportional to risk; a missing review is not clean | PARTIAL hook:core/hooks/council-escalation-gate.py,hook:core/hooks/session-quality-gate.py,git-hook:core/git-hooks/pre-commit ~ forces a council review only for council-scale or risk-path diffs; session-quality-gate runs tests only where a project declares completion_tests (none in this repo) and its verify-observed check is advisory unless AGENT_VERIFY_OBSERVER_BLOCK=1; neither can tell whether a report is honest
+RULE OC-5 | rules/policy/operating-contract.md | Never skip Git hooks unless the user supplied the flag | PARTIAL hook:core/hooks/pre-tool-guard.sh ~ asks rather than denies, and only for commands issued through a Claude Bash tool
+RULE OC-6 | rules/policy/operating-contract.md | Secrets, auth, billing, deploy changes need authorization; no secret values in output | PARTIAL hook:core/hooks/pre-tool-guard.sh,hook:core/hooks/secret-content-scan.py ~ asks on declared risk areas and blocks secret-shaped content in writes; whether the user authorized the concrete change is not checked, nor are secrets in chat output
+RULE OC-7 | rules/policy/operating-contract.md | Verify hook registration and coverage before claiming enforcement | PARTIAL test:core/tests/registry-drift.sh,test:core/tests/adapter-parity.sh ~ checks registry drift and adapter decision parity; nothing stops an enforcement claim made without running them
+RULE OC-8 | rules/policy/operating-contract.md | Query the brain first; write only the raw capture path | PARTIAL script:core/brain/brain-mcp.py,test:core/tests/brain-capture-test.sh ~ write path limited by the MCP tool; query-first and direct file writes are not enforced
+RULE OC-9 | rules/policy/operating-contract.md | Keep progress in a handoff; never disable a failing test because it recurs | UNENFORCED
+RULE OC-10 | rules/policy/operating-contract.md | Concise language; say what changed, why, how it was checked | UNENFORCED
+<!-- rule-map:end -->
+
 ## Review discipline
 
 When you re-validate a gate's assumption (it still catches real model failures, or
