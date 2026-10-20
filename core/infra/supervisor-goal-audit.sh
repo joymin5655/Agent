@@ -109,9 +109,9 @@ while IFS= read -r cmd; do
     [[ -z "$cmd" ]] && continue
     # eval'd below: never let a captured command substitution run
     # shellcheck disable=SC2016  # literal `$(` is the thing being matched
-    case "$cmd" in *'$('*|*'`'*) continue ;; esac
+    case "$cmd" in *'$('*|*'`'*) echo "[audit] dropped (substitution): $cmd" >&2; continue ;; esac
     CHECKS+=("$cmd")
-done < <({ echo "$WAVE_SECTION" | sed -E 's/^- fix: .* → verify: /- verify: /' | grep -oE '(npm run (build|lint|test|test:run|test:e2e|typecheck|test:a11y)|npx tsc[^[:space:]`]*|pytest[^"`]*|uv run pytest[^"`]*|ruff check[^"`]*|test -f [^[:space:]`]+|test ! -f [^[:space:]`]+|bash -n [^[:space:]`]+|wc -l [^[:space:]`]+|grep -c (-[A-Za-z]+ |-- )*("([^"\\]|\\.)*"|'"'"'[^'"'"']*'"'"'|[^[:space:]`"'"'"']+) ("[^"]+"|'"'"'[^'"'"']+'"'"'|[^[:space:]`"'"'"'|;&<>()$]+)|bash core/infra/completion-gate\.sh [A-Za-z0-9._-]+ [0-9]+|bash core/[^[:space:]]+\.sh|bash tests/[^[:space:]]+\.sh|tests/integration/[^[:space:]]+\.sh|jq [^"|]+\.(jsonl|json)|time bash [^[:space:]]+\.sh)' || true; } | sort -u)
+done < <({ echo "$WAVE_SECTION" | sed -E 's/^- fix: .* (→|->) verify: /- verify: /' | grep -oE '(npm run (build|lint|test|test:run|test:e2e|typecheck|test:a11y)|npx tsc[^[:space:]`]*|pytest[^"`]*|uv run pytest[^"`]*|ruff check[^"`]*|test -f [^[:space:]`]+|test ! -f [^[:space:]`]+|bash -n [^[:space:]`]+|wc -l [^[:space:]`]+|grep -c (-[A-Za-z]+ |-- )*("([^"\\]|\\.)*"|'"'"'[^'"'"']*'"'"'|[^[:space:]`"'"'"']+) ("[^"]+"|'"'"'[^'"'"']+'"'"'|[^[:space:]`"'"'"'|;&<>()$]+)|bash core/infra/completion-gate\.sh [A-Za-z0-9._-]+ [0-9]+|bash core/[^[:space:]]+\.sh|bash tests/[^[:space:]]+\.sh|tests/integration/[^[:space:]]+\.sh|jq [^"|]+\.(jsonl|json)|time bash [^[:space:]]+\.sh)' || true; } | sort -u)
 
 # ---------- Scoring functions (deterministic — no LLM calls) ----------
 
@@ -239,7 +239,12 @@ ALL_PASS=true
 for cmd in "${CHECKS[@]}"; do
     echo "[audit] running: $cmd" >&2
     LOG_FILE=$(mktemp)
-    if eval "$cmd" > "$LOG_FILE" 2>&1 < /dev/null; then
+    # A converge wave's completion-gate check runs as a dryrun liveness check (exit 2 =
+    # dead gate). The blocking verdict is step 2d's own gate call, so an inherited
+    # AGENT_VERIFY_BLOCKING=block must not turn a REFUTED wave into an audit FAIL.
+    run="$cmd"
+    case "$cmd" in "bash core/infra/completion-gate.sh "*) run="AGENT_VERIFY_BLOCKING=dryrun $cmd" ;; esac
+    if eval "$run" > "$LOG_FILE" 2>&1 < /dev/null; then
         PASS=true
         EXIT_CODE=0
     else

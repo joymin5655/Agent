@@ -35,7 +35,8 @@
 #   7  stop, --spec-change given
 #   8  merged into a pending converge wave; do NOT run add-wave (no new wave)
 #   9  plan/spec already fails plan-lint before any change; plan.md untouched
-# Checks run in the order 0, 7, 5, 6; only 3, 4 and 8 modify the plan.
+# Checks run in the order 0, 7, 8 (fold-in), 5, 6, then the pre-lint (9); only 3, 4
+# and 8 modify the plan.
 set -euo pipefail
 export LC_ALL=C
 

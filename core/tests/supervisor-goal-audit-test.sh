@@ -126,6 +126,25 @@ check "backticked-test-f-stops-at-backtick" 'test -f f.txt' "$(run_audit 'Check:
 check "backticked-wc-l-stops-at-backtick" 'wc -l f.txt' "$(run_audit 'Check: `wc -l f.txt`')"
 check "nothing-was-executed-by-converge-cases" "no" "$([[ -e PWNED ]] && echo yes || echo no)"
 
+echo "=== a converge wave's gate check runs as a dryrun even under an inherited block mode ==="
+mkdir -p core/infra
+# stub gate: fails only in block mode, like a REFUTED verdict
+printf '#!/usr/bin/env bash\necho "mode=${AGENT_VERIFY_BLOCKING:-unset}"\n[[ "${AGENT_VERIFY_BLOCKING:-}" != block ]]\n' \
+  > core/infra/completion-gate.sh
+printf '## Wave 2: converge 1\n- fix: gap → verify: `bash core/infra/completion-gate.sh p 2`\n' > "$AGENT_PLANS_DIR/p.md"
+OUT=$(AGENT_VERIFY_BLOCKING=block bash "$AUDIT" p 2 2>/dev/null)
+check "inherited-block-gate-check-passes" "true" "$(jq -r '.evidence[0].pass' <<<"$OUT")"
+check "inherited-block-gate-ran-dryrun" "mode=dryrun" "$(jq -r '.evidence[0].log_tail' <<<"$OUT")"
+printf '## Wave 1: t\n- `wc -l f.txt` -> 3\n' > "$AGENT_PLANS_DIR/p.md"
+OUT=$(AGENT_VERIFY_BLOCKING=block bash "$AUDIT" p 1 2>/dev/null)
+check "other-checks-keep-env" "true" "$(jq -r '.evidence[0].pass' <<<"$OUT")"
+echo "=== an ASCII -> marker on a fix step also keeps gap text out ==="
+check "ascii-arrow-fix-text-not-extracted" 'bash core/infra/completion-gate.sh demo 2' \
+  "$(run_audit '- fix: pytest x; touch PWNED -> verify: `bash core/infra/completion-gate.sh demo 2`')"
+echo "=== a dropped command is reported on stderr ==="
+printf '## Wave 1: t\n\nCheck: test -f $(touch PWNED)\n' > "$AGENT_PLANS_DIR/p.md"
+check "drop-is-logged" "1" "$(bash "$AUDIT" p 1 2>&1 >/dev/null | grep -c 'dropped (substitution)')"
+
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]

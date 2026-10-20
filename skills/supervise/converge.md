@@ -10,8 +10,10 @@ converge step.
    `.agent/plans/<slug>/verdict-w<i>.json`. The sink is shared by every run, so select
    by slug and wave, never by position:
    ```bash
-   jq -c --arg s <slug> --arg w <i> 'select(.slug == $s and (.wave | tostring) == $w)' \
-     .agent/logs/completion-gate.jsonl | tail -n 1 > .agent/plans/<slug>/verdict-w<i>.json
+   jq -c --arg s <slug> --arg w <i> \
+     'select(.slug == $s and (.wave | tostring) == $w and .mode == "block")' \
+     "${AGENT_COMPLETION_GATE_SINK:-.agent/logs/completion-gate.jsonl}" \
+     | tail -n 1 > .agent/plans/<slug>/verdict-w<i>.json
    ```
    The record is a superset of the `docs/scoring-convention.md` verdict. An empty
    file means the gate logged nothing for this wave: STOP and report it.
@@ -42,4 +44,5 @@ whose `refutations` are the findings and pass it with `--from`.
 
 `plan-converge.sh` never writes `spec.md`; the spec stays the human's contract.
 Gap text comes from verifier output: the script flattens it to one line and
-`supervisor-goal-audit.sh` never evaluates a `- fix:` step's text, only its verify command.
+`supervisor-goal-audit.sh` never evaluates a `- fix:` step's text, only its verify command
+(`→` or `->` marker); it runs that `completion-gate.sh` check as a dryrun liveness check.
