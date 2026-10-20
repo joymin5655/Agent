@@ -2068,6 +2068,18 @@ import time
 G3_MARKS = re.compile("[\x01-\x06]")
 G3_TOP = re.compile(r"^(?:(?:/|~|\$HOME|\$\{HOME\}|\.\.)(?:/\*?)?|/\*)$")  # a root, not a path below it
 G3_DEAD = "\x22${NAME+x}\x22"
+G3_GITCFG = r"core\.(?:worktree|gitdir|bare)"
+G3_LAUNCH_VAL = {
+    "exec": {"-a"}, "sudo": {"-u", "-g", "-h", "-p", "-C", "-D", "-R", "-T", "-U", "-r", "-t"},
+    "doas": {"-u", "-C"}, "nice": {"-n"}, "ionice": {"-c", "-n", "-p", "-t"},
+    "timeout": {"-k", "-s", "--kill-after", "--signal"}, "gtimeout": {"-k", "-s", "--kill-after", "--signal"},
+    "stdbuf": {"-i", "-o", "-e"}, "xargs": {"-I", "-n", "-P", "-L", "-s", "-E", "-d", "-a"},
+    "watch": {"-n", "-d"}, "flock": {"-w", "-E", "-c"}, "time": {"-f", "-o"}, "command": set(), "builtin": set(),
+    "nohup": set(), "setsid": set(), "caffeinate": {"-t", "-w"}, "rtk": set(), "taskset": set(), "chrt": set(),  # supply-chain-scan: allow-literal wrapper names skipped when parsing a command, not a spawn
+    "ssh": {"-p", "-l", "-i", "-o", "-F", "-J", "-L", "-R", "-D", "-b", "-c", "-e", "-m", "-O", "-S", "-W", "-w",
+            "-B", "-E", "-I"},
+}
+G3_LAUNCH_POS = {"timeout": 1, "gtimeout": 1, "flock": 1, "ssh": 1, "taskset": 1, "chrt": 1}  # leading operands
 G3_GITVARS = r"(?:GIT_DIR|GIT_WORK_TREE|GIT_INDEX_FILE|GIT_COMMON_DIR|GIT_CEILING_DIRECTORIES)="
 G3_HEADS = frozenset("git rm find rsync env printenv export declare typeset set ps eval command builtin".split()) | SHELLS | LAUNCHERS
 G3_COARSE_WORD = re.compile(
@@ -2100,7 +2112,7 @@ G3_PS_VALUE = {"-o", "-p", "-u", "-t", "-g", "-G", "-U", "-C", "-O", "-s", "-D",
 G3_READONLY = frozenset("echo printf ls pwd true false : test [ [[ cat head tail wc grep egrep fgrep rg sleep date "
                         "whoami basename dirname which type stat file du id uname hostname".split())
 G3_GIT_READONLY = frozenset("status log diff show rev-parse rev-list branch remote describe ls-files ls-tree "
-                            "blame shortlog cat-file config fetch".split())
+                            "blame shortlog cat-file fetch".split())  # not config: it can point the work tree elsewhere
 G3 = {"deny": [], "ask": [], "unsure": False, "unsure_name": False, "fails": [], "unknown_state": False, "probes": {}, "n": 0, "branch": {}}
 G3_DEADLINE = [0.0]
 
@@ -2108,6 +2120,55 @@ G3_DEADLINE = [0.0]
 def g3_lit(t):
     # ${HOME} reaches the word as PH + HOME: read it back as $HOME
     return G3_MARKS.sub("", t).replace(PH + "HOME", "$HOME")
+
+
+def g3_cmd_index(lits, i, end, skip_env=False):
+    """Index of the command word at or after i (below end): launchers, their options and the values of
+    their options (exec -a NAME, sudo -u U, nice -n N, timeout DURATION ...) are skipped. env is returned
+    as it is (it is judged on its own) unless skip_env."""
+    hops = 0
+    while i < end and hops < 16:
+        w = lits[i]
+        n = norm(w)
+        if ASSIGN.match(w):
+            i += 1
+            continue
+        if n == "env":
+            if not skip_env:
+                return i
+            j = i + 1
+            while j < end:
+                a = lits[j]
+                if a in G3_ENV_VALUE:
+                    j += 2
+                elif a.startswith("-") or ASSIGN.match(a):
+                    j += 1
+                else:
+                    break
+            i = j
+            hops += 1
+            continue
+        if n in G3_LAUNCH_VAL:
+            vals = G3_LAUNCH_VAL[n]
+            j = i + 1
+            while j < end and lits[j].startswith("-") and lits[j] != "--":
+                j += 2 if lits[j] in vals else 1
+            if j < end and lits[j] == "--":
+                j += 1
+            i = j + G3_LAUNCH_POS.get(n, 0)
+            hops += 1
+            continue
+        return i
+    return i
+
+
+def g3_top(t):
+    """Is the operand one of / ~ $HOME .. themselves (or their glob), after folding // and /./ and a trailing /?"""
+    t = re.sub(r"/{2,}", "/", t)
+    t = re.sub(r"(?:/\.)+(?=/|$)", "", t) or "/"
+    if len(t) > 1:
+        t = t.rstrip("/") or "/"
+    return bool(G3_TOP.match(t))
 
 
 def g3_writes(r):
@@ -2180,7 +2241,11 @@ def g3_push(args, cdir, unsure):
             break
         if a.startswith("--"):
             name = a.split("=", 1)[0]
-            if name.startswith("--forc"):
+            if g3_long(a, "--no-dry-run", 8):
+                dry = False
+            elif g3_long(a, "--no-force", 8):
+                force = False
+            elif name.startswith("--forc"):
                 force = True
             elif name.startswith("--dry"):
                 dry = True
@@ -2253,7 +2318,19 @@ def g3_git(lits, prior_unsafe):
         if a == "-C" and k + 1 < len(args):
             cdirs.append(args[k + 1])
             k += 2
+        elif a.startswith("-C") and len(a) > 2:
+            cdirs.append(a[2:])
+            k += 1
         elif a in ("--git-dir", "--work-tree") or a.startswith(("--git-dir=", "--work-tree=")):
+            extra = True
+            k += 1 if "=" in a else 2
+        elif a == "-c" and k + 1 < len(args):
+            extra = extra or bool(re.match(G3_GITCFG, args[k + 1], re.I))
+            k += 2
+        elif a.startswith("-c") and len(a) > 2:
+            extra = extra or bool(re.match(G3_GITCFG, a[2:], re.I))
+            k += 1
+        elif a == "--config-env" or a.startswith("--config-env="):
             extra = True
             k += 1 if "=" in a else 2
         elif a in G3_GIT_VALUE:
@@ -2265,6 +2342,8 @@ def g3_git(lits, prior_unsafe):
     if k >= len(args):
         return
     sub, rest = args[k], args[k + 1:]
+    if any(a in ("-h", "--help") for a in rest):
+        return  # usage text, nothing runs
     cdir = cdirs[-1] if cdirs else None
     if cdir is not None and cdir.startswith("-"):
         cdir = "./" + cdir
@@ -2291,9 +2370,20 @@ def g3_git(lits, prior_unsafe):
                         k += 1
                 else:
                     flags.append(a)
-        if any(g3_long(a, "--dry-run", 4) or g3_short(a, "n") for a in flags):
-            return
-        if not any(g3_long(a, "--force", 4) or g3_short(a, "f") for a in flags):
+        dry = force = False
+        for a in flags:
+            if g3_long(a, "--no-dry-run", 8):
+                dry = False
+            elif g3_long(a, "--no-force", 8):
+                force = False
+            elif g3_long(a, "--dry-run", 4):
+                dry = True
+            elif g3_long(a, "--force", 4):
+                force = True
+            elif g3_short(a, "fn"):
+                force = force or "f" in a[1:]
+                dry = dry or "n" in a[1:]
+        if dry or not force:
             return
         if any(g3_short(a, "xX") for a in flags):
             g3_deny(
@@ -2336,8 +2426,16 @@ def g3_git(lits, prior_unsafe):
                     else:
                         hit = len(pos) >= 2
         elif sub == "restore":
-            staged = any(a == "--staged" or g3_short(a, "S") for a in flags)
-            tree = any(a == "--worktree" or g3_short(a, "W") for a in flags)
+            staged = tree = False
+            for a in flags:
+                if g3_long(a, "--no-staged", 8):
+                    staged = False
+                elif g3_long(a, "--staged", 4) or g3_short(a, "S"):
+                    staged = True
+                elif g3_long(a, "--no-worktree", 8):
+                    tree = False
+                elif g3_long(a, "--worktree", 4) or g3_short(a, "W"):
+                    tree = True
             hit = not staged or tree
         else:
             hit = any(g3_long(a, "--discard-changes", 4) or g3_long(a, "--force", 4) or g3_short(a, "f")
@@ -2375,7 +2473,7 @@ def g3_rm(args):
             dd = True
         elif a.startswith("--rec") or (not a.startswith("--") and re.search(r"[rR]", a)):
             recursive = True
-    if recursive and any(G3_TOP.match(o) for o in operands):
+    if recursive and any(g3_top(o) for o in operands):
         g3_deny(
             "destructive", "recursive rm at a root blocked",
             "Recursive rm of root / home / parent blocked.\nWHY: destructive-deletion guard - an "
@@ -2385,7 +2483,7 @@ def g3_rm(args):
 
 
 def g3_sweep(kind, targets):
-    if any(G3_TOP.match(t) for t in targets):
+    if any(g3_top(t) for t in targets):
         g3_deny(
             "destructive", kind + " at a root blocked",
             kind + " aimed at root / home / parent blocked.\nWHY: destructive-deletion guard - a bulk "
@@ -2400,20 +2498,6 @@ def g3_sweep(kind, targets):
             "preview first (find without -delete, rsync --dry-run) and confirm the target is the intended one.")
 
 
-def g3_exec_rm(sub):
-    """Does the -exec body (up to its ; or +) run rm, possibly behind launchers and their options?"""
-    for w in sub:
-        if w in (";", "+"):
-            return False
-        n = norm(w)
-        if n == "rm":
-            return True
-        if n in LAUNCHERS or w.startswith("-") or ASSIGN.match(w) or w.isdigit():
-            continue
-        return False
-    return False
-
-
 def g3_find(args):
     k = 0
     while k < len(args) and (args[k] in ("-H", "-L", "-P") or args[k].startswith(("-D", "-O"))):
@@ -2423,17 +2507,38 @@ def g3_find(args):
         roots.append(args[k])
         k += 1
     body = args[k:]
-    rm_exec = any(a in ("-exec", "-execdir", "-ok", "-okdir") and g3_exec_rm(body[i + 1:])
-                  for i, a in enumerate(body))
+    rm_exec, i = False, 0
+    while i < len(body):
+        if body[i] in ("-exec", "-execdir", "-ok", "-okdir"):
+            end = i + 1
+            while end < len(body) and body[end] not in (";", "+"):
+                end += 1
+            c = g3_cmd_index(body, i + 1, end, True)
+            if c < end and norm(body[c]) == "rm":
+                rm_exec = True
+            i = end
+        i += 1
     if "-delete" in body or rm_exec:
         g3_sweep("find -delete" if "-delete" in body else "find -exec rm", roots or ["."])
+
+
+def g3_rsync_short(a):
+    """(dry-run seen, value is the next word) for a short bundle; letters after a value option are its payload."""
+    dry = False
+    for n, ch in enumerate(a[1:]):
+        if ch == "n":
+            dry = True
+        elif ch in "efTBM":
+            return dry, n == len(a) - 2
+    return dry, False
 
 
 def g3_rsync(args):
     flags = [a for a in args if re.match(r"--(?:del|delete(?:-[a-z-]+)?|remove-(?:source|sent)-files)$", a)]
     if not flags:
         return
-    if any(a == "--dry-run" or g3_short(a, "n") for a in args if a.startswith("-")):
+    if any(g3_long(a, "--dry-run", 5) or (not a.startswith("--") and g3_rsync_short(a)[0])
+           for a in args if a.startswith("-") and a != "-"):
         return
     ops, k, dd = [], 0, False
     while k < len(args):
@@ -2441,7 +2546,7 @@ def g3_rsync(args):
         if not dd and a == "--":
             dd = True
         elif not dd and a.startswith("-") and a != "-":
-            if a in G3_RSYNC_VALUE or (not a.startswith("--") and a[-1:] in "efT"):
+            if a in G3_RSYNC_VALUE or (not a.startswith("--") and g3_rsync_short(a)[1]):
                 k += 1
         elif re.match(r"(?:rsync://|(?:[^/:@]+@)?[^/:]+:)", a):
             ops.append("remote:")
@@ -2473,7 +2578,7 @@ def g3_ps(args):
         k += 1
 
 
-def g3_env(words, lits, redirs, bodies, depth):
+def g3_env(words, lits, redirs, bodies, depth, prior_unsafe=False):
     args = lits[1:]
     k = 0
     while k < len(args):
@@ -2494,8 +2599,10 @@ def g3_env(words, lits, redirs, bodies, depth):
             except ValueError:
                 G3["unsure"] = True
                 return
-            g3_sub("env " + " ".join(shlex.quote(p) for p in parts + rest), depth + 1)
+            g3_sub("env " + " ".join(shlex.quote(p) for p in parts + rest), depth + 1, prior_unsafe)
             return
+        if a == "-C" or a.startswith("-C") or a.startswith("--chdir"):
+            G3["unknown_state"] = True  # the command runs in another directory
         if a in G3_ENV_VALUE:
             k += 2
         elif a == "-" or a.startswith("-") or ASSIGN.match(a):
@@ -2507,7 +2614,7 @@ def g3_env(words, lits, redirs, bodies, depth):
     if k >= len(args):
         g3_dump("env" + (" (%d arguments)" % len(args) if args else ""))
     else:
-        g3_cmd(words[1 + k:], redirs, bodies, depth + 1, False)
+        g3_cmd(words[1 + k:], redirs, bodies, depth + 1, prior_unsafe)
 
 
 def g3_cmd(words, redirs, bodies, depth, prior_unsafe):
@@ -2560,7 +2667,7 @@ def g3_cmd(words, redirs, bodies, depth, prior_unsafe):
             return g3_cmd(words[j:], redirs, bodies, depth + 1, prior_unsafe)
         return False
     if name == "env":
-        g3_env(words, lits, redirs, bodies, depth)
+        g3_env(words, lits, redirs, bodies, depth, prior_unsafe)
         return True
     if name == "git":
         g3_git(lits, prior_unsafe)
@@ -2582,7 +2689,7 @@ def g3_cmd(words, redirs, bodies, depth, prior_unsafe):
             g3_dump("printenv")
         return False
     if name in ("export", "declare", "typeset"):
-        if all(a in ("-p", "-x", "-px", "-xp", "--") for a in args):
+        if all(a == "--" or re.fullmatch(r"-[px]+", a) for a in args):
             g3_dump(" ".join([name] + args))
         return True
     if name == "set":
@@ -2620,10 +2727,16 @@ def g3_cmd(words, redirs, bodies, depth, prior_unsafe):
             for (text, bare), lit in zip(words[1:], args):
                 if not bare and re.search(r"\s", lit):
                     g3_sub(lit, depth + 1, prior_unsafe)
-        for j in range(1, len(lits)):
-            if norm(lits[j]) in G3_HEADS and not lits[j].startswith("-"):
-                g3_cmd(words[j:], redirs, bodies, depth + 1, prior_unsafe)
-                break
+        if any(CHDIR_OPT.match(t) for t in lits[1:]):
+            G3["unknown_state"] = True
+        j = g3_cmd_index(lits, 0, len(lits)) if name in G3_LAUNCH_VAL else 0
+        if j > 0 and j < len(words):
+            g3_cmd(words[j:], redirs, bodies, depth + 1, prior_unsafe)
+        else:
+            for j in range(1, len(lits)):
+                if norm(lits[j]) in G3_HEADS and not lits[j].startswith("-"):
+                    g3_cmd(words[j:], redirs, bodies, depth + 1, prior_unsafe)
+                    break
         return True
     return changes
 

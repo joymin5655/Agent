@@ -2500,6 +2500,51 @@ G3A_NEST='true'
 for _i in 1 2 3 4 5 6 7 8 9 10; do G3A_NEST="bash -c $(printf %q "$G3A_NEST")"; done
 run_case_timed "limit-nested-sh-c-deny" "$G3A_NEST" deny
 
+echo "--- codex round 2: attached options, config, env, launchers, negations, payloads, paths"
+run_case "r2-ansi-octal-rm-home-deny"   "\$'\\162\\155' -r \"\$HOME\""          deny
+run_case_in "r2-attached-C-dirty-deny"   "$GC" "git -C$GD restore a.txt"            deny
+run_case_in "r2-attached-C-clean-allow" "$GD" "git -C$GC restore a.txt"            allow
+run_case_in "r2-config-worktree-ask"    "$GD" 'git -c core.worktree=/x restore a.txt' ask
+run_case_in "r2-config-worktree-attached-ask" "$GD" 'git -ccore.worktree=/x restore a.txt' ask
+run_case_in "r2-config-other-dirty-deny" "$GD" 'git -c user.name=x restore a.txt'  deny
+run_case_in "r2-env-work-tree-ask"      "$GD" 'env GIT_WORK_TREE=/x git restore a.txt' ask
+run_case_in "r2-env-chdir-ask"          "$GD" 'env -C dirty git restore a.txt'     ask
+run_case_in "r2-write-then-env-ask"     "$GC" 'echo changed > a.txt; env git restore a.txt' ask
+run_case_in "r2-write-then-sh-c-ask"    "$GC" 'echo changed > a.txt; sh -c "git restore a.txt"' ask
+run_case_in "r2-config-then-restore-ask" "$GD" 'git config core.worktree /x; git restore a.txt' ask
+run_case "r2-exec-a-rm-home-deny"       'exec -a git rm -r "$HOME"'               deny
+run_case "r2-sudo-u-rm-root-deny"       'sudo -u root rm -r /'                    deny
+run_case "r2-nice-n-rm-root-deny"       'nice -n 5 rm -r /'                       deny
+run_case "r2-timeout-rm-root-deny"      'timeout 5 rm -r /'                       deny
+run_case "r2-timeout-k-rm-root-deny"    'timeout -k 1 5 rm -r /'                  deny
+run_case "r2-stdbuf-rm-root-deny"       'stdbuf -oL rm -r /'                      deny
+run_case "r2-find-exec-sudo-u-deny"     'find / -exec sudo -u root rm -r {} +'    deny
+run_case "r2-find-exec-env-u-deny"      'find / -exec env -u VAR rm {} +'         deny
+run_case "r2-find-exec-nice-n-deny"     'find / -execdir nice -n 5 rm {} \;'      deny
+run_case "r2-find-exec-other-allow"     'find / -exec sudo -u root grep x {} +'   allow
+run_case_in "r2-clean-fnx-no-dry-deny"  "$GC" 'git clean -fnx --no-dry-run'       deny
+run_case_in "r2-clean-fn-no-dry-untracked-deny" "$GU" 'git clean -fn --no-dry-run' deny
+run_case_in "r2-clean-fn-still-dry-allow" "$GU" 'git clean -fn'                    allow
+run_case "r2-push-fn-no-dry-deny"       'git push -fn --no-dry-run origin main'   deny
+run_case_in "r2-restore-no-staged-dirty-deny" "$GD" 'git restore --staged --no-staged a.txt' deny
+run_case_in "r2-restore-staged-only-allow" "$GD" 'git restore --staged a.txt'      allow
+run_case "r2-rsync-f-payload-root-deny" "rsync -r --delete -f'- node_modules/' src /" deny
+run_case "r2-rsync-fn-payload-root-deny" "rsync -r --delete -fn src /"             deny
+run_case "r2-rsync-n-then-e-allow"      "rsync -ne ssh --delete src /"             allow
+run_case_in "r2-switch-discard-abbrev-deny" "$GD" 'git switch --discard main'      deny
+run_case "r2-export-pp-deny"            'export -pp'                              deny
+run_case "r2-declare-pxx-deny"          'declare -pxx'                            deny
+run_case "r2-export-n-allow"            'export -n FOO'                           allow
+run_case "r2-rm-home-double-slash-deny" 'rm -r "$HOME"//'                         deny
+run_case "r2-rm-root-dot-slash-deny"    'rm -r /./'                               deny
+run_case "r2-rm-home-dot-deny"          'rm -r "$HOME/."'                         deny
+run_case "r2-rm-home-trailing-deny"     'rm -r ~///'                              deny
+run_case "r2-rm-home-sub-allow"         'rm -r "$HOME/build"'                     allow
+run_case_in "r2-restore-help-dirty-allow" "$GD" 'git restore -h'                   allow
+run_case_in "r2-restore-help-long-dirty-allow" "$GD" 'git restore --help'          allow
+G3A_FX=$(printf ' -exec true {} \\;%.0s' $(seq 1 6000))
+run_case_timed "r2-find-many-exec-clauses-allow" "find build${G3A_FX}" allow
+
 echo "--- large input stays linear"
 G3A_FLAT=$(printf 'ls; %.0s' $(seq 1 6000))
 run_case_timed "g3a-large-env-deny"   "${G3A_FLAT}printenv"                  deny
