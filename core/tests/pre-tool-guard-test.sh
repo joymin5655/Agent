@@ -2393,6 +2393,41 @@ run_case "rsync-plain-allow"        'rsync -a src/ dst/'                   allow
 run_case "rsync-dry-run-allow"      'rsync -an src/ dst/'                  allow
 run_case "find-msg-mention-allow"   'git commit -m "docs: find -delete caveat"' allow
 
+echo "--- codex review: redirects, option values, --repo, --delete-*, find -exec launchers, dry runs, comments"
+run_case "printenv-redirect-glued-deny"   'printenv>dump.txt'                       deny
+run_case "env-redirect-glued-deny"        'env>x'                                   deny
+run_case "env-append-glued-deny"          'env>>x'                                  deny
+run_case "printenv-trailing-comment-deny" 'printenv # --help'                       deny
+run_case "clean-fx-trailing-comment-deny" 'git clean -fx # -n'                      deny
+run_case_in "clean-e-value-not-dry-deny"  "$GC" "git clean -fx -e '-n'"             deny
+run_case_in "clean-e-value-nothing-ask"   "$GC" "git clean -fd -e '-n'"             ask
+run_case_in "clean-e-attached-not-dry-ask" "$GC" "git clean -fd -e-n"               ask
+run_case_in "clean-exclude-long-not-dry-ask" "$GC" "git clean -fd --exclude -n"     ask
+run_case_in "clean-real-dry-after-e-allow" "$GU" "git clean -fd -e x -n"            allow
+run_case "push-repo-eq-f-main-deny"       'git push --repo=origin -f main'          deny
+run_case "push-repo-sep-f-main-deny"      'git push --repo origin -f main'          deny
+run_case "push-o-value-f-main-deny"       'git push -o ci.skip -f origin main'      deny
+run_case "push-n-f-main-allow"            'git push -n -f origin main'              allow
+run_case "push-dry-run-f-main-allow"      'git push --dry-run -f origin main'       allow
+run_case "push-dry-run-plus-main-allow"   'git push --dry-run origin +main'         allow
+run_case "rsync-delete-missing-args-deny" 'rsync -r --delete-missing-args src /'    deny
+for _v in delete-before delete-during delete-delay delete-after delete-excluded delete-missing-args del; do
+  run_case "rsync-$_v-root-deny"          "rsync -r --$_v src/ /"                   deny
+done
+run_case "rsync-n-delete-tmp-allow"       'rsync -an --delete src/ /tmp/d/'         allow
+run_case "rsync-dry-run-delete-root-allow" 'rsync --dry-run --delete src/ /'        allow
+run_case "find-exec-env-rm-deny"          'find / -exec env rm {} \;'               deny
+run_case "find-execdir-env-rm-deny"       'find / -execdir env rm {} \;'            deny
+run_case "find-ok-sudo-rm-deny"           'find / -ok sudo rm {} \;'                deny
+run_case "find-exec-nice-rm-deny"         'find / -exec nice -n 5 rm {} +'          deny
+run_case "find-exec-env-grep-allow"       'find / -exec env grep x {} \;'           allow
+run_case "ps-aux-dash-E-deny"             'ps aux -E'                               deny
+
+echo "--- many heredocs stay linear"
+G3A_HD=$(printf 'cat <<EOF >/dev/null\nx\nEOF\n%.0s' $(seq 1 2500))
+run_case_timed "g3a-many-heredocs-then-env-deny" "${G3A_HD}"$'\n'"env" deny
+run_case_timed "g3a-many-heredocs-benign-allow"  "${G3A_HD}"$'\n'"true" allow
+
 echo "--- large input stays linear"
 G3A_FLAT=$(printf 'ls; %.0s' $(seq 1 6000))
 run_case_timed "g3a-large-env-deny"   "${G3A_FLAT}printenv"                  deny

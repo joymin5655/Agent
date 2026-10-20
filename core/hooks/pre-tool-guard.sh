@@ -2143,18 +2143,39 @@ def g3_state_unknown(cdir_count, extra):
 
 
 def g3_push(args, cdir, unsure):
-    force = False
+    force, dry, repo = False, False, False
     pos = []
-    for a in args:
+    k = 0
+    while k < len(args):
+        a = args[k]
+        k += 1
+        if a == "--":
+            pos.extend(args[k:])
+            break
         if a.startswith("--"):
-            if a.split("=", 1)[0].startswith("--forc"):
+            name = a.split("=", 1)[0]
+            if name.startswith("--forc"):
                 force = True
+            elif name.startswith("--dry"):
+                dry = True
+            elif name == "--repo":
+                repo = True
+                if "=" not in a:
+                    k += 1
+            elif name in ("--receive-pack", "--exec", "--push-option") and "=" not in a:
+                k += 1
         elif a.startswith("-") and len(a) > 1:
             if g3_short(a, "f"):
                 force = True
+            if g3_short(a, "n"):
+                dry = True
+            if a == "-o":
+                k += 1
         else:
             pos.append(a)
-    refs = pos[1:]
+    if dry:
+        return
+    refs = pos if repo else pos[1:]
     hit = False
     for ref in refs:
         plus = ref.startswith("+")
@@ -2225,7 +2246,25 @@ def g3_git(lits, prior_unsafe):
     if sub == "push":
         g3_push(rest, cdir, unknown)
     elif sub == "clean":
-        flags = [a for a in rest if a.startswith("-")]
+        flags, k = [], 0
+        while k < len(rest):
+            a = rest[k]
+            k += 1
+            if a == "--":
+                break
+            if a.startswith("--"):
+                if a == "--exclude":
+                    k += 1
+                elif not a.startswith("--exclude="):
+                    flags.append(a)
+            elif a.startswith("-") and len(a) > 1:
+                cut = a.find("e")
+                if cut > 0:  # -e takes the rest of the bundle, or the next word, as its value
+                    flags.append(a[:cut])
+                    if cut == len(a) - 1:
+                        k += 1
+                else:
+                    flags.append(a)
         if any(a == "--dry-run" or g3_short(a, "n") for a in flags):
             return
         if not any(a == "--force" or g3_short(a, "f") for a in flags):
@@ -2323,6 +2362,20 @@ def g3_sweep(kind, targets):
             "preview first (find without -delete, rsync --dry-run) and confirm the target is the intended one.")
 
 
+def g3_exec_rm(sub):
+    """Does the -exec body (up to its ; or +) run rm, possibly behind launchers and their options?"""
+    for w in sub:
+        if w in (";", "+"):
+            return False
+        n = norm(w)
+        if n == "rm":
+            return True
+        if n in LAUNCHERS or w.startswith("-") or ASSIGN.match(w) or w.isdigit():
+            continue
+        return False
+    return False
+
+
 def g3_find(args):
     k = 0
     while k < len(args) and (args[k] in ("-H", "-L", "-P") or args[k].startswith(("-D", "-O"))):
@@ -2332,14 +2385,14 @@ def g3_find(args):
         roots.append(args[k])
         k += 1
     body = args[k:]
-    rm_exec = any(a in ("-exec", "-execdir", "-ok", "-okdir") and i + 1 < len(body)
-                  and norm(body[i + 1]) == "rm" for i, a in enumerate(body))
+    rm_exec = any(a in ("-exec", "-execdir", "-ok", "-okdir") and g3_exec_rm(body[i + 1:])
+                  for i, a in enumerate(body))
     if "-delete" in body or rm_exec:
         g3_sweep("find -delete" if "-delete" in body else "find -exec rm", roots or ["."])
 
 
 def g3_rsync(args):
-    flags = [a for a in args if re.match(r"--(?:del|delete(?:-[a-z]+)?|remove-(?:source|sent)-files)$", a)]
+    flags = [a for a in args if re.match(r"--(?:del|delete(?:-[a-z-]+)?|remove-(?:source|sent)-files)$", a)]
     if not flags:
         return
     if any(a == "--dry-run" or g3_short(a, "n") for a in args if a.startswith("-")):
