@@ -16,8 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   environment dumps (`env`, `printenv`, `export -p`, `declare -x|-p`, `set`, `ps e|eww|-E`; new
   `env-dump` gate), recursive `rm` in any `-r/-R/--recursive` spelling, short-form force pushes
   to main/master (`-f`, `--force-with-lease`, `+main`), and `find -delete|-exec rm` /
-  `rsync --delete*` (deny at / ~ $HOME ../ themselves, ask elsewhere; `rm -r /tmp/x` stays allowed as
-  before). Runs on guard 5's Lexer (shared program text), so launchers, `sh -c`, `eval`, `$( )`,
+  `rsync --delete*` (deny at / ~ $HOME ../ themselves, ask elsewhere; `rm -r /tmp/x` stays allowed, while the
+  older `rm -rf /tmp/x` rule still denies). Also: `git checkout <path>` without `--`, force push with
+  no refspec on a main/master checkout, `git reset --hard` via the Lexer, `--fo*`-style option
+  abbreviations; `git status` probes are capped (6, 4 s each, 10 s total) and an unknown work-tree
+  state (cd, git-dir overrides, earlier writes) asks. Runs on guard 5's Lexer (shared program text), so launchers, `sh -c`, `eval`, `$( )`,
   backticks and heredocs fed to a shell are followed; no answer from the scan is a deny. Remaining
   gaps: values built at run time, `python -c` one-liners, scripts written then run, `xargs rm`.
   Evidence: D2 bench T2/T8 escapes.

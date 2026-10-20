@@ -2097,6 +2097,35 @@ run_case_timed "s2fault-control-git-log-allow"    "$S2_GITLOG" allow FAKE_FAULT=
 run_case_timed "s2fault-control-git-show-allow"   "$S2_GITGAP" allow FAKE_FAULT= PATH="$FAULT_DIR:$PATH"
 # the work budget: a verb chain the scan cannot finish is `limit`, a deny for the git kind too
 run_case_timed "kind2-pathological-verb-chain-deny" "git log --oneline -- secrets/; sudo ${CATS}" deny
+# guard 3a runs `python3 -I - lib` (the stage-2 program plus its own): faults there end in a deny too, and
+# the stage-2 double above (exactly `-I -`) never touches it, so the two sets of tests stay independent
+cat > "$FAULT_DIR/python3" <<'SH'
+#!/bin/sh
+if [ "$#" -eq 3 ] && [ "$1" = "-I" ] && [ "$2" = "-" ] && [ "$3" = "lib" ]; then
+  script=$(cat)
+  case "${FAKE_FAULT3:-}" in
+    missing) echo "python3: command not found" >&2; exit 127 ;;
+    exit3) printf allow; exit 3 ;;
+    sigkill) printf allow; kill -KILL $$ ;;
+    empty) exit 0 ;;
+    garbage) printf 'Traceback (most recent call last)'; exit 0 ;;
+    truncated) printf '%s' "$script" | "$FAULT_PY" -I - lib 3<&3 | head -c 2; exit 0 ;;
+  esac
+  printf '%s' "$script" | "$FAULT_PY" -I - lib
+  exit $?
+fi
+if [ "$#" -eq 2 ] && [ "$1" = "-I" ] && [ "$2" = "-" ]; then
+  script=$(cat)
+  printf '%s' "$script" | "$FAULT_PY" -I -
+  exit $?
+fi
+exec "$FAULT_PY" "$@"
+SH
+chmod +x "$FAULT_DIR/python3"
+for _fault in missing exit3 sigkill empty garbage truncated; do
+  run_case_timed "g3fault-$_fault-git-status-deny" "git status" deny FAKE_FAULT3="$_fault" PATH="$FAULT_DIR:$PATH"
+done
+run_case_timed "g3fault-control-git-status-allow" "git status" allow FAKE_FAULT3= PATH="$FAULT_DIR:$PATH"
 rm -rf "$FAULT_DIR"
 unset FAULT_PY
 
@@ -2427,6 +2456,49 @@ echo "--- many heredocs stay linear"
 G3A_HD=$(printf 'cat <<EOF >/dev/null\nx\nEOF\n%.0s' $(seq 1 2500))
 run_case_timed "g3a-many-heredocs-then-env-deny" "${G3A_HD}"$'\n'"env" deny
 run_case_timed "g3a-many-heredocs-benign-allow"  "${G3A_HD}"$'\n'"true" allow
+
+echo "--- round 2: pre-filter, unparseable text, unknown state, abbreviations, nested scans"
+run_case "pf-ansi-octal-env-deny"       "\$'\\145nv'"                           deny
+run_case "pf-ansi-hex-rm-deny"          "\$'\\x72m' -r /"                       deny
+run_case "pf-line-continuation-rm-deny" $'r\\\nm -r /'                          deny
+run_case "pf-upper-env-deny"            'ENV'                                    deny
+run_case "pf-upper-printenv-deny"       'PRINTENV'                               deny
+run_case "pf-upper-rm-deny"             'RM -r /'                                deny
+run_case "pf-mixed-git-clean-deny"      'Git clean -fdx'                         deny
+run_case "pf-abs-path-rm-deny"          '/bin/rm -r /'                           deny
+run_case "pf-abs-path-env-deny"         '/usr/bin/env'                           deny
+run_case "fail-coarse-glued-push-deny"  "g''it push -f origin main \$'\\xff'"     deny
+run_case "fail-coarse-benign-allow"     "echo \$'\\xff'"                         allow
+run_case "fail-nested-keeps-judging-deny" "bash -c \"broken'quote\"; git clean -fdx" deny
+run_case "fail-nested-benign-allow"     "bash -c \"broken'quote\"; ls"           allow
+run_case "fail-long-line-no-window-deny" "git \$(printf '%.0s ' \$(seq 1 400)) clean -fdx \$'\\xff'" deny
+run_case_in "unknown-cd-checkout-path-ask" "$GC" 'cd . && git checkout a.txt'     ask
+run_case_in "unknown-cd-checkout-branch-ask" "$GC" 'cd . && git checkout main'     ask
+run_case_in "abbrev-clean-fo-deny"      "$GU" 'git clean --fo -d'                  deny
+run_case_in "abbrev-clean-forc-x-deny"  "$GC" 'git clean --forc -x'                deny
+run_case_in "abbrev-checkout-forc-deny" "$GD" 'git checkout --forc main'           deny
+run_case_in "abbrev-switch-disc-deny"   "$GD" 'git switch --disc main'             deny
+run_case_in "abbrev-switch-forc-deny"   "$GD" 'git switch --forc main'             deny
+run_case "push-force-all-deny"          'git push --force --all origin'          deny
+run_case "push-force-mirror-deny"       'git push --force --mirror origin'       deny
+run_case "push-force-tags-deny"         'git push -f --tags origin'              deny
+run_case "push-short-dst-heads-main-deny" 'git push --force origin HEAD:heads/main' deny
+run_case "push-all-no-force-allow"      'git push --all origin'                  allow
+run_case "reset-hard-C-dot-deny"        'git -C . reset --hard'                  deny
+run_case "reset-hard-abbrev-deny"       'git reset --har HEAD~1'                 deny
+run_case "reset-soft-allow"             'git reset --soft HEAD~1'                allow
+run_case_in "devnull-redirect-not-a-write" "$GD" 'echo hi >/dev/null 2>&1; git checkout -- .' deny
+run_case_in "fd-copy-not-a-write-clean-dirty" "$GC" 'ls 2>&1 && git checkout -- .' allow
+run_case_in "nested-bash-c-after-write-ask" "$GC" 'touch a.txt; bash -c "git checkout -- ."' ask
+run_case_in "nested-eval-after-write-ask" "$GC" 'touch a.txt; eval "git restore a.txt"' ask
+run_case_in "env-git-dir-assign-ask"    "$GD" "env GIT_DIR=$GD/.git git checkout -- ." ask
+run_case_in "var-command-word-keyword-ask" "$GC" '$X git clean -fd'                 ask
+run_case "var-command-word-plain-allow" '$X ls'                                  allow
+run_case "pipe-to-shell-with-keyword-deny" 'echo git push -f origin main | sh'    deny
+run_case "pipe-to-shell-plain-allow"    'echo x | sh'                            allow
+G3A_NEST='true'
+for _i in 1 2 3 4 5 6 7 8 9 10; do G3A_NEST="bash -c $(printf %q "$G3A_NEST")"; done
+run_case_timed "limit-nested-sh-c-deny" "$G3A_NEST" deny
 
 echo "--- large input stays linear"
 G3A_FLAT=$(printf 'ls; %.0s' $(seq 1 6000))

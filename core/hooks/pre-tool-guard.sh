@@ -2045,7 +2045,7 @@ def arm_alarm():
     signal.setitimer(signal.ITIMER_REAL, min(BUDGET_SECONDS, max(asked, 0.001)))
 
 
-if __name__ == "__main__" and not os.environ.get("S5_LIB"):
+if __name__ == "__main__" and "lib" not in sys.argv[1:]:
     arm_alarm()
     sys.stdout.write(verdict(os.environ.get("SCAN_INPUT", "")))
 PY
@@ -2068,10 +2068,24 @@ import time
 G3_MARKS = re.compile("[\x01-\x06]")
 G3_TOP = re.compile(r"^(?:(?:/|~|\$HOME|\$\{HOME\}|\.\.)(?:/\*?)?|/\*)$")  # a root, not a path below it
 G3_DEAD = "\x22${NAME+x}\x22"
+G3_GITVARS = r"(?:GIT_DIR|GIT_WORK_TREE|GIT_INDEX_FILE|GIT_COMMON_DIR|GIT_CEILING_DIRECTORIES)="
 G3_HEADS = frozenset("git rm find rsync env printenv export declare typeset set ps eval command builtin".split()) | SHELLS | LAUNCHERS
-G3_COARSE = re.compile(
-    r"(?<![\w/.-])(?:env|printenv|export|declare|typeset|set|ps|rm|find|rsync)(?![\w-])"
-    r"|git\b.{0,200}?\b(?:clean|checkout|restore|switch|stash|push)\b|/proc/[^/\s]+/environ", re.S)
+G3_COARSE_WORD = re.compile(
+    r"(?<![\w.-])(?:env|printenv|export|declare|typeset|set|ps|rm|find|rsync)(?![\w-])|/proc/[^/\s]+/environ", re.I)
+G3_COARSE_GIT = re.compile(r"(?<![\w-])git(?![\w-])", re.I)
+G3_COARSE_GITSUB = re.compile(r"(?<![\w-])(?:clean|checkout|restore|switch|stash|push|reset)(?![\w-])", re.I)
+
+
+def g3_coarse(text):
+    """Is a destructive word present? Quotes and backslashes are dropped, then each segment (split at
+    ; & | newline) is searched: one linear pass, no window."""
+    t = re.sub(r"[\\'\"]", "", text.replace("\\\n", ""))
+    for seg in re.split(r"[;&|\n]", t):
+        if G3_COARSE_WORD.search(seg) or (G3_COARSE_GIT.search(seg) and G3_COARSE_GITSUB.search(seg)):
+            return True
+    return False
+
+
 G3_GIT_VALUE = {"-c", "--namespace", "--super-prefix", "--exec-path", "--config-env"}
 G3_ENV_VALUE = {"-u", "-P", "-C", "--unset", "--chdir"}
 G3_RSYNC_VALUE = {
@@ -2087,13 +2101,19 @@ G3_READONLY = frozenset("echo printf ls pwd true false : test [ [[ cat head tail
                         "whoami basename dirname which type stat file du id uname hostname".split())
 G3_GIT_READONLY = frozenset("status log diff show rev-parse rev-list branch remote describe ls-files ls-tree "
                             "blame shortlog cat-file config fetch".split())
-G3 = {"deny": [], "ask": [], "unsure": False, "unknown_state": False, "probes": {}, "n": 0, "branch": {}}
+G3 = {"deny": [], "ask": [], "unsure": False, "unsure_name": False, "fails": [], "unknown_state": False, "probes": {}, "n": 0, "branch": {}}
 G3_DEADLINE = [0.0]
 
 
 def g3_lit(t):
     # ${HOME} reaches the word as PH + HOME: read it back as $HOME
     return G3_MARKS.sub("", t).replace(PH + "HOME", "$HOME")
+
+
+def g3_writes(r):
+    """A redirect target that writes a file (not a read, a descriptor copy, or /dev/null)."""
+    return not (r.startswith(IN) or r in ("/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty", "-")
+                or re.fullmatch(r"&?\d+", g3_lit(r)))
 
 
 def g3_deny(guard, log, why, fix):
@@ -2113,13 +2133,23 @@ def g3_dump(form):
     )
 
 
+def g3_long(a, full, need=4):
+    """a is a long option that abbreviates (or is) full, e.g. --fo / --forc / --force for --force."""
+    name = a.split("=", 1)[0]
+    return a.startswith("--") and len(name) >= need and full.startswith(name)
+
+
 def g3_short(a, letters):
     return a.startswith("-") and not a.startswith("--") and any(ch in a[1:] for ch in letters)
 
 
-def g3_run(cdir, argv):
-    """git <argv> in cdir, memoised; None when it cannot be answered (budget, error, not a repository)."""
-    key = (cdir, tuple(argv))
+G3_RC1 = "\x00rc!=0"
+
+
+def g3_run(cdir, argv, rcok=False):
+    """git <argv> in cdir, memoised; None when it cannot be answered (budget, error, not a repository).
+    With rcok, a git that ran and exited non-zero answers G3_RC1 instead of None."""
+    key = (cdir, tuple(argv), rcok)
     if key in G3["probes"]:
         return G3["probes"][key]
     left = G3_DEADLINE[0] - time.monotonic()
@@ -2131,19 +2161,15 @@ def g3_run(cdir, argv):
                 ["git", "--no-optional-locks", "-c", "core.fsmonitor=false"] + (["-C", cdir] if cdir else []) + argv,
                 stdin=subprocess.DEVNULL, capture_output=True, text=True, errors="replace",
                 timeout=min(4.0, left), env=dict(os.environ, GIT_OPTIONAL_LOCKS="0"))
-            out = r.stdout if r.returncode == 0 else None
+            out = r.stdout if r.returncode == 0 else (G3_RC1 if rcok else None)
         except Exception:
             out = None
     G3["probes"][key] = out
     return out
 
 
-def g3_state_unknown(cdir_count, extra):
-    return G3["unknown_state"] or cdir_count > 1 or extra
-
-
 def g3_push(args, cdir, unsure):
-    force, dry, repo = False, False, False
+    force, dry, repo, wide = False, False, False, False
     pos = []
     k = 0
     while k < len(args):
@@ -2158,6 +2184,8 @@ def g3_push(args, cdir, unsure):
                 force = True
             elif name.startswith("--dry"):
                 dry = True
+            elif g3_long(a, "--all", 4) or g3_long(a, "--mirror", 5) or g3_long(a, "--tags", 5):
+                wide = True
             elif name == "--repo":
                 repo = True
                 if "=" not in a:
@@ -2176,12 +2204,10 @@ def g3_push(args, cdir, unsure):
     if dry:
         return
     refs = pos if repo else pos[1:]
-    hit = False
+    hit = bool(force and wide)  # --all / --mirror / --tags with force can overwrite main
     for ref in refs:
         plus = ref.startswith("+")
-        dst = ref.lstrip("+").split(":")[-1]
-        if dst.startswith("refs/heads/"):
-            dst = dst[len("refs/heads/"):]
+        dst = re.sub(r"^(?:refs/)?(?:heads/)?", "", ref.lstrip("+").split(":")[-1])
         if (force or plus) and dst in ("main", "master"):
             hit = True
     cur = [r for r in refs if r.lstrip("+").split(":")[-1] in ("HEAD", "")] if refs else []
@@ -2265,9 +2291,9 @@ def g3_git(lits, prior_unsafe):
                         k += 1
                 else:
                     flags.append(a)
-        if any(a == "--dry-run" or g3_short(a, "n") for a in flags):
+        if any(g3_long(a, "--dry-run", 4) or g3_short(a, "n") for a in flags):
             return
-        if not any(a == "--force" or g3_short(a, "f") for a in flags):
+        if not any(g3_long(a, "--force", 4) or g3_short(a, "f") for a in flags):
             return
         if any(g3_short(a, "xX") for a in flags):
             g3_deny(
@@ -2293,22 +2319,29 @@ def g3_git(lits, prior_unsafe):
     elif sub in ("checkout", "restore", "switch"):
         flags = [a for a in rest if a.startswith("-") and a != "--"]
         if sub == "checkout":
-            hit = "--" in rest or "." in rest or any(a == "--force" or g3_short(a, "f") for a in flags)
+            hit = "--" in rest or "." in rest or any(g3_long(a, "--force", 4) or g3_short(a, "f") for a in flags)
             pos = [a for a in rest if not a.startswith("-")]
-            if not hit and pos and not any(a in ("-b", "-B", "--orphan", "-t", "--track", "--detach", "-d")
-                                           or g3_short(a, "bBtd") for a in flags):
-                # no --: git checkout <path> or <rev> <path> overwrites files; <branch> alone does not
-                first_is_rev = g3_run(cdir, ["rev-parse", "--verify", "--quiet", pos[0] + "^{commit}"]) is not None
-                if len(pos) >= 2 and first_is_rev:
+            if not hit and pos and not any(g3_long(a, "--orphan", 4) or g3_long(a, "--track", 4)
+                                           or g3_long(a, "--detach", 4) or g3_short(a, "bBtd") for a in flags):
+                # no --: git checkout <path> or <rev> <path> overwrites files; <branch> alone does not.
+                # An unknown state or a probe that could not answer is not "a branch": ask.
+                if unknown:
                     hit = True
-                elif not first_is_rev and not unknown and os.path.exists(os.path.join(cdir or ".", pos[0])):
-                    hit = True
+                else:
+                    r = g3_run(cdir, ["rev-parse", "--verify", "--quiet", pos[0] + "^{commit}"], rcok=True)
+                    if r is None:
+                        hit = True
+                    elif r == G3_RC1:
+                        hit = os.path.exists(os.path.join(cdir or ".", pos[0]))
+                    else:
+                        hit = len(pos) >= 2
         elif sub == "restore":
             staged = any(a == "--staged" or g3_short(a, "S") for a in flags)
             tree = any(a == "--worktree" or g3_short(a, "W") for a in flags)
             hit = not staged or tree
         else:
-            hit = any(a in ("--discard-changes", "--force") or g3_short(a, "f") for a in flags)
+            hit = any(g3_long(a, "--discard-changes", 4) or g3_long(a, "--force", 4) or g3_short(a, "f")
+                      for a in flags)
         if not hit:
             return
         out = None if unknown else g3_run(cdir, ["status", "--porcelain", "--untracked-files=no"])
@@ -2320,6 +2353,11 @@ def g3_git(lits, prior_unsafe):
                 "git " + sub + " blocked: the work tree has uncommitted changes it would overwrite.\nWHY: "
                 "destructive guard - discarded edits are in no commit and cannot be recovered.",
                 "git stash (keeps the work) or commit first, then retry; use git restore --staged to only unstage.")
+    elif sub == "reset" and any(g3_long(a, "--hard", 4) for a in rest):
+        g3_deny(
+            "destructive", "git reset --hard blocked",
+            "git reset --hard blocked.\nWHY: destructive guard - it discards uncommitted work with no recovery path.",
+            "git stash (keeps the work), git restore <path> for single files, or git revert <sha> for committed changes.")
     elif sub == "stash" and rest[:1] in (["drop"], ["clear"]):
         g3_ask(
             "destructive", "git stash " + rest[0] + " requires confirmation",
@@ -2456,11 +2494,13 @@ def g3_env(words, lits, redirs, bodies, depth):
             except ValueError:
                 G3["unsure"] = True
                 return
-            g3_scan("env " + " ".join(shlex.quote(p) for p in parts + rest), depth + 1)
+            g3_sub("env " + " ".join(shlex.quote(p) for p in parts + rest), depth + 1)
             return
         if a in G3_ENV_VALUE:
             k += 2
         elif a == "-" or a.startswith("-") or ASSIGN.match(a):
+            if re.match(G3_GITVARS, a):
+                G3["unknown_state"] = True
             k += 1
         else:
             break
@@ -2478,7 +2518,7 @@ def g3_cmd(words, redirs, bodies, depth, prior_unsafe):
     k = 0
     while k < len(words) and (words[k][0] in RESERVED or ASSIGN.match(g3_lit(words[k][0]))):
         t = g3_lit(words[k][0])
-        if re.match(r"(?:GIT_DIR|GIT_WORK_TREE|GIT_INDEX_FILE|GIT_COMMON_DIR|GIT_CEILING_DIRECTORIES)=", t):
+        if re.match(G3_GITVARS, t):
             G3["unknown_state"] = True
         k += 1
     words = words[k:]
@@ -2493,15 +2533,15 @@ def g3_cmd(words, redirs, bodies, depth, prior_unsafe):
     lits = [g3_lit(t) for t, _ in words]
     name = norm(lits[0])
     if "$" in name or PH in words[0][0] or "{}" in name:
-        G3["unsure"] = True
+        G3["unsure_name"] = True
         return True
     args = lits[1:]
     changes = name not in G3_READONLY and not (name == "git" and args[:1] and args[0] in G3_GIT_READONLY)
-    if redirs and any(not r.startswith(IN) for r in redirs):
+    if any(g3_writes(r) for r in redirs):
         changes = True
     if any(norm(x) in SHELLISH for x in lits) and bodies:
         for b in bodies:
-            g3_scan(b, depth + 1)
+            g3_sub(b, depth + 1, prior_unsafe)
     if name not in ("echo", "printf", "ls", "stat") and any(re.search(r"/proc/[^/]+/environ", x) for x in args):
         g3_deny("env-dump", "environment read blocked: /proc environ",
                 "Reading /proc/<pid>/environ blocked.\nWHY: env-dump guard - it is the whole environment, "
@@ -2563,7 +2603,7 @@ def g3_cmd(words, redirs, bodies, depth, prior_unsafe):
             else:
                 break
         if has_c and j < len(args):
-            g3_scan(args[j], depth + 1)
+            g3_sub(args[j], depth + 1, prior_unsafe)
         elif not has_c and (j >= len(args) or STDIN_SCRIPT.match(args[j])
                             or any(a.startswith("-") and not a.startswith("--") and "s" in a[1:] for a in args[:j])):
             if not bodies:
@@ -2573,13 +2613,13 @@ def g3_cmd(words, redirs, bodies, depth, prior_unsafe):
         if any("$" in a or PH in a for a in args):
             G3["unsure"] = True
         else:
-            g3_scan(" ".join(args), depth + 1)
+            g3_sub(" ".join(args), depth + 1, prior_unsafe)
         return True
     if name in LAUNCHERS or name in ("rtk",):
         if name in CARRIERS:
             for (text, bare), lit in zip(words[1:], args):
                 if not bare and re.search(r"\s", lit):
-                    g3_scan(lit, depth + 1)
+                    g3_sub(lit, depth + 1, prior_unsafe)
         for j in range(1, len(lits)):
             if norm(lits[j]) in G3_HEADS and not lits[j].startswith("-"):
                 g3_cmd(words[j:], redirs, bodies, depth + 1, prior_unsafe)
@@ -2588,12 +2628,20 @@ def g3_cmd(words, redirs, bodies, depth, prior_unsafe):
     return changes
 
 
-def g3_scan(text, depth):
+def g3_sub(text, depth, unsafe=False):
+    """A nested scan (sh -c string, eval, heredoc body, carrier string): a Fail in it is remembered for the
+    coarse check, and the commands after it are still judged."""
+    try:
+        g3_scan(text, depth, unsafe)
+    except Fail:
+        G3["fails"].append(text)
+
+
+def g3_scan(text, depth, unsafe=False):
     if depth > MAX_DEPTH:
         raise Limit("depth")
     lx = Lexer(text, depth)
     lx.commands(False)
-    unsafe = False
     for words, redirs, bodies in lx.cmds:
         if G3["deny"]:
             return
@@ -2619,17 +2667,23 @@ def g3_main():
                 "could not finish, so it cannot rule out a destructive command.",
                 "split the command into smaller steps without deep wrapper chains.")
     except Fail:
-        if G3_COARSE.search(text):
-            g3_deny("destructive", "unparseable command with a dangerous word",
-                    "A command the scan cannot parse names a destructive word (blocked fail-closed).\nWHY: bash "
-                    "and zsh may read it differently, so the danger scan cannot say what runs.",
-                    "write the command in plain form: one command per line, no unusual quoting.")
+        G3["fails"].append(text)
+    if not G3["deny"] and any(g3_coarse(t) for t in G3["fails"]):
+        g3_deny("destructive", "unparseable command with a dangerous word",
+                "A command the scan cannot parse names a destructive word (blocked fail-closed).\nWHY: bash "
+                "and zsh may read it differently, so the danger scan cannot say what runs.",
+                "write the command in plain form: one command per line, no unusual quoting.")
     if G3.get("crash") and not G3["deny"]:
         g3_deny("destructive", "danger scan internal error",
                 "The danger scan failed internally (blocked fail-closed).\nWHY: no verdict means no proof the "
                 "command is safe.",
                 "retry; if it persists, report it with the command shape (not its text).")
-    if G3["unsure"] and not G3["deny"] and G3_COARSE.search(text):
+    if G3["unsure_name"] and not G3["deny"] and g3_coarse(text):
+        g3_ask("destructive", "command name comes from an expansion, with a dangerous word",
+               "The command word comes from an expansion and the line names a destructive word - user confirmation "
+               "required.\nWHY: the program that will run is not visible to the scan.",
+               "write the command name out instead of expanding it.")
+    if G3["unsure"] and not G3["deny"] and g3_coarse(text):
         g3_deny("destructive", "command text comes from a pipe or an expansion, with a dangerous word",
                 "A shell fed from a pipe or an expansion names a destructive word (blocked fail-closed).\nWHY: "
                 "the text that will run is not visible to the scan.",
@@ -2655,9 +2709,12 @@ g3_main()
 PY
 _DG_ASK=""
 # cheap pre-filter on the quote-stripped text: only commands that name a judged verb pay for the scan
+_DG_RE='(^|[^[:alnum:]_.-])(git|rm|find|rsync|env|printenv|export|declare|typeset|set|ps|eval|sh|bash|zsh|dash|ksh|ash|command|builtin)([^[:alnum:]_-]|$)|/proc/[^/ ]+/environ'
 _DG_FLAT=$(printf '%s' "$SCAN_CMD" | tr -d "\\\\\"'")
-if printf '%s' "$_DG_FLAT" | grep -qE '(^|[^[:alnum:]_.-])(git|rm|find|rsync|env|printenv|export|declare|typeset|set|ps|eval|sh|bash|zsh|dash|ksh|ash|command|builtin)([^[:alnum:]_-]|$)|/proc/[^/ ]+/environ|\$'"'"'' ; then
-  _DG_OUT=$({ printf '%s\n' "$_S5_PY"; printf '%s\n' "$_G3_PY"; } | S5_LIB=1 python3 -I - 3<<<"$SCAN_CMD" 2>/dev/null) || _DG_OUT=""
+_DG_JOIN=$(printf '%s' "$SCAN_CMD" | tr -d "\\\\\"'\n")
+if printf '%s' "$_DG_FLAT" | grep -qiE "$_DG_RE" || printf '%s' "$_DG_JOIN" | grep -qiE "$_DG_RE" \
+   || printf '%s' "$SCAN_CMD" | grep -qF "\$'" ; then
+  _DG_OUT=$({ printf '%s\n' "$_S5_PY"; printf '%s\n' "$_G3_PY"; } | python3 -I - lib 3<<<"$SCAN_CMD" 2>/dev/null) || _DG_OUT=""
   _DG_HEAD="${_DG_OUT%%$'\n'*}"
   case "$_DG_HEAD" in
     allow) ;;
