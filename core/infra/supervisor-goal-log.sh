@@ -62,7 +62,6 @@ SECRETS = [
     re.compile(r"\bAIza[0-9A-Za-z_-]{30,}"),
     re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*"),
     re.compile(r"(?<=://)[^\s/:@]+:[^\s/@]+(?=@)"),
-    re.compile(r"sk-[A-Za-z0-9_-]{16,}"),
     re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}"),
     re.compile(r"github_pat_[A-Za-z0-9_]{20,}"),
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
@@ -130,10 +129,10 @@ def is_pointer(ev):
 
 def append_row(slug, phase, decision, why, evidence, result):
     if not PHASE_RE.match(phase):
-        die("phase must match [A-Za-z0-9._-]+: " + phase)
+        die("phase must match [A-Za-z0-9._-]+: " + clean(phase)[:60])
     if not is_pointer(evidence):
         die("evidence must be a pointer (commit SHA >=7 hex, repo path[:line], pr-N or https URL), "
-            "not prose: " + evidence[:60])
+            "not prose: " + clean(evidence)[:60])
     if not decision.strip():
         die("decision must not be empty")
     path = log_path(slug)

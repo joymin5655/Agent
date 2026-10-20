@@ -98,6 +98,9 @@ check "zero-budget-rejected" "2" "$(cd "$FX" && bash core/infra/supervisor-goal.
 check "traversal-scope-rejected" "2" "$(cd "$FX" && bash core/infra/supervisor-goal.sh agent-spawn demo a 1 60 ../x >/dev/null 2>&1; echo $?)"
 check "absolute-scope-rejected" "2" "$(cd "$FX" && bash core/infra/supervisor-goal.sh agent-spawn demo a 1 60 /etc >/dev/null 2>&1; echo $?)"
 check "state-dir-scope-rejected" "2" "$(cd "$FX" && bash core/infra/supervisor-goal.sh agent-spawn demo a 1 60 .agent/plans >/dev/null 2>&1; echo $?)"
+check ".git-scope-rejected" "2" "$(cd "$FX" && bash core/infra/supervisor-goal.sh agent-spawn demo a 1 60 .git/hooks >/dev/null 2>&1; echo $?)"
+check "bad-clock-check-active-rejected" "2" "$(cd "$FX" && AGENT_NOW_MS=abc bash core/infra/supervisor-goal.sh check-active >/dev/null 2>&1; echo $?)"
+check "bad-clock-heartbeat-rejected" "2" "$(cd "$FX" && AGENT_NOW_MS=abc bash core/infra/supervisor-goal.sh heartbeat demo >/dev/null 2>&1; echo $?)"
 check "bad-clock-rejected" "2" "$(cd "$FX" && AGENT_NOW_MS=abc bash core/infra/supervisor-goal.sh agent-spawn demo a 1 60 >/dev/null 2>&1; echo $?)"
 g "$FX" $T0 agent-spawn demo d1 1 60 >/dev/null
 g "$FX" $T0 agent-done demo d1 >/dev/null

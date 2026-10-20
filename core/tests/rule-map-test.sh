@@ -27,7 +27,7 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 new_fixture() {
   local fx; fx="$(mktemp -d "$TMP_ROOT/fxXXXXXX")"
   mkdir -p "$fx/docs" "$fx/core/hooks" "$fx/rules/policy" "$fx/hooks"
-  printf '{"hooks":["real.sh"]}\n' > "$fx/hooks/hooks.json"
+  printf '{"description":"mentions other.sh only here","hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"\\"${R}/adapter.sh\\" real.sh"}]}]}}\n' > "$fx/hooks/hooks.json"
   : > "$fx/core/hooks/real.sh"
   : > "$fx/AGENTS.md"
   printf '# c\n\n- first rule\n- second rule\n' > "$fx/rules/policy/operating-contract.md"
@@ -143,6 +143,10 @@ PY
 run "$FX"
 check "unregistered-hook-fails" "$(rc_is 1)"
 has 'not registered in hooks/hooks.json'; check "unregistered-hook-named" $?
+# a name that appears only in a description, not in any command, is not registered
+FX=$(new_fixture "$OC" 'RULE AG-1 | AGENTS.md | x | hook:core/hooks/other.sh')
+: > "$FX/core/hooks/other.sh"
+run "$FX"; check "description-only-mention-not-registered" "$(rc_is 1)"
 FX=$(new_fixture "$OC" 'this line is prose, not a row')
 run "$FX"; check "stray-line-fails" "$(rc_is 1)"
 has 'unrecognized line'; check "stray-line-named" $?

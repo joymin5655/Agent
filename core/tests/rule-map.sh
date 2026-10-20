@@ -62,6 +62,30 @@ excepted=""
 n_rules=0
 n_oc=0
 
+# hook_registered <basename> — true when some command value in hooks/hooks.json (any depth) names it
+hook_registered() {
+  [[ -f "$hooks_json" ]] || return 1
+  python3 -I - "$hooks_json" "$1" <<'PY'
+import json, sys
+def cmds(o):
+    if isinstance(o, dict):
+        for k, v in o.items():
+            if k == "command" and isinstance(v, str):
+                yield v
+            else:
+                yield from cmds(v)
+    elif isinstance(o, list):
+        for v in o:
+            yield from cmds(v)
+try:
+    data = json.load(open(sys.argv[1]))
+except Exception:
+    sys.exit(1)
+name = sys.argv[2]
+sys.exit(0 if any(name in c.replace('"', ' ').split() for c in cmds(data)) else 1)
+PY
+}
+
 # check_tokens <id> <comma-separated kind:path list>
 check_tokens() {
   local id="$1" list="$2" tok kind path
@@ -75,7 +99,7 @@ check_tokens() {
     esac
     if [[ "$tok" != *:* || ! -e "$ROOT/$path" ]]; then fail "$id: enforcer path does not exist: $path"; continue; fi
     if [[ "$kind" == hook ]]; then
-      if [[ ! -f "$hooks_json" ]] || ! grep -qF -- "${path##*/}" "$hooks_json"; then
+      if ! hook_registered "${path##*/}"; then
         fail "$id: hook ${path##*/} is not registered in hooks/hooks.json (an unregistered hook never runs)"
       fi
     fi

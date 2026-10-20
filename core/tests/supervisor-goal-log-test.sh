@@ -196,6 +196,11 @@ for bad in verified - none done.. 12 abc "a b" ; do
   check "pointer-rejected-$bad" "$(rc_is 2)"
 done
 
+# a rejected value echoed in the error message is redacted too
+SKX="sk_""live_abcdefghijklmnop1234"
+L "$FX" append demo plan d w "$SKX" pass
+! has "$SKX"; check "rejected-evidence-echo-redacted" $?
+
 echo
 echo "=== (9) bad slug / missing args ==="
 FX=$(build_fixture)

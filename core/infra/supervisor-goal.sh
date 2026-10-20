@@ -200,7 +200,8 @@ cmd_pause() {
     local slug="${1:-}"
     [[ -z "$slug" ]] && { echo "usage: ... pause <plan-slug>" >&2; exit 2; }
     init_db
-    sqlite3 "$DB_FILE" "UPDATE supervisor_goals SET status = 'paused', updated_at_ms = $(now_ms) WHERE plan_slug = '$(sql_escape "$slug")' AND status = 'active';"
+    local _now; _now="$(now_ms)"
+    sqlite3 "$DB_FILE" "UPDATE supervisor_goals SET status = 'paused', updated_at_ms = $_now WHERE plan_slug = '$(sql_escape "$slug")' AND status = 'active';"
     cmd_status "$slug"
 }
 
@@ -208,7 +209,8 @@ cmd_resume() {
     local slug="${1:-}"
     [[ -z "$slug" ]] && { echo "usage: ... resume <plan-slug>" >&2; exit 2; }
     init_db
-    sqlite3 "$DB_FILE" "UPDATE supervisor_goals SET status = 'active', updated_at_ms = $(now_ms), last_heartbeat_ms = $(now_ms) WHERE plan_slug = '$(sql_escape "$slug")' AND status = 'paused';"
+    local _now; _now="$(now_ms)"
+    sqlite3 "$DB_FILE" "UPDATE supervisor_goals SET status = 'active', updated_at_ms = $_now, last_heartbeat_ms = $_now WHERE plan_slug = '$(sql_escape "$slug")' AND status = 'paused';"
     cmd_status "$slug"
 }
 
@@ -255,7 +257,8 @@ cmd_complete() {
     # noise; --pre-record also skips "RECORD.md missing" because the stub is written next.
     local log_sh; log_sh="$(dirname "${BASH_SOURCE[0]}")/supervisor-goal-log.sh"
     if [[ -f "$log_sh" ]]; then bash "$log_sh" check "$slug" --pre-record >&2 || true; fi
-    sqlite3 "$DB_FILE" "UPDATE supervisor_goals SET status = 'complete', updated_at_ms = $(now_ms) WHERE plan_slug = '$(sql_escape "$slug")';"
+    local _now; _now="$(now_ms)"
+    sqlite3 "$DB_FILE" "UPDATE supervisor_goals SET status = 'complete', updated_at_ms = $_now WHERE plan_slug = '$(sql_escape "$slug")';"
     write_record_stub "$slug" || true
     cmd_status "$slug"
 }
@@ -298,7 +301,8 @@ cmd_clear() {
 cmd_check_active() {
     init_db
     local cutoff_ms
-    cutoff_ms=$(( $(now_ms) - 5*60*1000 ))
+    local _now; _now="$(now_ms)"
+    cutoff_ms=$(( _now - 5*60*1000 ))
     sqlite3 "$DB_FILE" "SELECT json_group_array(json_object(
         'goal_id', goal_id,
         'plan_slug', plan_slug,
@@ -428,7 +432,8 @@ cmd_heartbeat() {
     local slug="${1:-}"
     [[ -z "$slug" ]] && { echo "usage: ... heartbeat <plan-slug>" >&2; exit 2; }
     init_db
-    sqlite3 "$DB_FILE" "UPDATE supervisor_goals SET last_heartbeat_ms = $(now_ms) WHERE plan_slug = '$(sql_escape "$slug")' AND status = 'active';"
+    local _now; _now="$(now_ms)"
+    sqlite3 "$DB_FILE" "UPDATE supervisor_goals SET last_heartbeat_ms = $_now WHERE plan_slug = '$(sql_escape "$slug")' AND status = 'active';"
 }
 
 # ---- stuck detection by side effects -------------------------------------------------------
@@ -456,7 +461,7 @@ cmd_agent_spawn() {
     fi
     agent_args_ok "$slug" "$agent"
     # repo-relative only: no absolute paths, no `..`, and the harness's own state dirs are off limits
-    if [[ -n "$scope" ]] && { [[ ! "$scope" =~ ^[A-Za-z0-9._@+=,-][A-Za-z0-9._/@+=,-]*$ ]] || [[ "/$scope/" == *"/../"* ]] || [[ "$scope" == "-" ]] || [[ "/$scope/" == *"/.agent/"* || "/$scope/" == *"/.worktrees/"* ]]; }; then
+    if [[ -n "$scope" ]] && { [[ ! "$scope" =~ ^[A-Za-z0-9._@+=,-][A-Za-z0-9._/@+=,-]*$ ]] || [[ "/$scope/" == *"/../"* ]] || [[ "$scope" == "-" ]] || [[ "/$scope/" == *"/.git/"* || "/$scope/" == *"/.agent/"* || "/$scope/" == *"/.worktrees/"* ]]; }; then
         echo "ERROR: bad scope path: $scope" >&2; exit 2
     fi
     init_db
@@ -473,7 +478,8 @@ cmd_agent_effect() {
     [[ "$kind" =~ ^[a-z-]{1,20}$ ]] || { echo "ERROR: bad effect kind: $kind" >&2; exit 2; }
     init_db
     agent_exists "$slug" "$agent" || { echo "ERROR: agent not found: $agent" >&2; exit 3; }
-    sqlite3 "$DB_FILE" "UPDATE supervisor_agents SET last_effect_ms = $(now_ms), last_effect_kind = '$kind'
+    local _now; _now="$(now_ms)"
+    sqlite3 "$DB_FILE" "UPDATE supervisor_agents SET last_effect_ms = $_now, last_effect_kind = '$kind'
         WHERE plan_slug = '$(sql_escape "$slug")' AND agent_id = '$(sql_escape "$agent")' AND status != 'done';"
 }
 
@@ -488,7 +494,8 @@ cmd_agent_state() {  # <new-status> <slug> <agent-id>
         echo "ERROR: agent $agent is done; spawn it again to reuse the id" >&2; exit 3
     fi
     local extra=""
-    [[ "$status" == "running" ]] && extra=", last_effect_ms = $(now_ms), last_effect_kind = 'resume'"
+    local _now; _now="$(now_ms)"
+    [[ "$status" == "running" ]] && extra=", last_effect_ms = $_now, last_effect_kind = 'resume'"
     sqlite3 "$DB_FILE" "UPDATE supervisor_agents SET status = '$status', stuck_flagged_ms = NULL$extra
         WHERE plan_slug = '$(sql_escape "$slug")' AND agent_id = '$(sql_escape "$agent")';"
 }
@@ -496,7 +503,7 @@ cmd_agent_state() {  # <new-status> <slug> <agent-id>
 # scope_effect <scope> -> "<ms> <kind>" for the newest file change or commit under the scope.
 scope_effect() {
     local scope="$1" path
-    case "$scope" in /*) path="$scope" ;; *) path="$REPO_ROOT/$scope" ;; esac
+    path="$REPO_ROOT/$scope"
     python3 -I - "$path" "$REPO_ROOT" "$scope" <<'PY'
 import os, subprocess, sys
 path, root, scope = sys.argv[1:4]
@@ -531,7 +538,8 @@ cmd_stuck_check() {
     local slug="${1:-}"
     [[ -z "$slug" ]] && { echo "usage: ... stuck-check <plan-slug>" >&2; exit 2; }
     init_db
-    local now; now="$(now_ms)"
+    local _now; _now="$(now_ms)"
+    local now; now="$_now"
     local q_slug; q_slug="$(sql_escape "$slug")"
     local rows
     rows="$(sqlite3 -separator $'\t' "$DB_FILE" "SELECT agent_id, wave, CASE WHEN scope = '' THEN '-' ELSE scope END,
