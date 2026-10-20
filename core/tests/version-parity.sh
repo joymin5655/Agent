@@ -48,8 +48,11 @@ grab("README.ko status","README.ko.md", r"> 상태: v(\d+\.\d+\.\d+)")
 
 for label, path in [("plugin.json", ".claude-plugin/plugin.json"),
                     ("marketplace.json", ".claude-plugin/marketplace.json"),
-                    ("root plugin.json (Codex/portable)", "plugin.json")]:
+                    ("root plugin.json (Codex/portable)", "plugin.json"),
+                    ("extras plugin.json", "extras/.claude-plugin/plugin.json")]:
     p = root / path
+    if path.startswith("extras/") and not (root / "extras").is_dir():
+        continue  # the optional extras plugin is absent from this tree
     if not p.is_file():
         problems.append(f"{label}: file missing ({path})")
         continue

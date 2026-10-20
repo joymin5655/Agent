@@ -83,6 +83,32 @@ print("PASS" if r["real"]==["code-reviewer"] and not r["ghost"] and not r["disco
 ' "$D" "$D/agents/master-registry.json"
 
 # ---------------------------------------------------------------------------
+# 1b. extras — an id whose .md lives only in <root>/extras/agents is real, not ghost,
+#     for both the inventory reconcile and the supervisor's provider check
+# ---------------------------------------------------------------------------
+D="$(make_fixture)"
+mkdir -p "$D/extras/agents"
+cat > "$D/agents/master-registry.json" <<'JSON'
+{"version":1,"agents":[{"id":"persona-review-orchestrator","model":"sonnet"},{"id":"ui-director","model":"opus"}]}
+JSON
+agent_md "$D/extras/agents/persona-review-orchestrator.md" "sonnet"
+assert_py "extras: .md under extras/agents -> real (other id still ghost)" '
+r = m.reconcile(reg)
+print("PASS" if r["real"]==["persona-review-orchestrator"] and r["ghost"]==["ui-director"] and not r["discovered"] else r)
+' "$D" "$D/agents/master-registry.json"
+SUP="$REPO_ROOT/core/hooks/supervisor.py"
+out="$(ROOT="$D" SUP="$SUP" python3 - <<'PY' 2>&1
+import importlib.util, os, pathlib
+spec = importlib.util.spec_from_file_location("sup", os.environ["SUP"])
+sup = importlib.util.module_from_spec(spec); spec.loader.exec_module(sup)
+root = pathlib.Path(os.environ["ROOT"]); reg = root/"agents"/"master-registry.json"
+ok = sup.has_provider(root, reg, "persona-review-orchestrator") and not sup.has_provider(root, reg, "ui-director")
+print("PASS" if ok else "FAIL")
+PY
+)"
+if [[ "$out" == "PASS" ]]; then ok "extras: supervisor has_provider sees extras/agents"; else bad "extras: supervisor has_provider ($out)"; fi
+
+# ---------------------------------------------------------------------------
 # 2. ghost — id with no .md is quarantined
 # ---------------------------------------------------------------------------
 D="$(make_fixture)"
@@ -141,6 +167,17 @@ kept = any(a["id"]=="keep-me" and a.get("model")=="sonnet" for a in after["agent
 wired = ids.get("new-prov")=="opus"
 reclassified = "new-prov" in r["real"] and not r["discovered"]
 print("PASS" if kept and wired and reclassified and len(after["agents"])==2 else (ids, r))
+' "$D" "$D/agents/master-registry.json"
+
+# 5b. --sync of a provider that lives only in extras/agents keeps its declared model
+D="$(make_fixture)"; mkdir -p "$D/extras/agents"
+printf '{"version":1,"agents":[]}\n' > "$D/agents/master-registry.json"
+agent_md "$D/extras/agents/extra-prov.md" "opus"
+assert_py "sync: extras/agents provider wired with its frontmatter model" '
+import json
+r = m.run(root, True)
+ids = {a["id"]: a.get("model") for a in json.load(open(reg))["agents"]}
+print("PASS" if ids.get("extra-prov")=="opus" and "extra-prov" in r["real"] else (ids, r))
 ' "$D" "$D/agents/master-registry.json"
 
 # ---------------------------------------------------------------------------

@@ -13,7 +13,7 @@ tools: [Read, Grep, Glob, Agent]
 You seat a **panel of ordinary citizens** in front of a piece of work — a
 landing page, an onboarding flow, an email, a feature's copy, an error message —
 and report how real users would react. Your panelists are sampled from
-`skills/persona-review/personas/catalog.json`, a stratified subsample of the
+`${CLAUDE_PLUGIN_ROOT:-$PWD/extras}/skills/persona-review/personas/catalog.json`, a stratified subsample of the
 public `nvidia/Nemotron-Personas-Korea` dataset (CC BY 4.0): synthetic personas
 grounded in Korean census distributions across age, sex, region, and occupation.
 
@@ -27,7 +27,7 @@ adjudicate it yourself.
 ## The procedure
 
 The full step list is the single source of truth in
-`skills/persona-review/SKILL.md`. Run it:
+`${CLAUDE_PLUGIN_ROOT:-$PWD/extras}/skills/persona-review/SKILL.md`. Run it:
 
 1. **Load** the catalog and confirm it parsed (persona count > 0).
 2. **Frame** the target: exactly what artifact + which question (comprehension?

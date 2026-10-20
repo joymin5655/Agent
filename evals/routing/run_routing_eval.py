@@ -24,7 +24,7 @@ import sys
 from collections import Counter
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-DEFAULT_SKILLS = os.path.join(REPO, "skills")
+DEFAULT_SKILLS = [os.path.join(REPO, "skills"), os.path.join(REPO, "extras", "skills")]  # core + extras plugin
 DEFAULT_CASES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cases.json")
 
 MAX_DESC = 1024      # Agent Skills spec
@@ -203,7 +203,7 @@ def run(args):
     args.min_top3 = 0.0 if args.min_top3 is None else args.min_top3
     if args.max_negative_violations is None:
         args.max_negative_violations = 10**9
-    skills = load_skills(args.skills_dir or [DEFAULT_SKILLS])
+    skills = load_skills(args.skills_dir or [d for d in DEFAULT_SKILLS if os.path.isdir(d)])
     issues = lint(skills)
     idx = Index(skills)
     with open(args.cases, encoding="utf-8") as f:
@@ -303,7 +303,7 @@ def report(r, args):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--skills-dir", action="append", help="repeatable; default: repo skills/")
+    ap.add_argument("--skills-dir", action="append", help="repeatable; default: repo skills/ + extras/skills/")
     ap.add_argument("--cases", default=DEFAULT_CASES)
     ap.add_argument("--floors", help="JSON file with min_rank1/min_top3/max_negative_violations "
                     "(single source for CI, the test and the README); CLI flags override it")

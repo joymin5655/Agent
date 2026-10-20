@@ -39,8 +39,8 @@ check_class() {
 }
 
 shopt -s nullglob
-check_class "$SKILL_MAX" "$ROOT"/skills/*/SKILL.md
-check_class "$AGENT_MAX" "$ROOT"/agents/*.md
+check_class "$SKILL_MAX" "$ROOT"/skills/*/SKILL.md "$ROOT"/extras/skills/*/SKILL.md
+check_class "$AGENT_MAX" "$ROOT"/agents/*.md "$ROOT"/extras/agents/*.md
 # rules nest (rules/policy/…); find instead of globstar, which bash 3.2 lacks.
 rules=()
 if [[ -d "$ROOT/rules" ]]; then

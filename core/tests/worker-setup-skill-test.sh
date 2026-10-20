@@ -10,7 +10,7 @@
 set -u
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-SKILL="$REPO_ROOT/skills/worker-setup/SKILL.md"
+SKILL="$REPO_ROOT/extras/skills/worker-setup/SKILL.md"
 
 PASS=0
 FAIL=0

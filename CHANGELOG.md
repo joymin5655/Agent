@@ -27,6 +27,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Adapted from cursor/plugins pstack show-me-your-work (MIT).
 
 ### Changed
+- **Core plugin diet: nine rarely used skills and one agent move to a second plugin,
+  `agent-harness-extras`, in the same `agent` marketplace** (`extras/`, source `./extras`).
+  Moved: skills `brain-ingest`, `code-tour`, `harness-audit`, `harness-loop`, `loop`,
+  `manager-audit`, `persona-review`, `reorg-sync`, `worker-setup`; agent
+  `persona-review-orchestrator`; script `core/infra/reorg-sync.sh` (used only by `reorg-sync`).
+  Always-on context of `agent-harness` (`claude plugin details`, same method, same machine):
+  ~2,900 -> ~1,160 tokens; the extras add ~1,760 only for users who install them.
+  **Migration:** run `/plugin install agent-harness-extras@agent` once to keep the moved
+  skills; they are then invoked as `/agent-harness-extras:<name>` (`loop` needs that form —
+  Claude Code's built-in `/loop` is a different command). Core skills, agents, hooks and
+  `core/` are unchanged; `loop-run.sh`, `loop-ledger.sh`, `manager-audit.sh`,
+  `telemetry-digest.sh`, `call-worker.sh` and `backends.json` stay in core (hooks, `/supervise`
+  and `/council-review` call them).
+- `extras/scripts/harness-root.sh` resolves the core root for extras skills that need core
+  scripts (`manager-audit`, `worker-setup`): `$AGENT_HARNESS_ROOT`, the parent of
+  `extras/`, then the sibling `agent-harness` plugin-cache entry (never the current directory;
+  a candidate must carry the full core marker set; `core/tests/harness-root-test.sh`).
+- `setup.sh --codex` links `extras/skills/*` next to `skills/*`; `--doctor` (`codex skills`,
+  `agents/master-registry.json`) checks both. `registry-drift.sh`, `version-parity.sh`,
+  `doc-reality.sh` and the routing eval cover `extras/`; CI validates both manifests with
+  `claude plugin validate --strict`.
 - **`plan-lint.sh` hardening** (idea from pstack poteto-mode `check-plan.mjs`, MIT): fences follow
   CommonMark (`~~~`, and a 4-backtick fence may wrap literal ```` ``` ```` examples that used to
   leak out as phantom steps); an empty or placeholder `→ verify:` (nothing, TODO, TBD, `...`,

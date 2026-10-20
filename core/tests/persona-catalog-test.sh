@@ -25,9 +25,9 @@
 set -u
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-CATALOG="$REPO_ROOT/skills/persona-review/personas/catalog.json"
-SKILL="$REPO_ROOT/skills/persona-review/SKILL.md"
-AGENT="$REPO_ROOT/agents/persona-review-orchestrator.md"
+CATALOG="$REPO_ROOT/extras/skills/persona-review/personas/catalog.json"
+SKILL="$REPO_ROOT/extras/skills/persona-review/SKILL.md"
+AGENT="$REPO_ROOT/extras/agents/persona-review-orchestrator.md"
 REGISTRY="$REPO_ROOT/agents/master-registry.json"
 
 PASS=0

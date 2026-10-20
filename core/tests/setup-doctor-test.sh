@@ -401,10 +401,42 @@ OUT_K5="$(CODEX_CONFIG="$CXS_FIX/config.toml" CODEX_SKILLS_DIR="$CXS_FIX/skills"
 [[ "$OUT_K5" == *"[WARN"*"codex skills — "*"harness skills not linked"*"run setup.sh --codex"* ]]
 check "codex-skills-unlinked-warn" $?
 mkdir -p "$CXS_FIX/skills"
-for sk in "$FW_ROOT"/skills/*/; do ln -sfn "${sk%/}" "$CXS_FIX/skills/$(basename "$sk")"; done
+for sk in "$FW_ROOT"/skills/*/ "$FW_ROOT"/extras/skills/*/; do ln -sfn "${sk%/}" "$CXS_FIX/skills/$(basename "$sk")"; done
 OUT_K5="$(CODEX_CONFIG="$CXS_FIX/config.toml" CODEX_SKILLS_DIR="$CXS_FIX/skills" bash "$SETUP" --doctor 2>&1)"
 [[ "$OUT_K5" == *"[PASS"*"codex skills — all "*"harness skills linked"* ]]
 check "codex-skills-linked-pass" $?
+# upgrade: a link left at <root>/skills/<name> for a skill that moved to extras/skills/ is
+# ours (dangling) and must be relinked; a foreign link must still be left alone
+CXU_FIX="$(safe_mktemp_d)" || { echo "FAIL: mktemp -d failed (codex relink fixture)"; exit 1; }
+track_fixture "$CXU_FIX"
+mkdir -p "$CXU_FIX/skills" "$CXU_FIX/home"
+ln -s "$FW_ROOT/skills/loop" "$CXU_FIX/skills/loop"
+ln -s /elsewhere "$CXU_FIX/skills/code-tour"
+HOME="$CXU_FIX/home" CODEX_SKILLS_DIR="$CXU_FIX/skills" CODEX_CONFIG="$CXU_FIX/home/c.toml" \
+  CODEX_GLOBAL_AGENTS="$CXU_FIX/home/AGENTS.md" AGENT_CODEX_TIERS_FILE="$CXU_FIX/home/t.json" \
+  AGENT_SETUP_YES=1 bash "$SETUP" --codex >/dev/null 2>&1
+[[ "$(readlink "$CXU_FIX/skills/loop")" == "$FW_ROOT/extras/skills/loop" ]]
+check "codex-relinks-moved-skill-from-old-path" $?
+[[ "$(readlink "$CXU_FIX/skills/code-tour")" == "/elsewhere" ]]
+check "codex-leaves-foreign-link-alone" $?
+# a link to a DIFFERENT skill name (user alias) is not ours, even if it points into skills/
+ln -sfn "$FW_ROOT/skills/spec" "$CXU_FIX/skills/my-alias-of-spec"
+ln -sfn "$FW_ROOT/skills/spec" "$CXU_FIX/skills/wrap"
+HOME="$CXU_FIX/home" CODEX_SKILLS_DIR="$CXU_FIX/skills" CODEX_CONFIG="$CXU_FIX/home/c.toml" \
+  CODEX_GLOBAL_AGENTS="$CXU_FIX/home/AGENTS.md" AGENT_CODEX_TIERS_FILE="$CXU_FIX/home/t.json" \
+  AGENT_SETUP_YES=1 bash "$SETUP" --codex >/dev/null 2>&1
+[[ "$(readlink "$CXU_FIX/skills/wrap")" == "$FW_ROOT/skills/spec" ]]
+check "codex-leaves-other-skill-name-alias-alone" $?
+# a REAL directory in the skills dir (readlink rc 1) is skipped, not fatal under set -e
+rm -f "$CXU_FIX/skills/brain-ingest" "$CXU_FIX/skills/zz-after"; mkdir -p "$CXU_FIX/skills/brain-ingest"
+HOME="$CXU_FIX/home" CODEX_SKILLS_DIR="$CXU_FIX/skills" CODEX_CONFIG="$CXU_FIX/home/c.toml" \
+  CODEX_GLOBAL_AGENTS="$CXU_FIX/home/AGENTS.md" AGENT_CODEX_TIERS_FILE="$CXU_FIX/home/t.json" \
+  AGENT_SETUP_YES=1 bash "$SETUP" --codex > "$CXU_FIX/out.log" 2>&1
+RC_DIR=$?
+[[ $RC_DIR -eq 0 && -d "$CXU_FIX/skills/brain-ingest" && ! -L "$CXU_FIX/skills/brain-ingest" ]]
+check "codex-real-dir-skipped-not-fatal" $?
+grep -q 'skipped:.*brain-ingest' "$CXU_FIX/out.log"
+check "codex-real-dir-reported-skipped" $?
 OUT_K5="$(CODEX_CONFIG="$CXS_FIX/none.toml" CODEX_SKILLS_DIR="$CXS_FIX/empty" bash "$SETUP" --doctor 2>&1)"
 [[ "$OUT_K5" != *"codex skills — "* ]]
 check "codex-skills-skipped-without-codex" $?

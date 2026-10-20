@@ -57,7 +57,7 @@
 #     note below).
 #
 # Usage:
-#   bash core/infra/reorg-sync.sh --old <old-prefix> --new <new-prefix> \
+#   bash extras/core/infra/reorg-sync.sh --old <old-prefix> --new <new-prefix> \
 #        --root <tree> [--apply]
 #
 # KNOWN LIMITATION — a directory component swapped for a symlink between the parent-dir

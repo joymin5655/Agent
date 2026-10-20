@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# reorg-sync-test.sh — battery for W-2, core/infra/reorg-sync.sh (the orphaned
+# reorg-sync-test.sh — battery for W-2, extras/core/infra/reorg-sync.sh (the orphaned
 # path-reference sweeper). Builds a fixture tree carrying all five reference
 # classes plus decoys, and asserts: dry-run detects all five and changes nothing;
 # --apply rewrites each correctly (including the native-memory-key encoding);
@@ -14,7 +14,7 @@
 set -u
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-TOOL="$REPO_ROOT/core/infra/reorg-sync.sh"
+TOOL="$REPO_ROOT/extras/core/infra/reorg-sync.sh"
 
 # every mktemp in this file lands in one scratch dir, removed on exit; the hang-path
 # child (FIFO test) runs in its own process group and is killed as a group.
@@ -480,7 +480,7 @@ echo "$KE" | grep -q 'native-memory-key=1' && rc=0 || rc=$?; check "panel5-lossy
 rm -rf "$T19"
 # ⑧⑨ must stay DOCUMENTED residuals: the skill sheet has an explicit residuals
 # section naming both, and the promote-up refusal.
-SKILL="$REPO_ROOT/skills/reorg-sync/SKILL.md"
+SKILL="$REPO_ROOT/extras/skills/reorg-sync/SKILL.md"
 grep -qi 'residual' "$SKILL" && grep -q 'U+3000\|whitespace' "$SKILL" && rc=0 || rc=$?; check "panel5-skill-documents-whitespace-residual" "$rc"
 grep -q '10_Ref\|non-injective\|lossy' "$SKILL" && rc=0 || rc=$?; check "panel5-skill-documents-lossy-key-residual" "$rc"
 grep -qi 'promote-up' "$SKILL" && rc=0 || rc=$?; check "panel5-skill-documents-promoteup-refusal" "$rc"

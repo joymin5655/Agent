@@ -74,7 +74,7 @@ PLAN_REL="docs/internal/harness-improvement-plan.md"
 PLAN="$TARGET/$PLAN_REL"
 
 # (A) known in-repo top-level segments — a path ref must start with one of these.
-SEG='core|adapters|skills|agents|templates|rules|docs|hooks|scripts|evals'
+SEG='core|adapters|skills|agents|templates|rules|docs|hooks|scripts|evals|extras'
 
 # self-exemption (EXACT path) — the gate + its test carry example phantom literals.
 SELF_EXEMPT=(
@@ -162,7 +162,12 @@ while IFS= read -r doc; do
     [[ -z "$tok" ]] && continue
     # self-exemption by exact path
     case " ${SELF_EXEMPT[*]} " in *" $tok "*) continue ;; esac
-    [[ -e "$TARGET/$tok" ]] || HITS+="$doc: referenced path missing -> $tok"$'\n'
+    # extras/ docs may name the one plugin-relative file the extras plugin owns outside
+    # skills/ and agents/ (its own reorg-sync.sh); every other ref must resolve from the
+    # repo root, so a stale pre-split path (skills/<moved-skill>/...) is still caught.
+    [[ -e "$TARGET/$tok" ]] && continue
+    case "$doc:$tok" in "$TARGET"/extras/*:core/infra/reorg-sync.sh) [[ -e "$TARGET/extras/$tok" ]] && continue ;; esac
+    HITS+="$doc: referenced path missing -> $tok"$'\n'
   done < <(scan_paths_A "$doc")
 done < <(collect_docs_A)
 

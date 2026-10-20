@@ -30,14 +30,14 @@ voice pretending to be five.
 - **Question** (optional) — what to probe: first-read comprehension, trust,
   tone, call-to-action clarity, pricing legibility. Default when unstated:
   *first-time-visitor comprehension + trust*.
-- **Catalog** — `skills/persona-review/personas/catalog.json` (shipped). If it
+- **Catalog** — `${CLAUDE_PLUGIN_ROOT:-$PWD/extras}/skills/persona-review/personas/catalog.json` (shipped). If it
   is missing or unparseable, stop and say so — do not invent personas.
 
 ## Steps
 
 ### 1. Load the catalog
 
-Read `skills/persona-review/personas/catalog.json` and confirm
+Read `${CLAUDE_PLUGIN_ROOT:-$PWD/extras}/skills/persona-review/personas/catalog.json` and confirm
 `personas` is a non-empty list. Each entry carries `age`, `sex`, `province`,
 `occupation`, `education_level`, a one-line `summary`, `hobbies` / `skills`,
 and a `review_lens` tag (1-2 of `UX` / `카피` / `접근성` / `신뢰` / `가격민감` —
@@ -138,7 +138,7 @@ top. To rebuild it (e.g. a re-seeded sample), via DuckDB `httpfs` (no local
 dataset download):
 
 ```
-uv run --with duckdb skills/persona-review/scripts/build_catalog.py --seed my-seed-2027
+uv run --with duckdb "${CLAUDE_PLUGIN_ROOT:-$PWD/extras}/skills/persona-review/scripts/build_catalog.py" --seed my-seed-2027
 ```
 
 Attribution and modification notes live in the catalog's `_meta` block; keep

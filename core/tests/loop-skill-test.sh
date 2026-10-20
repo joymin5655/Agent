@@ -20,8 +20,8 @@
 set -u
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-HL="$REPO_ROOT/skills/harness-loop/SKILL.md"
-LOOP="$REPO_ROOT/skills/loop/SKILL.md"
+HL="$REPO_ROOT/extras/skills/harness-loop/SKILL.md"
+LOOP="$REPO_ROOT/extras/skills/loop/SKILL.md"
 
 PASS=0
 FAIL=0

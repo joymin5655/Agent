@@ -241,3 +241,4 @@ jobs:
             exit 0
           fi
           claude plugin validate --strict .
+          claude plugin validate --strict ./extras

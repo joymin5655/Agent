@@ -44,7 +44,8 @@ mirrors harness-audit: deleting this skill weakens no gate.
 ### 1. Run the machine layer
 
 ```bash
-bash core/infra/manager-audit.sh <slug> --json
+HR="$(bash "${CLAUDE_PLUGIN_ROOT:-$PWD/extras}/scripts/harness-root.sh")"   # core plugin root (extras ships skills only)
+[ -n "$HR" ] && bash "$HR/core/infra/manager-audit.sh" <slug> --json   # empty HR = core not found: stop and tell the user
 ```
 
 Optional: `--session <id>` to scope routing records to one session (matches the

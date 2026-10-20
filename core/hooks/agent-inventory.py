@@ -111,6 +111,26 @@ def is_provider(md_path: pathlib.Path) -> bool:
     return text.lstrip().startswith("---") and len(text.split("---", 2)) >= 3
 
 
+def provider_dirs_for(reg_dir: pathlib.Path) -> List[pathlib.Path]:
+    """Dirs holding provider .md files: beside the registry, plus the optional extras
+    plugin's <root>/extras/agents. The extras lookup only fires when <root> is a harness
+    checkout (root = the project dir, where agents/ and extras/ are siblings); the plugin
+    cache layout does not match. Accepted side effect: inside a checkout the extras agent
+    counts as present even when the extras plugin is not installed (the supervisor only
+    suggests a provider, it never denies)."""
+    dirs = [reg_dir]
+    if reg_dir.name == "agents" and (reg_dir.parent / "extras" / "agents").is_dir():
+        dirs.append(reg_dir.parent / "extras" / "agents")
+    return dirs
+
+
+def provider_md(reg_dir: pathlib.Path, agent_id: str) -> pathlib.Path:
+    for d in provider_dirs_for(reg_dir):
+        if (d / (agent_id + ".md")).is_file():
+            return d / (agent_id + ".md")
+    return reg_dir / (agent_id + ".md")
+
+
 def reconcile(registry_path: pathlib.Path) -> Dict[str, List[str]]:
     """Classify the active registry against the provider .md files beside it.
 
@@ -122,8 +142,9 @@ def reconcile(registry_path: pathlib.Path) -> Dict[str, List[str]]:
     registry_ids = [
         a.get("id", "") for a in reg.get("agents", []) if a.get("id")
     ]
+    provider_dirs = provider_dirs_for(reg_dir)
     provider_ids = {
-        p.stem for p in reg_dir.glob("*.md") if p.stem and is_provider(p)
+        p.stem for d in provider_dirs for p in d.glob("*.md") if p.stem and is_provider(p)
     }
 
     real = sorted(i for i in registry_ids if i in provider_ids)
@@ -186,7 +207,7 @@ def sync_registry(
         for aid in discovered:
             if aid in existing:
                 continue
-            model = frontmatter_model(registry_path.parent / (aid + ".md"))
+            model = frontmatter_model(provider_md(registry_path.parent, aid))
             entry = {
                 "id": aid,
                 "description": "(auto-synced from agents/{}.md)".format(aid),

@@ -230,17 +230,23 @@ install_codex() {
     # An entry that already exists and is not our symlink is left alone.
     local skills_dir="${CODEX_SKILLS_DIR:-$HOME/.agents/skills}" skill name linked=0
     mkdir -p "$skills_dir"
-    for skill in "$FRAMEWORK_ROOT"/skills/*/; do
+    for skill in "$FRAMEWORK_ROOT"/skills/*/ "$FRAMEWORK_ROOT"/extras/skills/*/; do
+        [[ -d "$skill" ]] || continue   # unmatched glob (no extras/ in this tree)
         skill="${skill%/}"; name="$(basename "$skill")"
-        if [[ -e "$skills_dir/$name" || -L "$skills_dir/$name" ]] &&
-           [[ "$(readlink "$skills_dir/$name" 2>/dev/null)" != "$skill" ]]; then
-            echo "  skipped: $skills_dir/$name exists and is not an Agent symlink"
-            continue
+        if [[ -e "$skills_dir/$name" || -L "$skills_dir/$name" ]]; then
+            local cur; cur="$(readlink "$skills_dir/$name" 2>/dev/null || true)"   # a real dir: readlink rc 1 must not abort (set -e)
+            # ours = this skill's own link, at skills/<name> or extras/skills/<name> (an upgrade
+            # can leave one at the old location of a skill that moved); relink it. A link to a
+            # different skill name is the user's alias and stays untouched.
+            case "$cur" in
+                "$skill"|"$FRAMEWORK_ROOT/skills/$name"|"$FRAMEWORK_ROOT/extras/skills/$name") ;;
+                *) echo "  skipped: $skills_dir/$name exists and is not an Agent symlink"; continue ;;
+            esac
         fi
         ln -sfn "$skill" "$skills_dir/$name"
         linked=$((linked + 1))
     done
-    echo "  symlink: ${skills_dir/#$HOME/~}/<name> -> skills/<name> ($linked skills)"
+    echo "  symlink: ${skills_dir/#$HOME/~}/<name> -> skills/<name> + extras/skills/<name> ($linked skills)"
 
     # The shell wrapper retired to legacy/codex-shell-wrap/ (native hooks replace
     # it). A ~/bin/codex-bash symlink an earlier setup created now dangles; repoint
@@ -543,9 +549,10 @@ except Exception as e:
 problems = []
 for entry in reg.get("agents", []):
     aid, rmodel = entry.get("id"), entry.get("model")
-    md = root / "agents" / f"{aid}.md"
+    md = next((d / f"{aid}.md" for d in (root / "agents", root / "extras" / "agents")
+               if (d / f"{aid}.md").exists()), root / "agents" / f"{aid}.md")
     if not md.exists():
-        problems.append(f"id '{aid}' has no agents/{aid}.md")
+        problems.append(f"id '{aid}' has no agents/{aid}.md (or extras/agents/{aid}.md)")
         continue
     parts = md.read_text(encoding="utf-8").split("---", 2)
     mm = re.search(r"(?m)^model:\s*(\S+)", parts[1]) if len(parts) >= 3 else None
@@ -902,7 +909,8 @@ PY
     #       a missing or foreign entry means Codex cannot see that harness skill.
     if [[ -f "$codex_cfg" ]]; then
         local cx_skills_dir="${CODEX_SKILLS_DIR:-$HOME/.agents/skills}" cx_skill cx_sname cx_missing_skills="" cx_total=0 cx_miss=0
-        for cx_skill in "$FRAMEWORK_ROOT"/skills/*/; do
+        for cx_skill in "$FRAMEWORK_ROOT"/skills/*/ "$FRAMEWORK_ROOT"/extras/skills/*/; do
+            [[ -d "$cx_skill" ]] || continue
             cx_skill="${cx_skill%/}"; cx_sname="$(basename "$cx_skill")"
             cx_total=$((cx_total + 1))
             if [[ "$(readlink "$cx_skills_dir/$cx_sname" 2>/dev/null)" != "$cx_skill" ]]; then

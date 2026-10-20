@@ -49,6 +49,7 @@ build_fixture() {
   cp "$REPO_ROOT/hooks/hooks.json"                "$fx/hooks/"
   cp -R "$REPO_ROOT/core/hooks"                   "$fx/core/hooks"
   cp -R "$REPO_ROOT/agents"                       "$fx/agents"
+  cp -R "$REPO_ROOT/extras"                       "$fx/extras"
   printf '%s' "$fx"
 }
 

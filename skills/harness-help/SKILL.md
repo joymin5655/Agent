@@ -9,7 +9,8 @@ tools: Read
 
 You don't remember every skill, so ask. Most work travels one **main flow**;
 everything else is standalone. Each skill below is documented in its own
-`skills/<name>/SKILL.md` — this router only says *when to reach for which*.
+`skills/<name>/SKILL.md` (core) or `extras/skills/<name>/SKILL.md` — this router
+only says *when to reach for which*.
 
 ## The main flow: idea → shipped
 
@@ -35,25 +36,34 @@ trivial work out by design.
 
 ## Standalone
 
-- **`/harness-audit`** — read-only health check of the harness itself: one
-  `verify-all.sh` dry-run, a per-check table, the doc-reality verdict named.
-  Run it before a release or after a structural change.
-- **`/persona-review <target>`** — seat a panel of grounded Korean citizen
-  personas in front of a piece of UX/copy/content and report how ordinary users
-  would react. A user-perspective lens beside `code-reviewer` (correctness) and
-  `security-reviewer` (vulnerabilities) — it judges experience, not code.
-- **`/reorg-sync <old> <new>`** — after a directory move, sweep orphaned absolute-path
-  references (shebangs, worktree pointers, crontab, doc anchors, memory keys); dry-run first.
-- **`/code-tour [path|range]`** — after `/supervise` or any large build, or on an
-  unfamiliar repo: write a reading path a human follows (file roles, one traced flow,
-  safe experiments, glossary). It edits no source; every cited path is checked.
-- **`/worker-setup`** — install → auth → verify onboarding for the
-  cross-vendor worker lanes (codex, antigravity), with a
-  cost-model briefing before anything installs. Reach for it when
-  `setup.sh --doctor` WARNs about a worker lane, or `/council-review`
-  reports a lane absent.
+- **`/council-review [--staged|--head|<range>]`** — multi-vendor second opinion on a
+  diff (Claude reviewer plus codex/gemini lanes), synthesized with citation checks.
 - **`/project-init`** (command) — scaffold a consumer project with
   `CLAUDE.md`, rules, and `gitleaks.toml`.
+
+## Extras plugin (`agent-harness-extras`, optional)
+
+Rarely used skills live in a second plugin so the core stays light. Install once
+with `/plugin install agent-harness-extras@agent`; its skills appear namespaced as
+`/agent-harness-extras:<name>` (the short `/<name>` works when unambiguous — note
+`loop` collides with Claude Code's built-in `/loop`, so use the namespaced form).
+Each is documented in its own `extras/skills/<name>/SKILL.md`:
+
+- **`/harness-audit`** — read-only health check of the harness itself: one
+  `verify-all.sh` dry-run, a per-check table, the doc-reality verdict named.
+- **`/manager-audit <slug>`** — meta-audit of a `/supervise` run (restatement,
+  routing waste, token spend, role compliance).
+- **`/persona-review <target>`** — a panel of grounded Korean citizen personas
+  reacts to a piece of UX/copy/content; a user-perspective lens, not a code review.
+- **`/reorg-sync <old> <new>`** — after a directory move, sweep orphaned
+  absolute-path references; dry-run first.
+- **`/code-tour [path|range]`** — write a human reading path through a codebase or
+  a just-finished build; edits no source.
+- **`/worker-setup`** — install → auth → verify onboarding for the cross-vendor
+  worker lanes (codex, antigravity), with a cost briefing before anything installs.
+- **`/loop <mission>`** and **`/harness-loop`** — bounded-attempt improvement loop
+  (generic, and specialized to this harness's reviewer prompts).
+- **`/brain-ingest`** — distill quarantined brain `raw/` captures into curated notes.
 
 ## The gates underneath
 
@@ -67,5 +77,5 @@ mid-flow, it names its own escape:
 
 ## Keeping this router honest
 
-Any skill added to or removed from `skills/` updates this file in the same
-commit — a router that lies is worse than no router.
+Any skill added to or removed from `skills/` or `extras/skills/` updates this file
+in the same commit — a router that lies is worse than no router.

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """build_catalog.py — regenerate the stratified Korean persona catalog.
 
-Reproducible builder for ``skills/persona-review/personas/catalog.json``: a
+Reproducible builder for ``extras/skills/persona-review/personas/catalog.json``: a
 stratified subsample of the public ``nvidia/Nemotron-Personas-Korea`` dataset
 (CC BY 4.0), used by ``/persona-review`` as a citizen/user review panel.
 
@@ -42,9 +42,9 @@ age + occupation_group + education (see ``tag_review_lens``) that tells
 ``/persona-review`` which kind of scrutiny this panelist is good for.
 
 Usage (requires the ``duckdb`` package — not stdlib):
-    uv run --with duckdb skills/persona-review/scripts/build_catalog.py
-    uv run --with duckdb skills/persona-review/scripts/build_catalog.py --dry-run
-    uv run --with duckdb skills/persona-review/scripts/build_catalog.py --seed my-seed-2027
+    uv run --with duckdb extras/skills/persona-review/scripts/build_catalog.py
+    uv run --with duckdb extras/skills/persona-review/scripts/build_catalog.py --dry-run
+    uv run --with duckdb extras/skills/persona-review/scripts/build_catalog.py --seed my-seed-2027
 
 If the Hub is unreachable, this exits non-zero WITHOUT touching the committed
 catalog — a stale-but-real catalog is always better than a fabricated one.
@@ -412,7 +412,7 @@ def build(target_n: int, seed: str) -> dict:
                 "No name/contact/identifier fields. 'id' is the dataset's own synthetic "
                 "uuid, retained for provenance only."
             ),
-            "generated_by": "skills/persona-review/scripts/build_catalog.py",
+            "generated_by": "extras/skills/persona-review/scripts/build_catalog.py",
             "stratification_axes": ["age_group", "province", "occupation_group", "education_level"],
             "sample_size": len(personas),
             "random_seed": seed,
