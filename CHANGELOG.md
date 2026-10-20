@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **pre-tool-guard guard 3a** absorbs the generic destructive-command rules of the maintainer's
+  local guards so the portable plugin blocks them without a user-level hook: `git clean -f`
+  (deny with `-x`/`-X` or when untracked files exist, else ask; a failed probe asks), the
+  discard-changes family (`git checkout --|.|-f`, `git restore` without `--staged`,
+  `git switch --discard-changes|-f`: deny on a dirty tree; `git stash drop|clear` asks),
+  environment dumps (`env`, `printenv`, `export -p`, `declare -x|-p`, `set`, `ps e|eww|-E`; new
+  `env-dump` gate), recursive `rm` in any `-r/-R/--recursive` spelling, short-form force pushes
+  to main/master (`-f`, `--force-with-lease`, `+main`), and `find -delete|-exec rm` /
+  `rsync --delete*` (deny at /, ~, $HOME, ../; ask elsewhere). Command position only: heredoc
+  and `$( )` bodies are not re-evaluated. Evidence: D2 bench T2/T8 escapes.
 - **Rule enforcement map** (`docs/gate-registry.md` § Rule enforcement map) maps every AGENTS.md
   and `operating-contract.md` rule to its enforcer (hook / test / CI / git hook) or marks it
   `PARTIAL <enforcers> ~ <gap>` (covered in part, gap stated) or `UNENFORCED`.

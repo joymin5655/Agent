@@ -2,9 +2,10 @@
 # PreToolUse hook — Bash command safety guards
 #
 # Catches dangerous shell command patterns before they execute:
-#   - Broad destructive deletion (rm -rf root/home)
-#   - Force push to main/master
-#   - git reset --hard
+#   - Broad destructive deletion (rm -r root/home, find -delete, rsync --delete, git clean -f)
+#   - Force push to main/master (--force, -f, --force-with-lease, +main)
+#   - git reset --hard; checkout -- / restore / switch --discard-changes on a dirty tree
+#   - Environment dumps (env, printenv, export -p, declare -x, set, ps eww) - guard 3a
 #   - DROP/TRUNCATE TABLE (ask — risk area #1, production-data)
 #   - Direct secrets/.env access (deny — risk area #2, secrets)
 #     covers 45+ command variants (read, copy, hash, compress, crypto, exfil, redirect, find -exec, xargs)
@@ -380,6 +381,565 @@ if echo "$SCAN_CMD" | grep -qE 'git\s+reset\s+--hard'; then
 WHY: destructive guard — it discards uncommitted work with no recovery path.
 FIX: git stash (keeps the work), git restore <path> for single files, or git revert <sha> for committed changes."
   exit 0
+fi
+
+# 3a. Command-position danger checks (one python pass over the message-stripped command): git clean -f,
+# the discard-changes family (checkout -- / restore / switch --discard-changes, stash drop|clear),
+# force push to main/master in its short forms (-f, --force-with-lease, +main), environment dumps
+# (env / printenv / export -p / declare -x / set / ps e|eww|-E), recursive rm (-r/-R/--recursive) and
+# find -delete / find -exec rm / rsync --delete aimed at /, ~, $HOME or ../. Ported from the local
+# destructive-guard / env-dump-guard. Only simple commands in command position are judged: heredoc
+# bodies are skipped, $( ) and backtick bodies are NOT re-evaluated (python -c, eval of a variable and
+# the like stay a known gap). git clean / discard decisions probe `git status` (5 s cap, fail-closed:
+# a probe that cannot run asks). A deny is emitted here; an ask is held back to the end of the file
+# so any later deny (4a/4b, secrets, risk areas) still wins. A python failure allows (the old behaviour).
+IFS= read -r -d '' _DANGER_PY <<'PY'
+import os
+import re
+import shlex
+import subprocess
+import sys
+
+# Command-position danger checks (git discard family, git clean, force push to main, env dumps,
+# recursive rm, find -delete, rsync --delete). Reads the message-stripped command on stdin and
+# prints nothing (allow) or one decision: a header line "decision<TAB>guard<TAB>log reason"
+# followed by the teaching reason. Only simple commands in command position are judged; text
+# inside heredoc bodies is skipped and $( ) or backtick bodies are NOT re-evaluated (known gap).
+
+ASSIGN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
+REDIR = re.compile(r"\d*(?:&?>>?|<<?<?|>&|<&|>\|)")
+SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
+KEYWORDS = {"then", "do", "else", "elif", "if", "while", "until", "!", "{", "}"}
+MAX_DEPTH = 4
+PROTECTED = re.compile(r"^(?:/|~|\$HOME|\$\{HOME\}|\.\./|\.\.$)")
+DEAD = "\x22${NAME+x}\x22"
+GIT_VALUE_OPTS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--exec-path"}
+ENV_VALUE_OPTS = {"-u", "-P", "-C", "--unset", "--chdir"}
+RSYNC_VALUE_OPTS = {
+    "-e", "--rsh", "--exclude", "--include", "--exclude-from", "--include-from", "--filter", "-f",
+    "--files-from", "--log-file", "--backup-dir", "--suffix", "--partial-dir", "--temp-dir", "-T",
+    "--bwlimit", "--port", "--timeout", "--rsync-path", "--max-size", "--min-size",
+    "--compare-dest", "--copy-dest", "--link-dest", "--chmod", "--chown", "--usermap",
+    "--groupmap", "--out-format", "--info", "--debug",
+}
+
+DENIES = []
+PROBES = []
+ASKS = []
+
+
+def read_word(s, i):
+    # one shell word starting at s[i], dequoted; returns (word, next index). Never raises.
+    n = len(s)
+    parts = []
+    while i < n:
+        c = s[i]
+        if c in " \t\n":
+            break
+        if c in ";()":
+            break
+        if c in "&|":
+            if parts and parts[-1][-1:] in "<>":
+                parts.append(c)
+                i += 1
+                continue
+            break
+        if c == "\\":
+            if i + 1 < n and s[i + 1] != "\n":
+                parts.append(s[i + 1])
+            i += 2
+        elif c == "\x27":
+            j = s.find("\x27", i + 1)
+            if j < 0:
+                parts.append(s[i + 1:])
+                i = n
+            else:
+                parts.append(s[i + 1:j])
+                i = j + 1
+        elif c == "\x22":
+            i += 1
+            while i < n and s[i] != "\x22":
+                if s[i] == "\\" and i + 1 < n:
+                    if s[i + 1] in "\x22$\x60\\":
+                        parts.append(s[i + 1])
+                    elif s[i + 1] != "\n":
+                        parts.append(s[i:i + 2])
+                    i += 2
+                else:
+                    parts.append(s[i])
+                    i += 1
+            i += 1
+        elif c == "\x60":
+            j = s.find("\x60", i + 1)
+            j = n - 1 if j < 0 else j
+            parts.append(s[i:j + 1])
+            i = j + 1
+        elif c == "$" and s.startswith("(", i + 1):
+            depth = 0
+            j = i + 1
+            while j < n:
+                if s[j] == "(":
+                    depth += 1
+                elif s[j] == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                j += 1
+            parts.append(s[i:j + 1])
+            i = j + 1
+        else:
+            parts.append(c)
+            i += 1
+    return "".join(parts), i
+
+
+def tokenize(s):
+    # simple commands as lists of words; heredoc bodies are skipped
+    cmds = []
+    cur = []
+    pending = []
+    want = None
+    i = 0
+    n = len(s)
+    while i < n:
+        c = s[i]
+        if c in " \t":
+            i += 1
+        elif c == "\n":
+            if cur:
+                cmds.append(cur)
+                cur = []
+            i += 1
+            while pending:
+                delim, strip = pending.pop(0)
+                while i < n:
+                    j = s.find("\n", i)
+                    line = s[i:] if j < 0 else s[i:j]
+                    i = n if j < 0 else j + 1
+                    if (line.lstrip("\t") if strip else line) == delim:
+                        break
+        elif c in ";&|()":
+            if cur:
+                cmds.append(cur)
+                cur = []
+            i += 1
+        elif c == "#" and not cur:
+            j = s.find("\n", i)
+            i = n if j < 0 else j
+        else:
+            w, j = read_word(s, i)
+            if j <= i:
+                j = i + 1
+            i = j
+            cur.append(w)
+            if want is not None:
+                pending.append((w, want))
+                want = None
+            elif w.startswith("<<") and not w.startswith("<<<"):
+                body = w[2:]
+                strip = body.startswith("-")
+                body = body[1:] if strip else body
+                if body:
+                    pending.append((body, strip))
+                else:
+                    want = strip
+    if cur:
+        cmds.append(cur)
+    return cmds
+
+
+def strip_redirs(words):
+    out = []
+    k = 0
+    while k < len(words):
+        w = words[k]
+        m = REDIR.match(w)
+        if m:
+            k += 2 if m.end() == len(w) else 1
+            continue
+        out.append(w)
+        k += 1
+    return out
+
+
+def skip_prefix(words):
+    i = 0
+    while i < len(words):
+        w = words[i]
+        b = os.path.basename(w)
+        if ASSIGN.match(w) or w in KEYWORDS:
+            i += 1
+        elif b in ("command", "builtin"):
+            if i + 1 < len(words) and re.match(r"-[A-Za-z]*[vV]", words[i + 1]):
+                return len(words)
+            i += 1
+        elif b in ("exec", "nohup", "time"):  # supply-chain-scan: allow-literal launcher names skipped when parsing a command, not a spawn
+            i += 1
+        elif b in ("sudo", "doas"):
+            i += 1
+            while i < len(words) and words[i].startswith("-"):
+                i += 2 if words[i] in ("-u", "-g", "-h", "-p", "-C", "-D", "-R", "-T", "-U") else 1
+        elif b == "nice":
+            i += 1
+            while i < len(words) and words[i].startswith("-"):
+                i += 2 if words[i] == "-n" else 1
+        else:
+            break
+    return i
+
+
+def deny(guard, log, why, fix):
+    DENIES.append((guard, log, why + "\nFIX: " + fix))
+
+
+def ask(guard, log, why, fix):
+    ASKS.append((guard, log, why + "\nFIX: " + fix))
+
+
+def env_dump(form):
+    deny(
+        "env-dump",
+        "environment dump blocked: " + form,
+        form + " blocked.\nWHY: env-dump guard - dumping the whole environment prints every secret the "
+        "session holds (API keys, tokens) into the transcript, where it is stored and may be read back.",
+        "test whether one variable is set without printing it: test -n " + DEAD + " && echo set",
+    )
+
+
+def ps_dump(args):
+    m = re.match(r"[A-Za-z]+", args[0]) if args and not args[0].startswith("-") else None
+    if m and "e" in m.group(0):
+        env_dump("ps " + args[0])
+        return
+    for a in args:
+        m = re.match(r"-([A-Za-z]+)", a) if not a.startswith("--") else None
+        if m and "E" in m.group(1):
+            env_dump("ps " + a)
+            return
+
+
+def env_check(args, depth):
+    if depth > MAX_DEPTH:
+        return
+    k = 0
+    while k < len(args):
+        a = args[k]
+        if a == "--":
+            k += 1
+            break
+        if a in ("--help", "--version"):
+            return
+        if a.startswith("-S") or a.startswith("--split-string"):
+            if a in ("-S", "--split-string"):
+                text, rest = (args[k + 1] if k + 1 < len(args) else ""), args[k + 2:]
+            else:
+                text = a.split("=", 1)[1] if a.startswith("--split-string=") else a[2:]
+                rest = args[k + 1:]
+            try:
+                return env_check(shlex.split(text) + rest, depth + 1)
+            except ValueError:
+                return
+        if a in ENV_VALUE_OPTS:
+            k += 2
+        elif a == "-" or a.startswith("-") or ASSIGN.match(a):
+            k += 1
+        else:
+            break
+    rest = args[k:]
+    if not rest:
+        env_dump("env" if not args else "env " + " ".join(args))
+    else:
+        check(rest, depth + 1)
+
+
+def git_global(args):
+    # (subcommand, rest, -C directory) after the global options
+    k = 0
+    cdir = None
+    while k < len(args):
+        a = args[k]
+        if a == "-C" and k + 1 < len(args):
+            cdir = args[k + 1]
+            k += 2
+        elif a in GIT_VALUE_OPTS:
+            k += 2
+        elif a.startswith("-"):
+            k += 1
+        else:
+            break
+    if k >= len(args):
+        return None, [], cdir
+    return args[k], args[k + 1:], cdir
+
+
+def git_status(cdir, extra):
+    if cdir is not None and re.search(r"[$\x60]", cdir):
+        return None
+    cmd = ["git"] + (["-C", cdir] if cdir else []) + ["status", "--porcelain"] + extra
+    try:
+        r = subprocess.run(
+            cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=5,
+            env=dict(os.environ, GIT_OPTIONAL_LOCKS="0"),
+        )
+    except Exception:
+        return None
+    return r.stdout if r.returncode == 0 else None
+
+
+def short_has(a, letters):
+    return a.startswith("-") and not a.startswith("--") and any(ch in a[1:] for ch in letters)
+
+
+def push_check(rest):
+    force = False
+    pos = []
+    for a in rest:
+        if a.startswith("--"):
+            if a.split("=", 1)[0] in ("--force", "--force-with-lease", "--force-if-includes"):
+                force = True
+        elif a.startswith("-") and len(a) > 1:
+            if short_has(a, "f"):
+                force = True
+        else:
+            pos.append(a)
+    for ref in pos[1:]:
+        plus = ref.startswith("+")
+        dst = ref.lstrip("+").split(":")[-1]
+        if dst.startswith("refs/heads/"):
+            dst = dst[len("refs/heads/"):]
+        if (force or plus) and dst in ("main", "master"):
+            deny(
+                "destructive", "force push to main/master blocked",
+                "Force push to main/master blocked.\nWHY: R6 - rewriting a protected branch history breaks "
+                "every other clone and open PR based on it.",
+                "push to a feature branch and open a PR; on your own branch use git push --force-with-lease.",
+            )
+            return
+
+
+def git_check(args):
+    sub, rest, cdir = git_global(args)
+    if sub == "push":
+        push_check(rest)
+    elif sub == "clean":
+        flags = [a for a in rest if a.startswith("-")]
+        dry = any(a == "--dry-run" or short_has(a, "n") for a in flags)
+        forced = any(a == "--force" or short_has(a, "f") for a in flags)
+        if dry or not forced:
+            return
+        if any(short_has(a, "xX") for a in flags):
+            deny(
+                "destructive", "git clean -x/-X blocked",
+                "git clean with -x/-X blocked.\nWHY: destructive guard - it deletes ignored files too "
+                "(.env, build output, local data) and none of it can be restored from git.",
+                "preview with git clean -n, then delete the specific paths explicitly.",
+            )
+            return
+        out = git_status(cdir, ["--ignored"])
+        if out is not None and any(line.startswith("??") for line in out.splitlines()):
+            deny(
+                "destructive", "git clean -f would delete untracked files",
+                "git clean -f blocked: untracked files exist and would be deleted.\nWHY: destructive guard - "
+                "untracked files are in no commit, so deletion cannot be undone.",
+                "preview with git clean -n, commit or stash -u what you need, or delete specific paths explicitly.",
+            )
+            return
+        ask(
+            "destructive", "git clean -f requires confirmation",
+            "git clean -f - user confirmation required.\nWHY: destructive guard - it deletes files from "
+            "the work tree" + ("" if out is not None else " (the status check could not run, so nothing "
+            "was verified)") + ".",
+            "run git clean -n first and confirm the list is what you want removed.",
+        )
+    elif sub in ("checkout", "restore", "switch"):
+        flags = [a for a in rest if a.startswith("-") and a != "--"]
+        if sub == "checkout":
+            hit = "--" in rest or "." in rest or any(a == "--force" or short_has(a, "f") for a in flags)
+        elif sub == "restore":
+            staged = any(a == "--staged" or short_has(a, "S") for a in flags)
+            tree = any(a == "--worktree" or short_has(a, "W") for a in flags)
+            hit = not staged or tree
+        else:
+            hit = any(a in ("--discard-changes", "--force") or short_has(a, "f") for a in flags)
+        if not hit:
+            return
+        out = git_status(cdir, ["--untracked-files=no"])
+        if out is None:
+            ask(
+                "destructive", "git " + sub + " discard: status check failed",
+                "git " + sub + " may discard changes - user confirmation required.\nWHY: destructive guard - the "
+                "work tree status could not be read, so uncommitted changes were not ruled out.",
+                "run git status first; stash (git stash) or commit what you want to keep.",
+            )
+        elif out.strip():
+            deny(
+                "destructive", "git " + sub + " would discard uncommitted changes",
+                "git " + sub + " blocked: the work tree has uncommitted changes it would overwrite.\nWHY: "
+                "destructive guard - discarded edits are in no commit and cannot be recovered.",
+                "git stash (keeps the work) or commit first, then retry; use git restore --staged to only unstage.",
+            )
+    elif sub == "stash" and rest[:1] in (["drop"], ["clear"]):
+        ask(
+            "destructive", "git stash " + rest[0] + " requires confirmation",
+            "git stash " + rest[0] + " - user confirmation required.\nWHY: destructive guard - a dropped "
+            "stash is only recoverable through git fsck, not by a normal command.",
+            "list it with git stash list and apply it (git stash apply) first if you may still need it.",
+        )
+
+
+def rm_check(args):
+    recursive = False
+    operands = []
+    dd = False
+    for a in args:
+        if dd or not a.startswith("-") or a == "-":
+            operands.append(a)
+        elif a == "--":
+            dd = True
+        elif a == "--recursive" or (not a.startswith("--") and re.search(r"[rR]", a)):
+            recursive = True
+    if recursive and any(PROTECTED.match(o) for o in operands):
+        deny(
+            "destructive", "broad recursive rm blocked",
+            "Broad recursive rm to root / home / parent blocked.\nWHY: destructive-deletion guard - an "
+            "unscoped recursive delete is unrecoverable and can take the whole workspace with it.",
+            "delete the specific target explicitly (e.g. rm -r ./<dir>) after verifying it with ls, or move "
+            "it aside instead of deleting.",
+        )
+
+
+def sweep(kind, targets):
+    if any(PROTECTED.match(t) for t in targets):
+        deny(
+            "destructive", kind + " on root / home / parent blocked",
+            kind + " aimed at root / home / parent blocked.\nWHY: destructive-deletion guard - a bulk "
+            "delete or mirror-delete outside the project cannot be undone.",
+            "name the exact project-local directory, run it without the delete option first (find without "
+            "-delete, rsync --dry-run) and review the list.",
+        )
+    else:
+        ask(
+            "destructive", kind + " requires confirmation",
+            kind + " - user confirmation required.\nWHY: destructive-deletion guard - it removes many files "
+            "in one step and the list is not shown before it runs.",
+            "preview first (find without -delete, rsync --dry-run) and confirm the target is the intended one.",
+        )
+
+
+def find_check(args):
+    k = 0
+    while k < len(args) and (args[k] in ("-H", "-L", "-P") or args[k].startswith(("-D", "-O"))):
+        k += 1
+    roots = []
+    while k < len(args) and not args[k].startswith("-") and args[k] not in ("(", "!"):
+        roots.append(args[k])
+        k += 1
+    body = args[k:]
+    rm_exec = any(
+        a in ("-exec", "-execdir", "-ok", "-okdir") and i + 1 < len(body)
+        and os.path.basename(body[i + 1]) == "rm"
+        for i, a in enumerate(body)
+    )
+    if "-delete" in body or rm_exec:
+        sweep("find -delete" if "-delete" in body else "find -exec rm", roots or ["."])
+
+
+def rsync_check(args):
+    flags = [a for a in args if re.match(r"--(?:del|delete(?:-[a-z]+)?|remove-(?:source|sent)-files)$", a)]
+    if not flags:
+        return
+    ops = []
+    k = 0
+    dd = False
+    while k < len(args):
+        a = args[k]
+        if not dd and a == "--":
+            dd = True
+        elif not dd and a.startswith("-") and a != "-":
+            if a in RSYNC_VALUE_OPTS or (not a.startswith("--") and a[-1:] in "efT"):
+                k += 1
+        elif not re.match(r"(?:rsync://|(?:[^/:@]+@)?[^/:]+:)", a):
+            ops.append(a)
+        else:
+            ops.append("remote:")
+        k += 1
+    remove_src = any("remove" in f for f in flags)
+    targets = ops[-1:] + (ops[:-1] if remove_src else [])
+    sweep("rsync " + flags[0], [t for t in targets if t != "remote:"] or ["remote:"])
+
+
+def check(words, depth):
+    if depth > MAX_DEPTH:
+        return
+    words = strip_redirs(words)
+    i = skip_prefix(words)
+    if i >= len(words):
+        return
+    cmd, args = os.path.basename(words[i]), words[i + 1:]
+    if cmd == "git":
+        git_check(args)
+    elif cmd == "rm":
+        rm_check(args)
+    elif cmd == "find":
+        find_check(args)
+    elif cmd == "rsync":
+        rsync_check(args)
+    elif cmd == "ps":
+        ps_dump(args)
+    elif cmd == "env":
+        env_check(args, depth)
+    elif cmd == "printenv":
+        if not any(a in ("--help", "--version") for a in args) and not [a for a in args if not a.startswith("-")]:
+            env_dump("printenv")
+    elif cmd in ("export", "declare", "typeset"):
+        if all(a in ("-p", "-x", "-px", "-xp", "--") for a in args):
+            env_dump(" ".join([cmd] + args))
+    elif cmd == "set":
+        if not args:
+            env_dump("set")
+    elif cmd in SHELLS:
+        for k, a in enumerate(args):
+            if a.startswith("-") and not a.startswith("--") and a[1:].isalpha() and "c" in a:
+                if k + 1 < len(args):
+                    analyze(args[k + 1], depth + 1)
+                break
+    elif cmd == "eval":
+        analyze(" ".join(args), depth + 1)
+
+
+def analyze(text, depth=0):
+    if depth > MAX_DEPTH:
+        return
+    for words in tokenize(text):
+        check(words, depth)
+
+
+def main():
+    text = sys.stdin.buffer.read().decode("utf-8", "replace")
+    analyze(text)
+    pick = DENIES[0] if DENIES else (ASKS[0] if ASKS else None)
+    if pick:
+        guard, log, body = pick
+        sys.stdout.write(("deny" if DENIES else "ask") + "\t" + guard + "\t" + log + "\n" + body)
+
+
+try:
+    main()
+except Exception:
+    pass
+PY
+_DG_OUT=$(printf '%s' "$SCAN_CMD" | python3 -I -c "$_DANGER_PY" 2>/dev/null) || _DG_OUT=""
+_DG_ASK=""
+if [[ -n "$_DG_OUT" ]]; then
+  _DG_HEAD="${_DG_OUT%%$'\n'*}"
+  _DG_BODY="${_DG_OUT#*$'\n'}"
+  IFS=$'\t' read -r _DG_DEC _DG_GUARD _DG_LOG <<<"$_DG_HEAD"
+  if [[ "$_DG_DEC" == "deny" ]]; then
+    log_violation "$_DG_GUARD" "$_DG_LOG"
+    emit_deny "$_DG_BODY"
+    exit 0
+  fi
+  _DG_ASK=1
 fi
 
 # 4a. Gate-config variables. AGENT_REVIEW_OVERRIDE is the USER's escape from the commit
@@ -2557,6 +3117,14 @@ FIX: confirm only if this change is intended; otherwise leave the file to a revi
     if [[ "$_RISK_HIT_DEC" == "deny" ]]; then emit_deny "$_RISK_MSG"; else emit_ask "$_RISK_MSG"; fi
     exit 0
   fi
+fi
+
+# 3a (ask half): held back from guard 3a so that every deny above (secrets, review gates, a project
+# risk area declared deny) wins over it; only the allow path reaches here.
+if [[ -n "$_DG_ASK" ]]; then
+  log_violation "$_DG_GUARD" "$_DG_LOG" "ask"
+  emit_ask "$_DG_BODY"
+  exit 0
 fi
 
 exit 0

@@ -196,6 +196,42 @@ run_case_timed() {
   fi
 }
 
+# run_case_in <name> <dir> <command> <expect>: run_case with the hook started inside <dir>, for the rules
+# that probe `git status` (git clean -f, checkout -- / restore / switch --discard-changes).
+run_case_in() {
+  local name="$1" dir="$2" cmd="$3" expect="$4" event out got
+  event=$(printf '%s' "$cmd" | python3 -c 'import sys,json; print(json.dumps({"event":"PreToolUse","tool_name":"Bash","tool_input":{"command":sys.stdin.read()}}))')
+  out=$(cd "$dir" && printf '%s' "$event" | bash "$HOOK" 2>/dev/null || true)
+  got="allow"
+  case "$out" in
+    *'"permissionDecision": "deny"'*) got="deny" ;;
+    *'"permissionDecision": "ask"'*) got="ask" ;;
+  esac
+  if [[ "$got" == "$expect" ]]; then
+    echo "  ok   [$name] expected=$expect"; PASS=$((PASS + 1))
+  else
+    echo "  FAIL [$name] expected=$expect got=$got :: $out"; FAIL=$((FAIL + 1))
+  fi
+  if [[ "$expect" != "allow" ]]; then
+    if [[ "$out" == *"WHY:"* && "$out" == *"FIX:"* ]]; then
+      echo "  ok   [$name/teaching] WHY+FIX present"; PASS=$((PASS + 1))
+    else
+      echo "  FAIL [$name/teaching] reason lacks WHY:/FIX: :: $out"; FAIL=$((FAIL + 1))
+    fi
+  fi
+}
+G3A_ROOT="$(mktemp -d)"
+for _r in clean dirty untr; do
+  git init -q "$G3A_ROOT/$_r" >/dev/null 2>&1
+  printf 'one\n' > "$G3A_ROOT/$_r/a.txt"
+  git -C "$G3A_ROOT/$_r" add a.txt
+  git -C "$G3A_ROOT/$_r" -c user.name=t -c user.email=t@example.invalid commit -q -m init
+done
+printf 'two\n' >> "$G3A_ROOT/dirty/a.txt"
+printf 'x\n' > "$G3A_ROOT/untr/new.txt"
+G3A_NOREPO="$(mktemp -d)"
+GC="$G3A_ROOT/clean"; GD="$G3A_ROOT/dirty"; GU="$G3A_ROOT/untr"
+
 echo "=== existing rules (regression) ==="
 run_case "rm-rf-root-deny"      'rm -rf /'                                deny
 run_case "force-push-main-deny" 'git push origin --force main'            deny
@@ -302,7 +338,7 @@ run_case "override-local-deny"          'f() { local AGENT_REVIEW_OVERRIDE=reaso
 run_case "override-set-a-deny"          'set -a; . ./vars; AGENT_REVIEW_OVERRIDE=reason-long-enough git commit' deny
 run_case "override-set-a-mention-deny"  'set -a && source env.sh && echo $AGENT_REVIEW_OVERRIDE'     deny
 run_case "override-test-bracket-allow"  '[[ "$AGENT_REVIEW_OVERRIDE" == "" ]]'                       allow
-run_case "override-env-pipe-grep-allow" 'env | grep AGENT_REVIEW_OVERRIDE'                           allow
+run_case "override-env-pipe-grep-allow" 'cat vars.txt | grep AGENT_REVIEW_OVERRIDE'                    allow
 run_case "override-grep-mention-allow"  'grep AGENT_REVIEW_OVERRIDE core/infra/review-evidence.py'   allow
 run_case "override-grep-count-assign-token-deny" 'grep -c "AGENT_REVIEW_OVERRIDE=" f'               deny
 run_case "override-grep-export-allow"   'grep -n export AGENT_REVIEW_OVERRIDE f'                     allow
@@ -1851,7 +1887,7 @@ run_case "git-fetch-upload-pack-plain-allow"        "git fetch --upload-pack=git
 run_case "git-rm-cached-allow"                      'git rm --cached secrets/k' allow
 run_case "git-reset-path-allow"                     'git reset HEAD secrets/k' allow
 run_case "git-restore-staged-allow"                 'git restore --staged secrets/k' allow
-run_case "git-checkout-path-allow"                  'git checkout main -- secrets/README.md' allow
+run_case_in "git-checkout-path-allow"               "$GC" 'git checkout main -- secrets/README.md' allow
 run_case "git-commit-path-allow"                    "git commit -m 'drop key' -- secrets/k" allow
 run_case "git-stash-path-doubt-allow"               'git stash push -m wip -- secrets/k' allow
 run_case "git-add-path-allow"                       "git add secrets/.gitkeep && git commit -m 'keep dir'" allow
@@ -2136,7 +2172,157 @@ run_case "guard10-dot-deny"             '. config/secrets/app.env'              
 run_case "guard11-python-c-deny"        "python3 -c \"print(1)  # config/${SEC}k\""               deny
 run_case "guard11-node-e-deny"          "node -e \"console.log(1) // config/${SEC}k\""            deny
 
+echo
+echo "=== guard 3a: git clean, discard-changes family, env dumps, recursive rm, force-push short forms, find/rsync delete ==="
+echo "--- git clean"
+run_case_in "clean-fdx-deny"            "$GC" 'git clean -fdx'                    deny
+run_case_in "clean-fX-deny"             "$GC" 'git clean -f -X'                   deny
+run_case_in "clean-chained-fdx-deny"    "$GC" 'cd . && git clean -fdx'            deny
+run_case_in "clean-quoted-sh-c-deny"    "$GC" 'bash -c "git clean -fdx"'          deny
+run_case_in "clean-global-opt-deny"     "$GC" 'git -c color.ui=never clean -fdx'  deny
+run_case_in "clean-fd-untracked-deny"   "$GU" 'git clean -fd'                     deny
+run_case_in "clean-C-untracked-deny"    "$GC" "git -C $GU clean -f"               deny
+run_case_in "clean-fd-nothing-ask"      "$GC" 'git clean -fd'                     ask
+run_case_in "clean-fd-no-repo-ask"      "$G3A_NOREPO" 'git clean -fd'             ask
+run_case_in "clean-n-allow"             "$GU" 'git clean -n'                      allow
+run_case_in "clean-fdn-allow"           "$GU" 'git clean -fdn'                    allow
+run_case_in "clean-dry-run-allow"       "$GU" 'git clean --dry-run -fdx'          allow
+run_case_in "clean-no-force-allow"      "$GU" 'git clean -d'                      allow
+run_case_in "clean-msg-mention-allow"   "$GC" 'git commit -m "docs: never git clean -fdx"' allow
+run_case_in "clean-echo-allow"          "$GC" 'echo git clean -fdx'               allow
+
+echo "--- git discard-changes family"
+run_case_in "checkout-dd-dot-dirty-deny"    "$GD" 'git checkout -- .'             deny
+run_case_in "checkout-dd-path-dirty-deny"   "$GD" 'git checkout -- a.txt'         deny
+run_case_in "checkout-dot-dirty-deny"       "$GD" 'git checkout .'                deny
+run_case_in "checkout-f-dirty-deny"         "$GD" 'git checkout -f main'          deny
+run_case_in "restore-dirty-deny"            "$GD" 'git restore a.txt'             deny
+run_case_in "restore-worktree-dirty-deny"   "$GD" 'git restore --staged --worktree a.txt' deny
+run_case_in "switch-discard-dirty-deny"     "$GD" 'git switch --discard-changes main' deny
+run_case_in "switch-f-dirty-deny"           "$GD" 'git switch -f main'            deny
+run_case_in "checkout-dd-chained-deny"      "$GD" 'ls && git checkout -- .'       deny
+run_case_in "checkout-dd-clean-allow"       "$GC" 'git checkout -- .'             allow
+run_case_in "restore-clean-allow"           "$GC" 'git restore a.txt'             allow
+run_case_in "switch-discard-clean-allow"    "$GC" 'git switch --discard-changes main' allow
+run_case_in "restore-staged-dirty-allow"    "$GD" 'git restore --staged a.txt'    allow
+run_case_in "checkout-branch-dirty-allow"   "$GD" 'git checkout main'             allow
+run_case_in "checkout-b-dirty-allow"        "$GD" 'git checkout -b feature'       allow
+run_case_in "switch-branch-dirty-allow"     "$GD" 'git switch main'               allow
+run_case_in "restore-no-repo-ask"           "$G3A_NOREPO" 'git restore a.txt'     ask
+run_case_in "stash-drop-ask"                "$GC" 'git stash drop'                ask
+run_case_in "stash-drop-ref-ask"            "$GC" 'git stash drop stash@{1}'      ask
+run_case_in "stash-clear-ask"               "$GC" 'git stash clear'               ask
+run_case_in "stash-list-allow"              "$GC" 'git stash list'                allow
+run_case_in "stash-push-allow"              "$GD" 'git stash push -m wip'         allow
+run_case_in "reset-hard-still-deny"         "$GC" 'git reset --hard'              deny
+
+echo "--- environment dumps"
+run_case "env-bare-deny"            'env'                                  deny
+run_case "env-pipe-deny"            'env | sort'                           deny
+run_case "env-chained-deny"         'cd /tmp && env'                       deny
+run_case "env-assign-only-deny"     'env FOO=1'                            deny
+run_case "env-launcher-deny"        'sudo env'                             deny
+run_case "env-assign-prefix-deny"   'FOO=1 env'                            deny
+run_case "env-split-string-deny"    "env -S 'FOO=1'"                       deny
+run_case "env-sh-c-deny"            'bash -c "env"'                        deny
+run_case "env-eval-deny"            'eval env'                             deny
+run_case "env-nested-printenv-deny" 'env FOO=1 printenv'                   deny
+run_case "printenv-bare-deny"       'printenv'                             deny
+run_case "printenv-redirect-deny"   'printenv > /dev/null 2>&1; printenv'  deny
+run_case "export-p-deny"            'export -p'                            deny
+run_case "export-bare-deny"         'export'                               deny
+run_case "declare-x-deny"           'declare -x'                           deny
+run_case "declare-p-deny"           'declare -p'                           deny
+run_case "typeset-x-deny"           'typeset -x'                           deny
+run_case "set-bare-deny"            'set'                                  deny
+run_case "ps-eww-deny"              'ps eww'                               deny
+run_case "ps-auxe-deny"             'ps auxe'                              deny
+run_case "ps-dash-E-deny"           'ps -E'                                deny
+run_case "ps-dash-wwE-deny"         'ps -wwE -p 1'                         deny
+run_case "env-heredoc-then-env-deny" $'cat <<EOF\nbody\nEOF\nenv'          deny
+run_case "printenv-name-allow"      'printenv HOME'                        allow
+run_case "printenv-flag-name-allow" 'printenv -0 HOME'                     allow
+run_case "env-command-allow"        'env FOO=1 true'                       allow
+run_case "env-u-command-allow"      'env -u FOO true'                      allow
+run_case "env-S-command-allow"      "env -S 'FOO=1 true'"                  allow
+run_case "export-assign-allow"      'export FOO=1'                         allow
+run_case "export-name-allow"        'export FOO'                           allow
+run_case "declare-p-name-allow"     'declare -p FOO'                       allow
+run_case "declare-a-allow"          'declare -a arr'                       allow
+run_case "set-e-allow"              'set -e'                               allow
+run_case "set-euo-allow"            'set -euo pipefail'                    allow
+run_case "set-positional-allow"     'set -- a b'                           allow
+run_case "ps-aux-allow"             'ps aux'                               allow
+run_case "ps-ef-allow"              'ps -ef'                               allow
+run_case "ps-p-o-allow"             'ps -p 1 -o command='                  allow
+run_case "command-v-env-allow"      'command -v env'                       allow
+run_case "echo-env-allow"           'echo env'                             allow
+run_case "echo-quoted-env-allow"    'echo "printenv" && echo "set"'        allow
+run_case "grep-env-allow"           'grep -n env config.sh'                allow
+run_case "heredoc-env-body-allow"   $'cat <<EOF > notes.txt\nenv\nset\nEOF' allow
+run_case "commit-msg-env-allow"     'git commit -m "docs: stop the env dump"' allow
+run_case "env-var-expansion-allow"  'echo "$HOME" "${PATH:+x}"'            allow
+
+echo "--- recursive rm widening"
+run_case "rm-r-root-deny"           'rm -r /'                              deny
+run_case "rm-R-home-deny"           'rm -R ~/x'                            deny
+run_case "rm-rf-dollar-home-deny"   'rm -fr $HOME/x'                       deny
+run_case "rm-recursive-parent-deny" 'rm --recursive ../x'                  deny
+run_case "rm-split-flags-deny"      'rm -r -f ~/x'                         deny
+run_case "rm-recursive-force-deny"  'rm --recursive --force /x'            deny
+run_case "rm-dd-operand-deny"       'rm -r -- /x'                          deny
+run_case "rm-chained-deny"          'ls && rm -r ../x'                     deny
+run_case "rm-r-local-allow"         'rm -r ./build'                        allow
+run_case "rm-rf-local-allow"        'rm -rf build dist'                    allow
+run_case "rm-r-dotdir-allow"        'rm -r .cache'                         allow
+run_case "rm-file-abs-allow"        'rm /tmp/x.txt'                        allow
+run_case "rm-f-abs-allow"           'rm -f /tmp/x.txt'                     allow
+run_case "rm-msg-mention-allow"     'git commit -m "fix: rm -r / mention"' allow
+
+echo "--- force-push short forms to main/master"
+run_case "push-f-main-deny"         'git push -f origin main'              deny
+run_case "push-f-master-deny"       'git push -f origin master'            deny
+run_case "push-plus-main-deny"      'git push origin +main'                deny
+run_case "push-plus-master-deny"    'git push origin +master'              deny
+run_case "push-lease-main-deny"     'git push --force-with-lease origin main' deny
+run_case "push-lease-eq-main-deny"  'git push --force-with-lease=main origin main' deny
+run_case "push-force-after-deny"    'git push origin HEAD:main --force'    deny
+run_case "push-fu-main-deny"        'git push -fu origin main'             deny
+run_case "push-refs-heads-deny"     'git push -f origin HEAD:refs/heads/main' deny
+run_case "push-C-f-main-deny"       'git -C sub push -f origin master'     deny
+run_case "push-f-feature-allow"     'git push -f origin feature'           allow
+run_case "push-lease-feature-allow" 'git push --force-with-lease origin feature' allow
+run_case "push-main-plain-allow"    'git push origin main'                 allow
+run_case "push-u-feature-allow"     'git push -u origin feature'           allow
+run_case "push-plus-feature-allow"  'git push origin +feature'             allow
+run_case "push-feature-main-name-allow" 'git push -f origin main-fix'      allow
+
+echo "--- find / rsync deletion"
+run_case "find-root-delete-deny"    'find / -name x -delete'               deny
+run_case "find-home-exec-rm-deny"   'find ~ -name x -exec rm {} \;'        deny
+run_case "find-dollar-home-deny"    'find $HOME -type f -delete'           deny
+run_case "find-parent-delete-deny"  'find ../ -delete'                     deny
+run_case "find-execdir-rm-deny"     'find / -execdir rm -f {} +'           deny
+run_case "rsync-delete-home-deny"   'rsync -a --delete src/ ~/dst/'        deny
+run_case "rsync-delete-after-deny"  'rsync -a --delete-after src/ /srv/x/' deny
+run_case "rsync-remove-src-root-deny" 'rsync --remove-source-files /data x/' deny
+run_case "find-local-delete-ask"    "find . -name '*.pyc' -delete"         ask
+run_case "find-local-exec-rm-ask"   'find build -name x -exec rm {} +'     ask
+run_case "rsync-delete-local-ask"   'rsync -a --delete src/ dst/'          ask
+run_case "rsync-delete-remote-ask"  'rsync -a --delete src/ host:dst/'     ask
+run_case "find-plain-allow"         'find . -name x -print'                allow
+run_case "find-exec-grep-allow"     'find . -type f -exec grep -l x {} \;' allow
+run_case "rsync-plain-allow"        'rsync -a src/ dst/'                   allow
+run_case "rsync-dry-run-allow"      'rsync -an src/ dst/'                  allow
+run_case "find-msg-mention-allow"   'git commit -m "docs: find -delete caveat"' allow
+
+echo "--- large input stays linear"
+G3A_FLAT=$(printf 'ls; %.0s' $(seq 1 6000))
+run_case_timed "g3a-large-env-deny"   "${G3A_FLAT}printenv"                  deny
+run_case_timed "g3a-large-benign-allow" "${G3A_FLAT}true"                    allow
+
 rm -f "$TIMED_PY"
+rm -rf "$G3A_ROOT" "$G3A_NOREPO"
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
