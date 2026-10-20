@@ -2545,6 +2545,32 @@ run_case_in "r2-restore-help-long-dirty-allow" "$GD" 'git restore --help'       
 G3A_FX=$(printf ' -exec true {} \\;%.0s' $(seq 1 6000))
 run_case_timed "r2-find-many-exec-clauses-allow" "find build${G3A_FX}" allow
 
+echo "--- round 3: restore bundles, launcher long options, read-only builtins"
+run_case_in "r3-restore-SW-dirty-deny"   "$GD" 'git restore -SW a.txt'              deny
+run_case_in "r3-restore-WS-dirty-deny"   "$GD" 'git restore -WS a.txt'              deny
+run_case_in "r3-restore-S-W-dirty-deny"  "$GD" 'git restore -S -W a.txt'            deny
+run_case_in "r3-restore-S-dirty-allow"   "$GD" 'git restore -S a.txt'               allow
+run_case_in "r3-restore-SW-clean-allow"  "$GC" 'git restore -SW a.txt'              allow
+run_case "r3-sudo-long-user-deny"        'sudo --user root rm -r /'                 deny
+run_case "r3-sudo-long-group-deny"       'sudo --group wheel rm -r /'               deny
+run_case "r3-sudo-long-chdir-deny"       'sudo --chdir /tmp rm -r /'                deny
+run_case "r3-sudo-long-eq-deny"          'sudo --user=root rm -r /'                 deny
+run_case "r3-xargs-max-args-deny"        'xargs --max-args 1 rm -r /'               deny
+run_case "r3-nice-adjustment-deny"       'nice --adjustment 5 rm -r /'              deny
+run_case "r3-timeout-kill-after-deny"    'timeout --kill-after 1 5 rm -r /'         deny
+run_case "r3-unknown-long-option-deny"   'sudo --frobnicate yes rm -r /'            deny
+run_case "r3-watch-d-deny"               'watch -d rm -r /'                         deny
+run_case "r3-ionice-t-deny"              'ionice -t rm -r /'                        deny
+run_case "r3-sudo-long-grep-allow"       'sudo --user root grep x file'             allow
+run_case_in "r3-commit-then-checkout-allow" "$GC" 'git commit -m x && git checkout main' allow
+run_case_in "r3-export-then-restore-dirty-deny" "$GD" 'export FOO=1 && git restore a.txt' deny
+run_case_in "r3-set-e-then-clean-ask"    "$GC" 'set -e; git clean -fd'              ask
+run_case_in "r3-export-git-dir-ask"      "$GD" "export GIT_DIR=$GD/.git; git restore a.txt" ask
+run_case_in "r3-rebase-then-push-lease-feature-allow" "$GBF" 'git rebase main && git push --force-with-lease origin' allow
+run_case_in "r3-rebase-then-push-force-main-deny" "$GBM" 'git rebase x && git push -f origin' deny
+run_case_in "r3-checkout-then-push-force-ask" "$GBF" 'git checkout main && git push -f origin' ask
+run_case_in "r3-cd-then-checkout-ask"    "$GC" 'cd . && git checkout main'          ask
+
 echo "--- large input stays linear"
 G3A_FLAT=$(printf 'ls; %.0s' $(seq 1 6000))
 run_case_timed "g3a-large-env-deny"   "${G3A_FLAT}printenv"                  deny

@@ -2052,7 +2052,7 @@ PY
 IFS= read -r -d '' _G3_PY <<'PY'
 
 # ---------------------------------------------------------------------------------------------------
-# Guard 3a, run on top of the stage-2 Lexer above (this text is appended to it, S5_LIB=1 keeps stage 2
+# Guard 3a, run on top of the stage-2 Lexer above (this text is appended to it, the argv word lib keeps stage 2
 # from running its own verdict). The command text arrives on fd 3. Output, first line: allow, or
 # "deny|ask <TAB> guard <TAB> log reason" followed by the teaching reason. A missing or garbled answer
 # (crash, kill, alarm) is read by the caller as a deny.
@@ -2070,11 +2070,16 @@ G3_TOP = re.compile(r"^(?:(?:/|~|\$HOME|\$\{HOME\}|\.\.)(?:/\*?)?|/\*)$")  # a r
 G3_DEAD = "\x22${NAME+x}\x22"
 G3_GITCFG = r"core\.(?:worktree|gitdir|bare)"
 G3_LAUNCH_VAL = {
-    "exec": {"-a"}, "sudo": {"-u", "-g", "-h", "-p", "-C", "-D", "-R", "-T", "-U", "-r", "-t"},
-    "doas": {"-u", "-C"}, "nice": {"-n"}, "ionice": {"-c", "-n", "-p", "-t"},
+    "exec": {"-a"},
+    "sudo": {"-u", "-g", "-h", "-p", "-C", "-D", "-R", "-T", "-U", "-r", "-t", "--user", "--group", "--host",
+             "--prompt", "--chdir", "--role", "--type", "--close-from", "--other-user", "--command-timeout"},
+    "doas": {"-u", "-C"}, "nice": {"-n", "--adjustment"}, "ionice": {"-c", "-n", "-p", "--class", "--classdata", "--pid"},
     "timeout": {"-k", "-s", "--kill-after", "--signal"}, "gtimeout": {"-k", "-s", "--kill-after", "--signal"},
-    "stdbuf": {"-i", "-o", "-e"}, "xargs": {"-I", "-n", "-P", "-L", "-s", "-E", "-d", "-a"},
-    "watch": {"-n", "-d"}, "flock": {"-w", "-E", "-c"}, "time": {"-f", "-o"}, "command": set(), "builtin": set(),
+    "stdbuf": {"-i", "-o", "-e", "--input", "--output", "--error"},
+    "xargs": {"-I", "-n", "-P", "-L", "-s", "-E", "-d", "-a", "--max-args", "--max-procs", "--max-lines",
+              "--max-chars", "--delimiter", "--arg-file", "--eof"},
+    "watch": {"-n", "--interval"}, "flock": {"-w", "-E", "-c", "--timeout", "--conflict-exit-code"},
+    "time": {"-f", "-o"}, "command": set(), "builtin": set(),
     "nohup": set(), "setsid": set(), "caffeinate": {"-t", "-w"}, "rtk": set(), "taskset": set(), "chrt": set(),  # supply-chain-scan: allow-literal wrapper names skipped when parsing a command, not a spawn
     "ssh": {"-p", "-l", "-i", "-o", "-F", "-J", "-L", "-R", "-D", "-b", "-c", "-e", "-m", "-O", "-S", "-W", "-w",
             "-B", "-E", "-I"},
@@ -2112,8 +2117,8 @@ G3_PS_VALUE = {"-o", "-p", "-u", "-t", "-g", "-G", "-U", "-C", "-O", "-s", "-D",
 G3_READONLY = frozenset("echo printf ls pwd true false : test [ [[ cat head tail wc grep egrep fgrep rg sleep date "
                         "whoami basename dirname which type stat file du id uname hostname".split())
 G3_GIT_READONLY = frozenset("status log diff show rev-parse rev-list branch remote describe ls-files ls-tree "
-                            "blame shortlog cat-file fetch".split())  # not config: it can point the work tree elsewhere
-G3 = {"deny": [], "ask": [], "unsure": False, "unsure_name": False, "fails": [], "unknown_state": False, "probes": {}, "n": 0, "branch": {}}
+                            "blame shortlog cat-file fetch commit add tag push".split())  # not config: it can point the work tree elsewhere
+G3 = {"branch_moved": False, "maybe_val": False, "deny": [], "ask": [], "unsure": False, "unsure_name": False, "fails": [], "unknown_state": False, "probes": {}, "n": 0, "branch": {}}
 G3_DEADLINE = [0.0]
 
 
@@ -2152,6 +2157,9 @@ def g3_cmd_index(lits, i, end, skip_env=False):
             vals = G3_LAUNCH_VAL[n]
             j = i + 1
             while j < end and lits[j].startswith("-") and lits[j] != "--":
+                if lits[j] not in vals and lits[j].startswith("--") and "=" not in lits[j] \
+                        and j + 1 < end and not lits[j + 1].startswith("-"):
+                    G3["maybe_val"] = True  # an unknown long option: the next word may be its value
                 j += 2 if lits[j] in vals else 1
             if j < end and lits[j] == "--":
                 j += 1
@@ -2348,8 +2356,10 @@ def g3_git(lits, prior_unsafe):
     if cdir is not None and cdir.startswith("-"):
         cdir = "./" + cdir
     unknown = G3["unknown_state"] or prior_unsafe or len(cdirs) > 1 or extra
+    if sub in ("checkout", "switch", "branch", "worktree"):
+        G3["branch_moved"] = True  # a later push without a branch name may mean another branch
     if sub == "push":
-        g3_push(rest, cdir, unknown)
+        g3_push(rest, cdir, G3["unknown_state"] or G3["branch_moved"] or len(cdirs) > 1 or extra)
     elif sub == "clean":
         flags, k = [], 0
         while k < len(rest):
@@ -2430,11 +2440,15 @@ def g3_git(lits, prior_unsafe):
             for a in flags:
                 if g3_long(a, "--no-staged", 8):
                     staged = False
-                elif g3_long(a, "--staged", 4) or g3_short(a, "S"):
+                elif g3_long(a, "--staged", 4):
                     staged = True
-                elif g3_long(a, "--no-worktree", 8):
+                if g3_long(a, "--no-worktree", 8):
                     tree = False
-                elif g3_long(a, "--worktree", 4) or g3_short(a, "W"):
+                elif g3_long(a, "--worktree", 4):
+                    tree = True
+                if g3_short(a, "S"):
+                    staged = True
+                if g3_short(a, "W"):
                     tree = True
             hit = not staged or tree
         else:
@@ -2691,11 +2705,13 @@ def g3_cmd(words, redirs, bodies, depth, prior_unsafe):
     if name in ("export", "declare", "typeset"):
         if all(a == "--" or re.fullmatch(r"-[px]+", a) for a in args):
             g3_dump(" ".join([name] + args))
-        return True
+        if any(re.match(G3_GITVARS, a) for a in args):
+            G3["unknown_state"] = True  # export GIT_DIR=/elsewhere
+        return False
     if name == "set":
         if not args:
             g3_dump("set")
-        return True
+        return False
     if name in SHELLS:
         j, has_c = 0, False
         while j < len(args):
@@ -2729,9 +2745,15 @@ def g3_cmd(words, redirs, bodies, depth, prior_unsafe):
                     g3_sub(lit, depth + 1, prior_unsafe)
         if any(CHDIR_OPT.match(t) for t in lits[1:]):
             G3["unknown_state"] = True
+        G3["maybe_val"] = False
         j = g3_cmd_index(lits, 0, len(lits)) if name in G3_LAUNCH_VAL else 0
         if j > 0 and j < len(words):
             g3_cmd(words[j:], redirs, bodies, depth + 1, prior_unsafe)
+            if G3["maybe_val"]:  # also judge the first later word that is a judged verb, as if it were a value
+                for jj in range(j + 1, len(lits)):
+                    if norm(lits[jj]) in G3_HEADS and not lits[jj].startswith("-"):
+                        g3_cmd(words[jj:], redirs, bodies, depth + 1, prior_unsafe)
+                        break
         else:
             for j in range(1, len(lits)):
                 if norm(lits[j]) in G3_HEADS and not lits[j].startswith("-"):
