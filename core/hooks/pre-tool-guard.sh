@@ -55,37 +55,28 @@ elif not isinstance(command, str):
 sys.stdout.buffer.write(command.encode("utf-8", "backslashreplace"))
 '); _DECODE_RC=$?
 
-emit_deny() {
-  local reason="$1"
-  python3 -I - "$reason" <<'PY'
-import json
-import sys
-reason = sys.argv[1]
-print(json.dumps({
-    "hookSpecificOutput": {
-        "hookEventName": "PreToolUse",
-        "permissionDecision": "deny",
-        "permissionDecisionReason": reason,
-    }
-}, ensure_ascii=False))
-PY
-}
+# The guard finds event_decode.sh next to its real file, however it was started: a bare relative
+# path has no slash in BASH_SOURCE (so ${x%/*} would be the file name itself) and a symlink points
+# elsewhere. If the helper cannot be loaded the guard cannot decide anything, and an empty stdout
+# would read as allow: print a minimal deny (no helper, no python3 needed) and stop.
+_GUARD_SRC="${BASH_SOURCE[0]}"
+while [[ -L "$_GUARD_SRC" ]]; do
+  _GUARD_LINK=$(readlink "$_GUARD_SRC") || break
+  case "$_GUARD_LINK" in
+    /*) _GUARD_SRC="$_GUARD_LINK" ;;
+    *)  _GUARD_SRC="$(dirname "$_GUARD_SRC")/$_GUARD_LINK" ;;
+  esac
+done
+case "$_GUARD_SRC" in */*) _GUARD_DIR="${_GUARD_SRC%/*}" ;; *) _GUARD_DIR="." ;; esac
+# shellcheck source=event_decode.sh
+if ! source "$_GUARD_DIR/event_decode.sh" 2>/dev/null; then
+  printf '%s\n' '{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": "pre-tool-guard.sh could not load event_decode.sh from its own directory (blocked fail-closed).\nWHY: without the helper no guard can read or answer the command, and an empty answer would read as allow.\nFIX: restore core/hooks/event_decode.sh next to pre-tool-guard.sh (re-run setup.sh or git checkout the file)."}}'
+  exit 0
+fi
 
-emit_ask() {
-  local reason="$1"
-  python3 -I - "$reason" <<'PY'
-import json
-import sys
-reason = sys.argv[1]
-print(json.dumps({
-    "hookSpecificOutput": {
-        "hookEventName": "PreToolUse",
-        "permissionDecision": "ask",
-        "permissionDecisionReason": reason,
-    }
-}, ensure_ascii=False))
-PY
-}
+emit_deny() { hook_emit_decision deny "$1"; }
+
+emit_ask() { hook_emit_decision ask "$1"; }
 
 # Append to .agent/logs/security-violations.jsonl (silent-fail).
 log_violation() {
@@ -122,36 +113,245 @@ FIX: send the tool call again as plain JSON text; if the event itself is malform
   exit 0
 fi
 
-# W-7: strip commit-MESSAGE payloads before the destructive guards (1-4), so a
-# message that merely MENTIONS a destructive command ("fix: guard rm -rf /")
-# is not blocked. Three shapes are stripped, each only when provably inert:
-#   - -m "$(cat <<'EOF' ... EOF)"  — the standard multi-line commit idiom; only
-#     a bare `cat <<'DELIM'` substitution with a QUOTED heredoc delimiter
-#     qualifies. The quote is mandatory: an UNQUOTED `<<DELIM` body still
-#     undergoes command substitution at shell-eval time, so `$(rm -rf /)` inside
-#     it would execute — those stay scannable. Any other command inside the
-#     substitution is a real execution and stays scannable too;
-#   - -m '...'                      — single quotes: shell-literal, always inert;
-#   - -m "..."                      — only when free of $ and backtick (no
-#     expansion/substitution can hide a live command).
-# The flag match covers bundled short clusters (-am/-nm) and --message[=].
-# Secrets guards (5+) keep scanning the FULL command: -m "$(cat secrets/key)"
-# is a real read, not a mention. Python failure falls back to the full command
-# (fail-safe = scan more, never less).
-SCAN_CMD=$(SCAN_INPUT="$COMMAND" python3 -I - <<'PY'
-import os, re, sys
-cmd = os.environ.get("SCAN_INPUT", "")
-# \x22/\x27/\x60 = dquote/quote/backtick as regex escapes: bash 3.2 mis-parses
-# unpaired quote or backtick characters inside a $(<<heredoc) command
-# substitution even when the heredoc delimiter is quoted.
-FLAG = r"(\s--?[a-zA-Z]*m(?:essage)?(?:=|\s+))"
-cmd = re.sub(r"(?s)" + FLAG +
-             r"\x22\$\(\s*cat\s+<<-?[\x27\x22](\w+)[\x27\x22]\n.*?\n\2\n?\s*\)\x22",
-             r"\1<msg>", cmd)
-cmd = re.sub(FLAG + r"\x27[^\x27]*\x27", r"\1<msg>", cmd)
-cmd = re.sub(FLAG + r"\x22[^\x22$\x60\\]*\x22", r"\1<msg>", cmd)
-sys.stdout.write(cmd)
+# W-7: strip commit-MESSAGE payloads before the destructive guards (1-4 and the ones after), so a
+# message that merely MENTIONS a destructive command ("fix: guard rm -rf /") is not blocked.
+# AG22 r1: the stripper works on SHELL WORDS. It replaces the value word of a message option
+# (-m, -am, -nm, --message, --message=) of git commit/tag/merge/notes/stash, and only when that word
+# is exactly one quoted string:
+#   - single quotes                  - shell-literal, always inert;
+#   - double quotes                  - only when free of $ and backtick (nothing can expand) and of
+#     backslashes other than the surrogate spelling \udXXX the decoder writes;
+#   - "$(cat <<'EOF' ... EOF)"       - the standard multi-line idiom; the heredoc delimiter must be
+#     QUOTED (an unquoted body still undergoes command substitution).
+# A " -m " inside another quoted string (echo, printf, ...), a message option of any other command, a
+# word that is not one whole quoted string, and anything the lexer cannot read with certainty (an
+# unterminated quote, an unmatched parenthesis) stay in the scanned text: the old regex matched the
+# flag anywhere and its double-quote pattern ran across quote boundaries to the next quote character,
+# which hid real commands (rm, force push, reset, DROP) between two quoted flag-like texts.
+# Secrets guards (5+) keep scanning the FULL command: -m "$(cat secrets/key)" is a real read, not a
+# mention. A python failure falls back to the full command (fail-safe = scan more, never less).
+# The program has no apostrophe or backtick on purpose and is read into a variable first (bash 3.2
+# mis-parses unpaired ones inside a command substitution that holds a heredoc).
+IFS= read -r -d '' _STRIP_PY <<'PY'
+import re
+import sys
+
+# Commit-message stripper (W-7), word based. Only the value word of a message option of a git
+# subcommand that takes one is replaced, and only when that word is one whole quoted string.
+# Anything the lexer cannot read with certainty leaves the command untouched (more scanning).
+
+SEPARATORS = ";&|()\n"
+HEREDOC_MSG = re.compile(r"\x22\$\(\s*cat\s+<<-?[\x27\x22](\w+)[\x27\x22]\n.*?\n\1\n?\s*\)\x22", re.S)
+SURROGATE_TEXT = r"\\u[dD][89a-fA-F][0-9a-fA-F]{2}"
+DQ_INERT = re.compile(r"(?:[^\x22$\x60\\]|" + SURROGATE_TEXT + r")*")
+MSG_OPTION = re.compile(r"-[A-Za-z]*m")
+ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=\S*")
+PREFIX_WORDS = {"command", "env", "exec", "sudo", "time", "nice", "then", "do", "else", "!", "{"}
+GIT_OPTIONS_WITH_VALUE = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"}
+MESSAGE_SUBCOMMANDS = {"commit", "tag", "merge", "notes", "stash"}
+QUICK = re.compile(r"\s-[A-Za-z]*m(?![A-Za-z])|\s--message")
+
+
+class Unreadable(Exception):
+    pass
+
+
+def skip_double(s, i):
+    # s[i] is a double quote; return the index after the closing one
+    n = len(s)
+    i += 1
+    while i < n:
+        c = s[i]
+        if c == "\\":
+            i += 2
+        elif c == "\x22":
+            return i + 1
+        elif c == "$" and s.startswith("(", i + 1):
+            i = skip_paren(s, i + 1)
+        elif c == "\x60":
+            i = skip_tick(s, i)
+        else:
+            i += 1
+    raise Unreadable()
+
+
+def skip_tick(s, i):
+    j = i + 1
+    while j < len(s):
+        if s[j] == "\\":
+            j += 2
+        elif s[j] == "\x60":
+            return j + 1
+        else:
+            j += 1
+    raise Unreadable()
+
+
+def skip_paren(s, i):
+    # s[i] is an opening paren; return the index after its matching close
+    depth = 0
+    n = len(s)
+    while i < n:
+        c = s[i]
+        if c == "\\":
+            i += 2
+            continue
+        if c == "\x27":
+            j = s.find("\x27", i + 1)
+            if j < 0:
+                raise Unreadable()
+            i = j + 1
+            continue
+        if c == "\x22":
+            i = skip_double(s, i)
+            continue
+        if c == "\x60":
+            i = skip_tick(s, i)
+            continue
+        if c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    raise Unreadable()
+
+
+def read_word(s, i):
+    n = len(s)
+    while i < n:
+        c = s[i]
+        if c in " \t" or c in SEPARATORS:
+            break
+        if c == "\\":
+            i += 2
+        elif c == "\x27":
+            j = s.find("\x27", i + 1)
+            if j < 0:
+                raise Unreadable()
+            i = j + 1
+        elif c == "\x22":
+            i = skip_double(s, i)
+        elif c == "\x60":
+            i = skip_tick(s, i)
+        elif c == "$" and s.startswith("(", i + 1):
+            i = skip_paren(s, i + 1)
+        else:
+            i += 1
+    return min(i, n)
+
+
+def lex(s):
+    # simple commands as lists of (start, end, kind); kind is heredoc for the cat idiom, else word
+    commands = []
+    current = []
+    i = 0
+    n = len(s)
+    while i < n:
+        c = s[i]
+        if c in " \t":
+            i += 1
+        elif c in SEPARATORS:
+            if current:
+                commands.append(current)
+                current = []
+            i += 1
+        elif c == "#":
+            j = s.find("\n", i)
+            i = n if j < 0 else j
+        else:
+            m = HEREDOC_MSG.match(s, i) if c == "\x22" else None
+            if m:
+                current.append((i, m.end(), "heredoc"))
+                i = m.end()
+            else:
+                j = read_word(s, i)
+                if j <= i:
+                    raise Unreadable()
+                current.append((i, j, "word"))
+                i = j
+    if current:
+        commands.append(current)
+    return commands
+
+
+def message_replacement(s, start, end, kind):
+    # (start, end) of the text to replace when the word is an inert whole quoted string, else None
+    raw = s[start:end]
+    if kind == "heredoc":
+        return (start, end)
+    if len(raw) >= 2 and raw[0] == "\x27" and raw[-1] == "\x27" and "\x27" not in raw[1:-1]:
+        return (start, end)
+    if len(raw) >= 2 and raw[0] == "\x22" and raw[-1] == "\x22" and DQ_INERT.fullmatch(raw[1:-1]):
+        return (start, end)
+    return None
+
+
+def git_message_start(s, words):
+    # index of the first word after the git subcommand when the command takes message options
+    k = 0
+    while k < len(words):
+        raw = s[words[k][0]:words[k][1]]
+        if ASSIGNMENT.fullmatch(raw) or raw in PREFIX_WORDS:
+            k += 1
+        else:
+            break
+    if k >= len(words) or s[words[k][0]:words[k][1]] != "git":
+        return None
+    k += 1
+    while k < len(words):
+        raw = s[words[k][0]:words[k][1]]
+        if raw in GIT_OPTIONS_WITH_VALUE:
+            k += 2
+        elif raw.startswith("-"):
+            k += 1
+        else:
+            break
+    if k >= len(words) or s[words[k][0]:words[k][1]] not in MESSAGE_SUBCOMMANDS:
+        return None
+    return k + 1
+
+
+def strip(s):
+    if not QUICK.search(s):
+        return s
+    try:
+        commands = lex(s)
+    except (Unreadable, RecursionError):
+        return s
+    edits = []
+    for words in commands:
+        k = git_message_start(s, words)
+        if k is None:
+            continue
+        while k < len(words):
+            start, end, kind = words[k]
+            raw = s[start:end]
+            if kind == "word" and (MSG_OPTION.fullmatch(raw) or raw == "--message"):
+                if k + 1 < len(words):
+                    hit = message_replacement(s, *words[k + 1])
+                    if hit:
+                        edits.append(hit)
+                k += 2
+            elif kind == "word" and raw.startswith("--message="):
+                body = start + len("--message=")
+                hit = message_replacement(s, body, end, "word")
+                if hit:
+                    edits.append(hit)
+                k += 1
+            else:
+                k += 1
+    for start, end in sorted(set(edits), reverse=True):
+        s = s[:start] + "<msg>" + s[end:]
+    return s
+
+
+if __name__ == "__main__":
+    raw = sys.stdin.buffer.read().decode("utf-8", "surrogateescape")
+    sys.stdout.buffer.write(strip(raw).encode("utf-8", "surrogateescape"))
 PY
+SCAN_CMD=$(printf '%s' "$COMMAND" | python3 -I -c "$_STRIP_PY"
 ) || SCAN_CMD="$COMMAND"
 [[ -z "$SCAN_CMD" && -n "$COMMAND" ]] && SCAN_CMD="$COMMAND"
 
@@ -2171,8 +2371,7 @@ PY
   # Inline code and a here-string may span lines (python3 -c "<newline>open('p')<newline>"): look at
   # a copy with backslash-newline joined and newlines turned into blanks. Only the two interpreter
   # clauses use it; every other clause keeps its line-by-line match.
-  _CMD_FLAT=${COMMAND//\\$'\n'/}
-  _CMD_FLAT=${_CMD_FLAT//$'\n'/ }
+  _CMD_FLAT=$(hook_flatten_lines "$COMMAND")
   if [[ "$_EXTRA_SECRET_ALT" == "!UNPARSEABLE" ]]; then
     if echo "$COMMAND" | grep -qiE "($_SECRET_READ_VERBS)\s+" \
        || echo "$COMMAND" | grep -qiE "$_SECRET_CMD_START" \
