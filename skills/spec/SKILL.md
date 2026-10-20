@@ -1,7 +1,7 @@
 ---
 name: spec
 description: Upstream planning-discipline — brainstorm a feature into spec.md + plan.md under .agent/plans/<slug>/, then route to plan approval. Enforced by the spec-gate tool boundary, not prompt coercion. NOT for trivial/test/doc-only edits (the gate scopes those out), and NOT for executing an already-approved plan (that is /supervise).
-when_to_use: Before starting substantive implementation on a non-trivial feature or change — "spec this", "/spec <slug>", or when spec-gate asks you to plan first before an edit. Add --interview when the request is fuzzy enough that a wrong guess would commit the spec to the wrong shape (structured question loop before writing).
+when_to_use: Before starting substantive implementation on a non-trivial feature or change — "spec this", "/spec <slug>", "plan this first"; 한국어 "스펙 잡아줘", "계획부터 세우자", "스펙부터 써줘" — or when spec-gate asks you to plan first before an edit. Add --interview when the request is fuzzy enough that a wrong guess would commit the spec to the wrong shape. Applies even when the change looks easy and you could start editing right away — the plan is what unlocks editing.
 tools: Bash, Read, Write, Edit, Grep, Glob
 ---
 
@@ -151,6 +151,17 @@ consumes:
 any other `##` section fails lint. Every Wave needs at least one step, and steps
 may be `-`, `*` or `1.` bullets.
 
+**Decompose into vertical slices.** Each Wave is a thin end-to-end slice (a
+tracer bullet through every layer the feature touches — data, logic, interface,
+test) that works and can be checked on its own, not a horizontal layer such as
+"all the schema, then all the handlers". Order the first slice to prove the
+riskiest assumption. Where a step needs another step's output, say so in the
+step text with an explicit blocking edge — `(blocked-by: Wave 1 step 2)` — and
+leave steps with no edge free to run in parallel. Edges live inside the step
+line because `plan-lint.sh` allows only the title and `## Wave N:` sections; the
+steps still need `→ verify:`, and each spec success-criterion's backticked term
+must appear in some step.
+
 Every step names its verification. A plan whose steps aren't checkable isn't done.
 Default each `→ verify:` to an **executable check** — a command whose exit code
 decides (`bash core/tests/<battery>.sh`, `grep -q <artifact>`); prose
@@ -221,3 +232,8 @@ Two, both named in the gate's own reason message:
 - **The scope is substantive impl code only.** Tests, types, config, docs, and
   `.agent/` meta are out of scope by design; risk-area paths defer to their own
   hooks. Don't widen the gate to nag on trivial edits.
+
+## Credits
+
+The vertical-slice and blocking-edge guidance adapts `to-tickets` in
+mattpocock/skills (MIT). Rewritten in this repo's own words.
