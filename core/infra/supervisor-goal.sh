@@ -69,7 +69,9 @@ SQL
 }
 
 # AGENT_NOW_MS pins the clock (tests only).
-now_ms() { if [[ -n "${AGENT_NOW_MS:-}" ]]; then echo "$AGENT_NOW_MS"; else python3 -c 'import time; print(int(time.time()*1000))'; fi; }
+now_ms() {
+    if [[ -n "${AGENT_NOW_MS:-}" && ! "$AGENT_NOW_MS" =~ ^[0-9]+$ ]]; then echo "ERROR: AGENT_NOW_MS must be integer ms" >&2; exit 2; fi
+    if [[ -n "${AGENT_NOW_MS:-}" ]]; then echo "$AGENT_NOW_MS"; else python3 -c 'import time; print(int(time.time()*1000))'; fi; }
 now_iso() { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
 
 sql_escape() { printf "%s" "$1" | sed "s/'/''/g"; }
@@ -247,12 +249,14 @@ cmd_complete() {
     local slug="${1:-}"
     [[ -z "$slug" ]] && { echo "usage: ... complete <plan-slug>" >&2; exit 2; }
     init_db
-    write_record_stub "$slug" || true
     # Cross-check the decision log against the run record BEFORE declaring done. Informational
     # (stderr, never blocks): the supervisor must read the Attention section before reporting.
+    # Runs before write_record_stub so the stub's own <fill> slots are not reported back as
+    # noise; --pre-record also skips "RECORD.md missing" because the stub is written next.
     local log_sh; log_sh="$(dirname "${BASH_SOURCE[0]}")/supervisor-goal-log.sh"
-    if [[ -f "$log_sh" ]]; then bash "$log_sh" check "$slug" >&2 || true; fi
+    if [[ -f "$log_sh" ]]; then bash "$log_sh" check "$slug" --pre-record >&2 || true; fi
     sqlite3 "$DB_FILE" "UPDATE supervisor_goals SET status = 'complete', updated_at_ms = $(now_ms) WHERE plan_slug = '$(sql_escape "$slug")';"
+    write_record_stub "$slug" || true
     cmd_status "$slug"
 }
 
@@ -286,7 +290,8 @@ cmd_clear() {
     local slug="${1:-}"
     [[ -z "$slug" ]] && { echo "usage: ... clear <plan-slug>" >&2; exit 2; }
     init_db
-    sqlite3 "$DB_FILE" "DELETE FROM supervisor_goals WHERE plan_slug = '$(sql_escape "$slug")';"
+    sqlite3 "$DB_FILE" "DELETE FROM supervisor_goals WHERE plan_slug = '$(sql_escape "$slug")';
+        DELETE FROM supervisor_agents WHERE plan_slug = '$(sql_escape "$slug")';"
     echo "{\"cleared\":\"$slug\"}"
 }
 
@@ -450,7 +455,8 @@ cmd_agent_spawn() {
         exit 2
     fi
     agent_args_ok "$slug" "$agent"
-    if [[ -n "$scope" ]] && { [[ ! "$scope" =~ ^[A-Za-z0-9._/@+=,-]+$ ]] || [[ "/$scope/" == *"/../"* ]] || [[ "$scope" == "-" ]]; }; then
+    # repo-relative only: no absolute paths, no `..`, and the harness's own state dirs are off limits
+    if [[ -n "$scope" ]] && { [[ ! "$scope" =~ ^[A-Za-z0-9._@+=,-][A-Za-z0-9._/@+=,-]*$ ]] || [[ "/$scope/" == *"/../"* ]] || [[ "$scope" == "-" ]] || [[ "/$scope/" == *"/.agent/"* || "/$scope/" == *"/.worktrees/"* ]]; }; then
         echo "ERROR: bad scope path: $scope" >&2; exit 2
     fi
     init_db
@@ -478,6 +484,9 @@ cmd_agent_state() {  # <new-status> <slug> <agent-id>
     agent_args_ok "$slug" "$agent"
     init_db
     agent_exists "$slug" "$agent" || { echo "ERROR: agent not found: $agent" >&2; exit 3; }
+    if [[ "$status" != "done" && "$(sqlite3 "$DB_FILE" "SELECT status FROM supervisor_agents WHERE plan_slug = '$(sql_escape "$slug")' AND agent_id = '$(sql_escape "$agent")';")" == "done" ]]; then
+        echo "ERROR: agent $agent is done; spawn it again to reuse the id" >&2; exit 3
+    fi
     local extra=""
     [[ "$status" == "running" ]] && extra=", last_effect_ms = $(now_ms), last_effect_kind = 'resume'"
     sqlite3 "$DB_FILE" "UPDATE supervisor_agents SET status = '$status', stuck_flagged_ms = NULL$extra
@@ -500,7 +509,7 @@ if os.path.isfile(path):
     consider(int(os.stat(path).st_mtime * 1000), "file")
 elif os.path.isdir(path):
     for d, dirs, files in os.walk(path):
-        dirs[:] = [x for x in dirs if x not in (".git", "node_modules")]
+        dirs[:] = [x for x in dirs if x not in (".git", "node_modules", ".agent", ".worktrees")]
         for f in files:
             try:
                 consider(int(os.stat(os.path.join(d, f)).st_mtime * 1000), "file")

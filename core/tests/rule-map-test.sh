@@ -26,7 +26,8 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 # given map rows between the markers; echoes the repo path.
 new_fixture() {
   local fx; fx="$(mktemp -d "$TMP_ROOT/fxXXXXXX")"
-  mkdir -p "$fx/docs" "$fx/core/hooks" "$fx/rules/policy"
+  mkdir -p "$fx/docs" "$fx/core/hooks" "$fx/rules/policy" "$fx/hooks"
+  printf '{"hooks":["real.sh"]}\n' > "$fx/hooks/hooks.json"
   : > "$fx/core/hooks/real.sh"
   : > "$fx/AGENTS.md"
   printf '# c\n\n- first rule\n- second rule\n' > "$fx/rules/policy/operating-contract.md"
@@ -90,21 +91,63 @@ has 'operating-contract.md has 2 bullets'; check "unmapped-bullet-named" $?
 echo
 echo "=== (5) exceptions need reason + expiry + approver, and must be live ==="
 BASE=("$OC" 'RULE AG-1 | AGENTS.md | x | UNENFORCED')
-FX=$(new_fixture "${BASE[@]}" 'EXCEPT AG-1 | no checker exists yet | 2026-12-31 | frank')
+FX=$(new_fixture "${BASE[@]}" 'EXCEPT AG-1 | no checker exists yet | 2026-12-31 | maintainer')
 run "$FX"; check "valid-exception-ok" "$(rc_is 0)"
 FX=$(new_fixture "${BASE[@]}" 'EXCEPT AG-1 | no checker exists yet | 2026-12-31 |')
 run "$FX"; check "no-approver-fails" "$(rc_is 1)"
-FX=$(new_fixture "${BASE[@]}" 'EXCEPT AG-1 | | 2026-12-31 | frank')
+FX=$(new_fixture "${BASE[@]}" 'EXCEPT AG-1 | | 2026-12-31 | maintainer')
 run "$FX"; check "no-reason-fails" "$(rc_is 1)"
-FX=$(new_fixture "${BASE[@]}" 'EXCEPT AG-1 | why | someday | frank')
+FX=$(new_fixture "${BASE[@]}" 'EXCEPT AG-1 | why | someday | maintainer')
 run "$FX"; check "bad-date-fails" "$(rc_is 1)"
-FX=$(new_fixture "${BASE[@]}" 'EXCEPT AG-1 | why | 2026-10-19 | frank')
+FX=$(new_fixture "${BASE[@]}" 'EXCEPT AG-1 | why | 2026-10-19 | maintainer')
 run "$FX"; check "expired-fails" "$(rc_is 1)"
 has 'expired 2026-10-19'; check "expired-named" $?
-FX=$(new_fixture "${BASE[@]}" 'EXCEPT AG-9 | why | 2026-12-31 | frank')
+FX=$(new_fixture "${BASE[@]}" 'EXCEPT AG-9 | why | 2026-12-31 | maintainer')
 run "$FX"; check "unknown-rule-exception-fails" "$(rc_is 1)"
-FX=$(new_fixture "$OC" 'RULE AG-1 | AGENTS.md | x | hook:core/hooks/real.sh' 'EXCEPT AG-1 | why | 2026-12-31 | frank')
+FX=$(new_fixture "$OC" 'RULE AG-1 | AGENTS.md | x | hook:core/hooks/real.sh' 'EXCEPT AG-1 | why | 2026-12-31 | maintainer')
 run "$FX"; check "exception-on-enforced-rule-fails" "$(rc_is 1)"
+
+echo
+echo "=== (5b) real dates only; PARTIAL rows can be excepted ==="
+FX=$(new_fixture "${BASE[@]}" 'EXCEPT AG-1 | why | 2026-02-30 | maintainer')
+run "$FX"; check "impossible-date-fails" "$(rc_is 1)"
+FX=$(new_fixture "$OC" 'RULE AG-1 | AGENTS.md | x | PARTIAL hook:core/hooks/real.sh ~ half' 'EXCEPT AG-1 | why | 2026-12-31 | maintainer')
+run "$FX"; check "partial-exception-ok" "$(rc_is 0)"
+
+echo
+echo "=== (5c) PARTIAL needs a gap; counts are reported ==="
+FX=$(new_fixture "$OC" 'RULE AG-1 | AGENTS.md | x | PARTIAL hook:core/hooks/real.sh')
+run "$FX"; check "partial-no-gap-fails" "$(rc_is 1)"
+FX=$(new_fixture "$OC" 'RULE AG-1 | AGENTS.md | x | PARTIAL hook:core/hooks/real.sh ~ ')
+run "$FX"; check "partial-empty-gap-fails" "$(rc_is 1)"
+FX=$(new_fixture "$OC" 'RULE AG-1 | AGENTS.md | x | PARTIAL hook:core/hooks/real.sh ~ only half')
+run "$FX"; check "partial-with-gap-passes" "$(rc_is 0)"
+has 'WARN rule-map: 1 PARTIAL'; check "partial-warned" $?
+has '1 PARTIAL, 0 UNENFORCED'; check "partial-counted" $?
+FX=$(new_fixture "$OC" 'RULE AG-1 | AGENTS.md | x | PARTIAL hook:core/hooks/gone.sh ~ half')
+run "$FX"; check "partial-dead-path-fails" "$(rc_is 1)"
+
+echo
+echo "=== (5d) hook enforcers must be registered; stray block lines fail ==="
+FX=$(new_fixture "$OC" 'RULE AG-1 | AGENTS.md | x | hook:core/hooks/real.sh')
+: > "$FX/core/hooks/other.sh"
+printf 'RULE AG-2 | AGENTS.md | y | hook:core/hooks/other.sh\n' >> "$FX/docs/gate-registry.md"
+python3 -I - "$FX/docs/gate-registry.md" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+row = "RULE AG-2 | AGENTS.md | y | hook:core/hooks/other.sh\n"
+s = s.replace(row, "", 1).replace("<!-- rule-map:end -->", row + "<!-- rule-map:end -->")
+open(p, "w").write(s)
+PY
+run "$FX"
+check "unregistered-hook-fails" "$(rc_is 1)"
+has 'not registered in hooks/hooks.json'; check "unregistered-hook-named" $?
+FX=$(new_fixture "$OC" 'this line is prose, not a row')
+run "$FX"; check "stray-line-fails" "$(rc_is 1)"
+has 'unrecognized line'; check "stray-line-named" $?
+FX=$(new_fixture "$OC" '# a comment' '')
+run "$FX"; check "comment-and-blank-allowed" "$(rc_is 0)"
 
 echo
 echo "=== (6) no map block -> exit 2 ==="

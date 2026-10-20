@@ -129,12 +129,12 @@ mkdir -p "$FX/.agent/plans/demo"; printf 'x <fill — prs>\n' > "$FX/.agent/plan
 L "$FX" append demo wave-1 "pending thing" why real.txt pending
 L "$FX" append demo wave-2 "bad thing" why real.txt fail
 L "$FX" append demo wave-2 "ghost evidence" why no/such/file.sh:3 pass
-L "$FX" append demo wave-2 "no evidence" why none pass
+printf "2026-01-01T00:00:00Z\twave-2\thand edited\twhy\tverified\tpass\n" >> "$(TSV "$FX")"
 L "$FX" check demo
 has 'still pending'; check "pending-flagged" $?
 has 'recorded as failed and never superseded'; check "failed-flagged" $?
 has 'evidence pointer not found: no/such/file.sh:3'; check "dead-pointer-flagged" $?
-has 'no evidence pointer'; check "none-evidence-flagged" $?
+has 'evidence is not a valid pointer: verified'; check "invalid-evidence-flagged" $?
 has 'unfilled <fill'; check "record-fill-flagged" $?
 L "$FX" check demo --strict
 check "strict-exits-1" "$(rc_is 1)"
@@ -151,6 +151,50 @@ STDOUT=$(cd "$FX" && bash core/infra/supervisor-goal.sh complete demo 2>"$TMP_RO
 printf '%s\n' "$STDOUT" | tail -1 | jq -e '.status == "complete"' >/dev/null; check "stdout-json-intact" $?
 grep -q '## Attention' "$TMP_ROOT/err.txt"; check "attention-on-stderr" $?
 ! printf '%s' "$STDOUT" | grep -q 'Attention'; check "attention-not-on-stdout" $?
+
+echo
+echo "=== (8b) complete on a clean run prints '- none' (no stub noise, no missing-RECORD item) ==="
+FX=$(build_fixture)
+SHA=$(cd "$FX" && git rev-parse --short HEAD)
+(cd "$FX" && bash core/infra/supervisor-goal.sh init demo 1 >/dev/null && bash core/infra/supervisor-goal.sh advance-wave demo 1 >/dev/null)
+L "$FX" append demo wave-1 "ship it" why "$SHA" pass
+(cd "$FX" && bash core/infra/supervisor-goal.sh complete demo >/dev/null 2>"$TMP_ROOT/err2.txt")
+grep -q '^- none$' "$TMP_ROOT/err2.txt"; check "complete-clean-run-is-none" $?
+! grep -q 'RECORD.md' "$TMP_ROOT/err2.txt"; check "complete-no-record-noise" $?
+[[ -f "$FX/.agent/plans/demo/RECORD.md" ]]; check "complete-still-writes-stub" $?
+# a RECORD.md the skill left with unfilled slots is still reported on complete
+FX=$(build_fixture)
+(cd "$FX" && bash core/infra/supervisor-goal.sh init demo 1 >/dev/null)
+mkdir -p "$FX/.agent/plans/demo"; printf '<fill x>\n' > "$FX/.agent/plans/demo/RECORD.md"
+(cd "$FX" && bash core/infra/supervisor-goal.sh complete demo >/dev/null 2>"$TMP_ROOT/err3.txt")
+grep -q 'unfilled <fill' "$TMP_ROOT/err3.txt"; check "complete-reports-real-unfilled-record" $?
+
+echo
+echo "=== (8c) redaction: PEM span, sk_live_, AIza, JWT, URL credentials ==="
+FX=$(build_fixture)
+PEM=$'-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEAabcdef\n-----END RSA PRIVATE KEY-----'
+# built at runtime so gitleaks does not flag the fixture itself
+SKL="sk_""live_abcdefghijklmnop1234"; JWT="ey""JhbGciOiJIUzI1NiJ9.ey""JzdWIiOiIxMjM0NTY3ODkw.SflKxwRJSMeKKF2QT4fwpM"
+L "$FX" append demo plan "key $PEM tail" "$SKL" real.txt pass
+L "$FX" append demo plan "AIzaSyA-abcdefghijklmnopqrstuvwxyz012345 x" "$JWT" real.txt pass
+L "$FX" append demo plan "clone https://user:s3cr3tpass@example.com/x.git" w real.txt pass
+for needle in MIIEowIBAAKC 'END RSA' sk_live_abcdef AIzaSyA-abcdef ey""JhbGciOiJ ey""JzdWIi s3cr3tpass; do
+  ! grep -qF -- "$needle" "$(TSV "$FX")"; check "redacted-$needle" $?
+done
+grep -q 'tail' "$(TSV "$FX")"; check "text-after-pem-kept" $?
+grep -q 'example.com' "$(TSV "$FX")"; check "url-host-kept" $?
+
+echo
+echo "=== (8d) evidence pointer shapes ==="
+FX=$(build_fixture)
+for ok in "$SHA" real.txt real.txt:3 real.txt:3-9 core/infra/x pr-12 https://example.com/a/b; do
+  L "$FX" append demo plan d w "$ok" pass
+  check "pointer-ok-$ok" "$(rc_is 0)"
+done
+for bad in verified - none done.. 12 abc "a b" ; do
+  L "$FX" append demo plan d w "$bad" pass
+  check "pointer-rejected-$bad" "$(rc_is 2)"
+done
 
 echo
 echo "=== (9) bad slug / missing args ==="

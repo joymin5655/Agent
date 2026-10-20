@@ -65,10 +65,10 @@ function fence_line(line,   s, c, n, rest) {
   rest = substr(s, n + 1)
   if (!fence) {
     if (c == "`" && index(rest, "`") > 0) return 0
-    fchar = c; flen = n; fence = 1; fline = NR
+    fchar = c; flen = n; fence = 1; fline = FNR
     return 1
   }
-  if (c == fchar && n >= flen && rest ~ /^[ \t]*$/) fence = 0
+  if (c == fchar && n >= flen && rest ~ /^[ \t\r]*$/) fence = 0
   return 1
 }
 function last_verify(s,   i, n, tick, c, j, k, pos) {
@@ -146,10 +146,10 @@ if [[ -f "$spec" ]]; then
       rest = substr(s, n + 1)
       if (!fence) {
         if (c == "`" && index(rest, "`") > 0) return 0
-        fchar = c; flen = n; fence = 1; fline = NR
+        fchar = c; flen = n; fence = 1; fline = FNR
         return 1
       }
-      if (c == fchar && n >= flen && rest ~ /^[ \t]*$/) fence = 0
+      if (c == fchar && n >= flen && rest ~ /^[ \t\r]*$/) fence = 0
       return 1
     }
     function boilerplate(t) {

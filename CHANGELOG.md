@@ -10,7 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **Rule enforcement map** (`docs/gate-registry.md` § Rule enforcement map) maps every AGENTS.md
   and `operating-contract.md` rule to its enforcer (hook / test / CI / git hook) or marks it
-  `UNENFORCED`. `core/tests/rule-map.sh` fails on dead enforcer paths, malformed rows, unmapped
+  `PARTIAL <enforcers> ~ <gap>` (covered in part, gap stated) or `UNENFORCED`.
+  `core/tests/rule-map.sh` fails on dead enforcer paths, unregistered `hook:` enforcers, malformed rows, unmapped
   contract bullets and exceptions without reason + expiry + approver (or expired), and warns with
   the UNENFORCED count; `rule-map-test.sh` proves each defect class. Mechanism adapted from
   cursor/plugins pstack `skills/correct` (MIT) and the "build the check, not the rule" retro.

@@ -5,7 +5,7 @@
 # Usage:
 #   supervisor-goal-log.sh append    <slug> <phase> <decision> <why> <evidence> <result>
 #   supervisor-goal-log.sh supersede <slug> <line> <phase> <decision> <why> <evidence> <result>
-#   supervisor-goal-log.sh check     <slug> [--strict]
+#   supervisor-goal-log.sh check     <slug> [--strict] [--pre-record]
 #
 # The log is .agent/plans/<slug>/DECISIONS.tsv (AGENT_PLANS_DIR overrides the plans root), one
 # row per decision, tab-separated, header first:
@@ -13,8 +13,8 @@
 #   ts  phase  decision  why  evidence  result
 #
 #   phase     [A-Za-z0-9._-]+, e.g. `plan`, `wave-2`, `review`; `wave-<N>` ties a row to a wave
-#   evidence  a POINTER, never prose: a commit SHA, a repo path, `path:line`, a PR ref.
-#             Prose with spaces is rejected — the reader must be able to go and look.
+#   evidence  a POINTER, never prose: hex commit SHA (>=7), repo path with a `/` or an extension
+#             (optional `:line`), `pr-<N>`, or an https URL. Bare words are rejected.
 #   result    pass | fail | pending | free text
 #
 # Rules:
@@ -26,7 +26,8 @@
 #     with [REDACTED] before anything is written.
 #   * `check` cross-checks the log against the run record (goal state in SQLite, RECORD.md) and
 #     prints "## Attention". Exit 0 always; `--strict` exits 1 when anything needs attention.
-#     supervisor-goal.sh `complete` runs it (to stderr) before declaring a run complete.
+#     supervisor-goal.sh `complete` runs it (to stderr) with --pre-record, which only skips the
+#     "RECORD.md missing" item because `complete` writes that stub itself right after.
 #
 # Idea credit: cursor/plugins pstack show-me-your-work (MIT) — a decision log whose evidence is a
 # pointer and whose corrections supersede instead of rewrite. Rewritten here.
@@ -43,20 +44,29 @@ if [[ $# -lt 2 ]]; then
 fi
 
 exec python3 -I - "$@" <<'PY'
-import datetime, os, re, sqlite3, subprocess, sys
+import datetime, os, pathlib, re, sqlite3, subprocess, sys
 
 HEADER = ["ts", "phase", "decision", "why", "evidence", "result"]
 SLUG_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 PHASE_RE = re.compile(r"^[A-Za-z0-9._-]+$")
-POINTER_RE = re.compile(r"^[A-Za-z0-9._/@:#+~=,%-]{1,200}$")
 SHA_RE = re.compile(r"^[0-9a-f]{7,40}$")
+PR_RE = re.compile(r"^pr-[0-9]+$")
+URL_RE = re.compile(r"^https?://[^\s/]+[^\s]*$")
+# a repo path: has a directory separator or a file extension; optional :line or :line-line
+PATH_RE = re.compile(r"^(?!-)[A-Za-z0-9._/@+~%-]+(:[0-9]+(-[0-9]+)?)?$")
+EXT_RE = re.compile(r"\.[A-Za-z0-9]{1,8}$")
 SECRETS = [
+    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----"),
+    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*"),
+    re.compile(r"\b(?:sk|pk|rk)[-_](?:live|test|ant|proj)?[-_]?[A-Za-z0-9_-]{16,}"),
+    re.compile(r"\bAIza[0-9A-Za-z_-]{30,}"),
+    re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*"),
+    re.compile(r"(?<=://)[^\s/:@]+:[^\s/@]+(?=@)"),
     re.compile(r"sk-[A-Za-z0-9_-]{16,}"),
     re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}"),
     re.compile(r"github_pat_[A-Za-z0-9_]{20,}"),
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
     re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}"),
-    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
     re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{16,}"),
     re.compile(r"(?i)\b(api[_-]?key|token|secret|passwd|password)\b\s*[=:]\s*\S+"),
 ]
@@ -107,11 +117,23 @@ def superseded_set(rows):
     return out
 
 
+def is_pointer(ev):
+    if len(ev) > 200:
+        return False
+    if SHA_RE.match(ev) or PR_RE.match(ev) or URL_RE.match(ev):
+        return True
+    if PATH_RE.match(ev):
+        target = ev.split(":", 1)[0]
+        return "/" in target or bool(EXT_RE.search(target))
+    return False
+
+
 def append_row(slug, phase, decision, why, evidence, result):
     if not PHASE_RE.match(phase):
         die("phase must match [A-Za-z0-9._-]+: " + phase)
-    if not POINTER_RE.match(evidence):
-        die("evidence must be a pointer (commit SHA, path, path:line), not prose: " + evidence[:60])
+    if not is_pointer(evidence):
+        die("evidence must be a pointer (commit SHA >=7 hex, repo path[:line], pr-N or https URL), "
+            "not prose: " + evidence[:60])
     if not decision.strip():
         die("decision must not be empty")
     path = log_path(slug)
@@ -129,22 +151,22 @@ def append_row(slug, phase, decision, why, evidence, result):
 
 def pointer_state(evidence):
     ev = evidence.lstrip("'")
-    if ev in ("", "none", "n/a"):
-        return "none"
+    if not is_pointer(ev):
+        return "invalid"
     if SHA_RE.match(ev):
         r = subprocess.run(["git", "-C", REPO_ROOT, "cat-file", "-e", ev + "^{commit}"],
                            capture_output=True)
         return "ok" if r.returncode == 0 else "missing"
-    target = re.split(r"[:#]", ev, maxsplit=1)[0]
-    if "/" in target or "." in target:
-        for base in (REPO_ROOT, PLANS_ROOT):
-            if os.path.exists(os.path.join(base, target)):
-                return "ok"
-        return "missing"
-    return "ok"  # opaque ref (e.g. pr-123): nothing local to resolve
+    if PR_RE.match(ev) or URL_RE.match(ev):
+        return "ok"  # remote reference: nothing local to resolve
+    target = ev.split(":", 1)[0]
+    for base in (REPO_ROOT, PLANS_ROOT):
+        if os.path.exists(os.path.join(base, target)):
+            return "ok"
+    return "missing"
 
 
-def check(slug, strict):
+def check(slug, strict, pre_record):
     path = log_path(slug)
     items = []
     rows = []
@@ -170,11 +192,11 @@ def check(slug, strict):
             label = f"L{n} [{phase}] {decision[:60]}"
             if res in ("", "pending"):
                 items.append(f"{label}: still pending")
-            elif res.startswith("fail"):
+            elif res in ("fail", "failed"):
                 items.append(f"{label}: recorded as failed and never superseded")
             st = pointer_state(evidence)
-            if st == "none":
-                items.append(f"{label}: no evidence pointer")
+            if st == "invalid":
+                items.append(f"{label}: evidence is not a valid pointer: {evidence.lstrip(chr(39))[:60]}")
             elif st == "missing":
                 items.append(f"{label}: evidence pointer not found: {evidence.lstrip(chr(39))}")
         rows = effective
@@ -184,7 +206,7 @@ def check(slug, strict):
     open_agents = []
     if os.path.isfile(DB_FILE):
         try:
-            con = sqlite3.connect("file:" + DB_FILE + "?mode=ro", uri=True)
+            con = sqlite3.connect(pathlib.Path(DB_FILE).as_uri() + "?mode=ro", uri=True)
             r = con.execute("SELECT waves_completed FROM supervisor_goals WHERE plan_slug = ?",
                             (slug,)).fetchone()
             if r:
@@ -194,11 +216,12 @@ def check(slug, strict):
                 open_agents = con.execute(
                     "SELECT agent_id, status FROM supervisor_agents WHERE plan_slug = ? AND status != 'done'",
                     (slug,)).fetchall()
-            except sqlite3.Error:
-                pass
+            except sqlite3.OperationalError as exc:
+                if "no such table" not in str(exc):  # an older DB without agents is fine
+                    items.append(f"goal state unreadable (agents): {exc}")
             con.close()
-        except sqlite3.Error:
-            pass
+        except (sqlite3.Error, ValueError) as exc:
+            items.append(f"goal state unreadable: {exc}")
     logged_waves = set()
     for _, cells in rows:
         m = re.match(r"^wave-(\d+)$", cells[1])
@@ -211,7 +234,8 @@ def check(slug, strict):
         items.append(f"agent {agent} is still {status} in the goal state")
     rec = os.path.join(PLANS_ROOT, slug, "RECORD.md") if SLUG_RE.match(slug) else ""
     if rec and not os.path.isfile(rec):
-        items.append("RECORD.md missing: no execution record to cross-check against")
+        if not pre_record:
+            items.append("RECORD.md missing: no execution record to cross-check against")
     elif rec:
         with open(rec, encoding="utf-8", errors="replace") as fh:
             if "<fill" in fh.read():
@@ -250,10 +274,11 @@ elif cmd == "supersede":
     append_row(slug, phase, decision, why, evidence, f"supersedes:L{line} {result}".strip())
 elif cmd == "check":
     strict = "--strict" in args
-    pos = [a for a in args if a != "--strict"]
+    pre_record = "--pre-record" in args
+    pos = [a for a in args if a not in ("--strict", "--pre-record")]
     if len(pos) != 1:
-        die("usage: check <slug> [--strict]")
-    check(pos[0], strict)
+        die("usage: check <slug> [--strict] [--pre-record]")
+    check(pos[0], strict, pre_record)
 else:
     die("unknown command: " + cmd)
 PY

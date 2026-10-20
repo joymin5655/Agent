@@ -273,6 +273,18 @@ FX=$(new_fixture)
 printf '\n```\n- `ghost-term` x\n```\n' >> "$FX/spec.md"
 run_lint "$FX"
 check "spec-fence-then-text-ok" "$(rc_is 0)"
+# spec-side unterminated fence reports the SPEC file line (not a line count across both files)
+FX=$(new_fixture)
+WANT=$(( $(wc -l < "$FX/spec.md") + 2 ))
+printf '\n```\n- never closed\n' >> "$FX/spec.md"
+run_lint "$FX"
+check "spec-unterminated-fails" "$(rc_is 1)"
+out_has "spec.md:$WANT: unterminated code fence"; check "spec-unterminated-spec-line" $?
+# a CRLF closing fence still closes
+FX=$(new_fixture)
+printf '\n```\r\n- fenced step no verify\r\n```\r\n' >> "$FX/plan.md"
+run_lint "$FX"
+check "crlf-fence-closes" "$(rc_is 0)"
 # a fenced example of an empty verify must not trip the empty-verify check
 FX=$(new_fixture)
 printf '\n```\n- Example -> verify:\n```\n' >> "$FX/plan.md"

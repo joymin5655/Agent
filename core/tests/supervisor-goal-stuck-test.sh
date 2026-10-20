@@ -96,6 +96,15 @@ FX=$(build_fixture)
 g "$FX" $T0 agent-spawn demo 'bad id' 1 60 >/dev/null; check "bad-id-rejected" "2" "$(cd "$FX" && bash core/infra/supervisor-goal.sh agent-spawn demo 'bad id' 1 60 >/dev/null 2>&1; echo $?)"
 check "zero-budget-rejected" "2" "$(cd "$FX" && bash core/infra/supervisor-goal.sh agent-spawn demo a 1 0 >/dev/null 2>&1; echo $?)"
 check "traversal-scope-rejected" "2" "$(cd "$FX" && bash core/infra/supervisor-goal.sh agent-spawn demo a 1 60 ../x >/dev/null 2>&1; echo $?)"
+check "absolute-scope-rejected" "2" "$(cd "$FX" && bash core/infra/supervisor-goal.sh agent-spawn demo a 1 60 /etc >/dev/null 2>&1; echo $?)"
+check "state-dir-scope-rejected" "2" "$(cd "$FX" && bash core/infra/supervisor-goal.sh agent-spawn demo a 1 60 .agent/plans >/dev/null 2>&1; echo $?)"
+check "bad-clock-rejected" "2" "$(cd "$FX" && AGENT_NOW_MS=abc bash core/infra/supervisor-goal.sh agent-spawn demo a 1 60 >/dev/null 2>&1; echo $?)"
+g "$FX" $T0 agent-spawn demo d1 1 60 >/dev/null
+g "$FX" $T0 agent-done demo d1 >/dev/null
+check "wait-after-done-refused" "3" "$(cd "$FX" && bash core/infra/supervisor-goal.sh agent-wait demo d1 >/dev/null 2>&1; echo $?)"
+check "resume-after-done-refused" "3" "$(cd "$FX" && bash core/infra/supervisor-goal.sh agent-resume demo d1 >/dev/null 2>&1; echo $?)"
+g "$FX" $T0 clear demo >/dev/null
+check "clear-removes-agent-rows" "0" "$(sqlite3 "$FX/.agent/locks/goal-state.db" 'SELECT count(*) FROM supervisor_agents')"
 check "effect-unknown-agent" "3" "$(cd "$FX" && bash core/infra/supervisor-goal.sh agent-effect demo ghost >/dev/null 2>&1; echo $?)"
 
 echo
