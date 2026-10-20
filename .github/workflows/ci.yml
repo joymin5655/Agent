@@ -119,7 +119,7 @@ jobs:
       - name: Verify the reference judge (green-by-construction detection + leak-safety)
         run: bash core/tests/reference-judge-test.sh
       - name: Skill routing eval (lint + lexical routing floors, model-free)
-        run: python3 evals/routing/run_routing_eval.py --min-rank1 65 --min-top3 70 --max-negative-violations 4
+        run: python3 evals/routing/run_routing_eval.py --floors evals/routing/floors.json
 
   verify:
     name: verify-all (shard ${{ matrix.shard }}/4 — unified runner, every core/tests check, no silent omission)

@@ -297,7 +297,7 @@ flowchart TB
     subgraph CORE["Layer 1 — core/ (단일 진실 원천)"]
         H["hooks/ — 배선된 스크립트 27개: 시크릿 스캔 · 뮤텍스 ·<br/>spec-gate · tdd-guard · supervisor …"]
         I["infra/ — 세션 · goal 모드 ·<br/>감사 · auto-ship"]
-        T["tests/ — 자가검증 스크립트 100개"]
+        T["tests/ — 자가검증 스크립트 108개"]
     end
     R["rules/ — 정책<br/>원문(SOT)"]
     PLUG[".claude-plugin/ + hooks/hooks.json<br/>플러그인 배포"]
@@ -462,7 +462,7 @@ Agent/
 │   ├── hooks/          #   이식 가능한 훅 스크립트 31개 (배선 27 + 공유 모듈)
 │   ├── infra/          #   세션 조정 · goal 모드 · 감사 · auto-ship
 │   ├── git-hooks/      #   pre-commit · pre-push
-│   └── tests/          #   테스트 스크립트 100개 (verify-all.sh가 전부 실행)
+│   └── tests/          #   테스트 스크립트 108개 (verify-all.sh가 전부 실행)
 │
 ├── adapters/           # claude-code (얇음) · codex · antigravity
 ├── rules/              # 범용 정책 문서
