@@ -107,7 +107,7 @@ printf '%s\n' '{"cases":[{"skill":"deploy","positive":["zzqx qqzz"]}]}' > "$TMP/
 run --skills-dir "$TMP/ko" --cases "$TMP/zero.json" --json
 printf '%s' "$OUT" | python3 -c 'import json,sys; d=json.load(sys.stdin); m=d["positive_misses"]; assert m and m[0]["rank"]==2 and d["rank1_pct"]==0'; check "zero-overlap-ranks-last" $?
 run --json
-printf '%s' "$OUT" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["skills_ranked"]==d["skills_linted"]-int(sys.argv[1])' "$(grep -lx 'disable-model-invocation: true' "$REPO_ROOT"/skills/*/SKILL.md | wc -l | tr -d ' ')"; check "harness-help-and-disabled-not-ranked" $?
+printf '%s' "$OUT" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["skills_ranked"]==d["skills_linted"]-int(sys.argv[1])' "$(grep -lx 'disable-model-invocation: true' "$REPO_ROOT"/skills/*/SKILL.md "$REPO_ROOT"/extras/skills/*/SKILL.md | wc -l | tr -d ' ')"; check "harness-help-and-disabled-not-ranked" $?
 ! grep -q '"skill": "harness-help"' "$REPO_ROOT/evals/routing/cases.json"; check "harness-help-has-no-cases" $?
 
 echo "=== (d) identical descriptions are listed as a near-collision (report-only) ==="

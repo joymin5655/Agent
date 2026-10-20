@@ -39,14 +39,14 @@ PY
 
 echo
 echo "=== (2) SKILL.md frontmatter: valid YAML, user-invoked-only flag ==="
-OUT="$(python3 - "$REPO_ROOT/skills" <<'PY'
+OUT="$(python3 - "$REPO_ROOT/skills" "$REPO_ROOT/extras/skills" <<'PY'
 import pathlib, re, sys
 try:
     import yaml
 except ImportError:
     print("NOYAML"); sys.exit()
 bad = []
-for f in sorted(pathlib.Path(sys.argv[1]).glob("*/SKILL.md")):
+for f in sorted(p for d in sys.argv[1:] for p in pathlib.Path(d).glob("*/SKILL.md")):
     m = re.match(r"---\n(.*?)\n---\n", f.read_text(encoding="utf-8"), re.S)
     if not m:
         bad.append(f"{f.parent.name}: no frontmatter"); continue
@@ -66,7 +66,7 @@ else
   [[ "$OUT" == OK ]] || echo "    $OUT"
 fi
 for s in worker-setup reorg-sync; do
-  grep -qE '^disable-model-invocation: true$' "$REPO_ROOT/skills/$s/SKILL.md"; check "$s-user-invoked-only" $?
+  grep -qE '^disable-model-invocation: true$' "$REPO_ROOT/extras/skills/$s/SKILL.md"; check "$s-user-invoked-only" $?
 done
 for s in wrap council-review supervise; do
   ! grep -q '^disable-model-invocation:' "$REPO_ROOT/skills/$s/SKILL.md"; check "$s-stays-model-invocable" $?

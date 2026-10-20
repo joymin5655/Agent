@@ -60,8 +60,31 @@ Plugin agents and skills are namespaced to prevent collisions. The current
 specialists are:
 
 - `agent-harness:code-reviewer`;
-- `agent-harness:persona-review-orchestrator`;
-- `agent-harness:security-reviewer`.
+- `agent-harness:plan-checker`;
+- `agent-harness:security-reviewer`;
+- `agent-harness-extras:persona-review-orchestrator` (optional second plugin, below).
+
+### Two plugins, one marketplace
+
+To keep the always-on context of the core plugin small (every installed skill and
+agent description is loaded into every session), the marketplace lists two plugins:
+
+| Plugin | Source | Ships |
+|---|---|---|
+| `agent-harness` | `./` | spec · supervise · verify-completion · council-review · wrap · harness-help · project-init, the code-reviewer / security-reviewer / plan-checker agents, all hooks, `core/` |
+| `agent-harness-extras` | `./extras` | brain-ingest · code-tour · harness-audit · harness-loop · loop · manager-audit · persona-review · reorg-sync · worker-setup, the persona-review-orchestrator agent, `extras/scripts/harness-root.sh`, `extras/core/infra/reorg-sync.sh` |
+
+Install the extras with `/plugin install agent-harness-extras@agent`; its skills are
+invoked as `/agent-harness-extras:<name>` (use that form for `loop`, which the built-in
+`/loop` shadows). A plugin is cached as its own directory, so extras skills cannot read
+the core plugin's files by relative path: the ones that need core scripts
+(`manager-audit`, `worker-setup`) resolve the core root through
+`${CLAUDE_PLUGIN_ROOT}/scripts/harness-root.sh` (order: `$AGENT_HARNESS_ROOT`, the current
+checkout, the parent of `extras/`, the sibling `agent-harness` cache entry).
+`loop`, `harness-loop`, `harness-audit` and `brain-ingest` drive a harness checkout
+(`core/tests`, `core/infra/loop-run.sh`, `core/brain`) and are run from its root, as before.
+Codex links `skills/*` and `extras/skills/*` into `~/.agents/skills`
+(`setup.sh --codex`, checked by `--doctor`).
 
 The plugin does not ship a root `.mcp.json`. Therefore marketplace installation
 does not register Agent's optional brain MCP server. The alternative
@@ -229,11 +252,13 @@ These are current-state findings, not future design:
    `council-threshold.sh`, or `council-escalation-gate.py` by bare relative
    path. **Still open**: the same shape for every OTHER `core/` script a skill
    invokes — 7 SKILL.md files as of 2026-08-21 (`harness-audit`,
-   `harness-loop`, `loop`, `manager-audit`, `spec`, `supervise`, `wrap`;
+   `harness-loop`, `loop`, `manager-audit`, `spec`, `supervise`, `wrap`; since
+   2026-10-20 `manager-audit` resolves through `harness-root.sh` and the first four
+   live in `extras/skills/`;
    `wrap` still appears for its other helper calls, e.g. the gitleaks fire
    drill), mostly `bash core/tests/…` and `bash core/infra/…` helper calls.
    Reproduce the current list with:
-   `grep -rlE '(^|[^"$/A-Za-z0-9_])bash core/(infra|hooks|tests)/' skills/*/SKILL.md`.
+   `grep -rlE '(^|[^"$/A-Za-z0-9_])bash core/(infra|hooks|tests)/' skills/*/SKILL.md extras/skills/*/SKILL.md`.
    Verify per-consumer, not by these fixes.
 2. The Claude adapter silently passes when a named core hook is missing. This
    favors session availability but means installation health must be verified

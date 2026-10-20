@@ -76,6 +76,20 @@ try:
     if not m.get("plugins"): fail.append("marketplace.json has no plugins[]")
     if m.get("plugins", [{}])[0].get("source") != "./":
         fail.append("marketplace.json plugin source must be './'")
+    # the optional extras plugin (rarely used skills, split out of core) must be
+    # declared in the marketplace with its own manifest when it ships in this tree
+    if pathlib.Path("extras").is_dir():
+        ex = [e for e in m.get("plugins", []) if e.get("name") == "agent-harness-extras"]
+        if not ex or ex[0].get("source") != "./extras":
+            fail.append("marketplace.json must list agent-harness-extras with source './extras'")
+        try:
+            xp = json.load(open("extras/.claude-plugin/plugin.json"))
+            for k in ("name", "version", "description", "license"):
+                if not xp.get(k): fail.append(f"extras plugin.json missing {k}")
+            if xp.get("name") != "agent-harness-extras":
+                fail.append("extras plugin.json name must be agent-harness-extras")
+        except Exception as e:
+            fail.append(f"extras plugin.json unreadable: {e}")
 except Exception as e:
     fail.append(f"marketplace.json unreadable: {e}")
 
@@ -94,8 +108,18 @@ try:
 except Exception as e:
     fail.append(f"hooks.json unreadable: {e}")
 
+AGENT_DIRS = [pathlib.Path("agents")] + ([pathlib.Path("extras/agents")] if pathlib.Path("extras/agents").is_dir() else [])
+SKILL_DIRS = [pathlib.Path("skills")] + ([pathlib.Path("extras/skills")] if pathlib.Path("extras/skills").is_dir() else [])
+def agent_mds():
+    return sorted(a for d in AGENT_DIRS for a in d.glob("*.md"))
+def agent_md(aid):
+    for d in AGENT_DIRS:
+        if (d / f"{aid}.md").exists():
+            return d / f"{aid}.md"
+    return pathlib.Path("agents") / f"{aid}.md"
+
 # 3) every agents/*.md carries a name: frontmatter (real, discoverable agents)
-for a in pathlib.Path("agents").glob("*.md"):
+for a in agent_mds():
     head = a.read_text(encoding="utf-8")[:400]
     if "name:" not in head:
         fail.append(f"agent without frontmatter: {a}")
@@ -106,19 +130,19 @@ try:
     reg = json.load(open("agents/master-registry.json"))
     for entry in reg.get("agents", []):
         aid, rmodel = entry.get("id"), entry.get("model")
-        md = pathlib.Path("agents") / f"{aid}.md"
+        md = agent_md(aid)
         if not md.exists():
             fail.append(f"registry id '{aid}' has no agents/{aid}.md"); continue
         parts = md.read_text(encoding="utf-8").split("---", 2)
         mm = re.search(r"(?m)^model:\s*(\S+)", parts[1]) if len(parts) >= 3 else None
         mdmodel = mm.group(1) if mm else None
         if rmodel != mdmodel:
-            fail.append(f"model drift: registry '{aid}'={rmodel} but agents/{aid}.md={mdmodel}")
+            fail.append(f"model drift: registry '{aid}'={rmodel} but {md}={mdmodel}")
         rentry_effort = entry.get("effort")
         em = re.search(r"(?m)^effort:\s*(\S+)", parts[1]) if len(parts) >= 3 else None
         mdeffort = em.group(1) if em else None
         if rentry_effort is not None and rentry_effort != mdeffort:
-            fail.append(f"effort drift: registry '{aid}'={rentry_effort} but agents/{aid}.md={mdeffort}")
+            fail.append(f"effort drift: registry '{aid}'={rentry_effort} but {md}={mdeffort}")
 except Exception as e:
     fail.append(f"master-registry.json unreadable: {e}")
 
@@ -126,7 +150,7 @@ except Exception as e:
 #    (W2-1: effort is the verification-budget axis alongside model — spending
 #    your effort blog's principle, made mechanically checkable).
 VALID_EFFORT = {"low", "medium", "high", "max"}
-for a in sorted(pathlib.Path("agents").glob("*.md")):
+for a in agent_mds():
     parts = a.read_text(encoding="utf-8").split("---", 2)
     if len(parts) < 3:
         continue  # no frontmatter -> already failed check 3
@@ -143,7 +167,7 @@ for a in sorted(pathlib.Path("agents").glob("*.md")):
 #    'reviewer', 'verifier' or 'checker'. Read-only = a subset of Read/Grep/Glob;
 #    a MISSING tools: line also fails (absence means all tools, write included).
 READ_ONLY = {"Read", "Grep", "Glob"}
-for a in sorted(pathlib.Path("agents").glob("*.md")):
+for a in agent_mds():
     parts = a.read_text(encoding="utf-8").split("---", 2)
     if len(parts) < 3:
         continue  # no frontmatter -> already failed check 3
@@ -184,9 +208,8 @@ if sup.is_dir():
 #    The "NOT " token is the machine-checkable contract: a description that
 #    only says when to fire routes worse than one that also says when not to.
 #    Scoped like check 6: fixtures without skills/ are exempt.
-skills_dir = pathlib.Path("skills")
-if skills_dir.is_dir():
-    for sk in sorted(skills_dir.glob("*/SKILL.md")):
+if pathlib.Path("skills").is_dir():
+    for sk in sorted(sk for d in SKILL_DIRS for sk in d.glob("*/SKILL.md")):
         parts = sk.read_text(encoding="utf-8").split("---", 2)
         if len(parts) < 3:
             fail.append(f"negative-trigger: {sk} has no frontmatter")

@@ -147,6 +147,7 @@ cp "$REPO_ROOT/.claude-plugin/marketplace.json" "$RFX/.claude-plugin/marketplace
 cp "$REPO_ROOT/hooks/hooks.json" "$RFX/hooks/hooks.json"
 cp -R "$REPO_ROOT/core/hooks/." "$RFX/core/hooks/"
 cp -R "$REPO_ROOT/agents/." "$RFX/agents/"
+mkdir -p "$RFX/extras" && cp -R "$REPO_ROOT/extras/." "$RFX/extras/"
 python3 - "$RFX/.claude-plugin/plugin.json" <<'PY'
 import json, sys
 p = json.load(open(sys.argv[1]))

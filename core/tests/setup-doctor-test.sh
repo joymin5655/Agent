@@ -401,7 +401,7 @@ OUT_K5="$(CODEX_CONFIG="$CXS_FIX/config.toml" CODEX_SKILLS_DIR="$CXS_FIX/skills"
 [[ "$OUT_K5" == *"[WARN"*"codex skills — "*"harness skills not linked"*"run setup.sh --codex"* ]]
 check "codex-skills-unlinked-warn" $?
 mkdir -p "$CXS_FIX/skills"
-for sk in "$FW_ROOT"/skills/*/; do ln -sfn "${sk%/}" "$CXS_FIX/skills/$(basename "$sk")"; done
+for sk in "$FW_ROOT"/skills/*/ "$FW_ROOT"/extras/skills/*/; do ln -sfn "${sk%/}" "$CXS_FIX/skills/$(basename "$sk")"; done
 OUT_K5="$(CODEX_CONFIG="$CXS_FIX/config.toml" CODEX_SKILLS_DIR="$CXS_FIX/skills" bash "$SETUP" --doctor 2>&1)"
 [[ "$OUT_K5" == *"[PASS"*"codex skills — all "*"harness skills linked"* ]]
 check "codex-skills-linked-pass" $?

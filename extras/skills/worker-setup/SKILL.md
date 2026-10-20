@@ -20,8 +20,8 @@ gets a lane from absent to healthy.
 ## Step 0 — resolve the harness root
 
 ```bash
-HR="${CLAUDE_PLUGIN_ROOT:-$PWD}"
-test -f "$HR/core/infra/backends.json" || echo "worker-setup: backends registry not found at $HR — plugin users: reinstall the plugin; repo users: run this from the repo root" >&2
+HR="$(bash "${CLAUDE_PLUGIN_ROOT:-$PWD/extras}/scripts/harness-root.sh")" || echo "worker-setup: agent-harness core (backends registry) not found — install agent-harness@agent, or set AGENT_HARNESS_ROOT to a harness checkout" >&2
+test -f "$HR/core/infra/backends.json" || echo "worker-setup: backends registry not found at ${HR:-<unresolved>}" >&2
 ```
 
 Stop here with that guidance if the registry does not resolve. Every command

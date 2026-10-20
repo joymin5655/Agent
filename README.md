@@ -43,6 +43,8 @@ not a boundary; remaining enforcement work is the V series in
 ```
 /plugin marketplace add joymin5655/Agent
 /plugin install agent-harness@agent
+# optional: the rarely used skills (audits, loops, persona panels, ...) live in a second plugin
+/plugin install agent-harness-extras@agent
 ```
 
 (Claude Code shown; Codex CLI / Antigravity CLI use the [shell install](#quick-start).
@@ -162,7 +164,7 @@ New to this space? These ten terms are all you need to read the rest of this pag
 | **hook** | A small script your AI runtime runs automatically before/after an action. It answers **allow**, **ask**, or **deny**. 26 scripts wired via `hooks/hooks.json` (31 incl. shared modules) live in [`core/hooks/`](core/hooks/). |
 | **adapter** | A translator from a runtime hook or controlled wrapper event to the harness's canonical JSON. There are 3 runtime adapters (claude-code, codex, antigravity) in [`adapters/`](adapters/). |
 | **agent** | A specialist your AI delegates to — e.g. a security reviewer that only reviews and never writes. 4 ship here ([`agents/`](agents/)). |
-| **skill** | A reusable step-by-step workflow the AI follows, e.g. the commit + PR flow. 15 ship here ([`skills/`](skills/)). |
+| **skill** | A reusable step-by-step workflow the AI follows, e.g. the commit + PR flow. 6 ship in the core plugin ([`skills/`](skills/)) and 9 more in the optional extras plugin ([`extras/skills/`](extras/skills/)). |
 | **gate** | A hook decision point (deny / ask / block). Every gate is registered with the model weakness it assumes — [`docs/gate-registry.md`](docs/gate-registry.md). |
 | **wave** | One batch of work inside a `/supervise` plan — dispatched, executed, and audited before the next wave starts. |
 | **verdict** | The shared CONFIRMED / REFUTED result schema every verifier emits — [`docs/scoring-convention.md`](docs/scoring-convention.md). |
@@ -254,10 +256,15 @@ Then:
    `/agent-harness:project-init` to generate runtime instructions, hook policy,
    secret-scan config, and Git-hook wiring.
 4. *(Optional)* In a repo that already runs another hook-heavy plugin, disable agent-harness there via `/plugin` — agents stay namespaced as `agent-harness:*`, so there's no collision either way.
-5. *(Optional)* Want the cross-vendor worker lanes (codex/antigravity second opinions)? Run `/agent-harness:worker-setup` for a guided install → auth → verify walkthrough with an upfront cost briefing.
+5. *(Optional)* Want the cross-vendor worker lanes (codex/antigravity second opinions)? Install the extras plugin (`/plugin install agent-harness-extras@agent`) and run `/agent-harness-extras:worker-setup` for a guided install → auth → verify walkthrough with an upfront cost briefing.
 
-The plugin bundles: **4 agents**, **15 skills**, the hook set, and the
-`/agent-harness:project-init` command.
+The core plugin bundles: **3 agents**, **6 skills**, the hook set, and the
+`/agent-harness:project-init` command. **`agent-harness-extras`** (optional, same marketplace)
+adds **1 agent** and **9 rarely used skills** — see the [Catalog](#catalog) below.
+Existing users who relied on `loop`, `harness-loop`, `harness-audit`, `manager-audit`,
+`persona-review`, `reorg-sync`, `worker-setup`, `code-tour` or `brain-ingest`: run
+`/plugin install agent-harness-extras@agent` once (skills then appear as
+`/agent-harness-extras:<name>`).
 See the
 [plugin installation lifecycle](docs/claude-plugin-install-lifecycle.md) for
 the cache, activation, event flow, project-init side effects, and current gaps.
@@ -284,7 +291,7 @@ skipped; when a file would be replaced, setup asks interactively. Set `AGENT_SET
 for non-interactive runs. There is no `--force` flag.
 
 Cross-vendor worker-lane onboarding (install → auth → verify, with a cost
-briefing) is a guided walkthrough, not a bare flag: run `/agent-harness:worker-setup`
+briefing) is a guided walkthrough, not a bare flag: run `/agent-harness-extras:worker-setup`
 (plugin) or the `worker-setup` skill (shell install) rather than reaching for
 `--antigravity` directly.
 
@@ -444,23 +451,28 @@ Manager-audit findings never self-apply — they land in a `PROPOSALS.md` for yo
 | `code-reviewer` | sonnet | read-only | Reviews diffs; defers security to security-reviewer |
 | `security-reviewer` | opus | read-only | OWASP Top 10, secrets, auth, injection — owns security findings |
 | `plan-checker` | sonnet | read-only | Checks a plan against its spec before approval; emits one verdict object |
-| `persona-review-orchestrator` | sonnet | read-only + dispatch | Runs a citizen/user persona panel over UX or copy; judges user experience, never code |
+| `persona-review-orchestrator` (extras plugin, `extras/agents/`) | sonnet | read-only + dispatch | Runs a citizen/user persona panel over UX or copy; judges user experience, never code |
 
 Model is cost-tiered per work class ([`docs/model-routing.md`](docs/model-routing.md) is the cross-runtime policy): judgment — planning, orchestration decisions, result synthesis — inherits the session's top model (no `model:` pin); the model pins above are kept in sync with `agents/master-registry.json` by a CI drift guard (the only machine-enforced part); implementation dispatches at the workhorse tier and mechanical work at the low tier via an explicit per-call `model` override — documented conventions. Read-only agents are enforced read-only (no `Write`/`Edit`/`Bash`). Specialize any of them per project with `.agent/` files — see [`docs/specializing-agents.md`](docs/specializing-agents.md).
 
-| Skills (`skills/`) | Trigger |
+| Core skills (`skills/`) | Trigger |
 |---|---|
 | `spec` | Upstream planning discipline — idea → reviewable spec before risky work (paired with the spec-gate hook) |
 | `supervise` | Delegate a plan to autonomous execution |
 | `verify-completion` | Independently re-verify a completion claim (deterministic checks + refute-by-default judge) |
 | `wrap` | Commit + PR automation with safeguards |
+| `harness-help` | Router — which skill fits the situation, and the main flow through them |
+
+| Extras plugin skills (`extras/skills/`, optional `agent-harness-extras`) | Trigger |
+|---|---|
 | `brain-ingest` | Distill raw session captures into curated brain notes behind a deterministic lint gate |
 | `harness-audit` | Read-only health check of the harness itself (one `verify-all.sh` dry-run, interpreted) |
 | `manager-audit` | Meta-audit of a `/supervise` run — restatement quality, model-routing waste, relative token spend, role compliance; findings become patch proposals for user approval |
 | `persona-review` | Seat a panel of distribution-grounded user personas in front of UX/copy and report how ordinary users react |
 | `reorg-sync` | After a tree move, sweep orphaned absolute-path references (shebangs, worktree gitfiles, crontab, doc anchors, memory keys); dry-run report first, `--apply` after confirmation |
 | `code-tour` | Write a human reading path through a codebase or a finished build — stack, file roles, one traced flow, safe experiments, run steps, glossary; every path checked, source untouched |
-| `harness-help` | Router — which skill fits the situation, and the main flow through them |
+| `harness-loop` · `loop` | Bounded-attempt improvement loops — generic (`loop`) and specialised to the harness's own reviewer prompts (`harness-loop`); use `/agent-harness-extras:loop` (the built-in `/loop` is a different command) |
+| `worker-setup` | Install → auth → verify onboarding for the cross-vendor worker lanes, with a cost briefing first |
 
 | Hooks — 26 wired via `hooks/hooks.json` → `core/hooks/` (31 scripts incl. shared modules) | Event |
 |---|---|
@@ -487,8 +499,9 @@ Agent/
 ├── AGENTS.md           # operating rules for AIs working on this repo
 ├── CHANGELOG.md
 │
-├── agents/             # 4 agent definitions + master-registry.json
-├── skills/             # 15 skills (spec · supervise · verify-completion · wrap · brain-ingest · harness-audit · manager-audit · persona-review · harness-help · loop · harness-loop · council-review · worker-setup · reorg-sync · code-tour)
+├── agents/             # 3 agent definitions + master-registry.json (plan-checker · code-reviewer · security-reviewer)
+├── skills/             # 6 core skills (spec · supervise · verify-completion · wrap · harness-help · council-review)
+├── extras/             # optional second plugin `agent-harness-extras`: .claude-plugin/plugin.json, skills/ (9: brain-ingest · harness-audit · manager-audit · persona-review · reorg-sync · code-tour · loop · harness-loop · worker-setup), agents/ (persona-review-orchestrator), scripts/harness-root.sh, core/infra/reorg-sync.sh
 ├── commands/           # 1 namespaced project-init command
 ├── hooks/              # plugin hook wiring (hooks.json)
 │

@@ -4,7 +4,7 @@
 # §5 (docs/internal/harness-improvement-plan.md) describes a loop that iterates: pick an
 # idea, edit ONE target, commit, grade, keep-or-discard, repeat until a cap /
 # timeout / circuit-breaker stops it. This script is the SOLE place that
-# enforcement lives — skills/loop and skills/harness-loop are thin callers that
+# enforcement lives — extras/skills/loop and extras/skills/harness-loop are thin callers that
 # read its output and act on it (git reset on discard, etc.); no machinery is
 # duplicated in either skill.
 #

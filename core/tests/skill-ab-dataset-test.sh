@@ -130,7 +130,7 @@ print("TRIGGER_POS_EACH %s" % ("yes" if pos_ok else "no"))
 print("TRIGGER_NEG_EACH %s" % ("yes" if neg_ok else "no"))
 
 # shipped-skill grounding: each baseline skill must have a real SKILL.md
-shipped_ok = all(os.path.isfile(os.path.join(skills_dir, s, "SKILL.md")) for s in skills)
+shipped_ok = all(any(os.path.isfile(os.path.join(d, s, "SKILL.md")) for d in skills_dir.split(os.pathsep)) for s in skills)  # skills_dir: os.pathsep-separated (core + extras)
 print("SKILLS_SHIPPED %s" % ("yes" if shipped_ok else "no"))
 PY
 }
@@ -138,7 +138,7 @@ PY
 echo "=== (1) the real seed: evals/datasets/skill-ab.jsonl ==="
 [[ -f "$DATA" ]]; check "dataset-exists" $?
 [[ -f "$BASELINE" ]]; check "baseline-exists" $?
-OUT="$(validate_py "$DATA" "$BASELINE" "$REPO_ROOT/skills")"
+OUT="$(validate_py "$DATA" "$BASELINE" "$REPO_ROOT/skills:$REPO_ROOT/extras/skills")"
 
 echo "$OUT" | grep -qx 'BASELINE_OK yes'; check "baseline-parses" $?
 echo "$OUT" | grep -qx 'PARSE_OK yes'; check "every-line-parses-json" $?

@@ -15,6 +15,13 @@
       "description": "Curated review/build/test agents + secret-hardening/worktree/plan-gate hooks + supervise/wrap skills. Install once, use in every project.",
       "category": "workflow",
       "tags": ["agents", "harness", "code-review", "security", "hooks", "tdd", "worktree"]
+    },
+    {
+      "name": "agent-harness-extras",
+      "source": "./extras",
+      "description": "Rarely used agent-harness skills (code-tour, harness-audit, harness-loop, loop, manager-audit, persona-review, reorg-sync, worker-setup, brain-ingest). Optional companion to agent-harness; install with /plugin install agent-harness-extras@agent.",
+      "category": "workflow",
+      "tags": ["agents", "harness", "audit", "loop", "persona-review"]
     }
   ]
 }

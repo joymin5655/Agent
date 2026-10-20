@@ -162,7 +162,11 @@ while IFS= read -r doc; do
     [[ -z "$tok" ]] && continue
     # self-exemption by exact path
     case " ${SELF_EXEMPT[*]} " in *" $tok "*) continue ;; esac
-    [[ -e "$TARGET/$tok" ]] || HITS+="$doc: referenced path missing -> $tok"$'\n'
+    # docs inside the extras plugin (extras/) name plugin-relative paths (skills/<x>/...,
+    # core/infra/<x>.sh) — those resolve under extras/ as well as at the repo root.
+    [[ -e "$TARGET/$tok" ]] && continue
+    case "$doc" in "$TARGET"/extras/*) [[ -e "$TARGET/extras/$tok" ]] && continue ;; esac
+    HITS+="$doc: referenced path missing -> $tok"$'\n'
   done < <(scan_paths_A "$doc")
 done < <(collect_docs_A)
 
