@@ -282,3 +282,9 @@ Each line is one case with a `kind`:
 
 See `docs/internal/harness-improvement-plan.md` (E-1) for the roadmap and
 `docs/scoring-convention.md` for the shared verdict schema.
+
+## Official plugin evals
+
+`evals/plugin/` holds a `claude plugin eval` suite (skill routing for spec, supervise,
+verify-completion, council-review, wrap). It calls real models, so it is manual/weekly and
+not in CI. See [`evals/plugin/README.md`](plugin/README.md).
