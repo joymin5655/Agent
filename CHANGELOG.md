@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-20
+
 ### Added
 - **Rule enforcement map** (`docs/gate-registry.md` § Rule enforcement map) maps every AGENTS.md
   and `operating-contract.md` rule to its enforcer (hook / test / CI / git hook) or marks it
