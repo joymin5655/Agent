@@ -371,7 +371,8 @@ is not an array and does not apply to lifecycle events. Decisions in this pass:
    now fires on every `Bash` call, like the hooks in item 3, and the script exits 0 within
    milliseconds for a non-commit.
 3. Every other wired hook keeps `matcher`-only filtering: `pre-tool-guard.sh`
-   and the rest fire on every `Bash`/`Write|Edit`/`*` call in their group and make their own internal decision — adding an `if` there would
+   and the rest fire on every `Bash`/`Write|Edit`/`*` call in their group and make their own
+   internal decision — adding an `if` there would
    duplicate logic the hook already owns without narrowing anything real.
 4. **`context-mode-guard.sh`'s own matcher** — it used to share the `*` group with
    `r4-mutex-check.sh`, which spawned bash + jq on every tool call only for the script to
@@ -420,10 +421,11 @@ deny itself, so its 30 s outer value can never pre-empt it.
 | Timeout | Hooks | Why this value |
 |---|---|---|
 | 2 s | `session-close.sh` on `SessionEnd` | Unchanged; the event's own 1.5 s shared budget (§12). |
-| 15 s | `session-tier-observer.py`, `model-routing-observer.py`, `model-routing-advisor.py`, `agent-session-heartbeat.sh`, `circuit-breaker.py`, `verify-observer.py`, `rubric-commit-judge.sh`, `r4-file-mutex-register.sh`, `session-close.sh` on `Stop` | Observers, advisories and lock bookkeeping; a stall helps nobody. |
-| 30 s | `pre-tool-guard.sh`, `loop-write-guard.py`, `r4-mutex-check.sh`, `context-mode-guard.sh`, `check-hardcoding.py`, `secret-content-scan.py`, `r4-file-mutex-check.sh`, `tdd-guard.py`, `spec-gate.py`, `supervisor.py`, `plan-scope-allow.py`, `plan-gate.py`, `agent-session-start.sh`, `session-init.py`, `brain-capture.py` | Guards and session setup. Internal subprocess limits are 2-5 s (`git`, regex watchdogs, the 5 s lookup in `r4-mutex-check.sh`). |
+| 15 s | `session-tier-observer.py`, `model-routing-observer.py`, `model-routing-advisor.py`, `agent-session-heartbeat.sh`, `circuit-breaker.py`, `verify-observer.py`, `r4-file-mutex-register.sh`, `session-close.sh` on `Stop` | Observers, advisories and lock bookkeeping; a stall helps nobody. |
+| 30 s | `pre-tool-guard.sh`, `loop-write-guard.py`, `r4-mutex-check.sh`, `context-mode-guard.sh`, `check-hardcoding.py`, `secret-content-scan.py`, `r4-file-mutex-check.sh`, `tdd-guard.py`, `spec-gate.py`, `supervisor.py`, `plan-scope-allow.py`, `plan-gate.py`, `agent-session-start.sh`, `session-init.py`, `brain-capture.py` | Guards and session setup. Most internal subprocesses are capped at 2-5 s (regex watchdogs, the 5 s lookup in `r4-mutex-check.sh`), but not all: some `git` calls and `agent-session-start.sh`'s `git fetch` have no cap of their own, so the host timeout is their only bound. |
+| 150 s | `rubric-commit-judge.sh` | Synchronous scorer: per-command cap 60 s, 120 s total (`rubric-score.py`). It only observes, so a kill loses a score record, never a decision. |
 | 90 s | `council-escalation-gate.py` | Several internal `git` / threshold subprocesses at 15 s each. |
-| 300 s | `session-quality-gate.py` on `Stop` | Runs the project's `session.completion_tests`, each capped by `AGENT_COMPLETION_TEST_TIMEOUT` (120 s). A project with several slow tests, or a raised cap, needs a higher value in its own settings. |
+| 300 s | `session-quality-gate.py` on `Stop` | Runs the project's `session.completion_tests`, each capped by `AGENT_COMPLETION_TEST_TIMEOUT` (120 s). The hook also keeps an aggregate budget (`AGENT_COMPLETION_TOTAL_BUDGET`, default 240 s) that stops launching tests and blocks with `budget exceeded`, so the block lands before this timeout. Keep the budget below the timeout. |
 
 `r4-mutex-check.sh` is registered for `Bash|mcp__.*` instead of `*`. Its resource detection
 only inspects `Bash` commands and MCP tool names, and the `WorktreeCreate` /

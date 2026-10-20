@@ -8,7 +8,7 @@
 # This hook checks the central lock file (.agent/locks/active-sessions.json) and returns
 # `ask` if a different session has claimed the resource the current tool call targets.
 #
-# Wire into your AI's PreToolUse with matcher "*" (see adapters/<ai>/settings.template).
+# Wire into your AI's PreToolUse with matcher "Bash|mcp__.*" (the only tools it inspects; see adapters/<ai>/settings.template).
 #
 # Resource categories (built-in defaults — extended, never replaced, by .agent/hook-config.yml|json
 # `resources.<name>.triggers`; see the config step below):

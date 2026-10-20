@@ -312,8 +312,8 @@ fi
 # argument of difftool -x and the code string of an interpreter; rsync/tar --include selects what
 # they read.
 # Stage 2 spends a bounded amount of work (MAX_WORK word visits, MAX_DEPTH levels of nesting:
-# `limit`) and arms a 2 s wall-clock alarm. hooks.json sets no timeout for this hook, so the
-# host's default applies, and a hook the host kills prints no decision, which lets the call
+# `limit`) and arms a 2 s wall-clock alarm. hooks.json gives this hook a 30 s timeout (docs/
+# hook-protocol.md section 14), and a hook the host kills prints no decision, which lets the call
 # through: the deny has to be decided inside our own budget. The alarm kills stage 2 without an
 # answer, which is a deny, so the worst case is 2 s plus the interpreter start-up.
 # AGENT_SECRETS_SCAN_BUDGET=<seconds> can only shorten the alarm (a test seam).

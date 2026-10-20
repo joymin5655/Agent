@@ -108,3 +108,11 @@ result is a warning rather than a success. The counterfactual machinery that wou
 properly — an on/off holdout arm — is backlog X-1, deliberately unbuilt until
 designed: that same project shipped an unrun measurement layer, and an
 instrument nobody executes measures nothing.
+
+## Retired gates
+
+A retired gate loses its `GATE` line (the digest would otherwise report it DEAD forever),
+its hook registration and its place in `core/hooks/`; the script moves to
+`legacy/<name>/` with a README that records the date, the reason and the restore steps.
+
+- `top-edit-advisor` (advise, sink `-`, retired 2026-10-20): `legacy/top-edit-advisor/README.md`.

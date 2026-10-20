@@ -9,8 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **Explicit timeouts on every `hooks/hooks.json` command hook** (previously 1 of 38 had one, so
-  the 600 s host default applied). Tiers 15 / 30 / 90 / 300 s, rationale in
+  the 600 s host default applied). Tiers 15 / 30 / 90 / 150 / 300 s, rationale in
   `docs/hook-protocol.md` §14.
+- **`session-quality-gate.py` keeps an aggregate completion-test budget**
+  (`AGENT_COMPLETION_TOTAL_BUDGET`, default 240 s): once spent it stops launching tests and
+  blocks with `budget exceeded`, so the block lands before the 300 s Stop timeout (a host kill
+  would drop it).
+- `manager-audit` frontmatter `description` is now a valid YAML scalar; a test pins that every
+  SKILL.md parses and that every hook has a timeout.
 - **`r4-mutex-check.sh` matcher narrowed from `*` to `Bash|mcp__.*`** (the only tools it
   inspects), in `hooks/hooks.json` and the settings template.
 - **`worker-setup` and `reorg-sync` set `disable-model-invocation: true`**; their descriptions

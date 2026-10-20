@@ -3,6 +3,11 @@
 `top-edit-advisor.py` was a PostToolUse advisory that repeated a `systemMessage` every +15
 direct Write/Edit calls made by the session's top-tier model. It never blocked.
 
+Why retired (2026-10-20): the user's local copy was already retired, the advisory repeated at
++15 direct edits and was routinely ignored, and enforcement belongs in the dispatch-time
+observers and `/supervise`, so a per-edit PostToolUse spawn bought no decision. Zero firings
+were never measured (sink `-`), so this is a judgement, not a DEAD verdict.
+
 It is retired from the active path: `hooks/hooks.json` and
 `adapters/claude-code/settings.json.template` no longer register it, `docs/gate-registry.md`
 no longer lists it, and it no longer counts toward `core/hooks/`. The routing convention it

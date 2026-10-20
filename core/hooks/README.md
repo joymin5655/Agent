@@ -8,7 +8,7 @@ AI-agnostic hook implementations. Each script reads a canonical event JSON from 
 |---|---|---|
 | `pre-tool-guard.sh` | PreToolUse (Bash) | Bash command safety — destructive deletion, force push, secrets/.env access, DROP/TRUNCATE TABLE; `review-override` denies the recognised forms that set `AGENT_REVIEW_OVERRIDE`/`AGENT_WORKERS_DIR`/`AGENT_LOGS_DIR`/`GITHEAD_*`, `evidence-ledger` denies writes to `reviews.jsonl`/`review-override.jsonl` (logged; Bash speed bumps, not boundaries: interpreter one-liners and run-after-write scripts evade them) |
 | `secret-content-scan.py` | PreToolUse (Write/Edit/MultiEdit + MCP write tools) | Secret bypass patterns in file content + MCP URL/query/content payloads; also denies Write/Edit of the review evidence ledgers (`reviews.jsonl`, `review-override.jsonl`) inside the workers/logs dirs |
-| `r4-mutex-check.sh` | PreToolUse (`*`) | Resource mutex — production-db, edge-function-deploy, production-deploy |
+| `r4-mutex-check.sh` | PreToolUse (`Bash`, MCP tools) | Resource mutex — production-db, edge-function-deploy, production-deploy |
 | `r4-file-mutex-check.sh` | PreToolUse (Write/Edit/MultiEdit) | File-level mutex when another session is editing the same path |
 | `r4-file-mutex-register.sh` | SessionStart (`baseline`) + PostToolUse Bash (`commit`) | Register worktree-commit-changed files in lock file |
 | `agent-session-start.sh` | SessionStart | Register session + GC stale entries + broadcast started + emit dashboard context |
@@ -98,8 +98,8 @@ reads, not a sandbox. Known gaps (the first and the fourth are pinned as allow i
   (`-I`, or a pruned `sys.path` for the one that needs PyYAML). `agent-proxy.sh`,
   `context-mode-guard.sh`, `r4-mutex-check.sh` and `r4-file-mutex-check.sh` still start a plain
   `python3`, so a `json.py` in the working directory can stand in for the standard module there.
-- Host timeout: `hooks/hooks.json` sets no timeout for this hook, so the host default applies
-  (documented as 600 s for command hooks). A hook the host kills, or one that crashes, prints no
+- Host timeout: `hooks/hooks.json` sets a 30 s timeout for this hook (`docs/hook-protocol.md`
+  section 14; the host default is 600 s). A hook the host kills, or one that crashes, prints no
   decision and the Claude Code adapter then lets the call through (`docs/hook-protocol.md`
   section 4; the Codex adapter fails closed). Stage 2 therefore decides inside its own 2 s alarm,
   and a stage 2 that fails in any way (python3 missing, a non-zero exit, SIGKILL or SIGTERM, a

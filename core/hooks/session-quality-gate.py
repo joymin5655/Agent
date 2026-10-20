@@ -60,6 +60,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 from datetime import date, datetime, timezone
 
 SCAN_DIRS = tuple(
@@ -99,6 +100,11 @@ def _parse_timeout(raw: str) -> int:
 
 COMPLETION_TEST_TIMEOUT = _parse_timeout(os.environ.get("AGENT_COMPLETION_TEST_TIMEOUT", "120"))
 
+# Aggregate wall-clock bound across ALL completion tests (seconds). The host kills a Stop hook
+# at its hooks.json timeout (300 s) and a killed hook prints no decision, which drops the block:
+# the budget must end this gate with a block of its own first. Keep it well below that timeout.
+COMPLETION_TOTAL_BUDGET = _parse_timeout(os.environ.get("AGENT_COMPLETION_TOTAL_BUDGET", "240"))
+
 
 def run_completion_tests(root: str) -> list[str]:
     """Run the project's `session.completion_tests` (P3-1) in `root`.
@@ -116,11 +122,18 @@ def run_completion_tests(root: str) -> list[str]:
         return []
 
     failures: list[str] = []
+    deadline = time.monotonic() + COMPLETION_TOTAL_BUDGET
     for cmd in cmds:
+        remaining = deadline - time.monotonic()
+        if remaining < 1:
+            failures.append(f"completion_tests budget exceeded ({COMPLETION_TOTAL_BUDGET}s): "
+                            f"`{cmd}` and any later tests were not run")
+            break
+        per_cmd = min(COMPLETION_TEST_TIMEOUT, int(remaining))
         try:
             r = subprocess.run(
                 cmd, shell=True, cwd=root or None,
-                capture_output=True, text=True, timeout=COMPLETION_TEST_TIMEOUT,
+                capture_output=True, text=True, timeout=per_cmd,
                 # Run the command in its OWN process group/session so a teardown
                 # idiom that signals its GROUP (`kill 0`, `trap 'kill 0' EXIT`) —
                 # the common Makefile/integration-test teardown case — reaches only
@@ -142,7 +155,7 @@ def run_completion_tests(root: str) -> list[str]:
                 detail = (" — " + " / ".join(t.strip() for t in tail)) if tail else ""
                 failures.append(f"`{cmd}` exited {r.returncode}{detail}")
         except subprocess.TimeoutExpired:
-            failures.append(f"`{cmd}` timed out after {COMPLETION_TEST_TIMEOUT}s")
+            failures.append(f"`{cmd}` timed out after {per_cmd}s")
         except Exception as e:  # spawn error, etc. — unverifiable => failure
             failures.append(f"`{cmd}` could not run ({type(e).__name__})")
     return failures

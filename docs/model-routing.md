@@ -98,13 +98,12 @@ the leak where the TOP model does the implementation directly and no
 Task/Agent call happens at all. A 2026-09-02 transcript audit measured that
 leak: 511 direct main-loop Edit/Write calls across 26 sessions (17 sessions
 with 10+ edits, one at 65), with earlier single-fire advisories proven
-insufficient — ignored well past their first warning. `top-edit-advisor.py` (retired 2026-10, now
-under `legacy/top-edit-advisor/`) added a third, accumulation-time layer: a PostToolUse advisory on the TOP
-model's own Write/Edit/MultiEdit calls that repeats every +15 measured edits
-(env `AGENT_TOP_EDIT_THRESHOLD`) instead of warning once and going silent,
-and never caches a not-TOP verdict, since the session model can switch
-mid-session. Same boundary as the other two: advisory only, never blocks,
-never switches a model.
+insufficient — ignored well past their first warning. `top-edit-advisor.py`
+added a third, accumulation-time layer: a PostToolUse advisory on the TOP model's own
+Write/Edit/MultiEdit calls that repeated every +15 measured edits instead of warning once.
+It was retired 2026-10-20 (unregistered; script and test kept under
+`legacy/top-edit-advisor/`), so the two dispatch-time hooks above plus `/supervise` now
+carry the convention. It was advisory only: it never blocked and never switched a model.
 
 ## Intelligence placement — the advisor pattern
 
@@ -391,8 +390,8 @@ shared blind spot doesn't survive review.
   `model-routing-advisor.py` also stays on this side: it is a *deterministic*
   PreToolUse reminder (fixed classification, fixed message, no model logic),
   it never sets `permissionDecision`, and it never touches `model` — the
-  dispatcher reads the nudge and still makes the call. `top-edit-advisor.py`
-  (retired, see `legacy/`) was the same shape one layer later: a deterministic
+  dispatcher reads the nudge and still makes the call. The retired
+  `top-edit-advisor.py` (see `legacy/`) had the same shape one layer later: a deterministic
   PostToolUse reminder keyed on a measured edit count, never a decision. The boundary is
   narrower than "no automated behavior at decision time"; it is "no automated
   *decision*" — a reminder is inside that line, a classifier or a switch is not.

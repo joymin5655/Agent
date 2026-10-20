@@ -240,7 +240,7 @@ install_codex() {
         ln -sfn "$skill" "$skills_dir/$name"
         linked=$((linked + 1))
     done
-    echo "  symlink: ~/.agents/skills/<name> -> skills/<name> ($linked skills)"
+    echo "  symlink: ${skills_dir/#$HOME/~}/<name> -> skills/<name> ($linked skills)"
 
     # The shell wrapper retired to legacy/codex-shell-wrap/ (native hooks replace
     # it). A ~/bin/codex-bash symlink an earlier setup created now dangles; repoint
@@ -911,7 +911,7 @@ PY
             fi
         done
         if [[ $cx_miss -gt 0 ]]; then
-            add_row WARN "codex skills — $cx_miss of $cx_total harness skills not linked in ${cx_skills_dir/#$HOME/~} (e.g. $cx_missing_skills): run setup.sh --codex"
+            add_row WARN "codex skills — $cx_miss of $cx_total harness skills not linked in ${cx_skills_dir/#$HOME/~} (e.g. $cx_missing_skills): run setup.sh --codex (an entry that exists and is not an Agent symlink is skipped by the installer; remove or relink it by hand)"
         else
             add_row PASS "codex skills — all $cx_total harness skills linked in ${cx_skills_dir/#$HOME/~}"
         fi

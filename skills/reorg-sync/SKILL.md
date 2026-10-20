@@ -1,7 +1,7 @@
 ---
 name: reorg-sync
 description: Sweep orphaned absolute-path references after a directory move — given an old and a new path prefix, find and optionally rewrite the five reference classes that silently break on a reorg (shebangs, git worktree pointers, crontab commands, doc anchors, and the path-keyed native-memory dir). Dry-run by default. NOT for renaming files on disk (that is `mv`/`git mv` — this fixes references that POINT at a moved path), and NOT for find-and-replace of arbitrary text (it targets path-prefix references specifically, driven by `core/infra/reorg-sync.sh`).
-when_to_use: After moving a project tree to a new location (drive reorg, folder rename) when config/metadata still points at the old path — "sync references after the move", "fix the broken paths from the reorg", or `/reorg-sync <old> <new>`.
+when_to_use: "User-invoked only (`/reorg-sync <old> <new>`): after moving a project tree (drive reorg, folder rename) when config or metadata still points at the old path."
 tools: Bash, Read, Grep, Glob
 disable-model-invocation: true
 ---
