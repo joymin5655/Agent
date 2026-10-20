@@ -11,7 +11,7 @@
     "modifications": "Stratified subsample of the full 1M-row / 9-shard dataset, selected via DuckDB httpfs range queries: age_group x province hard-balanced across a 7x17 grid (one persona per cell — even, non-population-proportional, so every province is represented for panel diversity), occupation_group x education_level soft-balanced. Demographic + one-line persona-summary + background + hobby/skill list fields kept; verbose per-domain narrative columns dropped. No fields added except the derived `review_lens` tag (1-2 per persona, computed from demographics + occupation only — see tag_review_lens() in the generator script).",
     "synthetic_note": "Every persona here is SYNTHETIC (NVIDIA Nemotron synthetic data), grounded in KOSIS/court/insurance/rural-economy distributions. No persona is a real person; any Korean name inside a summary is generated, not a real individual's.",
     "pii_note": "No name/contact/identifier fields. 'id' is the dataset's own synthetic uuid, retained for provenance only.",
-    "generated_by": "skills/persona-review/scripts/build_catalog.py",
+    "generated_by": "extras/skills/persona-review/scripts/build_catalog.py",
     "stratification_axes": [
       "age_group",
       "province",

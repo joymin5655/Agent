@@ -82,7 +82,12 @@ def is_real_agent(registry_path: pathlib.Path, agent_id: str) -> bool:
     """A specialist is real iff a sibling <id>.md sits next to the registry file."""
     if not agent_id:
         return False
-    return (registry_path.parent / (agent_id + ".md")).is_file()
+    if (registry_path.parent / (agent_id + ".md")).is_file():
+        return True
+    # agents of the optional extras plugin live in <root>/extras/agents
+    if registry_path.parent.name == "agents":
+        return (registry_path.parent.parent / "extras" / "agents" / (agent_id + ".md")).is_file()
+    return False
 
 
 def inventory_ghosts(root: pathlib.Path) -> set:

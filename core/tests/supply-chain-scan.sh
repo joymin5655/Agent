@@ -56,7 +56,7 @@ TARGET="${1:-$REPO_ROOT}"
 # Auto-loaded instruction (prose) scope — where classes 1/2/3 apply. Scanned as
 # *.md, *.template (scaffolding copied verbatim into consumers, where it BECOMES
 # their CLAUDE.md / AGENTS.md / rules), and *.json (the agent registry).
-INSTR_PATHS=(agents skills commands rules templates AGENTS.md AI_BOOTSTRAP.md CLAUDE.md)
+INSTR_PATHS=(agents skills extras commands rules templates AGENTS.md AI_BOOTSTRAP.md CLAUDE.md)
 PROSE_FIND_EXPR=(-name '*.md' -o -name '*.template' -o -name '*.json')
 
 # Auto-FIRED code scope — where the daemon-spawn class (4) applies. Only the

@@ -233,10 +233,14 @@ install_codex() {
     for skill in "$FRAMEWORK_ROOT"/skills/*/ "$FRAMEWORK_ROOT"/extras/skills/*/; do
         [[ -d "$skill" ]] || continue   # unmatched glob (no extras/ in this tree)
         skill="${skill%/}"; name="$(basename "$skill")"
-        if [[ -e "$skills_dir/$name" || -L "$skills_dir/$name" ]] &&
-           [[ "$(readlink "$skills_dir/$name" 2>/dev/null)" != "$skill" ]]; then
-            echo "  skipped: $skills_dir/$name exists and is not an Agent symlink"
-            continue
+        if [[ -e "$skills_dir/$name" || -L "$skills_dir/$name" ]]; then
+            local cur; cur="$(readlink "$skills_dir/$name" 2>/dev/null)"
+            # ours = a link into this framework's skills/ or extras/skills/ (an upgrade can
+            # leave one pointing at a skill that moved between the two); relink it
+            case "$cur" in
+                "$skill"|"$FRAMEWORK_ROOT"/skills/*|"$FRAMEWORK_ROOT"/extras/skills/*) ;;
+                *) echo "  skipped: $skills_dir/$name exists and is not an Agent symlink"; continue ;;
+            esac
         fi
         ln -sfn "$skill" "$skills_dir/$name"
         linked=$((linked + 1))

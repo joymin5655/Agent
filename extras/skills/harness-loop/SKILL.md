@@ -10,7 +10,7 @@ tools: Bash, Read, Write, Edit, Grep, Glob
 > **HUMAN-ONLY-EDITED.** This file is the §5 "program.md analog"
 > (`docs/internal/harness-improvement-plan.md` §5.1): it states the loop's own rules.
 > The loop agent reads it every iteration but must never edit
-> `skills/harness-loop/SKILL.md` itself — TARGET below is fixed to the
+> `extras/skills/harness-loop/SKILL.md` itself — TARGET below is fixed to the
 > reviewer-prompt pair precisely so a candidate cannot rewrite the regulation
 > it runs under. Changing this file is a deliberate, human-reviewed act
 > outside any loop session.
@@ -25,7 +25,7 @@ and `agents/security-reviewer.md`. A hook-surface mission (editing
 per-hook test battery (P1-3) — otherwise the grader's signal doesn't cover it
 and the loop would be scoring blind.
 
-This skill specializes `/loop` (`skills/loop/SKILL.md`) to one fixed
+This skill specializes `/loop` (`extras/skills/loop/SKILL.md`) to one fixed
 mission; all mechanical enforcement is still `core/infra/loop-run.sh` —
 nothing here duplicates it.
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# reorg-sync-test.sh — battery for W-2, core/infra/reorg-sync.sh (the orphaned
+# reorg-sync-test.sh — battery for W-2, extras/core/infra/reorg-sync.sh (the orphaned
 # path-reference sweeper). Builds a fixture tree carrying all five reference
 # classes plus decoys, and asserts: dry-run detects all five and changes nothing;
 # --apply rewrites each correctly (including the native-memory-key encoding);

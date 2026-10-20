@@ -79,7 +79,7 @@ The harness ships a shared knowledge store queried via the `brain` MCP server
 - **Query before re-deriving** — `brain_search` / `brain_get` / `brain_neighbors`
   may already hold the answer.
 - **Write quarantine only** — `brain_capture` appends to `raw/`; never write the
-  curated `notes/` or the vault directly. Distill via `/brain-ingest`.
+  curated `notes/` or the vault directly. Distill via `/brain-ingest` (agent-harness-extras).
 
 Full policy + provenance/trust model: **AGENTS.md § Agent brain**.
 

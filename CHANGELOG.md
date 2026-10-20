@@ -22,8 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `telemetry-digest.sh`, `call-worker.sh` and `backends.json` stay in core (hooks, `/supervise`
   and `/council-review` call them).
 - `extras/scripts/harness-root.sh` resolves the core root for extras skills that need core
-  scripts (`manager-audit`, `worker-setup`): `$AGENT_HARNESS_ROOT`, the current checkout, the
-  parent of `extras/`, then the sibling `agent-harness` plugin-cache entry.
+  scripts (`manager-audit`, `worker-setup`): `$AGENT_HARNESS_ROOT`, the parent of
+  `extras/`, then the sibling `agent-harness` plugin-cache entry (never the current directory;
+  a candidate must carry the full core marker set; `core/tests/harness-root-test.sh`).
 - `setup.sh --codex` links `extras/skills/*` next to `skills/*`; `--doctor` (`codex skills`,
   `agents/master-registry.json`) checks both. `registry-drift.sh`, `version-parity.sh`,
   `doc-reality.sh` and the routing eval cover `extras/`; CI validates both manifests with

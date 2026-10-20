@@ -405,6 +405,20 @@ for sk in "$FW_ROOT"/skills/*/ "$FW_ROOT"/extras/skills/*/; do ln -sfn "${sk%/}"
 OUT_K5="$(CODEX_CONFIG="$CXS_FIX/config.toml" CODEX_SKILLS_DIR="$CXS_FIX/skills" bash "$SETUP" --doctor 2>&1)"
 [[ "$OUT_K5" == *"[PASS"*"codex skills — all "*"harness skills linked"* ]]
 check "codex-skills-linked-pass" $?
+# upgrade: a link left at <root>/skills/<name> for a skill that moved to extras/skills/ is
+# ours (dangling) and must be relinked; a foreign link must still be left alone
+CXU_FIX="$(safe_mktemp_d)" || { echo "FAIL: mktemp -d failed (codex relink fixture)"; exit 1; }
+track_fixture "$CXU_FIX"
+mkdir -p "$CXU_FIX/skills" "$CXU_FIX/home"
+ln -s "$FW_ROOT/skills/loop" "$CXU_FIX/skills/loop"
+ln -s /elsewhere "$CXU_FIX/skills/code-tour"
+HOME="$CXU_FIX/home" CODEX_SKILLS_DIR="$CXU_FIX/skills" CODEX_CONFIG="$CXU_FIX/home/c.toml" \
+  CODEX_GLOBAL_AGENTS="$CXU_FIX/home/AGENTS.md" AGENT_CODEX_TIERS_FILE="$CXU_FIX/home/t.json" \
+  AGENT_SETUP_YES=1 bash "$SETUP" --codex >/dev/null 2>&1
+[[ "$(readlink "$CXU_FIX/skills/loop")" == "$FW_ROOT/extras/skills/loop" ]]
+check "codex-relinks-moved-skill-from-old-path" $?
+[[ "$(readlink "$CXU_FIX/skills/code-tour")" == "/elsewhere" ]]
+check "codex-leaves-foreign-link-alone" $?
 OUT_K5="$(CODEX_CONFIG="$CXS_FIX/none.toml" CODEX_SKILLS_DIR="$CXS_FIX/empty" bash "$SETUP" --doctor 2>&1)"
 [[ "$OUT_K5" != *"codex skills — "* ]]
 check "codex-skills-skipped-without-codex" $?

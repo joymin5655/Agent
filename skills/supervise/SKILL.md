@@ -323,7 +323,7 @@ rel_cost=<n>` (from the `token-spend` lane's `top-spend-sources` finding).
 This is non-blocking — a bad verdict never blocks completion, it only informs
 the ledger.
 
-Then offer to run the FULL `/manager-audit <slug>` (all four lanes —
+Then offer to run the FULL `/manager-audit <slug>` (from `agent-harness-extras`; all four lanes —
 restatement quality, model-routing waste, relative token spend, role
 compliance), passing `--since <Run started ts from RESTATEMENT.md>` so the
 audit scopes to this run's dispatches. It reads the logs this run already

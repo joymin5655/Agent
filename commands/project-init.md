@@ -63,4 +63,4 @@ implements.
 If `--dry-run` was passed, show what *would* be created without running `setup.sh`.
 
 Cross-vendor worker lanes (codex/antigravity second opinions) are
-separate opt-in onboarding, not part of this scaffold — run `/worker-setup`.
+separate opt-in onboarding, not part of this scaffold — run `/worker-setup` (from the optional `agent-harness-extras` plugin).

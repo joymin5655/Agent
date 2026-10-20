@@ -163,7 +163,7 @@ New to this space? These ten terms are all you need to read the rest of this pag
 | **harness** | The whole safety layer: agents + hooks + skills + rules, wrapped around your AI. |
 | **hook** | A small script your AI runtime runs automatically before/after an action. It answers **allow**, **ask**, or **deny**. 26 scripts wired via `hooks/hooks.json` (31 incl. shared modules) live in [`core/hooks/`](core/hooks/). |
 | **adapter** | A translator from a runtime hook or controlled wrapper event to the harness's canonical JSON. There are 3 runtime adapters (claude-code, codex, antigravity) in [`adapters/`](adapters/). |
-| **agent** | A specialist your AI delegates to — e.g. a security reviewer that only reviews and never writes. 4 ship here ([`agents/`](agents/)). |
+| **agent** | A specialist your AI delegates to — e.g. a security reviewer that only reviews and never writes. 3 ship in the core plugin ([`agents/`](agents/)) and 1 in the optional extras plugin. |
 | **skill** | A reusable step-by-step workflow the AI follows, e.g. the commit + PR flow. 6 ship in the core plugin ([`skills/`](skills/)) and 9 more in the optional extras plugin ([`extras/skills/`](extras/skills/)). |
 | **gate** | A hook decision point (deny / ask / block). Every gate is registered with the model weakness it assumes — [`docs/gate-registry.md`](docs/gate-registry.md). |
 | **wave** | One batch of work inside a `/supervise` plan — dispatched, executed, and audited before the next wave starts. |

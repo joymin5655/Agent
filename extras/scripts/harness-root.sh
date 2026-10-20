@@ -6,18 +6,25 @@
 # core plugin. A plugin cannot read outside its own cached root, so resolve the core
 # root explicitly, first hit wins:
 #   1. $AGENT_HARNESS_ROOT                        (explicit override)
-#   2. $PWD                                       (running inside a harness checkout)
-#   3. <extras root>/..                           (extras/ inside a checkout / --plugin-dir)
-#   4. sibling plugin-cache entry                 (<cache>/agent/agent-harness/<version>, the
+#   2. <extras root>/..                           (extras/ inside a checkout / --plugin-dir)
+#   3. sibling plugin-cache entry                 (<cache>/agent/agent-harness/<version>, the
 #                                                  extras' own version first, else the highest)
-# A candidate counts only if it contains core/infra/backends.json.
+# The current directory is deliberately NOT a candidate: the result is used as an
+# execution root, so a random repo that happens to carry core/infra/ must not qualify.
+# A candidate counts only if it carries the whole marker set below.
 # Exit 0 + path on stdout; exit 1 + hint on stderr when nothing resolves.
 set -u
 EXTRAS_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 
-is_core() { [[ -n "${1:-}" && -f "$1/core/infra/backends.json" ]]; }
+is_core() {
+  [[ -n "${1:-}" ]] || return 1
+  local f
+  for f in core/infra/backends.json core/infra/manager-audit.sh core/infra/telemetry-digest.sh .claude-plugin/plugin.json; do
+    [[ -f "$1/$f" ]] || return 1
+  done
+}
 
-for c in "${AGENT_HARNESS_ROOT:-}" "$PWD" "$EXTRAS_ROOT/.."; do
+for c in "${AGENT_HARNESS_ROOT:-}" "$EXTRAS_ROOT/.."; do
   if is_core "$c"; then (cd "$c" && pwd); exit 0; fi
 done
 

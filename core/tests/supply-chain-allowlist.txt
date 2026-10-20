@@ -10,6 +10,6 @@
 #
 # Adding a host is a supply-chain change: say why in the commit message.
 
-# worker-lane CLI installers (skills/worker-setup/SKILL.md)
+# worker-lane CLI installers (extras/skills/worker-setup/SKILL.md)
 chatgpt.com
 antigravity.google

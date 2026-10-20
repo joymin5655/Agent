@@ -79,8 +79,9 @@ invoked as `/agent-harness-extras:<name>` (use that form for `loop`, which the b
 `/loop` shadows). A plugin is cached as its own directory, so extras skills cannot read
 the core plugin's files by relative path: the ones that need core scripts
 (`manager-audit`, `worker-setup`) resolve the core root through
-`${CLAUDE_PLUGIN_ROOT}/scripts/harness-root.sh` (order: `$AGENT_HARNESS_ROOT`, the current
-checkout, the parent of `extras/`, the sibling `agent-harness` cache entry).
+`${CLAUDE_PLUGIN_ROOT}/scripts/harness-root.sh` (order: `$AGENT_HARNESS_ROOT`, the parent of
+`extras/`, the sibling `agent-harness` cache entry; the current directory is never used, and a
+candidate must carry the full core marker set).
 `loop`, `harness-loop`, `harness-audit` and `brain-ingest` drive a harness checkout
 (`core/tests`, `core/infra/loop-run.sh`, `core/brain`) and are run from its root, as before.
 Codex links `skills/*` and `extras/skills/*` into `~/.agents/skills`

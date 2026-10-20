@@ -49,7 +49,7 @@ check "guards-missing-dispatcher-path" $?
 # scripts this test owns; the wider "skills shell into bare core/ paths" gap
 # (7 files as of 2026-08-21) is tracked in
 # docs/claude-plugin-install-lifecycle.md §7, not asserted here.
-OFFENDERS="$(grep -rlE '(^|[^"$/A-Za-z0-9_])bash core/(infra|hooks)/(council-threshold\.sh|call-worker\.sh|council-escalation-gate\.py)' "$REPO_ROOT"/skills/*/SKILL.md 2>/dev/null || true)"
+OFFENDERS="$(grep -rlE '(^|[^"$/A-Za-z0-9_])bash core/(infra|hooks)/(council-threshold\.sh|call-worker\.sh|council-escalation-gate\.py)' "$REPO_ROOT"/skills/*/SKILL.md "$REPO_ROOT"/extras/skills/*/SKILL.md 2>/dev/null || true)"
 if [[ -z "$OFFENDERS" ]]; then
   check "no-skill-shells-into-bare-council-dispatch-path" 0
 else

@@ -122,8 +122,13 @@ def reconcile(registry_path: pathlib.Path) -> Dict[str, List[str]]:
     registry_ids = [
         a.get("id", "") for a in reg.get("agents", []) if a.get("id")
     ]
+    # the optional extras plugin keeps its agents in <root>/extras/agents (shipped inside
+    # the core plugin's tree because that plugin's source is "./")
+    provider_dirs = [reg_dir]
+    if reg_dir.name == "agents" and (reg_dir.parent / "extras" / "agents").is_dir():
+        provider_dirs.append(reg_dir.parent / "extras" / "agents")
     provider_ids = {
-        p.stem for p in reg_dir.glob("*.md") if p.stem and is_provider(p)
+        p.stem for d in provider_dirs for p in d.glob("*.md") if p.stem and is_provider(p)
     }
 
     real = sorted(i for i in registry_ids if i in provider_ids)
