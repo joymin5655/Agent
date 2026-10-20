@@ -1,7 +1,7 @@
 {
   "name": "agent-harness-extras",
   "description": "Rarely used agent-harness skills split out of the core plugin to keep its always-on context small: code-tour, harness-audit, harness-loop, loop, manager-audit, persona-review, reorg-sync, worker-setup, brain-ingest. Install alongside agent-harness.",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "author": {
     "name": "joymin",
     "url": "https://github.com/joymin5655"
