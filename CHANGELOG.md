@@ -7,7 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Rule enforcement map** (`docs/gate-registry.md` § Rule enforcement map) maps every AGENTS.md
+  and `operating-contract.md` rule to its enforcer (hook / test / CI / git hook) or marks it
+  `PARTIAL <enforcers> ~ <gap>` (covered in part, gap stated) or `UNENFORCED`.
+  `core/tests/rule-map.sh` fails on dead enforcer paths, unregistered `hook:` enforcers, malformed rows, unmapped
+  contract bullets and exceptions without reason + expiry + approver (or expired), and warns with
+  the UNENFORCED count; `rule-map-test.sh` proves each defect class. Mechanism adapted from
+  cursor/plugins pstack `skills/correct` (MIT) and the "build the check, not the rule" retro.
+- **Stuck detection by side effects** in `supervisor-goal.sh` (`agent-spawn`, `agent-effect`,
+  `agent-wait`/`agent-resume`/`agent-done`, `stuck-check`, `agents`): a dispatched agent with no
+  new commit / log row / file change in its scope past its `stuck_after` budget is flagged STUCK
+  once; agents awaiting the user are never stuck; unchanged ticks stay silent. Adapted from
+  cursor/plugins pstack autopilot-full playbook (MIT).
+- **Supervisor decision log** `core/infra/supervisor-goal-log.sh`: append-only
+  `DECISIONS.tsv` (`ts phase decision why evidence result`), evidence must be a pointer, wrong rows
+  are superseded not edited, CSV-injection-neutralized and secret-redacted cells. `complete` (and
+  `check <slug>`) cross-check the log against the run record and print an `## Attention` section.
+  Adapted from cursor/plugins pstack show-me-your-work (MIT).
+
 ### Changed
+- **`plan-lint.sh` hardening** (idea from pstack poteto-mode `check-plan.mjs`, MIT): fences follow
+  CommonMark (`~~~`, and a 4-backtick fence may wrap literal ```` ``` ```` examples that used to
+  leak out as phantom steps); an empty or placeholder `→ verify:` (nothing, TODO, TBD, `...`,
+  `<fill>`, empty backticks) now FAILs with its own message; an unterminated fence FAILs.
+
 - **Core skills polished** (`wrap`, `spec`, `council-review`, `verify-completion`): Korean
   trigger phrases and an anti-"I'll do it myself" clause in `description`/`when_to_use`;
   council synthesis gains Act on / Consider / Noted / Dismissed buckets, an agreement map and

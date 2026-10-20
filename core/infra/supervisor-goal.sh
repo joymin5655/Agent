@@ -13,6 +13,10 @@
 #   bash core/infra/supervisor-goal.sh check-active
 #   bash core/infra/supervisor-goal.sh track-tokens <plan-slug> <delta>
 #   bash core/infra/supervisor-goal.sh heartbeat <plan-slug>
+#   bash core/infra/supervisor-goal.sh agent-spawn <plan-slug> <agent-id> <wave> <stuck-after-s> [scope]
+#   bash core/infra/supervisor-goal.sh agent-effect|agent-wait|agent-resume|agent-done <plan-slug> <agent-id>
+#   bash core/infra/supervisor-goal.sh stuck-check <plan-slug>
+#   bash core/infra/supervisor-goal.sh agents <plan-slug>
 #
 # 5 status: active / paused / budget_limited / complete / aborted
 
@@ -45,9 +49,29 @@ init_db() {
         fi
         sqlite3 "$DB_FILE" < "$SCHEMA_FILE"
     fi
+    # Per-agent liveness table (stuck detection). Inline + IF NOT EXISTS so an existing
+    # goal-state.db picks it up without a migration step.
+    sqlite3 "$DB_FILE" <<'SQL'
+CREATE TABLE IF NOT EXISTS supervisor_agents (
+    plan_slug TEXT NOT NULL,
+    agent_id TEXT NOT NULL,
+    wave INTEGER NOT NULL,
+    scope TEXT NOT NULL DEFAULT '',
+    spawned_at_ms INTEGER NOT NULL,
+    stuck_after_s INTEGER NOT NULL,
+    last_effect_ms INTEGER NOT NULL,
+    last_effect_kind TEXT NOT NULL DEFAULT 'spawn',
+    status TEXT NOT NULL DEFAULT 'running' CHECK(status IN ('running','awaiting','done')),
+    stuck_flagged_ms INTEGER,
+    PRIMARY KEY (plan_slug, agent_id)
+);
+SQL
 }
 
-now_ms() { python3 -c 'import time; print(int(time.time()*1000))'; }
+# AGENT_NOW_MS pins the clock (tests only).
+now_ms() {
+    if [[ -n "${AGENT_NOW_MS:-}" && ! "$AGENT_NOW_MS" =~ ^[0-9]+$ ]]; then echo "ERROR: AGENT_NOW_MS must be integer ms" >&2; exit 2; fi
+    if [[ -n "${AGENT_NOW_MS:-}" ]]; then echo "$AGENT_NOW_MS"; else python3 -c 'import time; print(int(time.time()*1000))'; fi; }
 now_iso() { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
 
 sql_escape() { printf "%s" "$1" | sed "s/'/''/g"; }
@@ -176,7 +200,8 @@ cmd_pause() {
     local slug="${1:-}"
     [[ -z "$slug" ]] && { echo "usage: ... pause <plan-slug>" >&2; exit 2; }
     init_db
-    sqlite3 "$DB_FILE" "UPDATE supervisor_goals SET status = 'paused', updated_at_ms = $(now_ms) WHERE plan_slug = '$(sql_escape "$slug")' AND status = 'active';"
+    local _now; _now="$(now_ms)"
+    sqlite3 "$DB_FILE" "UPDATE supervisor_goals SET status = 'paused', updated_at_ms = $_now WHERE plan_slug = '$(sql_escape "$slug")' AND status = 'active';"
     cmd_status "$slug"
 }
 
@@ -184,7 +209,8 @@ cmd_resume() {
     local slug="${1:-}"
     [[ -z "$slug" ]] && { echo "usage: ... resume <plan-slug>" >&2; exit 2; }
     init_db
-    sqlite3 "$DB_FILE" "UPDATE supervisor_goals SET status = 'active', updated_at_ms = $(now_ms), last_heartbeat_ms = $(now_ms) WHERE plan_slug = '$(sql_escape "$slug")' AND status = 'paused';"
+    local _now; _now="$(now_ms)"
+    sqlite3 "$DB_FILE" "UPDATE supervisor_goals SET status = 'active', updated_at_ms = $_now, last_heartbeat_ms = $_now WHERE plan_slug = '$(sql_escape "$slug")' AND status = 'paused';"
     cmd_status "$slug"
 }
 
@@ -225,7 +251,14 @@ cmd_complete() {
     local slug="${1:-}"
     [[ -z "$slug" ]] && { echo "usage: ... complete <plan-slug>" >&2; exit 2; }
     init_db
-    sqlite3 "$DB_FILE" "UPDATE supervisor_goals SET status = 'complete', updated_at_ms = $(now_ms) WHERE plan_slug = '$(sql_escape "$slug")';"
+    # Cross-check the decision log against the run record BEFORE declaring done. Informational
+    # (stderr, never blocks): the supervisor must read the Attention section before reporting.
+    # Runs before write_record_stub so the stub's own <fill> slots are not reported back as
+    # noise; --pre-record also skips "RECORD.md missing" because the stub is written next.
+    local log_sh; log_sh="$(dirname "${BASH_SOURCE[0]}")/supervisor-goal-log.sh"
+    if [[ -f "$log_sh" ]]; then bash "$log_sh" check "$slug" --pre-record >&2 || true; fi
+    local _now; _now="$(now_ms)"
+    sqlite3 "$DB_FILE" "UPDATE supervisor_goals SET status = 'complete', updated_at_ms = $_now WHERE plan_slug = '$(sql_escape "$slug")';"
     write_record_stub "$slug" || true
     cmd_status "$slug"
 }
@@ -260,14 +293,16 @@ cmd_clear() {
     local slug="${1:-}"
     [[ -z "$slug" ]] && { echo "usage: ... clear <plan-slug>" >&2; exit 2; }
     init_db
-    sqlite3 "$DB_FILE" "DELETE FROM supervisor_goals WHERE plan_slug = '$(sql_escape "$slug")';"
+    sqlite3 "$DB_FILE" "DELETE FROM supervisor_goals WHERE plan_slug = '$(sql_escape "$slug")';
+        DELETE FROM supervisor_agents WHERE plan_slug = '$(sql_escape "$slug")';"
     echo "{\"cleared\":\"$slug\"}"
 }
 
 cmd_check_active() {
     init_db
     local cutoff_ms
-    cutoff_ms=$(( $(now_ms) - 5*60*1000 ))
+    local _now; _now="$(now_ms)"
+    cutoff_ms=$(( _now - 5*60*1000 ))
     sqlite3 "$DB_FILE" "SELECT json_group_array(json_object(
         'goal_id', goal_id,
         'plan_slug', plan_slug,
@@ -397,10 +432,163 @@ cmd_heartbeat() {
     local slug="${1:-}"
     [[ -z "$slug" ]] && { echo "usage: ... heartbeat <plan-slug>" >&2; exit 2; }
     init_db
-    sqlite3 "$DB_FILE" "UPDATE supervisor_goals SET last_heartbeat_ms = $(now_ms) WHERE plan_slug = '$(sql_escape "$slug")' AND status = 'active';"
+    local _now; _now="$(now_ms)"
+    sqlite3 "$DB_FILE" "UPDATE supervisor_goals SET last_heartbeat_ms = $_now WHERE plan_slug = '$(sql_escape "$slug")' AND status = 'active';"
+}
+
+# ---- stuck detection by side effects -------------------------------------------------------
+# A dispatched agent is STUCK when it has produced no new side effect (commit, log row, file
+# change in its scope) for longer than its stuck_after budget. Elapsed time alone proves
+# nothing — a long build is fine, a silent agent is not. An agent that is waiting on the user
+# or operator is never stuck (the clock restarts when it resumes). Unchanged ticks print
+# nothing: `stuck-check` speaks only on a transition (newly STUCK / RECOVERED).
+# Idea credit: cursor/plugins pstack autopilot-full playbook (MIT); implementation is ours.
+
+agent_args_ok() {  # <slug> <agent-id>
+    [[ "$2" =~ ^[A-Za-z0-9._:-]+$ ]] || { echo "ERROR: bad agent id: $2" >&2; exit 2; }
+    [[ -n "$1" ]] || { echo "ERROR: missing plan-slug" >&2; exit 2; }
+}
+
+agent_exists() {  # <slug> <agent-id>
+    [[ -n "$(sqlite3 "$DB_FILE" "SELECT 1 FROM supervisor_agents WHERE plan_slug = '$(sql_escape "$1")' AND agent_id = '$(sql_escape "$2")';")" ]]
+}
+
+cmd_agent_spawn() {
+    local slug="${1:-}" agent="${2:-}" wave="${3:-}" after="${4:-}" scope="${5:-}"
+    if [[ -z "$slug" || -z "$agent" || ! "$wave" =~ ^[0-9]+$ || ! "$after" =~ ^[0-9]+$ || "$after" -eq 0 ]]; then
+        echo "usage: supervisor-goal.sh agent-spawn <plan-slug> <agent-id> <wave> <stuck-after-seconds> [scope-path]" >&2
+        exit 2
+    fi
+    agent_args_ok "$slug" "$agent"
+    # repo-relative only: no absolute paths, no `..`, and the harness's own state dirs are off limits
+    if [[ -n "$scope" ]] && { [[ ! "$scope" =~ ^[A-Za-z0-9._@+=,-][A-Za-z0-9._/@+=,-]*$ ]] || [[ "/$scope/" == *"/../"* ]] || [[ "$scope" == "-" ]] || [[ "/$scope/" == *"/.git/"* || "/$scope/" == *"/.agent/"* || "/$scope/" == *"/.worktrees/"* ]]; }; then
+        echo "ERROR: bad scope path: $scope" >&2; exit 2
+    fi
+    init_db
+    local ts; ts="$(now_ms)"
+    sqlite3 "$DB_FILE" "INSERT OR REPLACE INTO supervisor_agents
+        (plan_slug, agent_id, wave, scope, spawned_at_ms, stuck_after_s, last_effect_ms, last_effect_kind, status, stuck_flagged_ms)
+        VALUES ('$(sql_escape "$slug")', '$(sql_escape "$agent")', $wave, '$(sql_escape "$scope")', $ts, $after, $ts, 'spawn', 'running', NULL);"
+}
+
+cmd_agent_effect() {
+    local slug="${1:-}" agent="${2:-}" kind="${3:-effect}"
+    [[ -z "$slug" || -z "$agent" ]] && { echo "usage: ... agent-effect <plan-slug> <agent-id> [kind: commit|log|file]" >&2; exit 2; }
+    agent_args_ok "$slug" "$agent"
+    [[ "$kind" =~ ^[a-z-]{1,20}$ ]] || { echo "ERROR: bad effect kind: $kind" >&2; exit 2; }
+    init_db
+    agent_exists "$slug" "$agent" || { echo "ERROR: agent not found: $agent" >&2; exit 3; }
+    local _now; _now="$(now_ms)"
+    sqlite3 "$DB_FILE" "UPDATE supervisor_agents SET last_effect_ms = $_now, last_effect_kind = '$kind'
+        WHERE plan_slug = '$(sql_escape "$slug")' AND agent_id = '$(sql_escape "$agent")' AND status != 'done';"
+}
+
+# agent-wait: blocked on the user/operator, so silence is expected. agent-resume restarts the clock.
+cmd_agent_state() {  # <new-status> <slug> <agent-id>
+    local status="$1" slug="${2:-}" agent="${3:-}"
+    [[ -z "$slug" || -z "$agent" ]] && { echo "usage: ... agent-wait|agent-resume|agent-done <plan-slug> <agent-id>" >&2; exit 2; }
+    agent_args_ok "$slug" "$agent"
+    init_db
+    agent_exists "$slug" "$agent" || { echo "ERROR: agent not found: $agent" >&2; exit 3; }
+    if [[ "$status" != "done" && "$(sqlite3 "$DB_FILE" "SELECT status FROM supervisor_agents WHERE plan_slug = '$(sql_escape "$slug")' AND agent_id = '$(sql_escape "$agent")';")" == "done" ]]; then
+        echo "ERROR: agent $agent is done; spawn it again to reuse the id" >&2; exit 3
+    fi
+    local extra=""
+    local _now; _now="$(now_ms)"
+    [[ "$status" == "running" ]] && extra=", last_effect_ms = $_now, last_effect_kind = 'resume'"
+    sqlite3 "$DB_FILE" "UPDATE supervisor_agents SET status = '$status', stuck_flagged_ms = NULL$extra
+        WHERE plan_slug = '$(sql_escape "$slug")' AND agent_id = '$(sql_escape "$agent")';"
+}
+
+# scope_effect <scope> -> "<ms> <kind>" for the newest file change or commit under the scope.
+scope_effect() {
+    local scope="$1" path
+    path="$REPO_ROOT/$scope"
+    python3 -I - "$path" "$REPO_ROOT" "$scope" <<'PY'
+import os, subprocess, sys
+path, root, scope = sys.argv[1:4]
+best = (0, "")
+def consider(ms, kind):
+    global best
+    if ms > best[0]:
+        best = (ms, kind)
+if os.path.isfile(path):
+    consider(int(os.stat(path).st_mtime * 1000), "file")
+elif os.path.isdir(path):
+    for d, dirs, files in os.walk(path):
+        dirs[:] = [x for x in dirs if x not in (".git", "node_modules", ".agent", ".worktrees")]
+        for f in files:
+            try:
+                consider(int(os.stat(os.path.join(d, f)).st_mtime * 1000), "file")
+            except OSError:
+                pass
+try:
+    out = subprocess.run(["git", "-C", root, "log", "-1", "--format=%ct", "--", scope],
+                         capture_output=True, text=True, timeout=10).stdout.strip()
+    if out.isdigit():
+        consider(int(out) * 1000, "commit")
+except Exception:
+    pass
+if best[0]:
+    print(best[0], best[1])
+PY
+}
+
+cmd_stuck_check() {
+    local slug="${1:-}"
+    [[ -z "$slug" ]] && { echo "usage: ... stuck-check <plan-slug>" >&2; exit 2; }
+    init_db
+    local _now; _now="$(now_ms)"
+    local now; now="$_now"
+    local q_slug; q_slug="$(sql_escape "$slug")"
+    local rows
+    rows="$(sqlite3 -separator $'\t' "$DB_FILE" "SELECT agent_id, wave, CASE WHEN scope = '' THEN '-' ELSE scope END,
+        stuck_after_s, last_effect_ms, last_effect_kind, status, IFNULL(stuck_flagged_ms, 0)
+        FROM supervisor_agents WHERE plan_slug = '$q_slug' AND status != 'done' ORDER BY wave, agent_id;")"
+    local id wave scope after last kind status flagged eff eff_ms eff_kind idle
+    while IFS=$'\t' read -r id wave scope after last kind status flagged; do
+        [[ -z "$id" ]] && continue
+        if [[ "$status" == "awaiting" ]]; then continue; fi
+        if [[ "$scope" != "-" ]]; then
+            eff="$(scope_effect "$scope" || true)"
+            eff_ms="${eff%% *}"; eff_kind="${eff#* }"
+            if [[ "$eff_ms" =~ ^[0-9]+$ && "$eff_ms" -gt "$last" ]]; then
+                last="$eff_ms"; kind="$eff_kind"
+                sqlite3 "$DB_FILE" "UPDATE supervisor_agents SET last_effect_ms = $last, last_effect_kind = '$kind'
+                    WHERE plan_slug = '$q_slug' AND agent_id = '$(sql_escape "$id")';"
+            fi
+        fi
+        idle=$(( (now - last) / 1000 ))
+        if [[ "$idle" -gt "$after" ]]; then
+            if [[ "$flagged" -eq 0 ]]; then
+                sqlite3 "$DB_FILE" "UPDATE supervisor_agents SET stuck_flagged_ms = $now WHERE plan_slug = '$q_slug' AND agent_id = '$(sql_escape "$id")';"
+                echo "STUCK $id (wave $wave): no side effect for ${idle}s, budget ${after}s, last=$kind"
+            fi
+        elif [[ "$flagged" -ne 0 ]]; then
+            sqlite3 "$DB_FILE" "UPDATE supervisor_agents SET stuck_flagged_ms = NULL WHERE plan_slug = '$q_slug' AND agent_id = '$(sql_escape "$id")';"
+            echo "RECOVERED $id (wave $wave): new $kind"
+        fi
+    done <<< "$rows"
+}
+
+cmd_agents() {
+    local slug="${1:-}"
+    [[ -z "$slug" ]] && { echo "usage: ... agents <plan-slug>" >&2; exit 2; }
+    init_db
+    sqlite3 "$DB_FILE" "SELECT json_group_array(json_object('agent_id', agent_id, 'wave', wave, 'scope', scope,
+        'stuck_after_s', stuck_after_s, 'last_effect_ms', last_effect_ms, 'last_effect_kind', last_effect_kind,
+        'status', status, 'stuck', json(CASE WHEN stuck_flagged_ms IS NULL THEN 'false' ELSE 'true' END))) FROM supervisor_agents
+        WHERE plan_slug = '$(sql_escape "$slug")';"
 }
 
 case "${1:-}" in
+    agent-spawn)  shift; cmd_agent_spawn "$@" ;;
+    agent-effect) shift; cmd_agent_effect "$@" ;;
+    agent-wait)   shift; cmd_agent_state awaiting "$@" ;;
+    agent-resume) shift; cmd_agent_state running "$@" ;;
+    agent-done)   shift; cmd_agent_state "done" "$@" ;;
+    stuck-check)  shift; cmd_stuck_check "$@" ;;
+    agents)       shift; cmd_agents "$@" ;;
     init)         shift; cmd_init "$@" ;;
     status)       shift; cmd_status "$@" ;;
     advance-wave) shift; cmd_advance_wave "$@" ;;
@@ -428,6 +616,11 @@ Commands:
   check-active
   track-tokens <plan-slug> <delta>
   heartbeat <plan-slug>
+  agent-spawn <plan-slug> <agent-id> <wave> <stuck-after-s> [scope-path]
+  agent-effect <plan-slug> <agent-id> [commit|log|file]
+  agent-wait|agent-resume|agent-done <plan-slug> <agent-id>
+  stuck-check <plan-slug>      (prints only STUCK / RECOVERED transitions)
+  agents <plan-slug>
 
 DB:         $DB_FILE
 schema:     $SCHEMA_FILE
