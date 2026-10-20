@@ -239,9 +239,9 @@ ALL_PASS=true
 for cmd in "${CHECKS[@]}"; do
     echo "[audit] running: $cmd" >&2
     LOG_FILE=$(mktemp)
-    # A converge wave's completion-gate check runs as a dryrun liveness check (exit 2 =
-    # dead gate). The blocking verdict is step 2d's own gate call, so an inherited
-    # AGENT_VERIFY_BLOCKING=block must not turn a REFUTED wave into an audit FAIL.
+    # Any completion-gate check (every converge wave has one) runs as a dryrun liveness
+    # check (exit 2 = dead gate). The blocking verdict is step 2d's own gate call, so an
+    # inherited AGENT_VERIFY_BLOCKING=block must not turn a REFUTED wave into an audit FAIL.
     run="$cmd"
     case "$cmd" in "bash core/infra/completion-gate.sh "*) run="AGENT_VERIFY_BLOCKING=dryrun $cmd" ;; esac
     if eval "$run" > "$LOG_FILE" 2>&1 < /dev/null; then
