@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.11.0] - 2026-10-20
+## [0.12.0] - 2026-10-21
 
 ### Added
 - **pre-tool-guard guard 3a** absorbs the generic destructive-command rules of the maintainer's
@@ -26,6 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   backticks and heredocs fed to a shell are followed; no answer from the scan is a deny. Remaining
   gaps: values built at run time, `python -c` one-liners, scripts written then run, `xargs rm`.
   Evidence: D2 bench T2/T8 escapes.
+
+## [0.11.0] - 2026-10-20
+
+### Added
 - **Rule enforcement map** (`docs/gate-registry.md` § Rule enforcement map) maps every AGENTS.md
   and `operating-contract.md` rule to its enforcer (hook / test / CI / git hook) or marks it
   `PARTIAL <enforcers> ~ <gap>` (covered in part, gap stated) or `UNENFORCED`.
