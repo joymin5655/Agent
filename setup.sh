@@ -235,10 +235,11 @@ install_codex() {
         skill="${skill%/}"; name="$(basename "$skill")"
         if [[ -e "$skills_dir/$name" || -L "$skills_dir/$name" ]]; then
             local cur; cur="$(readlink "$skills_dir/$name" 2>/dev/null || true)"   # a real dir: readlink rc 1 must not abort (set -e)
-            # ours = a link into this framework's skills/ or extras/skills/ (an upgrade can
-            # leave one pointing at a skill that moved between the two); relink it
+            # ours = this skill's own link, at skills/<name> or extras/skills/<name> (an upgrade
+            # can leave one at the old location of a skill that moved); relink it. A link to a
+            # different skill name is the user's alias and stays untouched.
             case "$cur" in
-                "$skill"|"$FRAMEWORK_ROOT"/skills/*|"$FRAMEWORK_ROOT"/extras/skills/*) ;;
+                "$skill"|"$FRAMEWORK_ROOT/skills/$name"|"$FRAMEWORK_ROOT/extras/skills/$name") ;;
                 *) echo "  skipped: $skills_dir/$name exists and is not an Agent symlink"; continue ;;
             esac
         fi

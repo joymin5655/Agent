@@ -419,6 +419,14 @@ HOME="$CXU_FIX/home" CODEX_SKILLS_DIR="$CXU_FIX/skills" CODEX_CONFIG="$CXU_FIX/h
 check "codex-relinks-moved-skill-from-old-path" $?
 [[ "$(readlink "$CXU_FIX/skills/code-tour")" == "/elsewhere" ]]
 check "codex-leaves-foreign-link-alone" $?
+# a link to a DIFFERENT skill name (user alias) is not ours, even if it points into skills/
+ln -sfn "$FW_ROOT/skills/spec" "$CXU_FIX/skills/my-alias-of-spec"
+ln -sfn "$FW_ROOT/skills/spec" "$CXU_FIX/skills/wrap"
+HOME="$CXU_FIX/home" CODEX_SKILLS_DIR="$CXU_FIX/skills" CODEX_CONFIG="$CXU_FIX/home/c.toml" \
+  CODEX_GLOBAL_AGENTS="$CXU_FIX/home/AGENTS.md" AGENT_CODEX_TIERS_FILE="$CXU_FIX/home/t.json" \
+  AGENT_SETUP_YES=1 bash "$SETUP" --codex >/dev/null 2>&1
+[[ "$(readlink "$CXU_FIX/skills/wrap")" == "$FW_ROOT/skills/spec" ]]
+check "codex-leaves-other-skill-name-alias-alone" $?
 # a REAL directory in the skills dir (readlink rc 1) is skipped, not fatal under set -e
 rm -f "$CXU_FIX/skills/brain-ingest" "$CXU_FIX/skills/zz-after"; mkdir -p "$CXU_FIX/skills/brain-ingest"
 HOME="$CXU_FIX/home" CODEX_SKILLS_DIR="$CXU_FIX/skills" CODEX_CONFIG="$CXU_FIX/home/c.toml" \

@@ -1,6 +1,6 @@
 ---
 name: harness-loop
-description: The §5 autonomous-improvement-loop procedure specialized to this harness's own reviewer prompts (agents/code-reviewer.md + agents/security-reviewer.md) — the mission-specific 9-step regulation layered on skills/loop's generic mechanics. NOT for an arbitrary mission (use /loop for that), and NOT for editing core/tests/, evals/, or the guards themselves — that is the grader's own surface and is off-limits to any candidate this loop produces.
+description: The §5 autonomous-improvement-loop procedure specialized to this harness's own reviewer prompts (agents/code-reviewer.md + agents/security-reviewer.md) — the mission-specific 9-step regulation layered on extras/skills/loop's generic mechanics. NOT for an arbitrary mission (use /loop for that), and NOT for editing core/tests/, evals/, or the guards themselves — that is the grader's own surface and is off-limits to any candidate this loop produces.
 when_to_use: The user wants to run the harness's own autonomous reviewer-improvement loop — "run harness-loop", "/harness-loop", "improve the reviewer prompts autonomously" — or is resuming a prior harness-loop session.
 tools: Bash, Read, Write, Edit, Grep, Glob
 ---

@@ -113,7 +113,11 @@ def is_provider(md_path: pathlib.Path) -> bool:
 
 def provider_dirs_for(reg_dir: pathlib.Path) -> List[pathlib.Path]:
     """Dirs holding provider .md files: beside the registry, plus the optional extras
-    plugin's <root>/extras/agents (shipped inside the core plugin tree: its source is "./")."""
+    plugin's <root>/extras/agents. The extras lookup only fires when <root> is a harness
+    checkout (root = the project dir, where agents/ and extras/ are siblings); the plugin
+    cache layout does not match. Accepted side effect: inside a checkout the extras agent
+    counts as present even when the extras plugin is not installed (the supervisor only
+    suggests a provider, it never denies)."""
     dirs = [reg_dir]
     if reg_dir.name == "agents" and (reg_dir.parent / "extras" / "agents").is_dir():
         dirs.append(reg_dir.parent / "extras" / "agents")
