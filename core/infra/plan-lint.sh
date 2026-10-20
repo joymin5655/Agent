@@ -25,7 +25,8 @@
 #      that was never filled in is not evidence
 #   7. an unterminated code fence (it would silently hide the rest of the file)
 #   8. spec.md present without a `## Must not` or a `## Edge cases` section
-#      (each may hold a single `- none — <reason>` bullet)
+#      (each may hold a single `- none — <reason>` bullet); a present section with
+#      no `- ` bullet at all is empty and fails too
 #   9. a spec `## Must not` / `## Edge cases` bullet with backticked terms,
 #      checked exactly like rule 5 (any-hit, same boilerplate exclusions)
 # Fenced code blocks are neither headers nor steps, in plan and spec. Fences
@@ -187,7 +188,12 @@ if [[ -f "$spec" ]]; then
       next
     }
     sec == "" { next }
-    /^- / { flush(); have = 1; buf = $0; bline = FNR; bkind = sec; next }
+    /^- / {
+      flush(); have = 1; buf = $0; bline = FNR; bkind = sec
+      if (sec == "must-not") mn_n++
+      else if (sec == "edge case") ec_n++
+      next
+    }
     /^[ \t]+[^ \t]/ { if (have) buf = buf " " $0; next }
     { flush() }
     END {
@@ -195,7 +201,9 @@ if [[ -f "$spec" ]]; then
       if (fence) print "FAIL " F ":" fline ": unterminated code fence"
       if (!dec) print "FAIL " F ":1: spec has no ## Decisions section"
       if (!mn) print "FAIL " F ":1: spec has no ## Must not section"
+      else if (!mn_n) print "FAIL " F ":1: spec ## Must not section is empty"
       if (!ec) print "FAIL " F ":1: spec has no ## Edge cases section"
+      else if (!ec_n) print "FAIL " F ":1: spec ## Edge cases section is empty"
     }
   ' - "$spec")
 fi

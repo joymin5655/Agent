@@ -98,19 +98,20 @@ fi
 # `grep -c PATTERN FILE` is captured whole: PATTERN may be single- or double-quoted
 # (spaces allowed) and FILE ends the command, so prose after it (`→`, backticks,
 # ` -> `) is never swept into the eval'd check. Option tokens (`-v`, `--`) may precede
-# PATTERN; a match containing `$(` or a backtick is dropped because the check is eval'd.
+# PATTERN. Any match containing `$(` or a backtick is dropped because the check is eval'd.
+# A converge wave's `- fix: <gap> → verify: <cmd>` step contributes only <cmd>: the gap
+# text comes from verifier output and must never reach eval. The completion-gate
+# alternative keeps `<slug> <wave>` (strict charset) so a converge wave can audit itself.
 declare -a CHECKS=()
+# shellcheck disable=SC2016  # the ERE and the sed expression are single-quoted on purpose
 while IFS= read -r cmd; do
     cmd="$(echo "$cmd" | sed -E 's/^[[:space:]]+|[[:space:]]+$//g')"
     [[ -z "$cmd" ]] && continue
-    case "$cmd" in
-        grep\ -c*)
-            # eval'd below: never let a captured command substitution run
-            # shellcheck disable=SC2016  # literal `$(` is the thing being matched
-            case "$cmd" in *'$('*|*'`'*) continue ;; esac ;;
-    esac
+    # eval'd below: never let a captured command substitution run
+    # shellcheck disable=SC2016  # literal `$(` is the thing being matched
+    case "$cmd" in *'$('*|*'`'*) continue ;; esac
     CHECKS+=("$cmd")
-done < <({ echo "$WAVE_SECTION" | grep -oE '(npm run (build|lint|test|test:run|test:e2e|typecheck|test:a11y)|npx tsc[^[:space:]]*|pytest[^"]*|uv run pytest[^"]*|ruff check[^"]*|test -f [^[:space:]]+|test ! -f [^[:space:]]+|bash -n [^[:space:]]+|wc -l [^[:space:]]+|grep -c (-[A-Za-z]+ |-- )*("([^"\\]|\\.)*"|'"'"'[^'"'"']*'"'"'|[^[:space:]`"'"'"']+) ("[^"]+"|'"'"'[^'"'"']+'"'"'|[^[:space:]`"'"'"'|;&<>()$]+)|bash core/[^[:space:]]+\.sh|bash tests/[^[:space:]]+\.sh|tests/integration/[^[:space:]]+\.sh|jq [^"|]+\.(jsonl|json)|time bash [^[:space:]]+\.sh)' || true; } | sort -u)
+done < <({ echo "$WAVE_SECTION" | sed -E 's/^- fix: .* → verify: /- verify: /' | grep -oE '(npm run (build|lint|test|test:run|test:e2e|typecheck|test:a11y)|npx tsc[^[:space:]`]*|pytest[^"`]*|uv run pytest[^"`]*|ruff check[^"`]*|test -f [^[:space:]`]+|test ! -f [^[:space:]`]+|bash -n [^[:space:]`]+|wc -l [^[:space:]`]+|grep -c (-[A-Za-z]+ |-- )*("([^"\\]|\\.)*"|'"'"'[^'"'"']*'"'"'|[^[:space:]`"'"'"']+) ("[^"]+"|'"'"'[^'"'"']+'"'"'|[^[:space:]`"'"'"'|;&<>()$]+)|bash core/infra/completion-gate\.sh [A-Za-z0-9._-]+ [0-9]+|bash core/[^[:space:]]+\.sh|bash tests/[^[:space:]]+\.sh|tests/integration/[^[:space:]]+\.sh|jq [^"|]+\.(jsonl|json)|time bash [^[:space:]]+\.sh)' || true; } | sort -u)
 
 # ---------- Scoring functions (deterministic — no LLM calls) ----------
 

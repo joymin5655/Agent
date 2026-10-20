@@ -149,7 +149,7 @@ than improvising a lane.
 
 ### 2. Per-wave loop
 
-For each wave i ∈ {1..N}:
+For each wave i ∈ {1..N} (N grows under `--converge`):
 
 a. **Read Wave i section** of the plan.
 b. **Classify the wave and pick lanes** based on its content:
@@ -245,8 +245,8 @@ f. **Wrap** (if `--auto-push` or `--auto-merge`):
 
 ### 2b. Race lanes (opt-in: wave annotated `race: true`)
 
-A wave annotated `race: true` runs competing lanes on the same spec; procedure in
-`skills/supervise/race-lanes.md`.
+Before running a `race: true` wave, read `skills/supervise/race-lanes.md` — it holds
+the one-writer and patch-only rules.
 
 ### 3. Safeguards (immediate abort)
 

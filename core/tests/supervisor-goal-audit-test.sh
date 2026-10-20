@@ -108,6 +108,24 @@ check "home-legacy-flat-fallback" 'test -f home.txt' "$(env -u AGENT_PLANS_DIR H
 env -u AGENT_PLANS_DIR HOME="$TMP/home" bash "$AUDIT" nope 1 >/dev/null 2>&1
 check "missing-plan-exits-3" "3" "$?"
 
+echo "=== converge waves: full gate command kept, gap text never reaches eval ==="
+check "converge-gate-keeps-slug-and-wave" 'bash core/infra/completion-gate.sh demo 2' \
+  "$(run_audit '- fix: file widget.sh missing → verify: `bash core/infra/completion-gate.sh demo 2`')"
+check "gate-without-args-still-captured" 'bash core/infra/completion-gate.sh' \
+  "$(run_audit '- `bash core/infra/completion-gate.sh`')"
+rm -f PWNED
+check "fix-text-command-not-extracted" 'bash core/infra/completion-gate.sh demo 2' \
+  "$(run_audit '- fix: pytest x failed $(touch PWNED) → verify: `bash core/infra/completion-gate.sh demo 2`')"
+check "fix-text-shell-metachars-not-extracted" 'bash core/infra/completion-gate.sh demo 2' \
+  "$(run_audit '- fix: pytest tests/ failed; touch PWNED → verify: `bash core/infra/completion-gate.sh demo 2`')"
+check "plain-pytest-with-substitution-dropped" "" "$(run_audit 'Check: pytest x failed $(touch PWNED)')"
+check "test-f-with-substitution-dropped" "" "$(run_audit 'Check: test -f $(touch PWNED)')"
+check "bash-core-with-backtick-dropped" "" "$(run_audit 'Check: bash core/a`touch PWNED`.sh')"
+check "backticked-pytest-stops-at-backtick" 'pytest tests/' "$(run_audit 'Run `pytest tests/` first')"
+check "backticked-test-f-stops-at-backtick" 'test -f f.txt' "$(run_audit 'Check: `test -f f.txt`')"
+check "backticked-wc-l-stops-at-backtick" 'wc -l f.txt' "$(run_audit 'Check: `wc -l f.txt`')"
+check "nothing-was-executed-by-converge-cases" "no" "$([[ -e PWNED ]] && echo yes || echo no)"
+
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]
