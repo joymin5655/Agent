@@ -3,7 +3,7 @@
 `top-edit-advisor.py` was a PostToolUse advisory that repeated a `systemMessage` every +15
 direct Write/Edit calls made by the session's top-tier model. It never blocked.
 
-Why retired (2026-10-20): the user's local copy was already retired, the advisory repeated at
+Why retired (2026-10-20): it was retired in the maintainer's own setup first, the advisory repeated at
 +15 direct edits and was routinely ignored, and enforcement belongs in the dispatch-time
 observers and `/supervise`, so a per-edit PostToolUse spawn bought no decision. Zero firings
 were never measured (sink `-`), so this is a judgement, not a DEAD verdict.

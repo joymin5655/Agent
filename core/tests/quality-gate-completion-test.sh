@@ -177,7 +177,18 @@ is_block "$OUT" && check "budget-blocks" 0 || check "budget-blocks" 1
 [[ "$OUT" == *"budget exceeded (3s)"* ]]; check "budget-reason-named" $?
 [[ ! -e "$P/ran-third" ]]; check "budget-stops-launching" $?
 
-cho
+echo
+echo "=== (j3) per-test timeout is clamped to the remaining aggregate budget ==="
+P=$(make_project clamp)
+cat > "$P/.agent/hook-config.json" <<'EOF'
+{ "session": { "completion_tests": ["sleep 5"] } }
+EOF
+RCJ3=$(run_stop "$P" false AGENT_COMPLETION_TOTAL_BUDGET=2); OUT=$(cat "$OUTFILE")
+[[ $RCJ3 -eq 0 ]]; check "exit-0-clamp" $?
+is_block "$OUT" && check "clamp-blocks" 0 || check "clamp-blocks" 1
+[[ "$OUT" == *"timed out after 2s"* ]]; check "clamp-reason-named" $?
+
+echo
 echo "=== (k) loader bounds — <=20 commands, <=500 chars each ==="
 # The bounded loader (_MAX_COMPLETION_TESTS=20, _MAX_COMMAND_LEN=500) has no other
 # coverage. Assert directly: 25 declared + one 600-char entry -> capped to 20, and

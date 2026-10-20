@@ -54,6 +54,7 @@ Configuration (env vars):
 """
 import hashlib
 import json
+import math
 import os
 import re
 import stat
@@ -129,7 +130,7 @@ def run_completion_tests(root: str) -> list[str]:
             failures.append(f"completion_tests budget exceeded ({COMPLETION_TOTAL_BUDGET}s): "
                             f"`{cmd}` and any later tests were not run")
             break
-        per_cmd = min(COMPLETION_TEST_TIMEOUT, int(remaining))
+        per_cmd = min(COMPLETION_TEST_TIMEOUT, math.ceil(remaining))
         try:
             r = subprocess.run(
                 cmd, shell=True, cwd=root or None,

@@ -214,6 +214,14 @@ JSON
 OUT="$(AGENT_RUBRIC_TOTAL_TIMEOUT=1 python3 "$SCORER" --rubric "$T/r.json" 2>/dev/null)"
 refut_has "total budget"; check "l-budget-cap" $?
 
+echo "=== (l2) a single slow check is clamped to the remaining total budget ==="
+T=$(fresh)
+printf '%s\n' '{"dimensions":[{"id":"slow","grader_check":"sleep 6"}]}' > "$T/r.json"
+START=$SECONDS
+OUT="$(AGENT_RUBRIC_TOTAL_TIMEOUT=2 python3 "$SCORER" --rubric "$T/r.json" 2>/dev/null)"
+[[ $((SECONDS - START)) -lt 5 ]]; check "l2-clamped-wall-time" $?
+[[ "$(field verdict)" != "CONFIRMED" ]]; check "l2-slow-check-refuted" $?
+
 echo
 echo "=== manifest: rubric-commit-judge must not be gated by a narrow if ==="
 # `Bash(git commit*)` misses `git -C d commit` and rtk-rewritten `rtk git commit`;
