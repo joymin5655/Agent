@@ -153,6 +153,9 @@ bash core/tests/adapter-parity.sh
 # Sanitize audit
 bash core/tests/sanitize-audit.sh
 
+# Rule -> enforcement map (docs/gate-registry.md); warns with the UNENFORCED count
+bash core/tests/rule-map.sh
+
 # Config parsing + autosync hook
 bash core/tests/hook-config-test.sh
 bash core/tests/post-commit-autosync-test.sh

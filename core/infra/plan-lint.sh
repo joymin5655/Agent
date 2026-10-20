@@ -20,7 +20,13 @@
 #      of its terms occurs in Wave step text (any-hit semantics: one hit per
 #      bullet suffices). Boilerplate terms (`→ verify:`, `-> verify:`,
 #      `## Wave N:`) are ignored; bullets without usable terms are skipped.
-# Fenced code blocks (```) are neither headers nor steps, in plan and spec.
+#   6. an empty verify box: `→ verify:` with nothing after it (or only a
+#      placeholder: TODO / TBD / ... / <fill ...> / empty backticks) — evidence
+#      that was never filled in is not evidence
+#   7. an unterminated code fence (it would silently hide the rest of the file)
+# Fenced code blocks are neither headers nor steps, in plan and spec. Fences
+# follow CommonMark: ``` or ~~~, >=3 chars, closed only by the same character
+# at >= the opener's length, so a 4-backtick fence may wrap literal ``` lines.
 #
 # Exit 0: clean. Exit 1: defects. Exit 2: usage / missing plan.md.
 set -euo pipefail
@@ -49,6 +55,22 @@ fi
 
 # MODE unset: print defects. MODE=steps: print each step's full text instead.
 read -r -d '' PLAN_AWK <<'AWK' || true
+function fence_line(line,   s, c, n, rest) {
+  s = line; sub(/^[ \t]*/, "", s)
+  c = substr(s, 1, 1)
+  if (c != "`" && c != "~") return 0
+  n = 0
+  while (substr(s, n + 1, 1) == c) n++
+  if (n < 3) return 0
+  rest = substr(s, n + 1)
+  if (!fence) {
+    if (c == "`" && index(rest, "`") > 0) return 0
+    fchar = c; flen = n; fence = 1; fline = FNR
+    return 1
+  }
+  if (c == fchar && n >= flen && rest ~ /^[ \t\r]*$/) fence = 0
+  return 1
+}
 function last_verify(s,   i, n, tick, c, j, k, pos) {
   n = length(s); tick = 0; pos = 0
   for (i = 1; i <= n; i++) {
@@ -64,7 +86,7 @@ function last_verify(s,   i, n, tick, c, j, k, pos) {
   }
   return pos
 }
-function flush(   p, v) {
+function flush(   p, v, w) {
   if (!have) return
   have = 0
   if (MODE == "steps") { print buf; return }
@@ -74,6 +96,11 @@ function flush(   p, v) {
     return
   }
   v = substr(buf, p)
+  w = v; gsub(/`[ \t]*`/, "", w); gsub(/^[ \t]+|[ \t]+$/, "", w)
+  if (w == "" || w ~ /^(TODO|TBD|FIXME|\.\.\.|…|<[^>]*>|-|n\/a|N\/A)[ \t.]*$/) {
+    print "FAIL " F ":" bline ": verify is empty (nothing after `→ verify:`)"
+    return
+  }
   if (index(v, "`") == 0 && index(v, "reason:") == 0)
     print "FAIL " F ":" bline ": verify has no backticked command and no `reason:`"
 }
@@ -82,7 +109,7 @@ function close_wave() {
     print "FAIL " F ":" wline ": wave has no steps"
   inwave = 0
 }
-/^[ \t]*```/ { flush(); fence = !fence; next }
+fence_line($0) { flush(); next }
 fence { next }
 /^# / { flush(); close_wave(); next }
 /^## / {
@@ -97,6 +124,7 @@ fence { next }
 { flush() }
 END {
   flush(); close_wave()
+  if (fence && MODE != "steps") print "FAIL " F ":" fline ": unterminated code fence"
   if (waves == 0 && MODE != "steps") print "FAIL " F ":1: no `## Wave <N>: <name>` header"
 }
 AWK
@@ -108,6 +136,22 @@ if [[ -f "$spec" ]]; then
   steps=$(awk -v MODE=steps -v F="$plan" "$PLAN_AWK" "$plan")
   spec_defects=$(printf '%s\n' "$steps" | awk -v F="$spec" '
     NR == FNR { plan = plan "\n" $0; next }
+    function fence_line(line,   s, c, n, rest) {
+      s = line; sub(/^[ \t]*/, "", s)
+      c = substr(s, 1, 1)
+      if (c != "`" && c != "~") return 0
+      n = 0
+      while (substr(s, n + 1, 1) == c) n++
+      if (n < 3) return 0
+      rest = substr(s, n + 1)
+      if (!fence) {
+        if (c == "`" && index(rest, "`") > 0) return 0
+        fchar = c; flen = n; fence = 1; fline = FNR
+        return 1
+      }
+      if (c == fchar && n >= flen && rest ~ /^[ \t\r]*$/) fence = 0
+      return 1
+    }
     function boilerplate(t) {
       return (t ~ /^(→|->) *verify:?$/ || t ~ /^## Wave/)
     }
@@ -127,7 +171,7 @@ if [[ -f "$spec" ]]; then
       }
       if (any && !hit) print "FAIL " F ":" bline ": criterion not referenced by plan: " buf
     }
-    /^[ \t]*```/ { flush(); fence = !fence; next }
+    fence_line($0) { flush(); next }
     fence { next }
     /^## / {
       flush()
@@ -141,6 +185,7 @@ if [[ -f "$spec" ]]; then
     { flush() }
     END {
       flush()
+      if (fence) print "FAIL " F ":" fline ": unterminated code fence"
       if (!dec) print "FAIL " F ":1: spec has no ## Decisions section"
     }
   ' - "$spec")
