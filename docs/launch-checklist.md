@@ -6,7 +6,24 @@ Research basis: 2026-07 survey of the top starred Claude Code ecosystem repos
 (see `docs/benchmark/landscape.md`); the consistent star drivers were a
 pain-first pitch, a visible demo, one-line install, and directory listings.
 
-## Preconditions (do these before any submission)
+## Process posts (start now — no GIF needed)
+
+These do not wait for the preconditions below: a short post about work in
+progress needs no recording, so posting can start before the GIF exists. The
+maintainer posts each item by hand — no agent, hook or CI job posts anything.
+
+- [ ] Post one short process post now — what you are working on this week and
+      what is stuck, in a few lines (plain text is enough: no GIF, no polish
+      pass).
+- [ ] Once a week, post one real scene where a gate caught a false "done" —
+      the claim, the REFUTED verdict and the check that refuted it, shaped like
+      scenario 2 in `docs/demo.md` but from a real run (redact home paths,
+      hostnames and secret values first; see `rules/public-repo.md`).
+- [ ] Post one question, not an announcement, in a Korean-language community —
+      for example "has your agent ever said tests passed when they didn't?" —
+      after reading that community's self-promotion rules.
+
+## Preconditions (do these before any directory submission or launch post)
 
 - [ ] Demo GIF recorded per `docs/demo.md` and embedded at the top of the
       README (lead with the false-"done" catch).
