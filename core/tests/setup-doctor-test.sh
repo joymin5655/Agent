@@ -419,6 +419,16 @@ HOME="$CXU_FIX/home" CODEX_SKILLS_DIR="$CXU_FIX/skills" CODEX_CONFIG="$CXU_FIX/h
 check "codex-relinks-moved-skill-from-old-path" $?
 [[ "$(readlink "$CXU_FIX/skills/code-tour")" == "/elsewhere" ]]
 check "codex-leaves-foreign-link-alone" $?
+# a REAL directory in the skills dir (readlink rc 1) is skipped, not fatal under set -e
+rm -f "$CXU_FIX/skills/brain-ingest" "$CXU_FIX/skills/zz-after"; mkdir -p "$CXU_FIX/skills/brain-ingest"
+HOME="$CXU_FIX/home" CODEX_SKILLS_DIR="$CXU_FIX/skills" CODEX_CONFIG="$CXU_FIX/home/c.toml" \
+  CODEX_GLOBAL_AGENTS="$CXU_FIX/home/AGENTS.md" AGENT_CODEX_TIERS_FILE="$CXU_FIX/home/t.json" \
+  AGENT_SETUP_YES=1 bash "$SETUP" --codex > "$CXU_FIX/out.log" 2>&1
+RC_DIR=$?
+[[ $RC_DIR -eq 0 && -d "$CXU_FIX/skills/brain-ingest" && ! -L "$CXU_FIX/skills/brain-ingest" ]]
+check "codex-real-dir-skipped-not-fatal" $?
+grep -q 'skipped:.*brain-ingest' "$CXU_FIX/out.log"
+check "codex-real-dir-reported-skipped" $?
 OUT_K5="$(CODEX_CONFIG="$CXS_FIX/none.toml" CODEX_SKILLS_DIR="$CXS_FIX/empty" bash "$SETUP" --doctor 2>&1)"
 [[ "$OUT_K5" != *"codex skills — "* ]]
 check "codex-skills-skipped-without-codex" $?

@@ -169,6 +169,17 @@ reclassified = "new-prov" in r["real"] and not r["discovered"]
 print("PASS" if kept and wired and reclassified and len(after["agents"])==2 else (ids, r))
 ' "$D" "$D/agents/master-registry.json"
 
+# 5b. --sync of a provider that lives only in extras/agents keeps its declared model
+D="$(make_fixture)"; mkdir -p "$D/extras/agents"
+printf '{"version":1,"agents":[]}\n' > "$D/agents/master-registry.json"
+agent_md "$D/extras/agents/extra-prov.md" "opus"
+assert_py "sync: extras/agents provider wired with its frontmatter model" '
+import json
+r = m.run(root, True)
+ids = {a["id"]: a.get("model") for a in json.load(open(reg))["agents"]}
+print("PASS" if ids.get("extra-prov")=="opus" and "extra-prov" in r["real"] else (ids, r))
+' "$D" "$D/agents/master-registry.json"
+
 # ---------------------------------------------------------------------------
 # 6. fail-open — no registry anywhere -> empty verdict, no write, no crash
 # ---------------------------------------------------------------------------

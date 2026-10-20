@@ -234,7 +234,7 @@ install_codex() {
         [[ -d "$skill" ]] || continue   # unmatched glob (no extras/ in this tree)
         skill="${skill%/}"; name="$(basename "$skill")"
         if [[ -e "$skills_dir/$name" || -L "$skills_dir/$name" ]]; then
-            local cur; cur="$(readlink "$skills_dir/$name" 2>/dev/null)"
+            local cur; cur="$(readlink "$skills_dir/$name" 2>/dev/null || true)"   # a real dir: readlink rc 1 must not abort (set -e)
             # ours = a link into this framework's skills/ or extras/skills/ (an upgrade can
             # leave one pointing at a skill that moved between the two); relink it
             case "$cur" in

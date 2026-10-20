@@ -111,6 +111,22 @@ def is_provider(md_path: pathlib.Path) -> bool:
     return text.lstrip().startswith("---") and len(text.split("---", 2)) >= 3
 
 
+def provider_dirs_for(reg_dir: pathlib.Path) -> List[pathlib.Path]:
+    """Dirs holding provider .md files: beside the registry, plus the optional extras
+    plugin's <root>/extras/agents (shipped inside the core plugin tree: its source is "./")."""
+    dirs = [reg_dir]
+    if reg_dir.name == "agents" and (reg_dir.parent / "extras" / "agents").is_dir():
+        dirs.append(reg_dir.parent / "extras" / "agents")
+    return dirs
+
+
+def provider_md(reg_dir: pathlib.Path, agent_id: str) -> pathlib.Path:
+    for d in provider_dirs_for(reg_dir):
+        if (d / (agent_id + ".md")).is_file():
+            return d / (agent_id + ".md")
+    return reg_dir / (agent_id + ".md")
+
+
 def reconcile(registry_path: pathlib.Path) -> Dict[str, List[str]]:
     """Classify the active registry against the provider .md files beside it.
 
@@ -122,11 +138,7 @@ def reconcile(registry_path: pathlib.Path) -> Dict[str, List[str]]:
     registry_ids = [
         a.get("id", "") for a in reg.get("agents", []) if a.get("id")
     ]
-    # the optional extras plugin keeps its agents in <root>/extras/agents (shipped inside
-    # the core plugin's tree because that plugin's source is "./")
-    provider_dirs = [reg_dir]
-    if reg_dir.name == "agents" and (reg_dir.parent / "extras" / "agents").is_dir():
-        provider_dirs.append(reg_dir.parent / "extras" / "agents")
+    provider_dirs = provider_dirs_for(reg_dir)
     provider_ids = {
         p.stem for d in provider_dirs for p in d.glob("*.md") if p.stem and is_provider(p)
     }
@@ -191,7 +203,7 @@ def sync_registry(
         for aid in discovered:
             if aid in existing:
                 continue
-            model = frontmatter_model(registry_path.parent / (aid + ".md"))
+            model = frontmatter_model(provider_md(registry_path.parent, aid))
             entry = {
                 "id": aid,
                 "description": "(auto-synced from agents/{}.md)".format(aid),
