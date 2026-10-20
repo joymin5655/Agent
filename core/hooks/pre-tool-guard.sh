@@ -2,7 +2,7 @@
 # PreToolUse hook — Bash command safety guards
 #
 # Catches dangerous shell command patterns before they execute:
-#   - Broad destructive deletion (rm -r root/home, find -delete, rsync --delete, git clean -f)
+#   - Broad destructive deletion (rm -r at / ~ $HOME ../, find -delete, rsync --delete, git clean -f)
 #   - Force push to main/master (--force, -f, --force-with-lease, +main)
 #   - git reset --hard; checkout -- / restore / switch --discard-changes on a dirty tree
 #   - Environment dumps (env, printenv, export -p, declare -x, set, ps eww) - guard 3a
@@ -383,756 +383,25 @@ FIX: git stash (keeps the work), git restore <path> for single files, or git rev
   exit 0
 fi
 
-# 3a. Command-position danger checks (one python pass over the message-stripped command): git clean -f,
-# the discard-changes family (checkout -- / restore / switch --discard-changes, stash drop|clear),
-# force push to main/master in its short forms (-f, --force-with-lease, +main), environment dumps
-# (env / printenv / export -p / declare -x / set / ps e|eww|-E), recursive rm (-r/-R/--recursive) and
-# find -delete / find -exec rm / rsync --delete aimed at /, ~, $HOME or ../. Ported from the local
-# destructive-guard / env-dump-guard. Only simple commands in command position are judged: heredoc
-# bodies are skipped, $( ) and backtick bodies are NOT re-evaluated (python -c, eval of a variable and
-# the like stay a known gap). git clean / discard decisions probe `git status` (5 s cap, fail-closed:
-# a probe that cannot run asks). A deny is emitted here; an ask is held back to the end of the file
-# so any later deny (4a/4b, secrets, risk areas) still wins. A python failure allows (the old behaviour).
-IFS= read -r -d '' _DANGER_PY <<'PY'
-import os
-import re
-import shlex
-import subprocess
-import sys
-
-# Command-position danger checks (git discard family, git clean, force push to main, env dumps,
-# recursive rm, find -delete, rsync --delete). Reads the message-stripped command on stdin and
-# prints nothing (allow) or one decision: a header line "decision<TAB>guard<TAB>log reason"
-# followed by the teaching reason. Only simple commands in command position are judged; text
-# inside heredoc bodies is skipped and $( ) or backtick bodies are NOT re-evaluated (known gap).
-
-ASSIGN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
-REDIR = re.compile(r"\d*(?:&?>>?|<<?<?|>&|<&|>\|)")
-SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
-KEYWORDS = {"then", "do", "else", "elif", "if", "while", "until", "!", "{", "}"}
-MAX_DEPTH = 4
-PROTECTED = re.compile(r"^(?:/|~|\$HOME|\$\{HOME\}|\.\./|\.\.$)")
-DEAD = "\x22${NAME+x}\x22"
-GIT_VALUE_OPTS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--exec-path"}
-ENV_VALUE_OPTS = {"-u", "-P", "-C", "--unset", "--chdir"}
-RSYNC_VALUE_OPTS = {
-    "-e", "--rsh", "--exclude", "--include", "--exclude-from", "--include-from", "--filter", "-f",
-    "--files-from", "--log-file", "--backup-dir", "--suffix", "--partial-dir", "--temp-dir", "-T",
-    "--bwlimit", "--port", "--timeout", "--rsync-path", "--max-size", "--min-size",
-    "--compare-dest", "--copy-dest", "--link-dest", "--chmod", "--chown", "--usermap",
-    "--groupmap", "--out-format", "--info", "--debug",
-}
-
-DENIES = []
-PROBES = []
-ASKS = []
-
-
-def read_word(s, i):
-    # one shell word starting at s[i], dequoted; returns (word, next index). Never raises.
-    n = len(s)
-    parts = []
-    while i < n:
-        c = s[i]
-        if c in " \t\n":
-            break
-        if c in ";()":
-            break
-        if c in "&|":
-            if parts and parts[-1][-1:] in "<>":
-                parts.append(c)
-                i += 1
-                continue
-            break
-        if c == "\\":
-            if i + 1 < n and s[i + 1] != "\n":
-                parts.append(s[i + 1])
-            i += 2
-        elif c == "\x27":
-            j = s.find("\x27", i + 1)
-            if j < 0:
-                parts.append(s[i + 1:])
-                i = n
-            else:
-                parts.append(s[i + 1:j])
-                i = j + 1
-        elif c == "\x22":
-            i += 1
-            while i < n and s[i] != "\x22":
-                if s[i] == "\\" and i + 1 < n:
-                    if s[i + 1] in "\x22$\x60\\":
-                        parts.append(s[i + 1])
-                    elif s[i + 1] != "\n":
-                        parts.append(s[i:i + 2])
-                    i += 2
-                else:
-                    parts.append(s[i])
-                    i += 1
-            i += 1
-        elif c == "\x60":
-            j = s.find("\x60", i + 1)
-            j = n - 1 if j < 0 else j
-            parts.append(s[i:j + 1])
-            i = j + 1
-        elif c == "$" and s.startswith("(", i + 1):
-            depth = 0
-            j = i + 1
-            while j < n:
-                if s[j] == "(":
-                    depth += 1
-                elif s[j] == ")":
-                    depth -= 1
-                    if depth == 0:
-                        break
-                j += 1
-            parts.append(s[i:j + 1])
-            i = j + 1
-        else:
-            parts.append(c)
-            i += 1
-    return "".join(parts), i
-
-
-def tokenize(s):
-    # simple commands as lists of words; heredoc bodies are skipped
-    cmds = []
-    cur = []
-    pending = []
-    want = None
-    i = 0
-    n = len(s)
-    while i < n:
-        c = s[i]
-        if c in " \t":
-            i += 1
-        elif c == "\n":
-            if cur:
-                cmds.append(cur)
-                cur = []
-            i += 1
-            while pending:
-                delim, strip = pending.pop(0)
-                while i < n:
-                    j = s.find("\n", i)
-                    line = s[i:] if j < 0 else s[i:j]
-                    i = n if j < 0 else j + 1
-                    if (line.lstrip("\t") if strip else line) == delim:
-                        break
-        elif c in ";&|()":
-            if cur:
-                cmds.append(cur)
-                cur = []
-            i += 1
-        elif c == "#" and not cur:
-            j = s.find("\n", i)
-            i = n if j < 0 else j
-        else:
-            w, j = read_word(s, i)
-            if j <= i:
-                j = i + 1
-            i = j
-            cur.append(w)
-            if want is not None:
-                pending.append((w, want))
-                want = None
-            elif w.startswith("<<") and not w.startswith("<<<"):
-                body = w[2:]
-                strip = body.startswith("-")
-                body = body[1:] if strip else body
-                if body:
-                    pending.append((body, strip))
-                else:
-                    want = strip
-    if cur:
-        cmds.append(cur)
-    return cmds
-
-
-def strip_redirs(words):
-    out = []
-    k = 0
-    while k < len(words):
-        w = words[k]
-        m = REDIR.match(w)
-        if m:
-            k += 2 if m.end() == len(w) else 1
-            continue
-        out.append(w)
-        k += 1
-    return out
-
-
-def skip_prefix(words):
-    i = 0
-    while i < len(words):
-        w = words[i]
-        b = os.path.basename(w)
-        if ASSIGN.match(w) or w in KEYWORDS:
-            i += 1
-        elif b in ("command", "builtin"):
-            if i + 1 < len(words) and re.match(r"-[A-Za-z]*[vV]", words[i + 1]):
-                return len(words)
-            i += 1
-        elif b in ("exec", "nohup", "time"):  # supply-chain-scan: allow-literal launcher names skipped when parsing a command, not a spawn
-            i += 1
-        elif b in ("sudo", "doas"):
-            i += 1
-            while i < len(words) and words[i].startswith("-"):
-                i += 2 if words[i] in ("-u", "-g", "-h", "-p", "-C", "-D", "-R", "-T", "-U") else 1
-        elif b == "nice":
-            i += 1
-            while i < len(words) and words[i].startswith("-"):
-                i += 2 if words[i] == "-n" else 1
-        else:
-            break
-    return i
-
-
-def deny(guard, log, why, fix):
-    DENIES.append((guard, log, why + "\nFIX: " + fix))
-
-
-def ask(guard, log, why, fix):
-    ASKS.append((guard, log, why + "\nFIX: " + fix))
-
-
-def env_dump(form):
-    deny(
-        "env-dump",
-        "environment dump blocked: " + form,
-        form + " blocked.\nWHY: env-dump guard - dumping the whole environment prints every secret the "
-        "session holds (API keys, tokens) into the transcript, where it is stored and may be read back.",
-        "test whether one variable is set without printing it: test -n " + DEAD + " && echo set",
-    )
-
-
-def ps_dump(args):
-    m = re.match(r"[A-Za-z]+", args[0]) if args and not args[0].startswith("-") else None
-    if m and "e" in m.group(0):
-        env_dump("ps " + args[0])
-        return
-    for a in args:
-        m = re.match(r"-([A-Za-z]+)", a) if not a.startswith("--") else None
-        if m and "E" in m.group(1):
-            env_dump("ps " + a)
-            return
-
-
-def env_check(args, depth):
-    if depth > MAX_DEPTH:
-        return
-    k = 0
-    while k < len(args):
-        a = args[k]
-        if a == "--":
-            k += 1
-            break
-        if a in ("--help", "--version"):
-            return
-        if a.startswith("-S") or a.startswith("--split-string"):
-            if a in ("-S", "--split-string"):
-                text, rest = (args[k + 1] if k + 1 < len(args) else ""), args[k + 2:]
-            else:
-                text = a.split("=", 1)[1] if a.startswith("--split-string=") else a[2:]
-                rest = args[k + 1:]
-            try:
-                return env_check(shlex.split(text) + rest, depth + 1)
-            except ValueError:
-                return
-        if a in ENV_VALUE_OPTS:
-            k += 2
-        elif a == "-" or a.startswith("-") or ASSIGN.match(a):
-            k += 1
-        else:
-            break
-    rest = args[k:]
-    if not rest:
-        env_dump("env" if not args else "env " + " ".join(args))
-    else:
-        check(rest, depth + 1)
-
-
-def git_global(args):
-    # (subcommand, rest, -C directory) after the global options
-    k = 0
-    cdir = None
-    while k < len(args):
-        a = args[k]
-        if a == "-C" and k + 1 < len(args):
-            cdir = args[k + 1]
-            k += 2
-        elif a in GIT_VALUE_OPTS:
-            k += 2
-        elif a.startswith("-"):
-            k += 1
-        else:
-            break
-    if k >= len(args):
-        return None, [], cdir
-    return args[k], args[k + 1:], cdir
-
-
-def git_status(cdir, extra):
-    if cdir is not None and re.search(r"[$\x60]", cdir):
-        return None
-    cmd = ["git"] + (["-C", cdir] if cdir else []) + ["status", "--porcelain"] + extra
-    try:
-        r = subprocess.run(
-            cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=5,
-            env=dict(os.environ, GIT_OPTIONAL_LOCKS="0"),
-        )
-    except Exception:
-        return None
-    return r.stdout if r.returncode == 0 else None
-
-
-def short_has(a, letters):
-    return a.startswith("-") and not a.startswith("--") and any(ch in a[1:] for ch in letters)
-
-
-def push_check(rest):
-    force = False
-    pos = []
-    for a in rest:
-        if a.startswith("--"):
-            if a.split("=", 1)[0] in ("--force", "--force-with-lease", "--force-if-includes"):
-                force = True
-        elif a.startswith("-") and len(a) > 1:
-            if short_has(a, "f"):
-                force = True
-        else:
-            pos.append(a)
-    for ref in pos[1:]:
-        plus = ref.startswith("+")
-        dst = ref.lstrip("+").split(":")[-1]
-        if dst.startswith("refs/heads/"):
-            dst = dst[len("refs/heads/"):]
-        if (force or plus) and dst in ("main", "master"):
-            deny(
-                "destructive", "force push to main/master blocked",
-                "Force push to main/master blocked.\nWHY: R6 - rewriting a protected branch history breaks "
-                "every other clone and open PR based on it.",
-                "push to a feature branch and open a PR; on your own branch use git push --force-with-lease.",
-            )
-            return
-
-
-def git_check(args):
-    sub, rest, cdir = git_global(args)
-    if sub == "push":
-        push_check(rest)
-    elif sub == "clean":
-        flags = [a for a in rest if a.startswith("-")]
-        dry = any(a == "--dry-run" or short_has(a, "n") for a in flags)
-        forced = any(a == "--force" or short_has(a, "f") for a in flags)
-        if dry or not forced:
-            return
-        if any(short_has(a, "xX") for a in flags):
-            deny(
-                "destructive", "git clean -x/-X blocked",
-                "git clean with -x/-X blocked.\nWHY: destructive guard - it deletes ignored files too "
-                "(.env, build output, local data) and none of it can be restored from git.",
-                "preview with git clean -n, then delete the specific paths explicitly.",
-            )
-            return
-        out = git_status(cdir, ["--ignored"])
-        if out is not None and any(line.startswith("??") for line in out.splitlines()):
-            deny(
-                "destructive", "git clean -f would delete untracked files",
-                "git clean -f blocked: untracked files exist and would be deleted.\nWHY: destructive guard - "
-                "untracked files are in no commit, so deletion cannot be undone.",
-                "preview with git clean -n, commit or stash -u what you need, or delete specific paths explicitly.",
-            )
-            return
-        ask(
-            "destructive", "git clean -f requires confirmation",
-            "git clean -f - user confirmation required.\nWHY: destructive guard - it deletes files from "
-            "the work tree" + ("" if out is not None else " (the status check could not run, so nothing "
-            "was verified)") + ".",
-            "run git clean -n first and confirm the list is what you want removed.",
-        )
-    elif sub in ("checkout", "restore", "switch"):
-        flags = [a for a in rest if a.startswith("-") and a != "--"]
-        if sub == "checkout":
-            hit = "--" in rest or "." in rest or any(a == "--force" or short_has(a, "f") for a in flags)
-        elif sub == "restore":
-            staged = any(a == "--staged" or short_has(a, "S") for a in flags)
-            tree = any(a == "--worktree" or short_has(a, "W") for a in flags)
-            hit = not staged or tree
-        else:
-            hit = any(a in ("--discard-changes", "--force") or short_has(a, "f") for a in flags)
-        if not hit:
-            return
-        out = git_status(cdir, ["--untracked-files=no"])
-        if out is None:
-            ask(
-                "destructive", "git " + sub + " discard: status check failed",
-                "git " + sub + " may discard changes - user confirmation required.\nWHY: destructive guard - the "
-                "work tree status could not be read, so uncommitted changes were not ruled out.",
-                "run git status first; stash (git stash) or commit what you want to keep.",
-            )
-        elif out.strip():
-            deny(
-                "destructive", "git " + sub + " would discard uncommitted changes",
-                "git " + sub + " blocked: the work tree has uncommitted changes it would overwrite.\nWHY: "
-                "destructive guard - discarded edits are in no commit and cannot be recovered.",
-                "git stash (keeps the work) or commit first, then retry; use git restore --staged to only unstage.",
-            )
-    elif sub == "stash" and rest[:1] in (["drop"], ["clear"]):
-        ask(
-            "destructive", "git stash " + rest[0] + " requires confirmation",
-            "git stash " + rest[0] + " - user confirmation required.\nWHY: destructive guard - a dropped "
-            "stash is only recoverable through git fsck, not by a normal command.",
-            "list it with git stash list and apply it (git stash apply) first if you may still need it.",
-        )
-
-
-def rm_check(args):
-    recursive = False
-    operands = []
-    dd = False
-    for a in args:
-        if dd or not a.startswith("-") or a == "-":
-            operands.append(a)
-        elif a == "--":
-            dd = True
-        elif a == "--recursive" or (not a.startswith("--") and re.search(r"[rR]", a)):
-            recursive = True
-    if recursive and any(PROTECTED.match(o) for o in operands):
-        deny(
-            "destructive", "broad recursive rm blocked",
-            "Broad recursive rm to root / home / parent blocked.\nWHY: destructive-deletion guard - an "
-            "unscoped recursive delete is unrecoverable and can take the whole workspace with it.",
-            "delete the specific target explicitly (e.g. rm -r ./<dir>) after verifying it with ls, or move "
-            "it aside instead of deleting.",
-        )
-
-
-def sweep(kind, targets):
-    if any(PROTECTED.match(t) for t in targets):
-        deny(
-            "destructive", kind + " on root / home / parent blocked",
-            kind + " aimed at root / home / parent blocked.\nWHY: destructive-deletion guard - a bulk "
-            "delete or mirror-delete outside the project cannot be undone.",
-            "name the exact project-local directory, run it without the delete option first (find without "
-            "-delete, rsync --dry-run) and review the list.",
-        )
-    else:
-        ask(
-            "destructive", kind + " requires confirmation",
-            kind + " - user confirmation required.\nWHY: destructive-deletion guard - it removes many files "
-            "in one step and the list is not shown before it runs.",
-            "preview first (find without -delete, rsync --dry-run) and confirm the target is the intended one.",
-        )
-
-
-def find_check(args):
-    k = 0
-    while k < len(args) and (args[k] in ("-H", "-L", "-P") or args[k].startswith(("-D", "-O"))):
-        k += 1
-    roots = []
-    while k < len(args) and not args[k].startswith("-") and args[k] not in ("(", "!"):
-        roots.append(args[k])
-        k += 1
-    body = args[k:]
-    rm_exec = any(
-        a in ("-exec", "-execdir", "-ok", "-okdir") and i + 1 < len(body)
-        and os.path.basename(body[i + 1]) == "rm"
-        for i, a in enumerate(body)
-    )
-    if "-delete" in body or rm_exec:
-        sweep("find -delete" if "-delete" in body else "find -exec rm", roots or ["."])
-
-
-def rsync_check(args):
-    flags = [a for a in args if re.match(r"--(?:del|delete(?:-[a-z]+)?|remove-(?:source|sent)-files)$", a)]
-    if not flags:
-        return
-    ops = []
-    k = 0
-    dd = False
-    while k < len(args):
-        a = args[k]
-        if not dd and a == "--":
-            dd = True
-        elif not dd and a.startswith("-") and a != "-":
-            if a in RSYNC_VALUE_OPTS or (not a.startswith("--") and a[-1:] in "efT"):
-                k += 1
-        elif not re.match(r"(?:rsync://|(?:[^/:@]+@)?[^/:]+:)", a):
-            ops.append(a)
-        else:
-            ops.append("remote:")
-        k += 1
-    remove_src = any("remove" in f for f in flags)
-    targets = ops[-1:] + (ops[:-1] if remove_src else [])
-    sweep("rsync " + flags[0], [t for t in targets if t != "remote:"] or ["remote:"])
-
-
-def check(words, depth):
-    if depth > MAX_DEPTH:
-        return
-    words = strip_redirs(words)
-    i = skip_prefix(words)
-    if i >= len(words):
-        return
-    cmd, args = os.path.basename(words[i]), words[i + 1:]
-    if cmd == "git":
-        git_check(args)
-    elif cmd == "rm":
-        rm_check(args)
-    elif cmd == "find":
-        find_check(args)
-    elif cmd == "rsync":
-        rsync_check(args)
-    elif cmd == "ps":
-        ps_dump(args)
-    elif cmd == "env":
-        env_check(args, depth)
-    elif cmd == "printenv":
-        if not any(a in ("--help", "--version") for a in args) and not [a for a in args if not a.startswith("-")]:
-            env_dump("printenv")
-    elif cmd in ("export", "declare", "typeset"):
-        if all(a in ("-p", "-x", "-px", "-xp", "--") for a in args):
-            env_dump(" ".join([cmd] + args))
-    elif cmd == "set":
-        if not args:
-            env_dump("set")
-    elif cmd in SHELLS:
-        for k, a in enumerate(args):
-            if a.startswith("-") and not a.startswith("--") and a[1:].isalpha() and "c" in a:
-                if k + 1 < len(args):
-                    analyze(args[k + 1], depth + 1)
-                break
-    elif cmd == "eval":
-        analyze(" ".join(args), depth + 1)
-
-
-def analyze(text, depth=0):
-    if depth > MAX_DEPTH:
-        return
-    for words in tokenize(text):
-        check(words, depth)
-
-
-def main():
-    text = sys.stdin.buffer.read().decode("utf-8", "replace")
-    analyze(text)
-    pick = DENIES[0] if DENIES else (ASKS[0] if ASKS else None)
-    if pick:
-        guard, log, body = pick
-        sys.stdout.write(("deny" if DENIES else "ask") + "\t" + guard + "\t" + log + "\n" + body)
-
-
-try:
-    main()
-except Exception:
-    pass
-PY
-_DG_OUT=$(printf '%s' "$SCAN_CMD" | python3 -I -c "$_DANGER_PY" 2>/dev/null) || _DG_OUT=""
-_DG_ASK=""
-if [[ -n "$_DG_OUT" ]]; then
-  _DG_HEAD="${_DG_OUT%%$'\n'*}"
-  _DG_BODY="${_DG_OUT#*$'\n'}"
-  IFS=$'\t' read -r _DG_DEC _DG_GUARD _DG_LOG <<<"$_DG_HEAD"
-  if [[ "$_DG_DEC" == "deny" ]]; then
-    log_violation "$_DG_GUARD" "$_DG_LOG"
-    emit_deny "$_DG_BODY"
-    exit 0
-  fi
-  _DG_ASK=1
-fi
-
-# 4a. Gate-config variables. AGENT_REVIEW_OVERRIDE is the USER's escape from the commit
-# review gate; AGENT_WORKERS_DIR / AGENT_LOGS_DIR relocate the evidence ledger the gate
-# reads; GITHEAD_<hex> is git's merged-head variable. An agent that sets any of them can
-# approve its own risk-area commit, so DENY an assignment `NAME=` / `NAME+=` / `NAME:=`
-# ANYWHERE in the quote- and backslash-stripped, message-stripped command ($SCAN_CMD, so a
-# -m message body is not scanned) — a launcher prefix (timeout, nice, env, bash -o … -c)
-# is covered by construction, not by enumeration. Also the builtins that name one
-# (export/declare/typeset/local/readonly/read/mapfile/readarray/printf -v), and `set -a`
-# in a command that mentions one. Mentions without `=` (grep NAME f, echo "$NAME",
-# unset NAME, [[ "$NAME" == "" ]]) never match. Placed before the ask guards so a compound
-# command still gets deny. Denies the recognised assignment forms and logs the attempt; a
-# speed bump, not a boundary (brace/variable indirection, interpreter one-liners such as
-# python/perl/node -e, and scripts written then run evade it).
-_CMD_RO=$(printf '%s' "$SCAN_CMD" | tr -d "\\\\\"'")
-_RO_NAMES='(AGENT_REVIEW_OVERRIDE|AGENT_WORKERS_DIR|AGENT_LOGS_DIR|GITHEAD_[0-9a-fA-F]+)'
-_RO_LEAD='(^|[;&|({`]|(^|[[:space:];&|(])(ba|z|da|k)?sh([[:space:]]+-[A-Za-z]+)*[[:space:]]+-[A-Za-z]*c[A-Za-z]*[[:space:]]+|(^|[[:space:]])eval[[:space:]]+)[[:space:]]*((then|do|else|elif|if|while|until|time|!)[[:space:]]+)*'
-if echo "$_CMD_RO" | grep -qE "(^|[^A-Za-z0-9_])${_RO_NAMES}[:+]?=" \
-   || echo "$_CMD_RO" | grep -qE "${_RO_LEAD}(export|declare|typeset|local|readonly|read|mapfile|readarray|printf[[:space:]]+-v)[[:space:]]+[^;&|]*${_RO_NAMES}" \
-   || { echo "$_CMD_RO" | grep -qE "${_RO_LEAD}set[[:space:]]+(-[A-Za-z]*a|-o[[:space:]]+allexport)" \
-        && echo "$_CMD_RO" | grep -qE "${_RO_NAMES}"; }; then
-  log_violation review-override "agent attempted to set a gate-config variable (AGENT_REVIEW_OVERRIDE/AGENT_WORKERS_DIR/AGENT_LOGS_DIR/GITHEAD_*)"
-  emit_deny "Setting AGENT_REVIEW_OVERRIDE, AGENT_WORKERS_DIR, AGENT_LOGS_DIR or GITHEAD_* from an agent command is blocked.
-WHY: review-override guard — these control the risk-area commit review gate (user-only escape, evidence-ledger location, merged heads); an agent setting one could approve its own commit.
-FIX: run /council-review --staged and commit normally; if every external lane is down, ask the user to run the commit in their own terminal. If you only mention a variable in prose, write the message to a file and use git commit -F."
-  exit 0
-fi
-
-# 4b. Evidence ledgers (reviews.jsonl, review-override.jsonl) are written only by
-# call-worker.sh and review-evidence.py — their appends happen inside those scripts,
-# not in an agent command string. DENY (case-insensitive: APFS) a Bash command that
-# writes them: a `>`/`>>`/`>|` redirect onto one; a write verb (tee/cp/mv/ln/dd/rsync/
-# scp/install/truncate/rm/shred/unzip/7z/tar/gpg/openssl/age — the write-capable members
-# of the secrets guard's verb list) with a ledger name or the .agent/workers directory
-# as ANY argument; sed -i naming one; or python open(...,'a'|'w'|'x'|'+') naming one.
-# Reading (cat, grep, jq, open(...,'r')) is allowed. Same speed-bump caveat as 4a.
-# basename boundary: the name must start the word or follow / = or whitespace, so
-# my_reviews.jsonl is not a ledger. _LEDGER_Q is the same boundary for the quote-preserving
-# python check (quote or / before the name).
-_LEDGER='(^|[[:space:]/=])(reviews|review-override)\.jsonl'
-_LEDGER_Q='[/"'"'"'](reviews|review-override)\.jsonl'
-_WRITE_VERBS='tee|cp|mv|ln|dd|rsync|scp|install|truncate|rm|shred|unzip|7z|tar|gpg|openssl|age'
-if echo "$_CMD_RO" | grep -qiE ">[>|]?[[:space:]]*([^[:space:];&|]*/)?(reviews|review-override)\.jsonl" \
-   || echo "$_CMD_RO" | grep -qiE "(^|[^A-Za-z0-9_./-])(${_WRITE_VERBS})[[:space:]]+([^;&|]*[[:space:]/=])?((reviews|review-override)\.jsonl|\.agent/workers)" \
-   || echo "$_CMD_RO" | grep -qiE "(^|[^A-Za-z0-9_./-])sed[[:space:]]+[^;&|]*-[A-Za-z]*i[^;&|]*${_LEDGER}" \
-   || echo "$SCAN_CMD" | grep -qiE "open\([^)]*${_LEDGER_Q}[^)]*,[[:space:]]*[\"'][abwx+]"; then
-  log_violation evidence-ledger "agent command writes a review evidence ledger"
-  emit_deny "Writing a review evidence ledger (reviews.jsonl / review-override.jsonl) from an agent command is blocked.
-WHY: evidence-ledger guard — these files are the proof the commit gate trusts and are written only by call-worker.sh and review-evidence.py; an agent-written row would forge a review.
-FIX: produce the row by running /council-review (call-worker.sh appends it); reading the ledger (cat, grep, jq) is fine."
-  exit 0
-fi
-
-# 4. Risk Area #1 — production data (DROP/TRUNCATE TABLE) — ASK (user confirms)
-if echo "$SCAN_CMD" | grep -qiE '(DROP\s+TABLE|TRUNCATE\s+TABLE)'; then
-  log_violation production-data "DROP/TRUNCATE TABLE requires user confirmation" "ask"
-  emit_ask "DROP/TRUNCATE TABLE — user confirmation required (Risk Area #1: production-data).
-WHY: a dropped or truncated table is unrecoverable without a verified backup.
-FIX: proceed only if intended; otherwise run it as a reviewed migration with a backup in place."
-  exit 0
-fi
-
-# 5. Risk Area #2 — secrets — DENY (no bypass).
-# Covers many command variants in a single regex (read / hash / archive / encrypt / exfil families).
-# To extend: add command name to the alternation. Project-specific paths can be
-# added via hook-config.yml: risk_areas[id=secrets].paths.
-# All secrets branches (5-11, 11b) match CASE-INSENSITIVELY (-qiE): on a
-# case-insensitive filesystem (macOS APFS default) `cat SECRETS/key` reads the
-# SAME file as `cat secrets/key`, so a case-sensitive match would be a trivial
-# bypass. The command verbs are lowercase, so -i adds no meaningful false positives.
-#
-# Two stages, to stop false positives without opening a hole. Stage 1 is the regex below,
-# unchanged: it only NOMINATES a command (no word boundary, no notion of command position, so
-# it also fires on a grep PATTERN, a commit message or `head -n 2; ls x/secrets/`). Stage 2
-# (_secrets_verdict) lexes the command like a shell and prints one word: `reader` (a guard verb
-# is the command word and a `secrets/` operand is read), `doubt` (no such operand, but the path
-# can still reach a reader through a $variable, a loop, a substitution, a cd or a program stage 2
-# does not know), `inert` (parsed, provably neither), `unparseable` (a construct it does not
-# model, or one on which bash and zsh disagree), `limit` (its work or nesting budget ran out)
-# or `error`. A nominated command is denied unless stage 2 says exactly `inert`, so a lexer
-# limit, an unbalanced quote, a crash, a missing python3, a non-zero exit, a killed process and
-# an empty, garbled or truncated answer can only keep the old deny.
-# Stage 1 never nominated `git show|blame|cat-file REV:secrets/x`, `git config -f secrets/x -l`
-# nor `git tag|commit|merge -F secrets/x` (git stores the file as a message, which a later `git
-# tag -n` or `git log` prints), and 0.8.0 allowed every `git log ... secrets/`. A second,
-# additive candidate regex catches those. It denies a parsed `reader` and anything that is not an
-# answer; `inert`, `doubt` and `unparseable` (a finished scan that found no read) are allowed, as
-# before: a path that comes out of an expansion is a known gap, pinned in the test. A `git
-# log|show` whose options all print commits, names or counts (--oneline, --name-only, --stat ...)
-# only selects commits by the path and is inert; -p anywhere, -c, -L, --word-diff, a pickaxe, an
-# option the scan does not know and REV:path are not.
-# A secrets/ path inside a quoted word that has blanks (' secrets/k', 'x secrets/k') is no path of
-# its own, but an unquoted $( ), $var, ${x#y}, xargs or read splits or reshapes it into one: stage 2
-# notes such a mention (`loose`) and denies when a splitting consumer exists too. Prose next to a
-# quoted "$f" or a heredoc inside "$( )" stays allowed.
-# Stage 1 only sees a literal secrets/, so a path spelled otherwise is judged by its shape. An
-# operand (also a cd target, a git pathspec or -C directory, a launcher's directory option) with a
-# component that can read as the word secrets is a read: written out, with a glob (secre[t]s, s*),
-# a brace group ({secrets,x}) or pieces ("$A"rets, $A$B, $(echo sec)rets, printf 'secrets\057k').
-# Before a slash it may also end in the word, as the written-out x-secrets/ does (data_*/k). A name
-# that an assignment (value or [key]), an array literal, a for list, the arguments of another
-# command, a here-string, an alias or a launcher option carries on to a later $var, ${!m[@]} or cd
-# is doubt: the word, a spelling of it, a name that ends in it (x-secrets) or holds it (secretsX,
-# for ${D%X}), the pieces of consecutive echo or printf commands side by side, and an item after
-# the first of a list that a splitting consumer hands on (D="x secrets"). A component that is one
-# bare expansion ("$D"/k) is not judged: its value is unknown here.
-# The value of an option that picks the files a reader reads is an operand too (rg -g, --glob,
-# --iglob; ag -G, --file-search-regex; grep --include; rsync and tar --include): a glob that can
-# spell the directory selects it. An exclusion (rg -g '!GLOB', --exclude-dir) picks nothing. A
-# reader that walks into directories (grep -r, rg, ag, git grep, tar c, zip -r, cp -r, rsync -a,
-# scp -r, 7z a, diff -r, gunzip -r) starts at its roots (no operand: the working directory). When
-# the line also names a secrets/ path as a path elsewhere (ls secrets/), a root that is, holds or
-# may hold it makes the line doubt. A root is cleared only when it provably lies apart from the
-# path: both relative (or both absolute) with a different name at the same depth. ~, .., a
-# variable, a pattern, a cd, a launcher's -C or -D, tar -C or -T and git -C leave it doubt.
-# A command that never names the directory (find . -exec cat {} +, xargs cat, grep -r PATTERN .)
-# is no read of it, with or without a mention that is only a pattern or prose.
-# Where bash and zsh read the same text differently, a hand-written lexer cannot tell which text is
-# code, so stage 2 says `unparseable` and the nominating deny stands: an expansion as a heredoc
-# delimiter, $[ ], a quote inside a double-quoted ${ }, <<( ), a ( glued to a word, a line
-# continuation inside a token or in a heredoc end, a subscript or array literal that holds a blank
-# or an operator, a << or a # inside [[ ]], a } that closes nothing, a $'...' escape that the
-# shells turn into different bytes (\c, \u, a code of 0 or from 128 up, an unknown escape: bash
-# ends a word at a NUL, and so a heredoc delimiter), a $"..." heredoc delimiter (zsh keeps the
-# dollar sign), and a shell or `source` that reads its script from stdin (sh -, bash -s,
-# /dev/stdin); core/hooks/README.md lists them all.
-# `git -c name=value` with the path in the value, written out or spelled, runs as a command
-# (alias.x=!cmd, core.pager), and so do the program of --upload-pack and --receive-pack, the
-# argument of difftool -x and the code string of an interpreter; rsync/tar --include selects what
-# they read.
-# Stage 2 spends a bounded amount of work (MAX_WORK word visits, MAX_DEPTH levels of nesting:
-# `limit`) and arms a 2 s wall-clock alarm. hooks.json gives this hook a 30 s timeout (docs/
-# hook-protocol.md section 14), and a hook the host kills prints no decision, which lets the call
-# through: the deny has to be decided inside our own budget. The alarm kills stage 2 without an
-# answer, which is a deny, so the worst case is 2 s plus the interpreter start-up.
-# AGENT_SECRETS_SCAN_BUDGET=<seconds> can only shorten the alarm (a test seam).
-# Not covered by stage 2, by design: text handed to an interpreter (python/perl/ruby/... bodies
-# and -e strings: guard 11 still covers python/node -c|-e), script files, aliases defined
-# elsewhere, a code string that reaches a program only through a variable (python3 -c "$X"),
-# a name assembled from data the command line does not spell out (decoded text, a file's content,
-# the environment), and a program that runs a quoted string but is not a code carrier stage 2 knows
-# (shell -c, eval, ssh, su, watch and the terminal multiplexers are known; another tool with a
-# command-line option of its own is not): its strings read as prose. Stage 2 is a speed bump
-# against careless reads, like the rest of this file.
-# Readers beyond the original list. One source for stage 1 (nominates a line), stage 2 (a VERBS
-# member is a reader of its secrets/ operands; handed over as SCAN_READERS) and guard 11b. A line
-# whose only reader is missing here is never nominated, so it never reaches stage 2. Stage 2 keeps
-# precision: `ls secrets/ | sort` and a commit message that names the path stay allowed.
-# Not listed on purpose: gzip, zcat, zless, zmore, batcat ... already end in a listed verb and stage 2
-# denies them as unknown programs; as VERBS members they would count as known non-walking readers
-# and let `gzip -r . ; ls secrets/` through. (zgrep, bzgrep and xzgrep need the list: stage 2 allowed them.)
-# Inline interpreter code that 11b and its fail-closed branch look for: the interpreter, any words
-# (options such as -I or -W "ignore", quoted or not) and then a code flag: -c -e -E -p -r, bundled
-# (-le, -pe), --eval, --print, or deno's `eval` word, then the code: opened by a quote, glued
-# (-c"x", -e'x') or spaced, plain or $'...', or unquoted with a backslash in it (node -p
-# require\(...\)): a shell needs that escape for any code with a parenthesis, and the backslash
-# keeps `pytest -p no:cacheprovider` and `pip install -r reqs.txt` out. Words in between are not
-# told apart from a script name, so `python3 tool.py -e "vault/x"` also matches; that only costs
-# when a declared path is named too.
-_SECRET_INTERP='(python[0-9.]*|pypy[0-9]*|node|nodejs|deno|bun|perl|ruby|php)'
-_SECRET_CODE_OPEN='(\$?["'"'"']|[^[:space:]]*\\)'
-_SECRET_INLINE_CODE="${_SECRET_INTERP}([[:space:]]+[^[:space:];|&<>]+)*[[:space:]]+(-[a-zA-Z]*[ceEpr]|--eval|--print|eval)(=|[[:space:]]+)?[[:space:]]*${_SECRET_CODE_OPEN}"
-# An interpreter fed a here-string reads its program from it (python3 <<< "open('p')"); echo "x" <<< "p"
-# is only text and stays out.
-_SECRET_HERESTRING="${_SECRET_INTERP}([[:space:]]+[^[:space:];|&<>]+)*[[:space:]]*<<<"
-# `pr` is not listed: the unanchored match would nominate every `gh pr create --body ...secrets/...`,
-# and stage 2 reads `pr` as a known reader of that body text (gh-pr-body-allow); coreutils pr is rare.
-# `install` (a copy) is nominated and judged by stages 1-2 only: in 11b a bare word match would also
-# catch `pip install` / `npm install`, including the remediation hint of the fail-closed branch, so
-# 11b matches it as a command word instead (_SECRET_CMD_START_READERS).
-_SECRET_STAGE12_ONLY='install'
-# timeout/gtimeout read their options with getopt_long (GNU "+fk:ps:v", FreeBSD "+fhk:ps:v"): a short bundle
-# that ends in k or s (-k, -vk, -fk) and a long option written out or as an unambiguous prefix (--kill-after,
-# --kill, --k, --signal, --sig, --s) take the next word as their value; every other option (--foreground,
-# --preserve-status, -v, -f, -p, --, and the glued -k5 / --signal=KILL forms) takes none, so the word after it is
-# the duration. The duration is a word that looks like one - a number (5, .5, 5e0, 0x5, +5, or -0 right after
-# --), inf / infinity with an optional unit (infs), a variable ($T, ${T}, "$T"), a quoted word ('5') - so the
-# program name after it ("pip") is not. Words are capped at 64 characters: this regex is compiled for every
-# command once risk_areas are declared, and an unbounded run that fails to match is quadratic in a UTF-8
-# locale in glibc (a 400 KB word took 10 s); a longer word is not read as a duration or an option.
-_SECRET_TIMEOUT='g?timeout([[:space:]]+((-[A-Za-z]{0,63}[ks]|--[ks][a-z-]{0,63})[[:space:]]+[^[:space:]-][^[:space:]]{0,63}|-[^[:space:]]{1,63}))*[[:space:]]+(inf(inity)?[smhd]?|-?[0-9.+][^[:space:]]{0,63}|\$[^[:space:]]{0,63}|["'"'"'][^[:space:]]{0,63})'  # supply-chain-scan: allow-literal wrapper name in a command-word regex, not a spawn
-# A wrapper in front (env, time, timeout/gtimeout with its duration, command, exec, sudo, xargs with its
-# options, NAME=value, a background launcher) or a
-# path (/usr/bin/install) does not hide it; `pip install`, `npm install`, `make install` are not it.
-_SECRET_CMD_START='(^|[;&|(`]|&&)[[:space:]]*(((env|nohup|time|command|exec|sudo|doas|nice|xargs|stdbuf)([[:space:]]+-[^[:space:]]+([[:space:]]+[^[:space:]-][^[:space:]]*)?)*|'"$_SECRET_TIMEOUT"'|[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*)[[:space:]]+)*([^[:space:]]*/)?install[[:space:]]+'  # supply-chain-scan: allow-literal wrapper names in a command-word regex, not a spawn
-_SECRET_MORE_READERS='base64|base32|basenc|sort|uniq|cut|paste|column|join|comm|expand|unexpand|fmt|shuf|cksum|b2sum|sha1sum|sha224sum|sha384sum|zgrep|bzgrep|xzgrep|iconv|split|look|vim|nano|emacs|jq|yq'
-_secrets_verdict() {
-  # a python3 that is missing, exits non-zero or is killed leaves `error` behind, never an allow
-  SCAN_INPUT="$1" SCAN_READERS="$_SECRET_MORE_READERS|$_SECRET_STAGE12_ONLY" python3 -I - <<'PY' 2>/dev/null || printf 'error'
+# 3a. Dangerous commands in command position, judged on guard 5's Lexer (stage 2 below shares one
+# program text, $_S5_PY: the same quote / substitution / heredoc / ANSI-C handling, depth and work
+# limits, and a wall-clock alarm). Rules: git clean -f, the discard-changes family (checkout -- / restore /
+# switch --discard-changes, stash drop|clear), force push to main/master in short forms (-f, --force-with-
+# lease, +main), environment dumps (env / printenv / export -p / declare -x / set / ps e|eww|-E, a
+# /proc/<pid>/environ read), recursive rm at / ~ $HOME ../, find -delete|-exec rm and rsync --delete* at
+# those roots. Ported from the local destructive-guard / env-dump-guard. git clean / discard decisions
+# probe `git status` (memoised, capped, 4 s each, 10 s total) and ask when the work tree state cannot be
+# established (a cd, GIT_DIR, --git-dir, repeated -C or an earlier non-read-only command in the chain).
+# A deny is emitted here; an ask is held to the end of the file so any later deny (4a/4b, secrets, risk
+# areas) still wins. NO answer from the scan (crash, kill, alarm, garbled output) is a deny, like stage 2.
+# A command the Lexer cannot parse, or a shell fed by a pipe, is denied only when a dangerous word is
+# present (coarse text match). Not covered: $( ) values built at run time, python -c one-liners, scripts
+# written and run later.
+IFS= read -r -d '' _S5_PY <<'PY'
 import fnmatch
 import os
 import re
+import shlex
 import signal
 import sys
 
@@ -2776,10 +2045,777 @@ def arm_alarm():
     signal.setitimer(signal.ITIMER_REAL, min(BUDGET_SECONDS, max(asked, 0.001)))
 
 
-if __name__ == "__main__":
+if __name__ == "__main__" and not os.environ.get("S5_LIB"):
     arm_alarm()
     sys.stdout.write(verdict(os.environ.get("SCAN_INPUT", "")))
 PY
+IFS= read -r -d '' _G3_PY <<'PY'
+
+# ---------------------------------------------------------------------------------------------------
+# Guard 3a, run on top of the stage-2 Lexer above (this text is appended to it, S5_LIB=1 keeps stage 2
+# from running its own verdict). The command text arrives on fd 3. Output, first line: allow, or
+# "deny|ask <TAB> guard <TAB> log reason" followed by the teaching reason. A missing or garbled answer
+# (crash, kill, alarm) is read by the caller as a deny.
+# Judged: git clean -f, the discard-changes family, short-form force push to main/master, environment
+# dumps, recursive rm at / ~ $HOME ../, find -delete|-exec rm and rsync --delete* at those roots. Only
+# simple commands are judged; the Lexer flattens $( ) and backtick bodies into the same list, shell -c /
+# eval / carrier strings / heredocs fed to a shell are scanned as code. Known gap: python -c style
+# one-liners, values built from variables, scripts written and run later.
+# ---------------------------------------------------------------------------------------------------
+import subprocess
+import time
+
+G3_MARKS = re.compile("[\x01-\x06]")
+G3_TOP = re.compile(r"^(?:(?:/|~|\$HOME|\$\{HOME\}|\.\.)(?:/\*?)?|/\*)$")  # a root, not a path below it
+G3_DEAD = "\x22${NAME+x}\x22"
+G3_HEADS = frozenset("git rm find rsync env printenv export declare typeset set ps eval command builtin".split()) | SHELLS | LAUNCHERS
+G3_COARSE = re.compile(
+    r"(?<![\w/.-])(?:env|printenv|export|declare|typeset|set|ps|rm|find|rsync)(?![\w-])"
+    r"|git\b.{0,200}?\b(?:clean|checkout|restore|switch|stash|push)\b|/proc/[^/\s]+/environ", re.S)
+G3_GIT_VALUE = {"-c", "--namespace", "--super-prefix", "--exec-path", "--config-env"}
+G3_ENV_VALUE = {"-u", "-P", "-C", "--unset", "--chdir"}
+G3_RSYNC_VALUE = {
+    "-e", "--rsh", "--exclude", "--include", "--exclude-from", "--include-from", "--filter", "-f",
+    "--files-from", "--log-file", "--backup-dir", "--suffix", "--partial-dir", "--temp-dir", "-T",
+    "--bwlimit", "--port", "--timeout", "--rsync-path", "--max-size", "--min-size",
+    "--compare-dest", "--copy-dest", "--link-dest", "--chmod", "--chown", "--usermap",
+    "--groupmap", "--out-format", "--info", "--debug",
+}
+G3_PS_VALUE = {"-o", "-p", "-u", "-t", "-g", "-G", "-U", "-C", "-O", "-s", "-D", "-L", "-N"}
+# a command that cannot change the work tree: a probe after it still tells the truth
+G3_READONLY = frozenset("echo printf ls pwd true false : test [ [[ cat head tail wc grep egrep fgrep rg sleep date "
+                        "whoami basename dirname which type stat file du id uname hostname".split())
+G3_GIT_READONLY = frozenset("status log diff show rev-parse rev-list branch remote describe ls-files ls-tree "
+                            "blame shortlog cat-file config fetch".split())
+G3 = {"deny": [], "ask": [], "unsure": False, "unknown_state": False, "probes": {}, "n": 0, "branch": {}}
+G3_DEADLINE = [0.0]
+
+
+def g3_lit(t):
+    # ${HOME} reaches the word as PH + HOME: read it back as $HOME
+    return G3_MARKS.sub("", t).replace(PH + "HOME", "$HOME")
+
+
+def g3_deny(guard, log, why, fix):
+    G3["deny"].append((guard, log, why + "\nFIX: " + fix))
+
+
+def g3_ask(guard, log, why, fix):
+    G3["ask"].append((guard, log, why + "\nFIX: " + fix))
+
+
+def g3_dump(form):
+    g3_deny(
+        "env-dump", "environment dump blocked: " + form.split(" ")[0],
+        form + " blocked.\nWHY: env-dump guard - dumping the whole environment prints every secret the "
+        "session holds (API keys, tokens) into the transcript, where it is stored and may be read back.",
+        "test whether one variable is set without printing it: test -n " + G3_DEAD + " && echo set",
+    )
+
+
+def g3_short(a, letters):
+    return a.startswith("-") and not a.startswith("--") and any(ch in a[1:] for ch in letters)
+
+
+def g3_run(cdir, argv):
+    """git <argv> in cdir, memoised; None when it cannot be answered (budget, error, not a repository)."""
+    key = (cdir, tuple(argv))
+    if key in G3["probes"]:
+        return G3["probes"][key]
+    left = G3_DEADLINE[0] - time.monotonic()
+    out = None
+    if G3["n"] < 6 and left > 0.3 and not (cdir and re.search(r"[$\x00-\x06\x60]", cdir)):
+        G3["n"] += 1
+        try:
+            r = subprocess.run(
+                ["git", "--no-optional-locks", "-c", "core.fsmonitor=false"] + (["-C", cdir] if cdir else []) + argv,
+                stdin=subprocess.DEVNULL, capture_output=True, text=True, errors="replace",
+                timeout=min(4.0, left), env=dict(os.environ, GIT_OPTIONAL_LOCKS="0"))
+            out = r.stdout if r.returncode == 0 else None
+        except Exception:
+            out = None
+    G3["probes"][key] = out
+    return out
+
+
+def g3_state_unknown(cdir_count, extra):
+    return G3["unknown_state"] or cdir_count > 1 or extra
+
+
+def g3_push(args, cdir, unsure):
+    force = False
+    pos = []
+    for a in args:
+        if a.startswith("--"):
+            if a.split("=", 1)[0].startswith("--forc"):
+                force = True
+        elif a.startswith("-") and len(a) > 1:
+            if g3_short(a, "f"):
+                force = True
+        else:
+            pos.append(a)
+    refs = pos[1:]
+    hit = False
+    for ref in refs:
+        plus = ref.startswith("+")
+        dst = ref.lstrip("+").split(":")[-1]
+        if dst.startswith("refs/heads/"):
+            dst = dst[len("refs/heads/"):]
+        if (force or plus) and dst in ("main", "master"):
+            hit = True
+    cur = [r for r in refs if r.lstrip("+").split(":")[-1] in ("HEAD", "")] if refs else []
+    if force and (not refs or cur) and not hit:
+        # force with no named branch: the current branch is what goes
+        if unsure:
+            br = None
+        else:
+            if (cdir,) not in G3["branch"]:
+                out = g3_run(cdir, ["symbolic-ref", "--short", "-q", "HEAD"])
+                G3["branch"][(cdir,)] = out.strip() if out is not None else None
+            br = G3["branch"][(cdir,)]
+        if br in ("main", "master"):
+            hit = True
+        elif br is None:
+            g3_ask(
+                "destructive", "force push without a named branch: current branch unknown",
+                "git push --force without a branch name - user confirmation required.\nWHY: R6 - the current "
+                "branch could not be read, and force-pushing main/master breaks every other clone.",
+                "name the branch explicitly (git push --force-with-lease origin <feature-branch>).")
+    if hit:
+        g3_deny(
+            "destructive", "force push to main/master blocked",
+            "Force push to main/master blocked.\nWHY: R6 - rewriting a protected branch history breaks "
+            "every other clone and open PR based on it.",
+            "push to a feature branch and open a PR; on your own branch use git push --force-with-lease.")
+
+
+def g3_discard_ask(sub, unknown):
+    g3_ask(
+        "destructive", "git " + sub + " discard: work tree state unknown",
+        "git " + sub + " may discard changes - user confirmation required.\nWHY: destructive guard - the "
+        "work tree status could not be established (" + ("an earlier command or a directory/option may have changed it"
+                                                      if unknown else "the status check did not run") + ").",
+        "run git status first; stash (git stash) or commit what you want to keep.")
+
+
+def g3_git(lits, prior_unsafe):
+    args = lits[1:]
+    k, cdirs, extra = 0, [], False
+    while k < len(args):
+        a = args[k]
+        if a == "-C" and k + 1 < len(args):
+            cdirs.append(args[k + 1])
+            k += 2
+        elif a in ("--git-dir", "--work-tree") or a.startswith(("--git-dir=", "--work-tree=")):
+            extra = True
+            k += 1 if "=" in a else 2
+        elif a in G3_GIT_VALUE:
+            k += 2
+        elif a.startswith("-"):
+            k += 1
+        else:
+            break
+    if k >= len(args):
+        return
+    sub, rest = args[k], args[k + 1:]
+    cdir = cdirs[-1] if cdirs else None
+    if cdir is not None and cdir.startswith("-"):
+        cdir = "./" + cdir
+    unknown = G3["unknown_state"] or prior_unsafe or len(cdirs) > 1 or extra
+    if sub == "push":
+        g3_push(rest, cdir, unknown)
+    elif sub == "clean":
+        flags = [a for a in rest if a.startswith("-")]
+        if any(a == "--dry-run" or g3_short(a, "n") for a in flags):
+            return
+        if not any(a == "--force" or g3_short(a, "f") for a in flags):
+            return
+        if any(g3_short(a, "xX") for a in flags):
+            g3_deny(
+                "destructive", "git clean -x/-X blocked",
+                "git clean with -x/-X blocked.\nWHY: destructive guard - it deletes ignored files too "
+                "(.env, build output, local data) and none of it can be restored from git.",
+                "preview with git clean -n, then delete the specific paths explicitly.")
+            return
+        out = None if unknown else g3_run(cdir, ["status", "--porcelain"])
+        if out is not None and any(line.startswith("??") for line in out.splitlines()):
+            g3_deny(
+                "destructive", "git clean -f would delete untracked files",
+                "git clean -f blocked: untracked files exist and would be deleted.\nWHY: destructive guard - "
+                "untracked files are in no commit, so deletion cannot be undone.",
+                "preview with git clean -n, commit or stash -u what you need, or delete specific paths explicitly.")
+            return
+        g3_ask(
+            "destructive", "git clean -f requires confirmation",
+            "git clean -f - user confirmation required.\nWHY: destructive guard - it deletes files from the work "
+            "tree" + ("" if out is not None else " (the work tree state could not be established, so nothing was "
+                                                  "verified)") + ".",
+            "run git clean -n first and confirm the list is what you want removed.")
+    elif sub in ("checkout", "restore", "switch"):
+        flags = [a for a in rest if a.startswith("-") and a != "--"]
+        if sub == "checkout":
+            hit = "--" in rest or "." in rest or any(a == "--force" or g3_short(a, "f") for a in flags)
+            pos = [a for a in rest if not a.startswith("-")]
+            if not hit and pos and not any(a in ("-b", "-B", "--orphan", "-t", "--track", "--detach", "-d")
+                                           or g3_short(a, "bBtd") for a in flags):
+                # no --: git checkout <path> or <rev> <path> overwrites files; <branch> alone does not
+                first_is_rev = g3_run(cdir, ["rev-parse", "--verify", "--quiet", pos[0] + "^{commit}"]) is not None
+                if len(pos) >= 2 and first_is_rev:
+                    hit = True
+                elif not first_is_rev and not unknown and os.path.exists(os.path.join(cdir or ".", pos[0])):
+                    hit = True
+        elif sub == "restore":
+            staged = any(a == "--staged" or g3_short(a, "S") for a in flags)
+            tree = any(a == "--worktree" or g3_short(a, "W") for a in flags)
+            hit = not staged or tree
+        else:
+            hit = any(a in ("--discard-changes", "--force") or g3_short(a, "f") for a in flags)
+        if not hit:
+            return
+        out = None if unknown else g3_run(cdir, ["status", "--porcelain", "--untracked-files=no"])
+        if out is None:
+            g3_discard_ask(sub, unknown)
+        elif out.strip():
+            g3_deny(
+                "destructive", "git " + sub + " would discard uncommitted changes",
+                "git " + sub + " blocked: the work tree has uncommitted changes it would overwrite.\nWHY: "
+                "destructive guard - discarded edits are in no commit and cannot be recovered.",
+                "git stash (keeps the work) or commit first, then retry; use git restore --staged to only unstage.")
+    elif sub == "stash" and rest[:1] in (["drop"], ["clear"]):
+        g3_ask(
+            "destructive", "git stash " + rest[0] + " requires confirmation",
+            "git stash " + rest[0] + " - user confirmation required.\nWHY: destructive guard - a dropped "
+            "stash is only recoverable through git fsck, not by a normal command.",
+            "list it with git stash list and apply it (git stash apply) first if you may still need it.")
+
+
+def g3_rm(args):
+    recursive, operands, dd = False, [], False
+    for a in args:
+        if dd or not a.startswith("-") or a == "-":
+            operands.append(a)
+        elif a == "--":
+            dd = True
+        elif a.startswith("--rec") or (not a.startswith("--") and re.search(r"[rR]", a)):
+            recursive = True
+    if recursive and any(G3_TOP.match(o) for o in operands):
+        g3_deny(
+            "destructive", "recursive rm at a root blocked",
+            "Recursive rm of root / home / parent blocked.\nWHY: destructive-deletion guard - an "
+            "unscoped recursive delete is unrecoverable and can take the whole workspace with it.",
+            "delete the specific target explicitly (e.g. rm -r ./<dir>) after verifying it with ls, or move "
+            "it aside instead of deleting.")
+
+
+def g3_sweep(kind, targets):
+    if any(G3_TOP.match(t) for t in targets):
+        g3_deny(
+            "destructive", kind + " at a root blocked",
+            kind + " aimed at root / home / parent blocked.\nWHY: destructive-deletion guard - a bulk "
+            "delete or mirror-delete outside the project cannot be undone.",
+            "name the exact project-local directory, run it without the delete option first (find without "
+            "-delete, rsync --dry-run) and review the list.")
+    else:
+        g3_ask(
+            "destructive", kind + " requires confirmation",
+            kind + " - user confirmation required.\nWHY: destructive-deletion guard - it removes many files "
+            "in one step and the list is not shown before it runs.",
+            "preview first (find without -delete, rsync --dry-run) and confirm the target is the intended one.")
+
+
+def g3_find(args):
+    k = 0
+    while k < len(args) and (args[k] in ("-H", "-L", "-P") or args[k].startswith(("-D", "-O"))):
+        k += 1
+    roots = []
+    while k < len(args) and not args[k].startswith("-") and args[k] not in ("(", "!"):
+        roots.append(args[k])
+        k += 1
+    body = args[k:]
+    rm_exec = any(a in ("-exec", "-execdir", "-ok", "-okdir") and i + 1 < len(body)
+                  and norm(body[i + 1]) == "rm" for i, a in enumerate(body))
+    if "-delete" in body or rm_exec:
+        g3_sweep("find -delete" if "-delete" in body else "find -exec rm", roots or ["."])
+
+
+def g3_rsync(args):
+    flags = [a for a in args if re.match(r"--(?:del|delete(?:-[a-z]+)?|remove-(?:source|sent)-files)$", a)]
+    if not flags:
+        return
+    if any(a == "--dry-run" or g3_short(a, "n") for a in args if a.startswith("-")):
+        return
+    ops, k, dd = [], 0, False
+    while k < len(args):
+        a = args[k]
+        if not dd and a == "--":
+            dd = True
+        elif not dd and a.startswith("-") and a != "-":
+            if a in G3_RSYNC_VALUE or (not a.startswith("--") and a[-1:] in "efT"):
+                k += 1
+        elif re.match(r"(?:rsync://|(?:[^/:@]+@)?[^/:]+:)", a):
+            ops.append("remote:")
+        else:
+            ops.append(a)
+        k += 1
+    remove_src = any("remove" in f for f in flags)
+    targets = ops[-1:] + (ops[:-1] if remove_src else [])
+    g3_sweep("rsync " + flags[0], [t for t in targets if t != "remote:"] or ["remote:"])
+
+
+def g3_ps(args):
+    k = 0
+    while k < len(args):
+        a = args[k]
+        if a.startswith("--"):
+            k += 1
+            continue
+        if a.startswith("-"):
+            m = re.match(r"-([A-Za-z]+)", a)
+            if m and "E" in m.group(1):
+                g3_dump("ps " + a)
+                return
+            k += 2 if a in G3_PS_VALUE else 1
+            continue
+        if re.fullmatch(r"[A-Za-z]+", a) and "e" in a:
+            g3_dump("ps " + a)
+            return
+        k += 1
+
+
+def g3_env(words, lits, redirs, bodies, depth):
+    args = lits[1:]
+    k = 0
+    while k < len(args):
+        a = args[k]
+        if a == "--":
+            k += 1
+            break
+        if a in ("--help", "--version"):
+            return
+        if a.startswith("-S") or a.startswith("--split-string"):
+            if a in ("-S", "--split-string"):
+                text, rest = (args[k + 1] if k + 1 < len(args) else ""), args[k + 2:]
+            else:
+                text = a.split("=", 1)[1] if a.startswith("--split-string=") else a[2:]
+                rest = args[k + 1:]
+            try:
+                parts = shlex.split(text)
+            except ValueError:
+                G3["unsure"] = True
+                return
+            g3_scan("env " + " ".join(shlex.quote(p) for p in parts + rest), depth + 1)
+            return
+        if a in G3_ENV_VALUE:
+            k += 2
+        elif a == "-" or a.startswith("-") or ASSIGN.match(a):
+            k += 1
+        else:
+            break
+    if k >= len(args):
+        g3_dump("env" + (" (%d arguments)" % len(args) if args else ""))
+    else:
+        g3_cmd(words[1 + k:], redirs, bodies, depth + 1, False)
+
+
+def g3_cmd(words, redirs, bodies, depth, prior_unsafe):
+    """Judge one simple command; returns True when it may change the work tree or the directory."""
+    spend(len(words) + 1)
+    if depth > MAX_DEPTH:
+        raise Limit("depth")
+    k = 0
+    while k < len(words) and (words[k][0] in RESERVED or ASSIGN.match(g3_lit(words[k][0]))):
+        t = g3_lit(words[k][0])
+        if re.match(r"(?:GIT_DIR|GIT_WORK_TREE|GIT_INDEX_FILE|GIT_COMMON_DIR|GIT_CEILING_DIRECTORIES)=", t):
+            G3["unknown_state"] = True
+        k += 1
+    words = words[k:]
+    for r in redirs:
+        if re.search(r"/proc/[^/]+/environ", g3_lit(r)):
+            g3_deny("env-dump", "environment read blocked: /proc environ",
+                    "Reading /proc/<pid>/environ blocked.\nWHY: env-dump guard - it is the whole environment, "
+                    "including every secret the process holds.",
+                    "test whether one variable is set without printing it: test -n " + G3_DEAD + " && echo set")
+    if not words:
+        return bool(redirs)
+    lits = [g3_lit(t) for t, _ in words]
+    name = norm(lits[0])
+    if "$" in name or PH in words[0][0] or "{}" in name:
+        G3["unsure"] = True
+        return True
+    args = lits[1:]
+    changes = name not in G3_READONLY and not (name == "git" and args[:1] and args[0] in G3_GIT_READONLY)
+    if redirs and any(not r.startswith(IN) for r in redirs):
+        changes = True
+    if any(norm(x) in SHELLISH for x in lits) and bodies:
+        for b in bodies:
+            g3_scan(b, depth + 1)
+    if name not in ("echo", "printf", "ls", "stat") and any(re.search(r"/proc/[^/]+/environ", x) for x in args):
+        g3_deny("env-dump", "environment read blocked: /proc environ",
+                "Reading /proc/<pid>/environ blocked.\nWHY: env-dump guard - it is the whole environment, "
+                "including every secret the process holds.",
+                "test whether one variable is set without printing it: test -n " + G3_DEAD + " && echo set")
+    if name in CWD or name == "popd":
+        G3["unknown_state"] = True
+        return True
+    if name in ("command", "builtin"):
+        j = 1
+        while j < len(lits) and lits[j].startswith("-"):
+            if re.match(r"-[A-Za-z]*[vV]", lits[j]):
+                return False
+            j += 1
+        if j < len(words):
+            return g3_cmd(words[j:], redirs, bodies, depth + 1, prior_unsafe)
+        return False
+    if name == "env":
+        g3_env(words, lits, redirs, bodies, depth)
+        return True
+    if name == "git":
+        g3_git(lits, prior_unsafe)
+        return changes
+    if name == "rm":
+        g3_rm(args)
+        return True
+    if name == "find":
+        g3_find(args)
+        return True
+    if name == "rsync":
+        g3_rsync(args)
+        return True
+    if name == "ps":
+        g3_ps(args)
+        return False
+    if name == "printenv":
+        if not any(a in ("--help", "--version") for a in args) and not [a for a in args if not a.startswith("-")]:
+            g3_dump("printenv")
+        return False
+    if name in ("export", "declare", "typeset"):
+        if all(a in ("-p", "-x", "-px", "-xp", "--") for a in args):
+            g3_dump(" ".join([name] + args))
+        return True
+    if name == "set":
+        if not args:
+            g3_dump("set")
+        return True
+    if name in SHELLS:
+        j, has_c = 0, False
+        while j < len(args):
+            if args[j] in ("-o", "+o", "-O", "+O"):
+                j += 2
+            elif args[j] == "--":
+                j += 1
+                break
+            elif args[j][:1] in "-+" and len(args[j]) > 1:
+                has_c = has_c or (args[j][0] == "-" and not args[j].startswith("--") and "c" in args[j])
+                j += 1
+            else:
+                break
+        if has_c and j < len(args):
+            g3_scan(args[j], depth + 1)
+        elif not has_c and (j >= len(args) or STDIN_SCRIPT.match(args[j])
+                            or any(a.startswith("-") and not a.startswith("--") and "s" in a[1:] for a in args[:j])):
+            if not bodies:
+                G3["unsure"] = True  # the script comes from a pipe or the terminal: not visible here
+        return True
+    if name == "eval":
+        if any("$" in a or PH in a for a in args):
+            G3["unsure"] = True
+        else:
+            g3_scan(" ".join(args), depth + 1)
+        return True
+    if name in LAUNCHERS or name in ("rtk",):
+        if name in CARRIERS:
+            for (text, bare), lit in zip(words[1:], args):
+                if not bare and re.search(r"\s", lit):
+                    g3_scan(lit, depth + 1)
+        for j in range(1, len(lits)):
+            if norm(lits[j]) in G3_HEADS and not lits[j].startswith("-"):
+                g3_cmd(words[j:], redirs, bodies, depth + 1, prior_unsafe)
+                break
+        return True
+    return changes
+
+
+def g3_scan(text, depth):
+    if depth > MAX_DEPTH:
+        raise Limit("depth")
+    lx = Lexer(text, depth)
+    lx.commands(False)
+    unsafe = False
+    for words, redirs, bodies in lx.cmds:
+        if G3["deny"]:
+            return
+        try:
+            if g3_cmd(words, redirs, bodies, depth, unsafe):
+                unsafe = True
+        except (Fail, Limit):
+            raise
+        except Exception:
+            G3["crash"] = True
+            return
+
+
+def g3_main():
+    text = os.fdopen(3, "rb").read().decode("utf-8", "replace")
+    G3_DEADLINE[0] = time.monotonic() + 10.0
+    verdict_reset()
+    try:
+        g3_scan(text, 0)
+    except Limit:
+        g3_deny("destructive", "command too deep or too large to scan",
+                "Command too deeply nested or too large to scan (blocked fail-closed).\nWHY: the danger scan "
+                "could not finish, so it cannot rule out a destructive command.",
+                "split the command into smaller steps without deep wrapper chains.")
+    except Fail:
+        if G3_COARSE.search(text):
+            g3_deny("destructive", "unparseable command with a dangerous word",
+                    "A command the scan cannot parse names a destructive word (blocked fail-closed).\nWHY: bash "
+                    "and zsh may read it differently, so the danger scan cannot say what runs.",
+                    "write the command in plain form: one command per line, no unusual quoting.")
+    if G3.get("crash") and not G3["deny"]:
+        g3_deny("destructive", "danger scan internal error",
+                "The danger scan failed internally (blocked fail-closed).\nWHY: no verdict means no proof the "
+                "command is safe.",
+                "retry; if it persists, report it with the command shape (not its text).")
+    if G3["unsure"] and not G3["deny"] and G3_COARSE.search(text):
+        g3_deny("destructive", "command text comes from a pipe or an expansion, with a dangerous word",
+                "A shell fed from a pipe or an expansion names a destructive word (blocked fail-closed).\nWHY: "
+                "the text that will run is not visible to the scan.",
+                "put the command in the script text directly instead of piping or expanding it.")
+    pick = G3["deny"][0] if G3["deny"] else (G3["ask"][0] if G3["ask"] else None)
+    if not pick:
+        sys.stdout.write("allow")
+        return
+    guard, log, body = pick
+    sys.stdout.write(("deny" if G3["deny"] else "ask") + "\t" + guard + "\t" + log + "\n" + body)
+
+
+def verdict_reset():
+    FLAGS.update(mention=False, loose=False, dyn=False, split=False, cwd=False, verb=False, doubt=False, chdir=False)
+    del NAMED[:], ROOTS[:]
+    WORK[0] = 0
+    MUX[0] = 0
+
+
+signal.signal(signal.SIGALRM, signal.SIG_DFL)
+signal.setitimer(signal.ITIMER_REAL, 14.0)
+g3_main()
+PY
+_DG_ASK=""
+# cheap pre-filter on the quote-stripped text: only commands that name a judged verb pay for the scan
+_DG_FLAT=$(printf '%s' "$SCAN_CMD" | tr -d "\\\\\"'")
+if printf '%s' "$_DG_FLAT" | grep -qE '(^|[^[:alnum:]_.-])(git|rm|find|rsync|env|printenv|export|declare|typeset|set|ps|eval|sh|bash|zsh|dash|ksh|ash|command|builtin)([^[:alnum:]_-]|$)|/proc/[^/ ]+/environ|\$'"'"'' ; then
+  _DG_OUT=$({ printf '%s\n' "$_S5_PY"; printf '%s\n' "$_G3_PY"; } | S5_LIB=1 python3 -I - 3<<<"$SCAN_CMD" 2>/dev/null) || _DG_OUT=""
+  _DG_HEAD="${_DG_OUT%%$'\n'*}"
+  case "$_DG_HEAD" in
+    allow) ;;
+    deny$'\t'* | ask$'\t'*)
+      _DG_BODY="${_DG_OUT#*$'\n'}"
+      IFS=$'\t' read -r _DG_DEC _DG_GUARD _DG_LOG <<<"$_DG_HEAD"
+      if [[ "$_DG_DEC" == "deny" ]]; then
+        log_violation "$_DG_GUARD" "$_DG_LOG"
+        emit_deny "$_DG_BODY"
+        exit 0
+      fi
+      _DG_ASK=1
+      ;;
+    *)
+      log_violation destructive "danger scan gave no usable answer"
+      emit_deny "The danger scan (guard 3a) gave no usable answer (blocked fail-closed).
+WHY: a crashed, killed or timed-out scan cannot rule out a destructive command or an environment dump, and an empty answer would read as allow.
+FIX: retry the command; if it keeps failing, split it into smaller steps."
+      exit 0
+      ;;
+  esac
+fi
+
+# 4a. Gate-config variables. AGENT_REVIEW_OVERRIDE is the USER's escape from the commit
+# review gate; AGENT_WORKERS_DIR / AGENT_LOGS_DIR relocate the evidence ledger the gate
+# reads; GITHEAD_<hex> is git's merged-head variable. An agent that sets any of them can
+# approve its own risk-area commit, so DENY an assignment `NAME=` / `NAME+=` / `NAME:=`
+# ANYWHERE in the quote- and backslash-stripped, message-stripped command ($SCAN_CMD, so a
+# -m message body is not scanned) — a launcher prefix (timeout, nice, env, bash -o … -c)
+# is covered by construction, not by enumeration. Also the builtins that name one
+# (export/declare/typeset/local/readonly/read/mapfile/readarray/printf -v), and `set -a`
+# in a command that mentions one. Mentions without `=` (grep NAME f, echo "$NAME",
+# unset NAME, [[ "$NAME" == "" ]]) never match. Placed before the ask guards so a compound
+# command still gets deny. Denies the recognised assignment forms and logs the attempt; a
+# speed bump, not a boundary (brace/variable indirection, interpreter one-liners such as
+# python/perl/node -e, and scripts written then run evade it).
+_CMD_RO=$(printf '%s' "$SCAN_CMD" | tr -d "\\\\\"'")
+_RO_NAMES='(AGENT_REVIEW_OVERRIDE|AGENT_WORKERS_DIR|AGENT_LOGS_DIR|GITHEAD_[0-9a-fA-F]+)'
+_RO_LEAD='(^|[;&|({`]|(^|[[:space:];&|(])(ba|z|da|k)?sh([[:space:]]+-[A-Za-z]+)*[[:space:]]+-[A-Za-z]*c[A-Za-z]*[[:space:]]+|(^|[[:space:]])eval[[:space:]]+)[[:space:]]*((then|do|else|elif|if|while|until|time|!)[[:space:]]+)*'
+if echo "$_CMD_RO" | grep -qE "(^|[^A-Za-z0-9_])${_RO_NAMES}[:+]?=" \
+   || echo "$_CMD_RO" | grep -qE "${_RO_LEAD}(export|declare|typeset|local|readonly|read|mapfile|readarray|printf[[:space:]]+-v)[[:space:]]+[^;&|]*${_RO_NAMES}" \
+   || { echo "$_CMD_RO" | grep -qE "${_RO_LEAD}set[[:space:]]+(-[A-Za-z]*a|-o[[:space:]]+allexport)" \
+        && echo "$_CMD_RO" | grep -qE "${_RO_NAMES}"; }; then
+  log_violation review-override "agent attempted to set a gate-config variable (AGENT_REVIEW_OVERRIDE/AGENT_WORKERS_DIR/AGENT_LOGS_DIR/GITHEAD_*)"
+  emit_deny "Setting AGENT_REVIEW_OVERRIDE, AGENT_WORKERS_DIR, AGENT_LOGS_DIR or GITHEAD_* from an agent command is blocked.
+WHY: review-override guard — these control the risk-area commit review gate (user-only escape, evidence-ledger location, merged heads); an agent setting one could approve its own commit.
+FIX: run /council-review --staged and commit normally; if every external lane is down, ask the user to run the commit in their own terminal. If you only mention a variable in prose, write the message to a file and use git commit -F."
+  exit 0
+fi
+
+# 4b. Evidence ledgers (reviews.jsonl, review-override.jsonl) are written only by
+# call-worker.sh and review-evidence.py — their appends happen inside those scripts,
+# not in an agent command string. DENY (case-insensitive: APFS) a Bash command that
+# writes them: a `>`/`>>`/`>|` redirect onto one; a write verb (tee/cp/mv/ln/dd/rsync/
+# scp/install/truncate/rm/shred/unzip/7z/tar/gpg/openssl/age — the write-capable members
+# of the secrets guard's verb list) with a ledger name or the .agent/workers directory
+# as ANY argument; sed -i naming one; or python open(...,'a'|'w'|'x'|'+') naming one.
+# Reading (cat, grep, jq, open(...,'r')) is allowed. Same speed-bump caveat as 4a.
+# basename boundary: the name must start the word or follow / = or whitespace, so
+# my_reviews.jsonl is not a ledger. _LEDGER_Q is the same boundary for the quote-preserving
+# python check (quote or / before the name).
+_LEDGER='(^|[[:space:]/=])(reviews|review-override)\.jsonl'
+_LEDGER_Q='[/"'"'"'](reviews|review-override)\.jsonl'
+_WRITE_VERBS='tee|cp|mv|ln|dd|rsync|scp|install|truncate|rm|shred|unzip|7z|tar|gpg|openssl|age'
+if echo "$_CMD_RO" | grep -qiE ">[>|]?[[:space:]]*([^[:space:];&|]*/)?(reviews|review-override)\.jsonl" \
+   || echo "$_CMD_RO" | grep -qiE "(^|[^A-Za-z0-9_./-])(${_WRITE_VERBS})[[:space:]]+([^;&|]*[[:space:]/=])?((reviews|review-override)\.jsonl|\.agent/workers)" \
+   || echo "$_CMD_RO" | grep -qiE "(^|[^A-Za-z0-9_./-])sed[[:space:]]+[^;&|]*-[A-Za-z]*i[^;&|]*${_LEDGER}" \
+   || echo "$SCAN_CMD" | grep -qiE "open\([^)]*${_LEDGER_Q}[^)]*,[[:space:]]*[\"'][abwx+]"; then
+  log_violation evidence-ledger "agent command writes a review evidence ledger"
+  emit_deny "Writing a review evidence ledger (reviews.jsonl / review-override.jsonl) from an agent command is blocked.
+WHY: evidence-ledger guard — these files are the proof the commit gate trusts and are written only by call-worker.sh and review-evidence.py; an agent-written row would forge a review.
+FIX: produce the row by running /council-review (call-worker.sh appends it); reading the ledger (cat, grep, jq) is fine."
+  exit 0
+fi
+
+# 4. Risk Area #1 — production data (DROP/TRUNCATE TABLE) — ASK (user confirms)
+if echo "$SCAN_CMD" | grep -qiE '(DROP\s+TABLE|TRUNCATE\s+TABLE)'; then
+  log_violation production-data "DROP/TRUNCATE TABLE requires user confirmation" "ask"
+  emit_ask "DROP/TRUNCATE TABLE — user confirmation required (Risk Area #1: production-data).
+WHY: a dropped or truncated table is unrecoverable without a verified backup.
+FIX: proceed only if intended; otherwise run it as a reviewed migration with a backup in place."
+  exit 0
+fi
+
+# 5. Risk Area #2 — secrets — DENY (no bypass).
+# Covers many command variants in a single regex (read / hash / archive / encrypt / exfil families).
+# To extend: add command name to the alternation. Project-specific paths can be
+# added via hook-config.yml: risk_areas[id=secrets].paths.
+# All secrets branches (5-11, 11b) match CASE-INSENSITIVELY (-qiE): on a
+# case-insensitive filesystem (macOS APFS default) `cat SECRETS/key` reads the
+# SAME file as `cat secrets/key`, so a case-sensitive match would be a trivial
+# bypass. The command verbs are lowercase, so -i adds no meaningful false positives.
+#
+# Two stages, to stop false positives without opening a hole. Stage 1 is the regex below,
+# unchanged: it only NOMINATES a command (no word boundary, no notion of command position, so
+# it also fires on a grep PATTERN, a commit message or `head -n 2; ls x/secrets/`). Stage 2
+# (_secrets_verdict) lexes the command like a shell and prints one word: `reader` (a guard verb
+# is the command word and a `secrets/` operand is read), `doubt` (no such operand, but the path
+# can still reach a reader through a $variable, a loop, a substitution, a cd or a program stage 2
+# does not know), `inert` (parsed, provably neither), `unparseable` (a construct it does not
+# model, or one on which bash and zsh disagree), `limit` (its work or nesting budget ran out)
+# or `error`. A nominated command is denied unless stage 2 says exactly `inert`, so a lexer
+# limit, an unbalanced quote, a crash, a missing python3, a non-zero exit, a killed process and
+# an empty, garbled or truncated answer can only keep the old deny.
+# Stage 1 never nominated `git show|blame|cat-file REV:secrets/x`, `git config -f secrets/x -l`
+# nor `git tag|commit|merge -F secrets/x` (git stores the file as a message, which a later `git
+# tag -n` or `git log` prints), and 0.8.0 allowed every `git log ... secrets/`. A second,
+# additive candidate regex catches those. It denies a parsed `reader` and anything that is not an
+# answer; `inert`, `doubt` and `unparseable` (a finished scan that found no read) are allowed, as
+# before: a path that comes out of an expansion is a known gap, pinned in the test. A `git
+# log|show` whose options all print commits, names or counts (--oneline, --name-only, --stat ...)
+# only selects commits by the path and is inert; -p anywhere, -c, -L, --word-diff, a pickaxe, an
+# option the scan does not know and REV:path are not.
+# A secrets/ path inside a quoted word that has blanks (' secrets/k', 'x secrets/k') is no path of
+# its own, but an unquoted $( ), $var, ${x#y}, xargs or read splits or reshapes it into one: stage 2
+# notes such a mention (`loose`) and denies when a splitting consumer exists too. Prose next to a
+# quoted "$f" or a heredoc inside "$( )" stays allowed.
+# Stage 1 only sees a literal secrets/, so a path spelled otherwise is judged by its shape. An
+# operand (also a cd target, a git pathspec or -C directory, a launcher's directory option) with a
+# component that can read as the word secrets is a read: written out, with a glob (secre[t]s, s*),
+# a brace group ({secrets,x}) or pieces ("$A"rets, $A$B, $(echo sec)rets, printf 'secrets\057k').
+# Before a slash it may also end in the word, as the written-out x-secrets/ does (data_*/k). A name
+# that an assignment (value or [key]), an array literal, a for list, the arguments of another
+# command, a here-string, an alias or a launcher option carries on to a later $var, ${!m[@]} or cd
+# is doubt: the word, a spelling of it, a name that ends in it (x-secrets) or holds it (secretsX,
+# for ${D%X}), the pieces of consecutive echo or printf commands side by side, and an item after
+# the first of a list that a splitting consumer hands on (D="x secrets"). A component that is one
+# bare expansion ("$D"/k) is not judged: its value is unknown here.
+# The value of an option that picks the files a reader reads is an operand too (rg -g, --glob,
+# --iglob; ag -G, --file-search-regex; grep --include; rsync and tar --include): a glob that can
+# spell the directory selects it. An exclusion (rg -g '!GLOB', --exclude-dir) picks nothing. A
+# reader that walks into directories (grep -r, rg, ag, git grep, tar c, zip -r, cp -r, rsync -a,
+# scp -r, 7z a, diff -r, gunzip -r) starts at its roots (no operand: the working directory). When
+# the line also names a secrets/ path as a path elsewhere (ls secrets/), a root that is, holds or
+# may hold it makes the line doubt. A root is cleared only when it provably lies apart from the
+# path: both relative (or both absolute) with a different name at the same depth. ~, .., a
+# variable, a pattern, a cd, a launcher's -C or -D, tar -C or -T and git -C leave it doubt.
+# A command that never names the directory (find . -exec cat {} +, xargs cat, grep -r PATTERN .)
+# is no read of it, with or without a mention that is only a pattern or prose.
+# Where bash and zsh read the same text differently, a hand-written lexer cannot tell which text is
+# code, so stage 2 says `unparseable` and the nominating deny stands: an expansion as a heredoc
+# delimiter, $[ ], a quote inside a double-quoted ${ }, <<( ), a ( glued to a word, a line
+# continuation inside a token or in a heredoc end, a subscript or array literal that holds a blank
+# or an operator, a << or a # inside [[ ]], a } that closes nothing, a $'...' escape that the
+# shells turn into different bytes (\c, \u, a code of 0 or from 128 up, an unknown escape: bash
+# ends a word at a NUL, and so a heredoc delimiter), a $"..." heredoc delimiter (zsh keeps the
+# dollar sign), and a shell or `source` that reads its script from stdin (sh -, bash -s,
+# /dev/stdin); core/hooks/README.md lists them all.
+# `git -c name=value` with the path in the value, written out or spelled, runs as a command
+# (alias.x=!cmd, core.pager), and so do the program of --upload-pack and --receive-pack, the
+# argument of difftool -x and the code string of an interpreter; rsync/tar --include selects what
+# they read.
+# Stage 2 spends a bounded amount of work (MAX_WORK word visits, MAX_DEPTH levels of nesting:
+# `limit`) and arms a 2 s wall-clock alarm. hooks.json gives this hook a 30 s timeout (docs/
+# hook-protocol.md section 14), and a hook the host kills prints no decision, which lets the call
+# through: the deny has to be decided inside our own budget. The alarm kills stage 2 without an
+# answer, which is a deny, so the worst case is 2 s plus the interpreter start-up.
+# AGENT_SECRETS_SCAN_BUDGET=<seconds> can only shorten the alarm (a test seam).
+# Not covered by stage 2, by design: text handed to an interpreter (python/perl/ruby/... bodies
+# and -e strings: guard 11 still covers python/node -c|-e), script files, aliases defined
+# elsewhere, a code string that reaches a program only through a variable (python3 -c "$X"),
+# a name assembled from data the command line does not spell out (decoded text, a file's content,
+# the environment), and a program that runs a quoted string but is not a code carrier stage 2 knows
+# (shell -c, eval, ssh, su, watch and the terminal multiplexers are known; another tool with a
+# command-line option of its own is not): its strings read as prose. Stage 2 is a speed bump
+# against careless reads, like the rest of this file.
+# Readers beyond the original list. One source for stage 1 (nominates a line), stage 2 (a VERBS
+# member is a reader of its secrets/ operands; handed over as SCAN_READERS) and guard 11b. A line
+# whose only reader is missing here is never nominated, so it never reaches stage 2. Stage 2 keeps
+# precision: `ls secrets/ | sort` and a commit message that names the path stay allowed.
+# Not listed on purpose: gzip, zcat, zless, zmore, batcat ... already end in a listed verb and stage 2
+# denies them as unknown programs; as VERBS members they would count as known non-walking readers
+# and let `gzip -r . ; ls secrets/` through. (zgrep, bzgrep and xzgrep need the list: stage 2 allowed them.)
+# Inline interpreter code that 11b and its fail-closed branch look for: the interpreter, any words
+# (options such as -I or -W "ignore", quoted or not) and then a code flag: -c -e -E -p -r, bundled
+# (-le, -pe), --eval, --print, or deno's `eval` word, then the code: opened by a quote, glued
+# (-c"x", -e'x') or spaced, plain or $'...', or unquoted with a backslash in it (node -p
+# require\(...\)): a shell needs that escape for any code with a parenthesis, and the backslash
+# keeps `pytest -p no:cacheprovider` and `pip install -r reqs.txt` out. Words in between are not
+# told apart from a script name, so `python3 tool.py -e "vault/x"` also matches; that only costs
+# when a declared path is named too.
+_SECRET_INTERP='(python[0-9.]*|pypy[0-9]*|node|nodejs|deno|bun|perl|ruby|php)'
+_SECRET_CODE_OPEN='(\$?["'"'"']|[^[:space:]]*\\)'
+_SECRET_INLINE_CODE="${_SECRET_INTERP}([[:space:]]+[^[:space:];|&<>]+)*[[:space:]]+(-[a-zA-Z]*[ceEpr]|--eval|--print|eval)(=|[[:space:]]+)?[[:space:]]*${_SECRET_CODE_OPEN}"
+# An interpreter fed a here-string reads its program from it (python3 <<< "open('p')"); echo "x" <<< "p"
+# is only text and stays out.
+_SECRET_HERESTRING="${_SECRET_INTERP}([[:space:]]+[^[:space:];|&<>]+)*[[:space:]]*<<<"
+# `pr` is not listed: the unanchored match would nominate every `gh pr create --body ...secrets/...`,
+# and stage 2 reads `pr` as a known reader of that body text (gh-pr-body-allow); coreutils pr is rare.
+# `install` (a copy) is nominated and judged by stages 1-2 only: in 11b a bare word match would also
+# catch `pip install` / `npm install`, including the remediation hint of the fail-closed branch, so
+# 11b matches it as a command word instead (_SECRET_CMD_START_READERS).
+_SECRET_STAGE12_ONLY='install'
+# timeout/gtimeout read their options with getopt_long (GNU "+fk:ps:v", FreeBSD "+fhk:ps:v"): a short bundle
+# that ends in k or s (-k, -vk, -fk) and a long option written out or as an unambiguous prefix (--kill-after,
+# --kill, --k, --signal, --sig, --s) take the next word as their value; every other option (--foreground,
+# --preserve-status, -v, -f, -p, --, and the glued -k5 / --signal=KILL forms) takes none, so the word after it is
+# the duration. The duration is a word that looks like one - a number (5, .5, 5e0, 0x5, +5, or -0 right after
+# --), inf / infinity with an optional unit (infs), a variable ($T, ${T}, "$T"), a quoted word ('5') - so the
+# program name after it ("pip") is not. Words are capped at 64 characters: this regex is compiled for every
+# command once risk_areas are declared, and an unbounded run that fails to match is quadratic in a UTF-8
+# locale in glibc (a 400 KB word took 10 s); a longer word is not read as a duration or an option.
+_SECRET_TIMEOUT='g?timeout([[:space:]]+((-[A-Za-z]{0,63}[ks]|--[ks][a-z-]{0,63})[[:space:]]+[^[:space:]-][^[:space:]]{0,63}|-[^[:space:]]{1,63}))*[[:space:]]+(inf(inity)?[smhd]?|-?[0-9.+][^[:space:]]{0,63}|\$[^[:space:]]{0,63}|["'"'"'][^[:space:]]{0,63})'  # supply-chain-scan: allow-literal wrapper name in a command-word regex, not a spawn
+# A wrapper in front (env, time, timeout/gtimeout with its duration, command, exec, sudo, xargs with its
+# options, NAME=value, a background launcher) or a
+# path (/usr/bin/install) does not hide it; `pip install`, `npm install`, `make install` are not it.
+_SECRET_CMD_START='(^|[;&|(`]|&&)[[:space:]]*(((env|nohup|time|command|exec|sudo|doas|nice|xargs|stdbuf)([[:space:]]+-[^[:space:]]+([[:space:]]+[^[:space:]-][^[:space:]]*)?)*|'"$_SECRET_TIMEOUT"'|[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*)[[:space:]]+)*([^[:space:]]*/)?install[[:space:]]+'  # supply-chain-scan: allow-literal wrapper names in a command-word regex, not a spawn
+_SECRET_MORE_READERS='base64|base32|basenc|sort|uniq|cut|paste|column|join|comm|expand|unexpand|fmt|shuf|cksum|b2sum|sha1sum|sha224sum|sha384sum|zgrep|bzgrep|xzgrep|iconv|split|look|vim|nano|emacs|jq|yq'
+_secrets_verdict() {
+  # a python3 that is missing, exits non-zero or is killed leaves `error` behind, never an allow
+  printf '%s\n' "$_S5_PY" | SCAN_INPUT="$1" SCAN_READERS="$_SECRET_MORE_READERS|$_SECRET_STAGE12_ONLY" python3 -I - 2>/dev/null || printf 'error'
 }
 _S5_BLOCK=""
 _S5_WHY=""

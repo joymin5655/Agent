@@ -225,12 +225,19 @@ for _r in clean dirty untr; do
   git init -q "$G3A_ROOT/$_r" >/dev/null 2>&1
   printf 'one\n' > "$G3A_ROOT/$_r/a.txt"
   git -C "$G3A_ROOT/$_r" add a.txt
-  git -C "$G3A_ROOT/$_r" -c user.name=t -c user.email=t@example.invalid commit -q -m init
+  git -C "$G3A_ROOT/$_r" -c user.name=t -c user.email=t@example.invalid -c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q -m init
 done
 printf 'two\n' >> "$G3A_ROOT/dirty/a.txt"
 printf 'x\n' > "$G3A_ROOT/untr/new.txt"
 G3A_NOREPO="$(mktemp -d)"
 GC="$G3A_ROOT/clean"; GD="$G3A_ROOT/dirty"; GU="$G3A_ROOT/untr"
+for _b in main feature; do
+  git init -q -b "$_b" "$G3A_ROOT/br-$_b" >/dev/null 2>&1
+  printf 'one\n' > "$G3A_ROOT/br-$_b/a.txt"
+  git -C "$G3A_ROOT/br-$_b" add a.txt
+  git -C "$G3A_ROOT/br-$_b" -c user.name=t -c user.email=t@example.invalid -c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q -m init
+done
+GBM="$G3A_ROOT/br-main"; GBF="$G3A_ROOT/br-feature"
 
 echo "=== existing rules (regression) ==="
 run_case "rm-rf-root-deny"      'rm -rf /'                                deny
@@ -2216,6 +2223,46 @@ run_case_in "stash-list-allow"              "$GC" 'git stash list'              
 run_case_in "stash-push-allow"              "$GD" 'git stash push -m wip'         allow
 run_case_in "reset-hard-still-deny"         "$GC" 'git reset --hard'              deny
 
+echo "--- unknown work-tree state, ordering, force push without a branch"
+run_case_in "unknown-earlier-write-ask"     "$GC" 'touch a.txt && git checkout -- .'   ask
+run_case_in "unknown-earlier-redirect-ask"  "$GC" 'echo x > a.txt; git restore a.txt'  ask
+run_case_in "unknown-cd-ask"                "$GD" 'cd . && git checkout -- .'          ask
+run_case_in "unknown-pushd-clean-ask"       "$GD" 'pushd . >/dev/null; git clean -fd'  ask
+run_case_in "unknown-git-dir-ask"           "$GD" "git --git-dir=$GD/.git checkout -- ." ask
+run_case_in "unknown-work-tree-ask"         "$GD" "git --work-tree=$GD restore a.txt"  ask
+run_case_in "unknown-env-git-dir-ask"       "$GD" "GIT_DIR=$GD/.git git checkout -- ." ask
+run_case_in "unknown-repeated-C-ask"        "$GD" "git -C $GD -C $GD restore a.txt"    ask
+run_case_in "known-readonly-before-dirty-deny" "$GD" 'git status && ls && git checkout -- .' deny
+run_case_in "ask-then-later-deny"           "$GC" 'git stash drop; cat secrets/k'      deny
+run_case_in "ask-then-ask"                  "$GC" 'git stash drop; git commit --no-verify -m x' ask
+run_case_in "ask-then-env-deny"             "$GC" 'git stash clear; env'               deny
+run_case_in "checkout-path-nodd-dirty-deny" "$GD" 'git checkout a.txt'                 deny
+run_case_in "checkout-rev-path-dirty-deny"  "$GD" 'git checkout HEAD a.txt'            deny
+run_case_in "checkout-path-nodd-clean-allow" "$GC" 'git checkout a.txt'                allow
+run_case_in "checkout-existing-branch-allow" "$GD" 'git checkout main'                 allow
+run_case_in "push-force-no-ref-on-main-deny"   "$GBM" 'git push -f'                    deny
+run_case_in "push-force-origin-on-main-deny"   "$GBM" 'git push --force-with-lease origin' deny
+run_case_in "push-force-head-on-main-deny"     "$GBM" 'git push -f origin HEAD'        deny
+run_case_in "push-force-no-ref-on-feature-allow" "$GBF" 'git push -f origin'           allow
+run_case_in "push-force-no-ref-no-repo-ask"    "$G3A_NOREPO" 'git push -f origin'      ask
+run_case_in "push-force-abbrev-main-deny"      "$GBF" 'git push --force-with origin main' deny
+run_case_in "push-force-abbrev2-main-deny"     "$GBF" 'git push --forc origin master'  deny
+run_case_in "push-plain-no-ref-on-main-allow"  "$GBM" 'git push origin'                allow
+
+echo "--- deny text never echoes the arguments of env"
+G3A_OUT=$(printf '%s' '{"event":"PreToolUse","tool_name":"Bash","tool_input":{"command":"env API_KEY=sk-test-CANARY-0123456789"}}' | AGENT_GATE_SINK_DIR="$AGENT_GATE_SINK_DIR" bash "$HOOK" 2>/dev/null || true)
+if [[ "$G3A_OUT" == *'"permissionDecision": "deny"'* && "$G3A_OUT" != *CANARY* ]]; then
+  echo "  ok   [env-args-not-echoed]"; PASS=$((PASS + 1))
+else
+  echo "  FAIL [env-args-not-echoed] :: $G3A_OUT"; FAIL=$((FAIL + 1))
+fi
+G3A_LOG=$(cat "$AGENT_GATE_SINK_DIR"/security-violations.jsonl 2>/dev/null || true)
+if [[ "$G3A_LOG" != *CANARY* ]]; then
+  echo "  ok   [env-args-not-logged]"; PASS=$((PASS + 1))
+else
+  echo "  FAIL [env-args-not-logged]"; FAIL=$((FAIL + 1))
+fi
+
 echo "--- environment dumps"
 run_case "env-bare-deny"            'env'                                  deny
 run_case "env-pipe-deny"            'env | sort'                           deny
@@ -2239,6 +2286,22 @@ run_case "ps-eww-deny"              'ps eww'                               deny
 run_case "ps-auxe-deny"             'ps auxe'                              deny
 run_case "ps-dash-E-deny"           'ps -E'                                deny
 run_case "ps-dash-wwE-deny"         'ps -wwE -p 1'                         deny
+run_case "ps-aux-e-deny"            'ps aux e'                             deny
+run_case "proc-environ-cat-deny"    'cat /proc/self/environ'               deny
+run_case "proc-environ-strings-deny" 'strings /proc/1234/environ'          deny
+run_case "proc-environ-redirect-deny" 'tr "\0" "\n" < /proc/self/environ' deny
+run_case "proc-environ-echo-allow"  'echo /proc/self/environ'              allow
+run_case "ps-o-command-allow"       'ps -o command -p 1'                   allow
+run_case "env-launcher-timeout-deny" 'timeout 5 env'                       deny
+run_case "env-launcher-nice-deny"   'nice -n 5 env'                        deny
+run_case "env-quoted-glue-deny"     "e'n'v"                                deny
+run_case "env-subst-deny"           'echo $(env)'                          deny
+run_case "env-heredoc-shell-deny"   $'bash <<EOF\nenv\nEOF'                  deny
+run_case "env-herestring-shell-deny" 'bash <<< env'                        deny
+run_case "env-pipe-to-shell-deny"   'echo env | sh'                        deny
+run_case "env-case-arm-allow"       'case "$x" in set) echo a;; esac'      allow
+run_case "env-case-arm-env-allow"   'case "$x" in env) :;; esac'           allow
+run_case "pipe-to-shell-benign-allow" 'echo hi | sh'                       allow
 run_case "env-heredoc-then-env-deny" $'cat <<EOF\nbody\nEOF\nenv'          deny
 run_case "printenv-name-allow"      'printenv HOME'                        allow
 run_case "printenv-flag-name-allow" 'printenv -0 HOME'                     allow
@@ -2265,13 +2328,23 @@ run_case "env-var-expansion-allow"  'echo "$HOME" "${PATH:+x}"'            allow
 
 echo "--- recursive rm widening"
 run_case "rm-r-root-deny"           'rm -r /'                              deny
-run_case "rm-R-home-deny"           'rm -R ~/x'                            deny
+run_case "rm-R-home-deny"           'rm -R ~'                              deny
+run_case "rm-R-home-slash-deny"     'rm -R ~/'                             deny
 run_case "rm-rf-dollar-home-deny"   'rm -fr $HOME/x'                       deny
-run_case "rm-recursive-parent-deny" 'rm --recursive ../x'                  deny
-run_case "rm-split-flags-deny"      'rm -r -f ~/x'                         deny
-run_case "rm-recursive-force-deny"  'rm --recursive --force /x'            deny
-run_case "rm-dd-operand-deny"       'rm -r -- /x'                          deny
-run_case "rm-chained-deny"          'ls && rm -r ../x'                     deny
+run_case "rm-r-dollar-home-deny"    'rm -r $HOME'                          deny
+run_case "rm-r-brace-home-deny"     'rm -r ${HOME}/'                       deny
+run_case "rm-recursive-parent-deny" 'rm --recursive ../'                   deny
+run_case "rm-split-flags-deny"      'rm -r -f ~/'                          deny
+run_case "rm-recursive-force-deny"  'rm --recursive --force /'             deny
+run_case "rm-dd-operand-deny"       'rm -r -- /'                           deny
+run_case "rm-root-glob-deny"        'rm -r /*'                             deny
+run_case "rm-chained-deny"          'ls && rm -r ..'                       deny
+run_case "rm-sudo-deny"             'sudo rm -r /'                         deny
+run_case "rm-quoted-glue-deny"      "r''m -r /"                            deny
+run_case "rm-below-home-allow"      'rm -R ~/x'                            allow
+run_case "rm-below-root-allow"      'rm -r /tmp/build-x'                   allow
+run_case "rm-below-parent-allow"    'rm -r ../sibling-build'               allow
+run_case "rm-homedir-lookalike-allow" 'rm -r $HOMEX'                       allow
 run_case "rm-r-local-allow"         'rm -r ./build'                        allow
 run_case "rm-rf-local-allow"        'rm -rf build dist'                    allow
 run_case "rm-r-dotdir-allow"        'rm -r .cache'                         allow
@@ -2303,9 +2376,13 @@ run_case "find-home-exec-rm-deny"   'find ~ -name x -exec rm {} \;'        deny
 run_case "find-dollar-home-deny"    'find $HOME -type f -delete'           deny
 run_case "find-parent-delete-deny"  'find ../ -delete'                     deny
 run_case "find-execdir-rm-deny"     'find / -execdir rm -f {} +'           deny
-run_case "rsync-delete-home-deny"   'rsync -a --delete src/ ~/dst/'        deny
-run_case "rsync-delete-after-deny"  'rsync -a --delete-after src/ /srv/x/' deny
-run_case "rsync-remove-src-root-deny" 'rsync --remove-source-files /data x/' deny
+run_case "rsync-delete-home-deny"   'rsync -a --delete src/ ~/'            deny
+run_case "rsync-delete-after-deny"  'rsync -a --delete-after src/ /'       deny
+run_case "rsync-remove-src-root-deny" 'rsync --remove-source-files / x/'   deny
+run_case "find-below-root-ask"      'find /tmp/build -name x -delete'      ask
+run_case "rsync-delete-below-home-ask" 'rsync -a --delete src/ ~/dst/'     ask
+run_case "rsync-dry-run-long-allow" 'rsync -a --dry-run --delete src/ /'   allow
+run_case "rsync-n-bundled-allow"    'rsync -avn --delete src/ ~/'          allow
 run_case "find-local-delete-ask"    "find . -name '*.pyc' -delete"         ask
 run_case "find-local-exec-rm-ask"   'find build -name x -exec rm {} +'     ask
 run_case "rsync-delete-local-ask"   'rsync -a --delete src/ dst/'          ask
