@@ -25,7 +25,6 @@ set -euo pipefail
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 AUDIT_LOG="$REPO_ROOT/.agent/logs/supervisor-goal-audit.jsonl"
 GOAL_HELPER="$REPO_ROOT/core/infra/supervisor-goal.sh"
-PLANS_DIR="${AGENT_PLANS_DIR:-$HOME/.agent/plans}"
 
 # Project-tunable scoring keywords (override via env vars).
 DOMAIN_OUTPUT_KEYWORDS="${AGENT_DOMAIN_OUTPUT_KEYWORDS:-uncertainty|confidence|tolerance}"
@@ -60,9 +59,20 @@ if [[ -z "$PLAN_SLUG" || -z "$WAVE_NUM" ]]; then
     exit 2
 fi
 
-PLAN_FILE="$PLANS_DIR/${PLAN_SLUG}.md"
+# /spec writes <root>/<slug>/plan.md; the flat <slug>.md is the legacy layout.
+# AGENT_PLANS_DIR (when set) is the plans root; otherwise the directory layout is
+# repo-relative and the legacy flat file lives under $HOME/.agent/plans.
+if [[ -n "${AGENT_PLANS_DIR:-}" ]]; then
+    PLAN_CANDIDATES=("$AGENT_PLANS_DIR/${PLAN_SLUG}/plan.md" "$AGENT_PLANS_DIR/${PLAN_SLUG}.md")
+else
+    PLAN_CANDIDATES=("$REPO_ROOT/.agent/plans/${PLAN_SLUG}/plan.md" "$HOME/.agent/plans/${PLAN_SLUG}.md")
+fi
+PLAN_FILE="${PLAN_CANDIDATES[0]}"
+for cand in "${PLAN_CANDIDATES[@]}"; do
+    if [[ -f "$cand" ]]; then PLAN_FILE="$cand"; break; fi
+done
 if [[ ! -f "$PLAN_FILE" ]]; then
-    echo "ERROR: plan missing: $PLAN_FILE" >&2
+    echo "ERROR: plan missing: ${PLAN_CANDIDATES[*]}" >&2
     exit 3
 fi
 

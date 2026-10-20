@@ -87,6 +87,27 @@ echo "=== other extractors unchanged ==="
 check "bash-core-script-still-captured" 'bash core/tests/x.sh' "$(run_audit '- `bash core/tests/x.sh` -> exit 0')"
 check "test-f-still-captured" 'test -f f.txt' "$(run_audit 'Check: test -f f.txt')"
 
+echo "=== plan path: directory layout first, legacy flat file as fallback ==="
+dir_plan() {  # dir_plan <path> <check-file>: write a one-wave plan whose check is `test -f <check-file>`
+  mkdir -p "$(dirname "$1")"
+  printf '## Wave 1: t\n\n- Check: test -f %s\n' "$2" > "$1"
+}
+req() { jq -r '.requirements[]' 2>/dev/null; }
+dir_plan "$AGENT_PLANS_DIR/d/plan.md" dir.txt
+check "env-root-directory-layout" 'test -f dir.txt' "$(bash "$AUDIT" d 1 2>/dev/null | req)"
+dir_plan "$AGENT_PLANS_DIR/b/plan.md" dir.txt
+dir_plan "$AGENT_PLANS_DIR/b.md" flat.txt
+check "env-root-directory-beats-flat" 'test -f dir.txt' "$(bash "$AUDIT" b 1 2>/dev/null | req)"
+dir_plan "$AGENT_PLANS_DIR/l.md" flat.txt
+check "env-root-legacy-flat-still-read" 'test -f flat.txt' "$(bash "$AUDIT" l 1 2>/dev/null | req)"
+dir_plan "$TMP/repo/.agent/plans/r/plan.md" repo.txt
+check "repo-relative-directory-layout" 'test -f repo.txt' "$(env -u AGENT_PLANS_DIR bash "$AUDIT" r 1 2>/dev/null | req)"
+mkdir -p "$TMP/home"
+dir_plan "$TMP/home/.agent/plans/h.md" home.txt
+check "home-legacy-flat-fallback" 'test -f home.txt' "$(env -u AGENT_PLANS_DIR HOME="$TMP/home" bash "$AUDIT" h 1 2>/dev/null | req)"
+env -u AGENT_PLANS_DIR HOME="$TMP/home" bash "$AUDIT" nope 1 >/dev/null 2>&1
+check "missing-plan-exits-3" "3" "$?"
+
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]
