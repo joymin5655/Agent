@@ -24,6 +24,10 @@
 #      placeholder: TODO / TBD / ... / <fill ...> / empty backticks) — evidence
 #      that was never filled in is not evidence
 #   7. an unterminated code fence (it would silently hide the rest of the file)
+#   8. spec.md present without a `## Must not` or a `## Edge cases` section
+#      (each may hold a single `- none — <reason>` bullet)
+#   9. a spec `## Must not` / `## Edge cases` bullet with backticked terms,
+#      checked exactly like rule 5 (any-hit, same boilerplate exclusions)
 # Fenced code blocks are neither headers nor steps, in plan and spec. Fences
 # follow CommonMark: ``` or ~~~, >=3 chars, closed only by the same character
 # at >= the opener's length, so a 4-backtick fence may wrap literal ``` lines.
@@ -169,24 +173,29 @@ if [[ -f "$spec" ]]; then
         any = 1
         if (index(plan, term) > 0) hit = 1
       }
-      if (any && !hit) print "FAIL " F ":" bline ": criterion not referenced by plan: " buf
+      if (any && !hit) print "FAIL " F ":" bline ": " bkind " not referenced by plan: " buf
     }
     fence_line($0) { flush(); next }
     fence { next }
     /^## / {
       flush()
-      insec = ($0 ~ /^## Success criteria/)
-      if ($0 ~ /^## Decisions/) dec = 1
+      sec = ""
+      if ($0 ~ /^## Success criteria/) sec = "criterion"
+      else if ($0 ~ /^## Must not/) { sec = "must-not"; mn = 1 }
+      else if ($0 ~ /^## Edge cases/) { sec = "edge case"; ec = 1 }
+      else if ($0 ~ /^## Decisions/) dec = 1
       next
     }
-    !insec { next }
-    /^- / { flush(); have = 1; buf = $0; bline = FNR; next }
+    sec == "" { next }
+    /^- / { flush(); have = 1; buf = $0; bline = FNR; bkind = sec; next }
     /^[ \t]+[^ \t]/ { if (have) buf = buf " " $0; next }
     { flush() }
     END {
       flush()
       if (fence) print "FAIL " F ":" fline ": unterminated code fence"
       if (!dec) print "FAIL " F ":1: spec has no ## Decisions section"
+      if (!mn) print "FAIL " F ":1: spec has no ## Must not section"
+      if (!ec) print "FAIL " F ":1: spec has no ## Edge cases section"
     }
   ' - "$spec")
 fi
