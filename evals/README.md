@@ -41,6 +41,7 @@ track* below. The skill A/B dataset is a later increment.
 | `evals/datasets/skill-ab.jsonl` | Skill A/B track **seed** (H-3) — labeled trigger + assertion cases for the shipped skills. No runner yet. |
 | `evals/baseline-skill-ab.json` | Skill A/B seed coverage floor (`min_cases`, `min_assertions_per_skill`, shipped-skill list). |
 | `core/tests/skill-ab-dataset-test.sh` | Battery that validates the skill A/B seed's shape (parse, per-skill floors, shipped grounding). |
+| `evals/routing/` | Skill routing eval (model-free): SKILL.md lint + TF-IDF ranking of description vs. prompts + near-collision scan. See `evals/routing/README.md`. |
 
 ## Run it
 
