@@ -228,7 +228,7 @@ install_codex() {
 
     # Skills: Codex reads user skills from ~/.agents/skills and follows symlinks.
     # An entry that already exists and is not our symlink is left alone.
-    local skills_dir="$HOME/.agents/skills" skill name linked=0
+    local skills_dir="${CODEX_SKILLS_DIR:-$HOME/.agents/skills}" skill name linked=0
     mkdir -p "$skills_dir"
     for skill in "$FRAMEWORK_ROOT"/skills/*/; do
         skill="${skill%/}"; name="$(basename "$skill")"
@@ -893,6 +893,27 @@ PY
             add_row WARN "codex native hooks — ${cx_state#OK } entries installed but no PreToolUse trust record found: start codex and approve them with /hooks"
         else
             add_row PASS "codex native hooks — ${cx_state#OK } entries in ${cx_hooks/#$HOME/~} with a PreToolUse trust record (re-trust after hook changes)"
+        fi
+    fi
+
+    # 15b2. codex skills — install_codex links every skills/<name> into the dir Codex
+    #       reads user skills from (default ~/.agents/skills; CODEX_SKILLS_DIR is a
+    #       seam shared with install_codex). Only a codex config makes it relevant;
+    #       a missing or foreign entry means Codex cannot see that harness skill.
+    if [[ -f "$codex_cfg" ]]; then
+        local cx_skills_dir="${CODEX_SKILLS_DIR:-$HOME/.agents/skills}" cx_skill cx_sname cx_missing_skills="" cx_total=0 cx_miss=0
+        for cx_skill in "$FRAMEWORK_ROOT"/skills/*/; do
+            cx_skill="${cx_skill%/}"; cx_sname="$(basename "$cx_skill")"
+            cx_total=$((cx_total + 1))
+            if [[ "$(readlink "$cx_skills_dir/$cx_sname" 2>/dev/null)" != "$cx_skill" ]]; then
+                cx_miss=$((cx_miss + 1))
+                [[ $cx_miss -le 3 ]] && cx_missing_skills="${cx_missing_skills:+$cx_missing_skills, }$cx_sname"
+            fi
+        done
+        if [[ $cx_miss -gt 0 ]]; then
+            add_row WARN "codex skills — $cx_miss of $cx_total harness skills not linked in ${cx_skills_dir/#$HOME/~} (e.g. $cx_missing_skills): run setup.sh --codex"
+        else
+            add_row PASS "codex skills — all $cx_total harness skills linked in ${cx_skills_dir/#$HOME/~}"
         fi
     fi
 

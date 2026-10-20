@@ -12,12 +12,12 @@
 # Seams: AGENT_TOP_EDIT_STATE_DIR (fixture state dir), AGENT_TOP_EDIT_THRESHOLD
 # (set to 3 here so fixtures stay small).
 #
-# Usage: bash core/tests/top-edit-advisor-test.sh
+# Usage: bash legacy/top-edit-advisor/top-edit-advisor-test.sh
 # Exit 0: all pass. Exit 1: one or more failures.
 set -u
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-HOOK="$REPO_ROOT/core/hooks/top-edit-advisor.py"
+HOOK="$REPO_ROOT/legacy/top-edit-advisor/top-edit-advisor.py"
 
 PASS=0
 FAIL=0

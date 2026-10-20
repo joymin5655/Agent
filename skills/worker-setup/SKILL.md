@@ -3,6 +3,7 @@ name: worker-setup
 description: Per-lane install → auth → verify onboarding for the cross-vendor worker lanes (codex, antigravity/gemini) with a cost-model/tier briefing before anything is installed. NOT a dispatcher (`core/infra/call-worker.sh` is), and NOT a paid probe run without explicit user approval — every real round-trip probe is announced before it runs.
 when_to_use: "/worker-setup", "set up codex/gemini lanes", `setup.sh --doctor` WARNed about a worker lane, or `/council-review` reported a lane absent and the user wants to fix that.
 tools: Bash, Read, Grep, Glob
+disable-model-invocation: true
 ---
 
 # /worker-setup

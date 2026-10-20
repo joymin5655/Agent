@@ -275,7 +275,7 @@ def session_edited_files(transcript_path: str) -> "set[str] | None":
     """Absolute paths THIS session edited, or None when that is unknowable.
 
     Walks the transcript for Edit/Write/MultiEdit/NotebookEdit tool calls — the
-    same traversal core/hooks/top-edit-advisor.py does — so the advisory can be
+    same traversal legacy/top-edit-advisor/top-edit-advisor.py does — so the advisory can be
     scoped to what the session actually touched.
 
     Why it exists: get_changed_files() reports the whole dirty work tree with no

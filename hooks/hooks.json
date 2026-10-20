@@ -5,9 +5,9 @@
       {
         "matcher": "*",
         "hooks": [
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" agent-session-start.sh" },
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" session-init.py" },
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" session-tier-observer.py" }
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" agent-session-start.sh", "timeout": 30 },
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" session-init.py", "timeout": 30 },
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" session-tier-observer.py", "timeout": 15 }
         ]
       }
     ],
@@ -23,9 +23,9 @@
       {
         "matcher": "*",
         "hooks": [
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" session-quality-gate.py" },
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" brain-capture.py" },
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" session-close.sh" }
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" session-quality-gate.py", "timeout": 300 },
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" brain-capture.py", "timeout": 30 },
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" session-close.sh", "timeout": 15 }
         ]
       }
     ],
@@ -33,8 +33,8 @@
       {
         "matcher": "*",
         "hooks": [
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" agent-session-heartbeat.sh" },
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" supervisor.py" }
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" agent-session-heartbeat.sh", "timeout": 15 },
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" supervisor.py", "timeout": 30 }
         ]
       }
     ],
@@ -42,46 +42,46 @@
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" pre-tool-guard.sh" },
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" loop-write-guard.py" }
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" pre-tool-guard.sh", "timeout": 30 },
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" loop-write-guard.py", "timeout": 30 }
         ]
       },
       {
-        "matcher": "*",
+        "matcher": "Bash|mcp__.*",
         "hooks": [
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" r4-mutex-check.sh" }
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" r4-mutex-check.sh", "timeout": 30 }
         ]
       },
       {
         "matcher": "mcp__.*context[-_]mode__ctx_(batch_)?execute(_file)?",
         "hooks": [
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" context-mode-guard.sh" }
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" context-mode-guard.sh", "timeout": 30 }
         ]
       },
       {
         "matcher": "Write|Edit",
         "hooks": [
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" check-hardcoding.py" },
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" secret-content-scan.py" },
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" r4-file-mutex-check.sh" },
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" tdd-guard.py" },
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" spec-gate.py" },
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" loop-write-guard.py" },
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" supervisor.py" },
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" plan-scope-allow.py" }
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" check-hardcoding.py", "timeout": 30 },
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" secret-content-scan.py", "timeout": 30 },
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" r4-file-mutex-check.sh", "timeout": 30 },
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" tdd-guard.py", "timeout": 30 },
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" spec-gate.py", "timeout": 30 },
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" loop-write-guard.py", "timeout": 30 },
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" supervisor.py", "timeout": 30 },
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" plan-scope-allow.py", "timeout": 30 }
         ]
       },
       {
         "matcher": "WebFetch|mcp__supabase__.*|mcp__firecrawl__.*|mcp__claude_ai_Notion__.*|mcp__claude_ai_Google_Drive__.*|mcp__stitch__.*",
         "hooks": [
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" secret-content-scan.py" }
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" secret-content-scan.py", "timeout": 30 }
         ]
       },
       {
         "matcher": "Agent",
         "hooks": [
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" model-routing-advisor.py" },
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" council-escalation-gate.py" }
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" model-routing-advisor.py", "timeout": 15 },
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" council-escalation-gate.py", "timeout": 90 }
         ]
       }
     ],
@@ -89,7 +89,7 @@
       {
         "matcher": "*",
         "hooks": [
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" session-tier-observer.py" }
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" session-tier-observer.py", "timeout": 15 }
         ]
       }
     ],
@@ -97,7 +97,7 @@
       {
         "matcher": "*",
         "hooks": [
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" session-tier-observer.py" }
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" session-tier-observer.py", "timeout": 15 }
         ]
       }
     ],
@@ -105,30 +105,23 @@
       {
         "matcher": "ExitPlanMode|Agent",
         "hooks": [
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" plan-gate.py" },
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" supervisor.py" },
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" model-routing-observer.py" }
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" plan-gate.py", "timeout": 30 },
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" supervisor.py", "timeout": 30 },
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" model-routing-observer.py", "timeout": 15 }
         ]
       },
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" circuit-breaker.py" },
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" verify-observer.py" },
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" rubric-commit-judge.sh" }
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" circuit-breaker.py", "timeout": 15 },
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" verify-observer.py", "timeout": 15 },
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" rubric-commit-judge.sh", "timeout": 15 }
         ]
       },
       {
         "matcher": "Write|Edit",
         "hooks": [
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" r4-file-mutex-register.sh" },
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" top-edit-advisor.py" }
-        ]
-      },
-      {
-        "matcher": "NotebookEdit",
-        "hooks": [
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" top-edit-advisor.py" }
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" r4-file-mutex-register.sh", "timeout": 15 }
         ]
       }
     ],
@@ -136,7 +129,7 @@
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" circuit-breaker.py" }
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" circuit-breaker.py", "timeout": 15 }
         ]
       }
     ],
@@ -144,7 +137,7 @@
       {
         "matcher": "*",
         "hooks": [
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" model-routing-observer.py" }
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" model-routing-observer.py", "timeout": 15 }
         ]
       }
     ],
@@ -152,7 +145,7 @@
       {
         "matcher": "*",
         "hooks": [
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" model-routing-observer.py" }
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" model-routing-observer.py", "timeout": 15 }
         ]
       }
     ]
