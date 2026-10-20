@@ -30,6 +30,7 @@ See docs/scoring-convention.md for the verdict schema and the producers table.
 """
 import argparse
 import json
+import math
 import os
 import subprocess
 import sys
@@ -82,7 +83,7 @@ def load_rubric(path):
     return doc.get("target"), dims
 
 
-def _run(cmd, root):
+def _run(cmd, root, timeout=None):
     """Run a grader_check; return True iff it exits 0. Never raises — a spawn
     error, timeout, or signal all count as failure. Mirrors completion-verify._run
     (process-group isolation, discarded output, bounded time)."""
@@ -92,7 +93,7 @@ def _run(cmd, root):
         r = subprocess.run(
             cmd, shell=True, cwd=root or None,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            timeout=CMD_TIMEOUT, start_new_session=True,
+            timeout=CMD_TIMEOUT if timeout is None else timeout, start_new_session=True,
         )
         return r.returncode == 0
     except Exception:
@@ -159,7 +160,8 @@ def score(target, dims, root):
             break
         checked += 1
         weighted_total += weight
-        if _run(check, root):
+        # clamp to what is left of the total budget, so the hook timeout covers _MAX_TOTAL
+        if _run(check, root, min(CMD_TIMEOUT, max(1, math.ceil(deadline - time.monotonic())))):
             dimensions[did] = {"passed": 1, "total": 1}
             weighted_passed += weight
         else:

@@ -78,8 +78,8 @@ out="$(th --list-risk-files --staged | tr '\0' '\n' | LC_ALL=C sort | tr '\n' ' 
     && ok "--list-risk-files --staged lists only risk paths" \
     || bad "--list-risk-files" "got=[$out]"
 out="$(th --staged)"; rc=$?
-[[ "$out" == "lines=3 files=3 risk=billing,production-migration" || "$out" == "lines=3 files=3 risk=production-migration,billing" ]] \
-    && ok "default summary line unchanged" || bad "default summary" "got=[$out]"
+[[ "$out" == "lines=3 files=3 risk=billing,production-migration excluded=0" || "$out" == "lines=3 files=3 risk=production-migration,billing excluded=0" ]] \
+    && ok "default summary line unchanged (plus the appended excluded= field)" || bad "default summary" "got=[$out]"
 th --staged >/dev/null; rc=$?
 [[ $rc -eq 10 ]] && ok "default exit 10 on risk path unchanged" || bad "default exit" "rc=$rc"
 reset_repo
@@ -87,7 +87,7 @@ echo x > "$REPO/src/plain.py"; git -C "$REPO" add -A
 out="$(th --list-risk-files --staged)"
 [[ -z "$out" ]] && ok "--list-risk-files empty when no risk path" || bad "--list-risk-files none" "got=[$out]"
 out="$(th --staged)"; th --staged >/dev/null; rc=$?
-[[ "$out" == "lines=1 files=1 risk=none" && $rc -eq 0 ]] \
+[[ "$out" == "lines=1 files=1 risk=none excluded=0" && $rc -eq 0 ]] \
     && ok "non-risk default contract unchanged (rc 0)" || bad "non-risk default" "out=[$out] rc=$rc"
 
 # --- 3. key --staged -----------------------------------------------------------

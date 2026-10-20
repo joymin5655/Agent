@@ -370,9 +370,9 @@ is not an array and does not apply to lifecycle events. Decisions in this pass:
    (`\bgit\b[^|;&]*\bcommit(\s|$)`) could not act as the authoritative check. The entry
    now fires on every `Bash` call, like the hooks in item 3, and the script exits 0 within
    milliseconds for a non-commit.
-3. Every other wired hook keeps `matcher`-only filtering: `pre-tool-guard.sh`,
-   `r4-mutex-check.sh`, and the rest fire on every `Bash`/`Write|Edit`/`*` call
-   in their group and make their own internal decision — adding an `if` there would
+3. Every other wired hook keeps `matcher`-only filtering: `pre-tool-guard.sh`
+   and the rest fire on every `Bash`/`Write|Edit`/`*` call in their group and make their own
+   internal decision — adding an `if` there would
    duplicate logic the hook already owns without narrowing anything real.
 4. **`context-mode-guard.sh`'s own matcher** — it used to share the `*` group with
    `r4-mutex-check.sh`, which spawned bash + jq on every tool call only for the script to
@@ -404,3 +404,31 @@ on `PreToolUse` (plus `"force_ask"` for a core-hook `ask`, which agy documents a
 `{"decision":"ask"}` (agy treats `{}` as a deny; a hook `allow` was not observed to grant more
 than `ask`, so it is never emitted), `{}` on `PostToolUse`, and `{"decision":"continue"|"stop"}` on `Stop`.
 Details, chains and limits: `adapters/antigravity/README.md` ("Native hooks (plugin)").
+
+---
+
+## 14. Hook timeouts in `hooks/hooks.json`
+
+Every command hook in `hooks/hooks.json` carries an explicit `timeout` (seconds); without
+one Claude Code applies a 600 s default, so a hung hook would stall the session for ten
+minutes. A hook the host kills on timeout is a **non-blocking error**: on `PreToolUse` the
+tool call proceeds, so a timeout is fail-open. The values below are therefore generous
+ceilings, not budgets. A typical invocation through the adapter costs about 0.4 s (1 s for
+`agent-session-start.sh`), so each ceiling is 15x or more above normal runtime. The one
+guard with its own internal budget, `pre-tool-guard.sh`, arms a 2 s alarm that decides a
+deny itself, so its 30 s outer value can never pre-empt it.
+
+| Timeout | Hooks | Why this value |
+|---|---|---|
+| 2 s | `session-close.sh` on `SessionEnd` | Unchanged; the event's own 1.5 s shared budget (§12). |
+| 15 s | `session-tier-observer.py`, `model-routing-observer.py`, `model-routing-advisor.py`, `agent-session-heartbeat.sh`, `circuit-breaker.py`, `verify-observer.py`, `r4-file-mutex-register.sh`, `session-close.sh` on `Stop` | Observers, advisories and lock bookkeeping; a stall helps nobody. |
+| 30 s | `pre-tool-guard.sh`, `loop-write-guard.py`, `r4-mutex-check.sh`, `context-mode-guard.sh`, `check-hardcoding.py`, `secret-content-scan.py`, `r4-file-mutex-check.sh`, `tdd-guard.py`, `spec-gate.py`, `supervisor.py`, `plan-scope-allow.py`, `plan-gate.py`, `agent-session-start.sh`, `session-init.py`, `brain-capture.py` | Guards and session setup. Most internal subprocesses are capped at 2-5 s (regex watchdogs, the 5 s lookup in `r4-mutex-check.sh`), but not all: some `git` calls and `agent-session-start.sh`'s `git fetch` have no cap of their own, so the host timeout is their only bound. |
+| 90 s | `council-escalation-gate.py` | Several internal `git` / threshold subprocesses at 15 s each. |
+| 150 s | `rubric-commit-judge.sh` | Synchronous scorer: per-command cap 60 s, 120 s total, each check clamped to the remaining total (`rubric-score.py`). It only observes, so a kill loses a score record, never a decision. |
+| 300 s | `session-quality-gate.py` on `Stop` | Runs the project's `session.completion_tests`, each capped by `AGENT_COMPLETION_TEST_TIMEOUT` (120 s). The hook also keeps an aggregate budget (`AGENT_COMPLETION_TOTAL_BUDGET`, default 240 s) that stops launching tests and blocks with `budget exceeded`, so the block lands before this timeout. Keep the budget below the timeout. |
+
+`r4-mutex-check.sh` is registered for `Bash|mcp__.*` instead of `*`. Its resource detection
+only inspects `Bash` commands and MCP tool names, and the `WorktreeCreate` /
+`WorktreeRemove` branch is never wired, so every other tool exited 0 after a bash + jq
+spawn. `adapters/claude-code/settings.json.template` mirrors the matcher but not the
+timeouts.

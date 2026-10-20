@@ -166,6 +166,29 @@ RCJ=$(run_stop "$P" false AGENT_COMPLETION_TEST_TIMEOUT=1); OUT=$(cat "$OUTFILE"
 is_block "$OUT" && check "timeout-blocks" 0 || check "timeout-blocks" 1
 
 echo
+echo "=== (j2) aggregate budget exhausted -> block naming the budget, later tests not run ==="
+P=$(make_project budget)
+cat > "$P/.agent/hook-config.json" <<'EOF'
+{ "session": { "completion_tests": ["sleep 2", "sleep 2", "touch ran-third"] } }
+EOF
+RCJ2=$(run_stop "$P" false AGENT_COMPLETION_TOTAL_BUDGET=3); OUT=$(cat "$OUTFILE")
+[[ $RCJ2 -eq 0 ]]; check "exit-0-budget" $?
+is_block "$OUT" && check "budget-blocks" 0 || check "budget-blocks" 1
+[[ "$OUT" == *"budget exceeded (3s)"* ]]; check "budget-reason-named" $?
+[[ ! -e "$P/ran-third" ]]; check "budget-stops-launching" $?
+
+echo
+echo "=== (j3) per-test timeout is clamped to the remaining aggregate budget ==="
+P=$(make_project clamp)
+cat > "$P/.agent/hook-config.json" <<'EOF'
+{ "session": { "completion_tests": ["sleep 5"] } }
+EOF
+RCJ3=$(run_stop "$P" false AGENT_COMPLETION_TOTAL_BUDGET=2); OUT=$(cat "$OUTFILE")
+[[ $RCJ3 -eq 0 ]]; check "exit-0-clamp" $?
+is_block "$OUT" && check "clamp-blocks" 0 || check "clamp-blocks" 1
+[[ "$OUT" == *"timed out after 2s"* ]]; check "clamp-reason-named" $?
+
+echo
 echo "=== (k) loader bounds — <=20 commands, <=500 chars each ==="
 # The bounded loader (_MAX_COMPLETION_TESTS=20, _MAX_COMMAND_LEN=500) has no other
 # coverage. Assert directly: 25 declared + one 600-char entry -> capped to 20, and

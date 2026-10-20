@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/joymin5655/Agent/actions/workflows/ci.yml/badge.svg)](https://github.com/joymin5655/Agent/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-![Version](https://img.shields.io/badge/version-0.9.0-blue.svg)
+![Version](https://img.shields.io/badge/version-0.10.1-blue.svg)
 ![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-7c3aed.svg)
 ![AI-agnostic](https://img.shields.io/badge/AI-Claude%20%7C%20Codex%20%7C%20Antigravity-orange.svg)
 
@@ -54,7 +54,7 @@
 증명합니다. 런타임마다 다른 것은 CLI 활동 중 얼마나 많은 부분이 그 코어에
 도달하는가입니다 — [런타임 커버리지](#런타임-커버리지) 참고.
 
-> 상태: v0.9.0 · 라이선스: **MIT**
+> 상태: v0.10.1 · 라이선스: **MIT**
 
 ---
 
@@ -152,7 +152,7 @@ flowchart LR
 | **훅(hook)** | AI 런타임이 어떤 행동 전/후에 자동으로 실행하는 작은 스크립트. **allow**, **ask**, **deny** 중 하나로 답합니다. [`core/hooks/`](core/hooks/)에 `hooks/hooks.json`으로 배선된 스크립트 27개(공유 모듈 포함 31개)가 있습니다. |
 | **어댑터(adapter)** | 각 AI CLI의 고유 이벤트 형식과 하네스의 표준 JSON 사이를 번역하는 얇은 계층. 런타임 어댑터 3개(claude-code, codex, antigravity)가 [`adapters/`](adapters/)에 있습니다. |
 | **에이전트(agent)** | AI가 일을 위임하는 전문가 — 예: 리뷰만 하고 절대 코드를 쓰지 않는 보안 리뷰어. 4종이 포함됩니다([`agents/`](agents/)). |
-| **스킬(skill)** | AI가 따라가는 재사용 가능한 단계별 워크플로우 — 예: 커밋+PR 자동화 흐름. 14종이 포함됩니다([`skills/`](skills/)). |
+| **스킬(skill)** | AI가 따라가는 재사용 가능한 단계별 워크플로우 — 예: 커밋+PR 자동화 흐름. 15종이 포함됩니다([`skills/`](skills/)). |
 | **게이트(gate)** | 훅의 결정 지점(deny / ask / block). 모든 게이트는 자신이 가정하는 모델 약점과 함께 등록됩니다 — [`docs/gate-registry.md`](docs/gate-registry.md). |
 | **웨이브(wave)** | `/supervise` 플랜 안의 작업 묶음 하나 — 디스패치·실행·감사를 마쳐야 다음 웨이브가 시작됩니다. |
 | **판정(verdict)** | 모든 검증기가 뱉는 공용 CONFIRMED / REFUTED 결과 스키마 — [`docs/scoring-convention.md`](docs/scoring-convention.md). |
@@ -235,7 +235,7 @@ Antigravity(agy 1.2.12)는 훅의 `{}`를 deny로 처리하므로 통과는 `ask
 4. *(선택)* 훅이 많은 다른 플러그인을 쓰는 저장소에서는 `/plugin`으로 agent-harness를 꺼도 됩니다 — 에이전트는 `agent-harness:*` 네임스페이스라 어느 쪽이든 충돌하지 않습니다.
 5. *(선택)* 크로스벤더 워커 레인(codex/antigravity 세컨드 오피니언)을 쓰려면 `/agent-harness:worker-setup`을 실행하세요 — 설치→인증→검증을 비용 안내와 함께 안내합니다.
 
-플러그인에 포함: **에이전트 4종**, **스킬 14종**, 훅 세트, `/project-init` 커맨드.
+플러그인에 포함: **에이전트 4종**, **스킬 15종**, 훅 세트, `/project-init` 커맨드.
 
 ### Path B — 셸 설치 (Codex CLI / Antigravity CLI / 전부)
 
@@ -297,7 +297,7 @@ flowchart TB
     subgraph CORE["Layer 1 — core/ (단일 진실 원천)"]
         H["hooks/ — 배선된 스크립트 27개: 시크릿 스캔 · 뮤텍스 ·<br/>spec-gate · tdd-guard · supervisor …"]
         I["infra/ — 세션 · goal 모드 ·<br/>감사 · auto-ship"]
-        T["tests/ — 자가검증 스크립트 100개"]
+        T["tests/ — 자가검증 스크립트 108개"]
     end
     R["rules/ — 정책<br/>원문(SOT)"]
     PLUG[".claude-plugin/ + hooks/hooks.json<br/>플러그인 배포"]
@@ -427,6 +427,7 @@ manager-audit의 발견은 절대 스스로 적용되지 않습니다 — `PROPO
 | `manager-audit` | `/supervise` 실행의 메타 감사 — 재구성 품질, 모델 라우팅 낭비, 상대 토큰 지출, 역할 준수; 발견은 사용자 승인용 패치 제안이 됨 |
 | `persona-review` | 분포 근거 사용자 페르소나 패널을 UX/카피 앞에 앉혀 일반 사용자 반응을 보고 |
 | `reorg-sync` | 트리 이동 후 남은 절대경로 참조(셔뱅·worktree gitfile·crontab·문서 앵커·메모리 키) 일괄 스윕; 기본 dry-run 리포트, 확인 후 `--apply` |
+| `code-tour` | 코드베이스나 끝난 빌드를 사람이 읽는 순서로 안내하는 투어 문서 작성 — 스택·파일 역할·흐름 하나 추적·안전한 실습·실행 단계·용어 사전, 인용 경로 전부 검사, 소스는 수정하지 않음 |
 | `harness-help` | 라우터 — 상황에 맞는 스킬 안내와 전체 흐름 |
 
 | 훅 — 27개 배선(`hooks/hooks.json` → `core/hooks/`, 공유 모듈 포함 스크립트 31개) | 이벤트 |
@@ -453,7 +454,7 @@ Agent/
 ├── CHANGELOG.md
 │
 ├── agents/             # 에이전트 정의 4종 + master-registry.json
-├── skills/             # 스킬 14종 (spec · supervise · verify-completion · wrap · brain-ingest · harness-audit · manager-audit · persona-review · harness-help · loop · harness-loop · council-review · worker-setup · reorg-sync)
+├── skills/             # 스킬 15종 (spec · supervise · verify-completion · wrap · brain-ingest · harness-audit · manager-audit · persona-review · harness-help · loop · harness-loop · council-review · worker-setup · reorg-sync · code-tour)
 ├── commands/           # 슬래시 커맨드 1개 (/project-init)
 ├── hooks/              # 플러그인 훅 배선 (hooks.json)
 │
@@ -461,7 +462,7 @@ Agent/
 │   ├── hooks/          #   이식 가능한 훅 스크립트 31개 (배선 27 + 공유 모듈)
 │   ├── infra/          #   세션 조정 · goal 모드 · 감사 · auto-ship
 │   ├── git-hooks/      #   pre-commit · pre-push
-│   └── tests/          #   테스트 스크립트 100개 (verify-all.sh가 전부 실행)
+│   └── tests/          #   테스트 스크립트 108개 (verify-all.sh가 전부 실행)
 │
 ├── adapters/           # claude-code (얇음) · codex · antigravity
 ├── rules/              # 범용 정책 문서
@@ -499,6 +500,9 @@ Agent/
 # 한 명령으로 전부 실행 (모든 게이트 + 배터리 + 평가 + gitleaks):
 bash core/tests/verify-all.sh
 # → === verify-all: N passed, 0 failed, 0 skipped ===
+
+# CI는 같은 검사 집합을 4개 병렬 잡으로 나눠 돌린다. 샤드 하나만 로컬에서 실행할 수도 있다:
+bash core/tests/verify-all.sh --shard 1/4          # --list를 붙이면 그 샤드의 검사 목록만 출력
 ```
 
 개별 검사를 따로 실행하려면:
@@ -574,7 +578,9 @@ Agent는 도그푸딩됩니다: 구현 코드의 대부분은 바로 이 하네�
 에이전트가 작성합니다. 메인테이너는 위협 모델(무엇을 차단해야 하는가), 훅 프로토콜과
 정책 룰, 블라인드 벤치마크를 포함한 검증 설계, 그리고 모든 릴리스 결정을 책임집니다.
 AI가 작성한 모든 변경은 이 레포가 배포하는 것과 같은 기계 게이트 — gitleaks · 정책
-훅 · CI — 를 통과합니다.
+훅 · CI — 를 통과합니다. 메인테이너가 이 하네스를 매일 어떻게 운영하는지(위임, 리뷰
+사다리, 항상 사람에게 묻는 목록, 규칙이 된 교훈)는
+[`docs/maintainer-workflow.md`](docs/maintainer-workflow.md)에 있습니다.
 
 ## 기여
 

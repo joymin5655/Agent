@@ -7,7 +7,9 @@
 # any changed path matches a risk-area pattern (spec-gate.py:72
 # GUARD_PATTERNS mirror, plus the auth class, which exists only here —
 # spec-gate and plan-scope-allow do not have it). Otherwise exit 0. stdout is always exactly one
-# summary line: "lines=<N> files=<M> risk=<comma-list|none>".
+# summary line: "lines=<N> files=<M> risk=<comma-list|none> excluded=<K>".
+# lines/files EXCLUDE test and docs paths (core/infra/path-kinds.sh); K counts them.
+# The risk signal still sees every path (a risk file under tests/ escalates).
 #
 # Fixture: one throwaway git repo, reset to a clean baseline commit between
 # scenarios (call-worker-test.sh pattern: mktemp -d, trap cleanup, PATH-free
@@ -62,7 +64,7 @@ run() {
 echo "=== clean tree, single commit (no HEAD~1 yet): not council-scale ==="
 reset_repo
 run -- --staged
-if [[ "$RC" -eq 0 && "$OUT" == "lines=0 files=0 risk=none" ]]; then
+if [[ "$RC" -eq 0 && "$OUT" == "lines=0 files=0 risk=none excluded=0" ]]; then
   ok "clean tree — exit 0, zeroed summary"
 else
   bad "clean tree" "rc=$RC out='$OUT'"
@@ -71,10 +73,10 @@ fi
 echo
 echo "=== small diff: not council-scale ==="
 reset_repo
-echo "a small tweak" >> "$REPO/README.md"
-git -C "$REPO" add README.md
+echo "a small tweak" > "$REPO/small.py"
+git -C "$REPO" add small.py
 run -- --staged
-if [[ "$RC" -eq 0 && "$OUT" == "lines=1 files=1 risk=none" ]]; then
+if [[ "$RC" -eq 0 && "$OUT" == "lines=1 files=1 risk=none excluded=0" ]]; then
   ok "small diff — exit 0, summary line exact"
 else
   bad "small diff" "rc=$RC out='$OUT'"
@@ -83,10 +85,10 @@ fi
 echo
 echo "=== large diff: line threshold alone (single file, >=200 lines) ==="
 reset_repo
-gen_lines 250 > "$REPO/big.txt"
-git -C "$REPO" add big.txt
+gen_lines 250 > "$REPO/big.dat"
+git -C "$REPO" add big.dat
 run -- --staged
-if [[ "$RC" -eq 10 && "$OUT" == "lines=250 files=1 risk=none" ]]; then
+if [[ "$RC" -eq 10 && "$OUT" == "lines=250 files=1 risk=none excluded=0" ]]; then
   ok "large lines — exit 10 on line threshold alone"
 else
   bad "large lines" "rc=$RC out='$OUT'"
@@ -95,10 +97,10 @@ fi
 echo
 echo "=== large diff: file-count threshold alone (12 tiny files) ==="
 reset_repo
-for i in $(seq 1 12); do echo "x" > "$REPO/f$i.txt"; done
-git -C "$REPO" add f*.txt
+for i in $(seq 1 12); do echo "x" > "$REPO/f$i.dat"; done
+git -C "$REPO" add f*.dat
 run -- --staged
-if [[ "$RC" -eq 10 && "$OUT" == "lines=12 files=12 risk=none" ]]; then
+if [[ "$RC" -eq 10 && "$OUT" == "lines=12 files=12 risk=none excluded=0" ]]; then
   ok "file-count — exit 10 on file threshold alone"
 else
   bad "file-count" "rc=$RC out='$OUT'"
@@ -111,7 +113,7 @@ mkdir -p "$REPO/secrets"
 echo "TOKEN=x" > "$REPO/secrets/prod.env"
 git -C "$REPO" add secrets/prod.env
 run -- --staged
-if [[ "$RC" -eq 10 && "$OUT" == "lines=1 files=1 risk=secret" ]]; then
+if [[ "$RC" -eq 10 && "$OUT" == "lines=1 files=1 risk=secret excluded=0" ]]; then
   ok "risk-path secret — exit 10, risk=secret despite tiny diff"
 else
   bad "risk-path secret" "rc=$RC out='$OUT'"
@@ -124,7 +126,7 @@ mkdir -p "$REPO/migrations"
 echo "ALTER TABLE x ADD COLUMN y int;" > "$REPO/migrations/0001_add_y.sql"
 git -C "$REPO" add migrations/0001_add_y.sql
 run -- --staged
-if [[ "$RC" -eq 10 && "$OUT" == "lines=1 files=1 risk=production-migration" ]]; then
+if [[ "$RC" -eq 10 && "$OUT" == "lines=1 files=1 risk=production-migration excluded=0" ]]; then
   ok "risk-path migration — exit 10, risk=production-migration"
 else
   bad "risk-path migration" "rc=$RC out='$OUT'"
@@ -133,10 +135,10 @@ fi
 echo
 echo "=== env override: raising AGENT_COUNCIL_LINES clears a line-only escalation ==="
 reset_repo
-gen_lines 250 > "$REPO/big.txt"
-git -C "$REPO" add big.txt
+gen_lines 250 > "$REPO/big.dat"
+git -C "$REPO" add big.dat
 run "AGENT_COUNCIL_LINES=1000" -- --staged
-if [[ "$RC" -eq 0 && "$OUT" == "lines=250 files=1 risk=none" ]]; then
+if [[ "$RC" -eq 0 && "$OUT" == "lines=250 files=1 risk=none excluded=0" ]]; then
   ok "env override — raised threshold un-escalates the same diff"
 else
   bad "env override" "rc=$RC out='$OUT'"
@@ -145,11 +147,11 @@ fi
 echo
 echo "=== HEAD fallback: nothing staged, falls back to HEAD~1..HEAD ==="
 reset_repo
-gen_lines 250 > "$REPO/big.txt"
-git -C "$REPO" add big.txt
+gen_lines 250 > "$REPO/big.dat"
+git -C "$REPO" add big.dat
 git -C "$REPO" commit -q -m "big commit"
 run -- --staged
-if [[ "$RC" -eq 10 && "$OUT" == "lines=250 files=1 risk=none" ]]; then
+if [[ "$RC" -eq 10 && "$OUT" == "lines=250 files=1 risk=none excluded=0" ]]; then
   ok "HEAD fallback — judges the last commit when staging is empty"
 else
   bad "HEAD fallback" "rc=$RC out='$OUT'"
@@ -158,7 +160,7 @@ fi
 echo
 echo "=== --head explicit: same as fallback, addressable directly ==="
 run -- --head
-if [[ "$RC" -eq 10 && "$OUT" == "lines=250 files=1 risk=none" ]]; then
+if [[ "$RC" -eq 10 && "$OUT" == "lines=250 files=1 risk=none excluded=0" ]]; then
   ok "--head explicit — same verdict as the fallback path"
 else
   bad "--head explicit" "rc=$RC out='$OUT'"
@@ -171,7 +173,7 @@ mkdir -p "$REPO/functions/on-signup"
 echo "export default () => {}" > "$REPO/functions/on-signup/index.ts"
 git -C "$REPO" add functions/on-signup/index.ts
 run -- --staged
-if [[ "$RC" -eq 10 && "$OUT" == "lines=1 files=1 risk=edge-fn" ]]; then
+if [[ "$RC" -eq 10 && "$OUT" == "lines=1 files=1 risk=edge-fn excluded=0" ]]; then
   ok "risk-path edge-fn — exit 10, risk=edge-fn"
 else
   bad "risk-path edge-fn" "rc=$RC out='$OUT'"
@@ -184,7 +186,7 @@ mkdir -p "$REPO/billing"
 echo "x" > "$REPO/billing/invoice.ts"
 git -C "$REPO" add billing/invoice.ts
 run -- --staged
-if [[ "$RC" -eq 10 && "$OUT" == "lines=1 files=1 risk=billing" ]]; then
+if [[ "$RC" -eq 10 && "$OUT" == "lines=1 files=1 risk=billing excluded=0" ]]; then
   ok "risk-path billing — exit 10, risk=billing"
 else
   bad "risk-path billing" "rc=$RC out='$OUT'"
@@ -193,10 +195,10 @@ fi
 echo
 echo "=== env override: raising AGENT_COUNCIL_FILES clears a file-count-only escalation ==="
 reset_repo
-for i in $(seq 1 12); do echo "x" > "$REPO/f$i.txt"; done
-git -C "$REPO" add f*.txt
+for i in $(seq 1 12); do echo "x" > "$REPO/f$i.dat"; done
+git -C "$REPO" add f*.dat
 run "AGENT_COUNCIL_FILES=100" -- --staged
-if [[ "$RC" -eq 0 && "$OUT" == "lines=12 files=12 risk=none" ]]; then
+if [[ "$RC" -eq 0 && "$OUT" == "lines=12 files=12 risk=none excluded=0" ]]; then
   ok "env override — raised file threshold un-escalates the same diff"
 else
   bad "env override files" "rc=$RC out='$OUT'"
@@ -208,7 +210,7 @@ reset_repo
 printf '\x00\x01\x02\xff\xfe' > "$REPO/blob.bin"
 git -C "$REPO" add blob.bin
 run -- --staged
-if [[ "$RC" -eq 0 && "$OUT" == "lines=0 files=1 risk=none" ]]; then
+if [[ "$RC" -eq 0 && "$OUT" == "lines=0 files=1 risk=none excluded=0" ]]; then
   ok "binary file — non-numeric add/del counted as a file, zero lines"
 else
   bad "binary file" "rc=$RC out='$OUT'"
@@ -220,19 +222,19 @@ echo "=== --no-renames (F12): rename into a risk-area path, no common prefix ===
 # "a/{old => new}/b" rename shorthand) was replaced by F12: pass
 # --no-renames to every numstat call instead, so git never emits rename
 # notation in the first place and every path field is always a single plain
-# path. Measured empirically (2026-08-21, git 2.50.1): src/plain.txt (1
+# path. Measured empirically (2026-08-21, git 2.50.1): src/plain.dat (1
 # line) moved to billing/charge.ts numstats as TWO plain entries —
-# "1 0 billing/charge.ts" + "0 1 src/plain.txt" — so risk_area_for()'s
+# "1 0 billing/charge.ts" + "0 1 src/plain.dat" — so risk_area_for()'s
 # ordinary anchor-on-slash regex matches directly, no rename-shorthand
 # parsing needed at all.
 reset_repo
 mkdir -p "$REPO/src" "$REPO/billing"
-echo "hello world" > "$REPO/src/plain.txt"
-git -C "$REPO" add src/plain.txt
+echo "hello world" > "$REPO/src/plain.dat"
+git -C "$REPO" add src/plain.dat
 git -C "$REPO" commit -q -m "add plain file"
-git -C "$REPO" mv src/plain.txt billing/charge.ts
+git -C "$REPO" mv src/plain.dat billing/charge.ts
 run -- --staged
-if [[ "$RC" -eq 10 && "$OUT" == "lines=2 files=2 risk=billing" ]]; then
+if [[ "$RC" -eq 10 && "$OUT" == "lines=2 files=2 risk=billing excluded=0" ]]; then
   ok "rename no-common-prefix into billing/ — detected via --no-renames"
 else
   bad "rename no-common-prefix into billing/" "rc=$RC out='$OUT'"
@@ -251,7 +253,7 @@ git -C "$REPO" commit -q -m "add nested file"
 mkdir -p "$REPO/app/billing"
 git -C "$REPO" mv app/old/f.ts app/billing/f.ts
 run -- --staged
-if [[ "$RC" -eq 10 && "$OUT" == "lines=2 files=2 risk=billing" ]]; then
+if [[ "$RC" -eq 10 && "$OUT" == "lines=2 files=2 risk=billing excluded=0" ]]; then
   ok "rename common-prefix into billing/ — detected via --no-renames"
 else
   bad "rename common-prefix into billing/" "rc=$RC out='$OUT'"
@@ -269,14 +271,14 @@ echo "=== --no-renames (F12): rename+edit line accounting is not collapsed ==="
 # still cross the line threshold as it should.
 reset_repo
 mkdir -p "$REPO/movesrc" "$REPO/movedst"
-for i in $(seq 1 40); do echo "line $i"; done > "$REPO/movesrc/big.txt"
-git -C "$REPO" add movesrc/big.txt
+for i in $(seq 1 40); do echo "line $i"; done > "$REPO/movesrc/big.dat"
+git -C "$REPO" add movesrc/big.dat
 git -C "$REPO" commit -q -m "add 40-line file"
-git -C "$REPO" mv movesrc/big.txt movedst/big.txt
-echo "extra line" >> "$REPO/movedst/big.txt"
+git -C "$REPO" mv movesrc/big.dat movedst/big.dat
+echo "extra line" >> "$REPO/movedst/big.dat"
 git -C "$REPO" add -A
 run -- --staged
-if [[ "$RC" -eq 0 && "$OUT" == "lines=81 files=2 risk=none" ]]; then
+if [[ "$RC" -eq 0 && "$OUT" == "lines=81 files=2 risk=none excluded=0" ]]; then
   ok "rename+edit line accounting — 81, not 1 (F12 line-collapse fix)"
 else
   bad "rename+edit line accounting" "rc=$RC out='$OUT'"
@@ -287,7 +289,7 @@ echo "=== non-repo cwd: no git repo at all -> zeroed summary, exit 0, no crash =
 NOGIT="$WORK/not-a-repo"
 mkdir -p "$NOGIT"
 OUT="$(cd "$NOGIT" && bash "$SCRIPT" --staged 2>/dev/null)"; RC=$?
-if [[ "$RC" -eq 0 && "$OUT" == "lines=0 files=0 risk=none" ]]; then
+if [[ "$RC" -eq 0 && "$OUT" == "lines=0 files=0 risk=none excluded=0" ]]; then
   ok "non-repo cwd — degrades to zeroed summary, never crashes"
 else
   bad "non-repo cwd" "rc=$RC out='$OUT'"
@@ -305,10 +307,10 @@ cat > "$REPO/.agent/hook-config.json" <<'JSON'
 {"risk_areas": {"secrets": {"paths": ["vault/"]}}}
 JSON
 mkdir -p "$REPO/vault"
-echo "x" > "$REPO/vault/token.txt"
-git -C "$REPO" add vault/token.txt
+echo "x" > "$REPO/vault/token.dat"
+git -C "$REPO" add vault/token.dat
 run -- --staged
-if [[ "$RC" -eq 10 && "$OUT" == "lines=1 files=1 risk=secret" ]]; then
+if [[ "$RC" -eq 10 && "$OUT" == "lines=1 files=1 risk=secret excluded=0" ]]; then
   ok "project-declared secret path (hook-config.json) — exit 10, risk=secret"
 else
   bad "project-declared secret path" "rc=$RC out='$OUT'"
@@ -319,7 +321,7 @@ echo "=== option injection: a pass-through range starting with '-' cannot be con
 reset_repo
 CANARY="$WORK/canary-should-not-exist"
 OUT="$(cd "$REPO" && bash "$SCRIPT" "--output=$CANARY" 2>/dev/null)"; RC=$?
-if [[ ! -e "$CANARY" && "$OUT" == "lines=0 files=0 risk=none" ]]; then
+if [[ ! -e "$CANARY" && "$OUT" == "lines=0 files=0 risk=none excluded=0" ]]; then
   ok "option injection — --end-of-options blocks it, no canary file created"
 else
   bad "option injection" "canary_exists=$([[ -e "$CANARY" ]] && echo yes || echo no) rc=$RC out='$OUT'"
@@ -353,7 +355,75 @@ bad_utf8="$(printf 'src/auth/\377.py')"
 reset_repo
 mkdir -p "$REPO/src/auth"; echo x > "$REPO/src/auth/session.py"; git -C "$REPO" add -A
 run -- --staged
-[[ "$RC" -eq 10 && "$OUT" == "lines=1 files=1 risk=auth" ]] && ok "staged auth file -> council-scale, risk=auth" || bad "staged auth summary" "rc=$RC out='$OUT'"
+[[ "$RC" -eq 10 && "$OUT" == "lines=1 files=1 risk=auth excluded=0" ]] && ok "staged auth file -> council-scale, risk=auth" || bad "staged auth summary" "rc=$RC out='$OUT'"
+reset_repo
+
+echo
+echo "=== test/docs paths are excluded from the size signals (excluded=<n>), risk still sees them ==="
+# 2026-10: 53% of recent commits were tier 2 purely on test/doc line counts. lines/files now
+# count non-test, non-docs paths only; classify_path (risk) still runs on every path.
+reset_repo
+mkdir -p "$REPO/tests" "$REPO/src"
+gen_lines 300 > "$REPO/tests/big-test.sh"
+gen_lines 20 > "$REPO/src/feature.py"
+git -C "$REPO" add -A
+run -- --staged
+[[ "$RC" -eq 0 && "$OUT" == "lines=20 files=1 risk=none excluded=1" ]] \
+  && ok "300 test lines + 20 code lines -> not council-scale, test excluded" \
+  || bad "300 test + 20 code" "rc=$RC out='$OUT'"
+
+reset_repo
+mkdir -p "$REPO/src"
+gen_lines 200 > "$REPO/src/feature.py"
+git -C "$REPO" add -A
+run -- --staged
+[[ "$RC" -eq 10 && "$OUT" == "lines=200 files=1 risk=none excluded=0" ]] \
+  && ok "200 code lines -> council-scale (exit 10)" || bad "200 code lines" "rc=$RC out='$OUT'"
+
+reset_repo
+mkdir -p "$REPO/tests"
+echo "x = 1" > "$REPO/tests/auth_helper.py"
+git -C "$REPO" add -A
+run -- --staged
+[[ "$RC" -eq 10 && "$OUT" == "lines=0 files=0 risk=auth excluded=1" ]] \
+  && ok "tests/auth_helper.py (1 line) -> still escalates on risk=auth, counted as excluded" \
+  || bad "risk file under tests/" "rc=$RC out='$OUT'"
+
+reset_repo
+mkdir -p "$REPO/tests" "$REPO/src"
+for i in $(seq 1 15); do echo "t$i" > "$REPO/tests/case$i-test.sh"; done
+echo "a" > "$REPO/src/a.py"; echo "b" > "$REPO/src/b.py"
+git -C "$REPO" add -A
+run -- --staged
+[[ "$RC" -eq 0 && "$OUT" == "lines=2 files=2 risk=none excluded=15" ]] \
+  && ok "15 test files + 2 code files -> not council-scale" || bad "15 test + 2 code files" "rc=$RC out='$OUT'"
+
+reset_repo
+mkdir -p "$REPO/docs"
+gen_lines 250 > "$REPO/docs/guide.md"
+git -C "$REPO" add -A
+run -- --staged
+[[ "$RC" -eq 0 && "$OUT" == "lines=0 files=0 risk=none excluded=1" ]] \
+  && ok "250 docs lines -> not council-scale" || bad "250 docs lines" "rc=$RC out='$OUT'"
+
+# every test-shaped name in the spec is excluded; look-alikes are code
+reset_repo
+mkdir -p "$REPO/src"
+for f in a-test.sh b_test.go c.test.ts d.spec.ts test_e.py; do echo x > "$REPO/src/$f"; done
+for d in test __tests__ spec evals tests; do mkdir -p "$REPO/$d"; echo x > "$REPO/$d/f.py"; done
+git -C "$REPO" add -A
+run -- --staged
+[[ "$RC" -eq 0 && "$OUT" == "lines=0 files=0 risk=none excluded=10" ]] \
+  && ok "all test-name/dir shapes (*-test.* *_test.* *.test.* *.spec.* test_*.py, test/ __tests__/ spec/ evals/ tests/) excluded" \
+  || bad "test shapes" "rc=$RC out='$OUT'"
+reset_repo
+mkdir -p "$REPO/src"
+for f in attest.py contest.py latest_v2.py testing.py spec.py protest.sh; do echo x > "$REPO/src/$f"; done
+mkdir -p "$REPO/src/testdata" "$REPO/src/specs"; echo x > "$REPO/src/testdata/a.py"; echo x > "$REPO/src/specs/a.py"
+git -C "$REPO" add -A
+run -- --staged
+[[ "$RC" -eq 0 && "$OUT" == "lines=8 files=8 risk=none excluded=0" ]] \
+  && ok "look-alikes (attest.py, testdata/, specs/, ...) stay counted as code" || bad "test look-alikes" "rc=$RC out='$OUT'"
 reset_repo
 
 echo

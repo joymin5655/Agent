@@ -15,6 +15,7 @@ no self-approval.
 
    ```bash
    bash core/tests/verify-all.sh          # every gate + battery + evals
+   bash core/tests/verify-all.sh --shard 1/4   # one quarter of it (CI runs 4 shards in parallel)
    bash setup.sh --doctor                 # environment / wiring diagnosis
    ```
 

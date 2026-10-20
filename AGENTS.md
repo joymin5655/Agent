@@ -71,7 +71,11 @@ For any new hook in `core/hooks/`, write a reproduce test in `core/tests/<name>-
 - Branch naming: `<agent>/<task-slug>` (e.g., `codex/add-pre-pr-hook`, `claude/fix-supervisor-race`)
 - Push to your own branch, never to `main`
 - Open a PR with full description: what, why, how tested, before/after
-- Wait for human review + merge (no auto-merge in this repo)
+- Merge: the repository owner's supervisor agent may squash-merge planned work (an
+  owner-approved plan or a direct owner request) once CI passes and the review ladder
+  (`core/infra/review-tier.sh`) is satisfied. PRs that change hooks, guards, permission
+  policy, or release/deploy configuration wait for human review + merge.
+  Other contributors' agents never merge.
 
 ---
 

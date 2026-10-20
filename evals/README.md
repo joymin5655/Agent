@@ -41,6 +41,7 @@ track* below. The skill A/B dataset is a later increment.
 | `evals/datasets/skill-ab.jsonl` | Skill A/B track **seed** (H-3) — labeled trigger + assertion cases for the shipped skills. No runner yet. |
 | `evals/baseline-skill-ab.json` | Skill A/B seed coverage floor (`min_cases`, `min_assertions_per_skill`, shipped-skill list). |
 | `core/tests/skill-ab-dataset-test.sh` | Battery that validates the skill A/B seed's shape (parse, per-skill floors, shipped grounding). |
+| `evals/routing/` | Skill routing eval (model-free): SKILL.md lint + TF-IDF ranking of description vs. prompts + near-collision scan. See `evals/routing/README.md`. |
 
 ## Run it
 
@@ -281,3 +282,9 @@ Each line is one case with a `kind`:
 
 See `docs/internal/harness-improvement-plan.md` (E-1) for the roadmap and
 `docs/scoring-convention.md` for the shared verdict schema.
+
+## Official plugin evals
+
+`evals/plugin/` holds a `claude plugin eval` suite (skill routing for spec, supervise,
+verify-completion, council-review, wrap). It calls real models, so it is manual/weekly and
+not in CI. See [`evals/plugin/README.md`](plugin/README.md).

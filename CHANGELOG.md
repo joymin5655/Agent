@@ -7,15 +7,93 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Core skills polished** (`wrap`, `spec`, `council-review`, `verify-completion`): Korean
+  trigger phrases and an anti-"I'll do it myself" clause in `description`/`when_to_use`;
+  council synthesis gains Act on / Consider / Noted / Dismissed buckets, an agreement map and
+  a spec axis; `verify-completion` verifies blind to the builder's summary, caps at 3 cycles
+  and gains a `--light` single-pass mode (absorbs the local `claim-check`); `spec` plans
+  decompose into vertical slices with explicit `blocked-by` edges. Routing eval cases added;
+  `evals/routing/floors.json` raised to rank-1 75 / top-3 78. Ideas credited per skill
+  (addyosmani/agent-skills, cursor/plugins pstack, mattpocock/skills; all MIT).
+- **Explicit timeouts on every `hooks/hooks.json` command hook** (previously 1 of 38 had one, so
+  the 600 s host default applied). Tiers 15 / 30 / 90 / 150 / 300 s, rationale in
+  `docs/hook-protocol.md` §14.
+- **`session-quality-gate.py` keeps an aggregate completion-test budget**
+  (`AGENT_COMPLETION_TOTAL_BUDGET`, default 240 s): once spent it stops launching tests and
+  blocks with `budget exceeded`, so the block lands before the 300 s Stop timeout (a host kill
+  would drop it).
+- `manager-audit` frontmatter `description` is now a valid YAML scalar; a test pins that every
+  SKILL.md parses and that every hook has a timeout.
+- **`r4-mutex-check.sh` matcher narrowed from `*` to `Bash|mcp__.*`** (the only tools it
+  inspects), in `hooks/hooks.json` and the settings template.
+- **`worker-setup` and `reorg-sync` set `disable-model-invocation: true`**; their descriptions
+  no longer sit in the always-on skill listing.
+- **`setup.sh --doctor` warns when harness skills are not linked for Codex** (new check
+  `codex skills`; `CODEX_SKILLS_DIR` seam shared with `--codex`).
+
+### Removed
+- **`top-edit-advisor.py` retired** to `legacy/top-edit-advisor/` (unregistered, gate-registry
+  line and doc counts updated).
+
+## [0.10.1] - 2026-10-16
+
+Review-cycle speedup: sharded CI verify-all, code-only council size signal, a review round
+cap and a lighter security-reviewer pin (#196).
+
+### Changed
+- **CI `verify-all` is sharded (4 parallel jobs).** `core/tests/verify-all.sh` gained
+  `--shard K/N` (combinable with `--list`, bad values exit 1). Checks are assigned by
+  deterministic longest-processing-time packing over the measured seconds in
+  `core/tests/verify-all-weights.txt` (unlisted checks weigh 1); each shard keeps the original
+  run order and the union of the shards is exactly the full set. Declared-SKIP lines now also
+  show `(Ns)` like PASS lines. No flag = the unchanged full run. The serial run took about 31
+  min (`call-worker-test.sh` 640 s, `pre-tool-guard-test.sh` 509 s, `log-origin-test.sh`
+  278 s); `verify-all-test.sh` runs once, on shard 4. Unknown arguments now exit 1 instead of
+  being ignored.
+- **Council size signal ignores tests and docs.** `core/infra/council-threshold.sh` no longer
+  counts test paths (`tests/` `test/` `__tests__/` `spec/` `evals/`, `*-test.*` `*_test.*`
+  `*.test.*` `*.spec.*` `test_*.py`) or docs paths toward `AGENT_COUNCIL_LINES` /
+  `AGENT_COUNCIL_FILES`; risk-area paths are still classified everywhere, so
+  `tests/auth_helper.py` still escalates. The summary line gains a trailing `excluded=<n>`;
+  `review-tier.sh` now parses `risk=` as a single token. The docs/test predicates moved to
+  the shared `core/infra/path-kinds.sh`. Fixtures that used `.txt` as "code" in the affected
+  batteries now use `.dat`.
+- **Review round cap.** `skills/council-review/SKILL.md` "Round cap": at most 2 full-council /
+  `security-reviewer` rounds per PR/diff; from round 3 only the fix delta is re-reviewed
+  (`code-reviewer`, plus one external lane when a risk file changed); leftovers go to
+  "Deferred findings" unless Critical. Referenced from `skills/wrap/SKILL.md` and
+  `docs/model-routing.md`.
+- **`security-reviewer` pin: `fable`/`max` to `opus`/`high`.** Maintainer decision
+  2026-10-16, latency vs benefit (review passes took 22-26 min). Updated in
+  `agents/security-reviewer.md`, `agents/master-registry.json` (registry-drift pairs them) and
+  `docs/model-routing.md`; TOP-F is now reserved for completion verdicts only. The earlier
+  64%->87% vendor-study rationale is kept in the docs as history.
+
+## [0.10.0] - 2026-10-16
+
+A human reading-path skill, plus a batch of guard hardening (#184–#194).
+
 ### Added
+- **`/code-tour` skill.** Writes a human reading path through a codebase or a finished
+  build: stack, file-role rules, one flow traced end to end with cited links, 1–3 safe
+  experiments, run steps and a glossary (`--audience self|teammate|non-dev`). The source
+  tree is never edited, and every cited path is checked before the tour is done.
 - **Out-of-band label principle + guard (X-2).** `docs/hook-protocol.md` defines
   measurement labels narrowly and bars them from `additionalContext` / `systemMessage`;
   `core/tests/oob-label-guard-test.sh` scans the text `core/hooks` emit (0 violations today).
 - **circuit-breaker firing sink (X-3).** Each fire appends a line to
   `.agent/logs/circuit-breaker.jsonl` (failures to write are ignored) and the gate has a
   `docs/gate-registry.md` row, so `telemetry-digest --gates` can count it. Verdict unchanged.
+- **risk_areas triggers consumed at runtime, extend-only (#189, AG14).** The
+  `risk_areas` data/deploy/payment and `resources` triggers in hook-config now take effect
+  at runtime as additions only.
 
 ### Fixed
+- **pre-push: risk-area scan missed non-ASCII paths (#192, AG23).**
+- **pre-tool-guard: hook-input decode no longer fails open on surrogates or malformed JSON (#190, AG21).**
+- **pre-tool-guard: `timeout`/`gtimeout` with a non-numeric duration no longer hides the wrapped command (#187, AG17).**
+- **oob-label-guard: line continuations, computed keys, shell function definitions, a combination budget and test-environment isolation (#188, AG18).**
 - **plan-gate: approval-flag readers and cleanup paths hardened (AG16).** `spec-gate` and `plan-scope-allow` accept the flag only as a regular, own, single-link file (`lstat`); `_restore_claim` keeps a claim it cannot preserve, `is_withheld` reads it and `clear_withheld` drops it; failed-write cleanup unlinks only the file it created (same dev/ino, fd still open); short writes are completed; `flag_session` cannot block on a FIFO flag. The reader tests now run a copy of the hooks against a throwaway flag path instead of the real `/tmp/agent-plan-approved`.
 - **pre-tool-guard: secret reads through readers outside the verb list, and declared paths through redirects and inline code (P1-12).** `base64`, `sort`, `cut`, `jq`, `vim` and ~30 more readers now nominate guard 5 (one shared list, also used by stage 2 and guard 11b); guard 11b also denies `cat<p`, `< p cat`, `$(<p)` and `python3 -c`/`node -e`/`perl -e` naming a declared path. P1-11 (cwd module shadowing) was already closed by #176; its test is `shadow-json-*` in `pre-tool-guard-test.sh`. Council r1: `<>` opens a file for reading and is denied too; 11b inline-code detection accepts options before the flag, glued flags and quotes, `$'…'`, `-p`, `--eval=` and `deno eval`; `zgrep`/`bzgrep`/`xzgrep` keep grep's pattern handling; the 11b redirect clause skips `<<`/`<<<`. Council r2: an interpreter fed a here-string and multi-line or unquoted inline code on a declared path are denied, `install` behind a wrapper or path is recognised, and the PyYAML-less branch stays a superset.
 

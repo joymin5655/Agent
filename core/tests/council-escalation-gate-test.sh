@@ -69,8 +69,9 @@ reset_worktree_only() {
 gen_lines() { local n="$1"; for ((i = 0; i < n; i++)); do echo "line $i"; done; }
 
 stage_large_diff() {
-  gen_lines 250 > "$REPO/big.txt"
-  git -C "$REPO" add big.txt
+  # .dat, not .txt: .txt is docs-shaped and no longer counts toward the council size signal
+  gen_lines 250 > "$REPO/big.dat"
+  git -C "$REPO" add big.dat
 }
 
 stage_small_diff() {

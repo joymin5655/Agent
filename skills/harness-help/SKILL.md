@@ -44,6 +44,9 @@ trivial work out by design.
   `security-reviewer` (vulnerabilities) — it judges experience, not code.
 - **`/reorg-sync <old> <new>`** — after a directory move, sweep orphaned absolute-path
   references (shebangs, worktree pointers, crontab, doc anchors, memory keys); dry-run first.
+- **`/code-tour [path|range]`** — after `/supervise` or any large build, or on an
+  unfamiliar repo: write a reading path a human follows (file roles, one traced flow,
+  safe experiments, glossary). It edits no source; every cited path is checked.
 - **`/worker-setup`** — install → auth → verify onboarding for the
   cross-vendor worker lanes (codex, antigravity), with a
   cost-model briefing before anything installs. Reach for it when

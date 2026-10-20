@@ -393,6 +393,24 @@ check "codex-native-absent-warn" $?
 rm -rf "$CXN_FIX"
 
 echo
+echo "=== (k3c) codex skills: unlinked WARN / linked PASS / no codex config skipped ==="
+CXS_FIX="$(safe_mktemp_d)" || { echo "FAIL: mktemp -d failed (codex skills fixture)"; exit 1; }
+track_fixture "$CXS_FIX"
+printf '[features]\nhooks = true\n' > "$CXS_FIX/config.toml"
+OUT_K5="$(CODEX_CONFIG="$CXS_FIX/config.toml" CODEX_SKILLS_DIR="$CXS_FIX/skills" bash "$SETUP" --doctor 2>&1)"
+[[ "$OUT_K5" == *"[WARN"*"codex skills — "*"harness skills not linked"*"run setup.sh --codex"* ]]
+check "codex-skills-unlinked-warn" $?
+mkdir -p "$CXS_FIX/skills"
+for sk in "$FW_ROOT"/skills/*/; do ln -sfn "${sk%/}" "$CXS_FIX/skills/$(basename "$sk")"; done
+OUT_K5="$(CODEX_CONFIG="$CXS_FIX/config.toml" CODEX_SKILLS_DIR="$CXS_FIX/skills" bash "$SETUP" --doctor 2>&1)"
+[[ "$OUT_K5" == *"[PASS"*"codex skills — all "*"harness skills linked"* ]]
+check "codex-skills-linked-pass" $?
+OUT_K5="$(CODEX_CONFIG="$CXS_FIX/none.toml" CODEX_SKILLS_DIR="$CXS_FIX/empty" bash "$SETUP" --doctor 2>&1)"
+[[ "$OUT_K5" != *"codex skills — "* ]]
+check "codex-skills-skipped-without-codex" $?
+rm -rf "$CXS_FIX"
+
+echo
 echo "=== (k5) codex wiring: header present but atypical path shape -> WARN not-wired, NO crash ==="
 CXA_FIX="$(safe_mktemp_d)" || { echo "FAIL: mktemp -d failed (codex wiring anchor fixture)"; exit 1; }
 track_fixture "$CXA_FIX"

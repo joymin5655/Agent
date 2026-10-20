@@ -20,6 +20,7 @@
 | [`concepts/loop-engineering.md`](concepts/loop-engineering.md) | Designing autonomous loops on top of the harness — building blocks, L0→L3 readiness, 15-criteria checklist |
 | [`concepts/fable-5-prompting.md`](concepts/fable-5-prompting.md) | Writing dispatch prompts for frontier (Fable 5.1-class) models — 8 rules mapped to the delegation contract |
 | [`concepts/team-patterns.md`](concepts/team-patterns.md) | Six team patterns (Pipeline / Fan-out–Fan-in / Expert Pool / Producer-Reviewer / Supervisor / Hierarchical Delegation) mapped to `/supervise` wave construction |
+| [`maintainer-workflow.md`](maintainer-workflow.md) | How the maintainer runs the harness day to day — a worked profile, not a default |
 
 ## Internal notes
 

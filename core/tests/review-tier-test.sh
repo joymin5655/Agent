@@ -120,6 +120,32 @@ else
   bad "f1-output-line-format" "out='$OUT'"
 fi
 
+echo "=== 400 test lines -> tier 1, not tier 2 (tests excluded from the council size signal) ==="
+reset_repo
+mkdir -p "$REPO/tests"
+gen_lines 400 "$REPO/tests/big-test.sh"
+git -C "$REPO" add tests/big-test.sh
+run
+# code_lines still counts the test lines (so it is above the tier-0 cut), and the parsed
+# risk= field must stop at the space before council-threshold's trailing excluded=<n>.
+if [[ "$RC" -eq 5 && "$OUT" == "tier=1 lines=0 files=0 code_lines=400 risk=none" ]]; then
+  ok "g1-test-only-diff-tier1"
+else
+  bad "g1-test-only-diff-tier1" "rc=$RC out='$OUT'"
+fi
+
+echo "=== risk file under tests/ still -> tier 2, risk token parsed cleanly ==="
+reset_repo
+mkdir -p "$REPO/tests"
+echo "x = 1" > "$REPO/tests/auth_helper.py"
+git -C "$REPO" add tests/auth_helper.py
+run
+if [[ "$RC" -eq 10 && "$OUT" == "tier=2 lines=0 files=0 code_lines=1 risk=auth" ]]; then
+  ok "g2-risk-under-tests-tier2"
+else
+  bad "g2-risk-under-tests-tier2" "rc=$RC out='$OUT'"
+fi
+
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]

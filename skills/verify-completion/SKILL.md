@@ -1,7 +1,7 @@
 ---
 name: verify-completion
 description: Independently re-verify a completion claim in a separate context — mechanical evidence (files/tests/assertions) plus a refute-by-default semantic judge — before a wave or task is allowed to be called "done". Emits the shared verdict schema. NOT for code-style review (that is a reviewer's lane) and NOT for verifying work you authored in the same context — the verifier must be a fresh spawn.
-when_to_use: A builder/executor has just reported a task or wave complete and you need a second, independent check before accepting it — "verify completion", "is this actually done", "/verify-completion <claim>", or the completion step of /supervise.
+when_to_use: A builder/executor has just reported a task or wave complete and you need a second, independent check before accepting it — "verify completion", "is this actually done", "/verify-completion <claim> [--light]"; 한국어 "진짜 끝났는지 검증", "완료 검증", "다 된 거 맞아?" — or the completion step of /supervise. Applies even when you built it and feel sure — your own conviction is not evidence; the claim is checked by a fresh context or the --light single pass.
 tools: Bash, Read, Grep, Glob
 ---
 
@@ -83,13 +83,28 @@ python3 core/infra/completion-verify.py --root "$PWD" .agent/claims/<slug>.yml
 
 ### 2. Semantic pass (independent context)
 
+**Blind to the builder's verdict.** The verifier receives the artifacts (diff,
+files) and the **contract** — acceptance criteria, `spec.md` success criteria,
+or the plan step — but NOT the builder's completion claim, summary, or "it
+works" narrative. A verifier that has read "all tests pass" starts anchored on
+it. The claim's *checkable list* (files, tests, assertions) is what step 1 ran;
+the semantic judge derives its own expectations from the contract and then looks
+at the artifact. Where no contract exists, state the intent in neutral terms
+(what was asked for) and withhold how the builder says it went.
+
+**Adversarial instruction wins over persona tone.** Whatever balanced or
+courteous persona the dispatched agent carries, the prompt must say: "Your job
+is to find why this is NOT done. Do not soften, do not give credit for effort."
+**At most 3 cycles** of verify → builder fixes → re-verify; if still REFUTED
+after the third, stop and escalate to the user with the open refutations.
+
 Spin up a **fresh** verifier context that has NOT seen the builder's reasoning —
 dispatch `code-reviewer` (or `security-reviewer` if the change touches
 auth/secrets/input handling), or a general reviewer subagent — a general
 (unpinned) reviewer must carry an explicit `model` override at the workhorse
 tier, or it silently inherits the session top model — and give it only:
-the claim, the deterministic verdict JSON, and the actual diff/artifacts. Ask it
-to **refute**, not confirm:
+the contract, the deterministic verdict JSON, and the actual diff/artifacts
+(not the builder's summary — see above). Ask it to **refute**, not confirm:
 
 - Do the changed lines actually implement what `summary` claims, or do they only
   *look* like they do?
@@ -167,6 +182,33 @@ into a rubber stamp (`docs/model-routing.md` → The effort axis).
 assertion checks via `subprocess`); it makes no model call, so it has no
 effort parameter — the floor applies to the semantic judge you dispatch here.
 
+### Modes: full vs `--light`
+
+| | full (default) | `--light` |
+|---|---|---|
+| Context | fresh spawned verifier, blind to the builder's summary | the current session, single pass |
+| Passes | deterministic + semantic judge | claim split into units, one refute-first evidence pass |
+| Use for | waves, multi-file work, risk areas, anything `/supervise` accepts as done | one small claim ("fixed the typo", "config applied", "page renders") |
+| Cost | judge at workhorse tier or above, up to 3 cycles | no dispatch, re-run commands only |
+| Independence | yes | no — say so in the report |
+
+`--light` procedure (read-only; fixing is a separate step after the verdict):
+
+1. **Split the claim** into checkable units (e.g. "design applied" → file has the
+   change; build passes; the rendered page shows it).
+2. **Try to refute each unit first**, with fresh evidence only: `git diff` /
+   `git status` or a grep for file claims; **re-run** test/build commands (never
+   quote an earlier output, never hide the exit code behind `| tail`); a real
+   render or screenshot for UI claims; the live URL's response for deploy claims.
+3. **Judge per unit**: `CONFIRMED` with the evidence cited; `UNVERIFIED` when
+   evidence is unobtainable (state what is missing — it does not count as done);
+   `REFUTED` on any mismatch, reported immediately and never reinterpreted.
+4. **Report one table.** Say "done" only when every unit is CONFIRMED, and note
+   that same-context checking is weaker than full mode.
+
+Escalate `--light` to full when a unit is REFUTED, when the change touches a risk
+area, or when the user asks for independent verification.
+
 ### 3. Combine and gate
 
 Merge the two passes into one verdict (`docs/scoring-convention.md` schema):
@@ -217,3 +259,9 @@ verify-completion <slug>: CONFIRMED | REFUTED   (score S)
   two silent idles, one session-limit death, one spawn failure — while the code
   lane in the same batch completed normally and raised three confirmed defects.
   Machine-enforcing this is backlog X-4.)
+
+## Credits
+
+The blind-verifier rule, adversarial-over-persona instruction and 3-cycle cap
+adapt `doubt-driven-development` in addyosmani/agent-skills (MIT); `--light`
+absorbs the user's local `claim-check` skill. Rewritten in this repo's own words.

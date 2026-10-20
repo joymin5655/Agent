@@ -1,7 +1,7 @@
 ---
 name: council-review
 description: Multi-vendor code review council — runs the Claude code-reviewer agent alongside external second opinions (codex, gemini) in parallel, then synthesizes with citation verification, source tagging, and disagreement surfacing. NOT a completion gate (that is /verify-completion), NOT a security audit (security findings route to security-reviewer), and NOT free for the codex/gemini lanes — those are paid CLI calls the user approves first.
-when_to_use: User wants a code review with independent cross-vendor opinions — "council review", "get a second opinion on this diff", "review with codex/gemini", or `/council-review [--staged|--head|<range>]` — or `council-escalation-gate.py` denied a plain code-reviewer dispatch because the diff is council-scale (line/file threshold or a risk-area path; core/infra/council-threshold.sh).
+when_to_use: User wants a code review with independent cross-vendor opinions — "council review", "get a second opinion on this diff", "review with codex/gemini", `/council-review [--staged|--head|<range>]`; 한국어 "교차 리뷰", "다른 AI로 검토", "council 리뷰" — or `council-escalation-gate.py` denied a plain code-reviewer dispatch because the diff is council-scale (core/infra/council-threshold.sh). Applies even when the diff is pasted inline or you could review it yourself — a same-vendor self-review is not a second opinion.
 tools: Bash, Read, Grep, Glob, Agent
 ---
 
@@ -32,6 +32,25 @@ A lane whose vendor quota is exhausted mid-review (e.g. the Google account's
 Antigravity quota) surfaces `status: rate-limited` and the council **fails
 open** — the review proceeds without that lane, the lane status line says
 "rate-limited, retry later", and no upgrade prompt is put to the user.
+
+## Round cap
+
+Review rounds on one PR/diff are capped so a guard-heavy change cannot loop for hours:
+
+- **Rounds 1-2**: a full council and a `security-reviewer` re-review each run at most twice
+  for the same PR/diff.
+- **Round 3 onward**: confirm only the fix delta (the commits since the last round) with one
+  `code-reviewer` dispatch. If the delta touches a risk-area file, add exactly one external
+  lane via a single-lane `call-worker.sh` call — the pre-commit hook matches evidence to the
+  staged risk files' blob hashes (`core/infra/review-evidence.py`), so a changed risk file
+  needs fresh evidence. No third full council. `council-escalation-gate.py` still denies a
+  plain `code-reviewer` dispatch when the delta is council-scale or touches a risk file, so
+  wrap that one dispatch in the Step 0.5 council-active flag (`--council-flag set`) and clear
+  it as in Step 6 — the cap narrows the review, it does not bypass the gate's evidence rules.
+- **Leftover findings** go to the PR body under "Deferred findings" or to the backlog; they do
+  not block the merge decision.
+- **Exception**: a leftover finding that is Critical (security-incident class) earns another
+  round. Record the reason in the PR body.
 
 ## Steps
 
@@ -90,6 +109,12 @@ copies of the same question):
   "is this diff built the way the system is built?" Design and simplification
   opportunities, API/contract coherence, doc–code drift, cross-file
   consistency, naming.
+
+- **spec axis** (every lane, appended to the shared core) — "where does the
+  diff contradict the stated intent or the spec?" Report each as a finding with
+  category `spec` and quote both the diff line and the intent/spec line it
+  contradicts. Correct code that does the wrong thing is invisible to a pure
+  bug hunt; skip this axis only when no intent or spec was supplied (say so).
 
 A lens states emphasis, not permission — each preamble must also say "report
 any defect you see, in or out of your lens." The Claude `code-reviewer` lane
@@ -176,11 +201,23 @@ sleep-polling.
    the same question would give.
 6. **Disagreements**: where seated lanes conflict, show both positions and
    adjudicate with a stated reason — against the code, not against authority.
+7. **Action bucket**: give every surviving finding exactly one bucket, separate
+   from severity (severity = how risky it is; bucket = what the reader does):
+   - **Act on** — fix before merge; verified against the code.
+   - **Consider** — real trade-off or judgment call; owner decides.
+   - **Noted** — true but out of this change's scope; carry to backlog.
+   - **Dismissed** — a lane raised it, you checked, it does not hold.
+   Each entry carries a one-line reason and its source lanes. Dismissed items
+   stay visible (never silently dropped) so the reader can overrule you.
+8. **Agreement map**: one short table or list of where the seated lanes agreed,
+   where they diverged, and where only one lane spoke (a lone voice is not
+   wrong, but it is unconfirmed). It summarizes the pattern across lanes; the
+   per-finding detail stays in Findings.
 
 Security-shaped findings (auth, injection, secrets, crypto) are LISTED but
 not adjudicated here — route them to `security-reviewer` (the
 no-double-reporting contract in agents/code-reviewer.md applies to the
-council too). Dispatch that security lens at `effort: max` (advisory;
+council too). Dispatch that security lens at `effort: high` (advisory;
 `docs/model-routing.md` → The effort axis).
 
 ### 5. Report
@@ -203,8 +240,10 @@ the council's authority. Absent lanes (no capture) are appended by hand as
 <review-evidence.py summary output: [single-vendor warning,] Lane status: ...>
 Citation drops: codex 1, gemini 0
 
+### Agreement map             ...  agreed / diverged / single-lane
 ### High-signal (≥2 vendors)  ...
-### Findings                  ...
+### Findings                  ...  grouped Act on / Consider / Noted / Dismissed;
+                                  each: severity · [sources] · file:line · reason
 ### Disagreements             ...
 ```
 
@@ -262,3 +301,10 @@ python3 "$CEG" --council-flag clear
 | exit 1 / `status: failed` | backend errored | lane absent, quote stderr tail |
 
 External failures never abort the review — the Claude lane carries it.
+
+## Credits
+
+The action buckets and agreement map adapt the synthesis step of the
+`interrogate` skill in cursor/plugins (pstack, MIT); the spec axis adapts
+`engineering/code-review` in mattpocock/skills (MIT). Rewritten in this repo's
+own words.

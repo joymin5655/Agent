@@ -6,6 +6,12 @@
 # re-derive the numbers themselves:
 #   - changed line total  >= AGENT_COUNCIL_LINES  (default 200)
 #   - changed file count  >= AGENT_COUNCIL_FILES  (default 10)
+#     Both counts EXCLUDE test and documentation paths (core/infra/path-kinds.sh:
+#     tests/ test/ __tests__/ spec/ evals/ dirs, *-test.* *_test.* *.test.* *.spec.*
+#     test_*.py; .md/.css/.txt/LICENSE/docs/assets) — a 2000-line test battery is
+#     not council-scale code. The number left out is reported as excluded=<n>.
+#     Size is the only signal that excludes them: the risk signal below still
+#     sees EVERY path, so tests/auth_helper.py or docs/.env.example still escalate.
 #   - any changed path matches a risk-area pattern (migration, secret, edge-fn,
 #     billing, auth; all but auth mirror
 #     core/hooks/spec-gate.py:72 GUARD_PATTERNS, plus a project's own
@@ -33,7 +39,9 @@
 #   --classify: read NUL-separated paths on stdin, print the risk ones NUL-terminated
 #             (no git call; the pattern owner for review-evidence.py)
 #
-# stdout: ALWAYS one line — "lines=<N> files=<M> risk=<comma-list|none>"
+# stdout: ALWAYS one line — "lines=<N> files=<M> risk=<comma-list|none> excluded=<K>"
+#         (excluded=<K> is APPENDED so a parser that stops at risk= keeps working;
+#         lines/files count non-test, non-docs paths only, K is how many were left out)
 # exit:   0  = not council-scale
 #         10 = council-scale (one or more OR signals fired)
 #
@@ -51,6 +59,9 @@ set -u
 # pre-tool-guard.sh's log_violation() and hook_config's other Bash callers
 # use, so all three stay in lockstep.
 FRAMEWORK_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shared docs/test path predicates (also used by review-tier.sh — one definition)
+# shellcheck source=core/infra/path-kinds.sh
+. "$(dirname "${BASH_SOURCE[0]}")/path-kinds.sh"
 PROJECT_ROOT="${AGENT_PROJECT_DIR:-${CLAUDE_PROJECT_DIR:-$(git -c core.fsmonitor= rev-parse --show-toplevel 2>/dev/null)}}"
 PROJECT_ROOT="${PROJECT_ROOT:-$PWD}"
 
@@ -177,6 +188,7 @@ fi
 
 LINES=0
 FILES=0
+EXCLUDED=0
 RISK_AREAS=""
 
 add_risk() {
@@ -220,9 +232,15 @@ while IFS= read -r -d '' rec; do
   del="${rest%%$'\t'*}"
   path="${rest#*$'\t'}"
   [[ -z "$path" ]] && continue
-  FILES=$((FILES + 1))
-  [[ "$add" =~ ^[0-9]+$ ]] && LINES=$((LINES + add))
-  [[ "$del" =~ ^[0-9]+$ ]] && LINES=$((LINES + del))
+  # Test/docs paths do not count toward the size signals (only those); classify_path
+  # below still runs on every path, so a risk-area file inside tests/ still escalates.
+  if is_review_light_path "$path"; then
+    EXCLUDED=$((EXCLUDED + 1))
+  else
+    FILES=$((FILES + 1))
+    [[ "$add" =~ ^[0-9]+$ ]] && LINES=$((LINES + add))
+    [[ "$del" =~ ^[0-9]+$ ]] && LINES=$((LINES + del))
+  fi
 
   classify_path "$path"
   [[ "$LIST_RISK" -eq 1 && "$is_risk" -eq 1 ]] && printf '%s\0' "$path"
@@ -235,7 +253,7 @@ ESCALATE=0
 [[ "$FILES" -ge "$FILES_THRESHOLD" ]] && ESCALATE=1
 [[ -n "$RISK_AREAS" ]] && ESCALATE=1
 
-printf 'lines=%d files=%d risk=%s\n' "$LINES" "$FILES" "${RISK_AREAS:-none}"
+printf 'lines=%d files=%d risk=%s excluded=%d\n' "$LINES" "$FILES" "${RISK_AREAS:-none}" "$EXCLUDED"
 
 [[ "$ESCALATE" -eq 1 ]] && exit 10
 exit 0
