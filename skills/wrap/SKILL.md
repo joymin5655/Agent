@@ -1,7 +1,7 @@
 ---
 name: wrap
 description: Commits staged changes and opens a PR. Runs gitleaks + risk-area guards before committing. Push is user-confirmed by default; --auto-push and --auto-merge are opt-in. NOT for review or verification (run those before wrapping), and NOT when nothing has changed yet — there is nothing to commit.
-when_to_use: User asks to commit and open a PR — "wrap up", "ship this", or `/wrap`.
+when_to_use: User asks to commit and/or push and open a PR — "wrap up", "ship this", "commit and push", "push it", "open a PR", `/wrap`; 한국어 "커밋하고 푸쉬", "푸쉬해줘", "PR 올려줘", "보안 점검하고 커밋". Applies even when the change is small or the diff is pasted inline — this skill runs gitleaks and the risk-area guards even in repos whose git hooks are not installed, so do not hand-roll git commit/push instead.
 tools: Bash, Read, Grep, Glob
 ---
 
@@ -188,3 +188,8 @@ never silently omitted).
 - Risk-area violation → ABORT, instruct user that this requires manual
   review.
 - CI fails after push → don't auto-merge; report and let user decide.
+
+## Credits
+
+The "applies even when you could do it yourself" firing clause follows the
+plugin-eval finding in addyosmani/agent-skills (`evals/README`, MIT).

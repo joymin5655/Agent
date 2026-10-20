@@ -31,6 +31,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   CommonMark (`~~~`, and a 4-backtick fence may wrap literal ```` ``` ```` examples that used to
   leak out as phantom steps); an empty or placeholder `→ verify:` (nothing, TODO, TBD, `...`,
   `<fill>`, empty backticks) now FAILs with its own message; an unterminated fence FAILs.
+
+- **Core skills polished** (`wrap`, `spec`, `council-review`, `verify-completion`): Korean
+  trigger phrases and an anti-"I'll do it myself" clause in `description`/`when_to_use`;
+  council synthesis gains Act on / Consider / Noted / Dismissed buckets, an agreement map and
+  a spec axis; `verify-completion` verifies blind to the builder's summary, caps at 3 cycles
+  and gains a `--light` single-pass mode (absorbs the local `claim-check`); `spec` plans
+  decompose into vertical slices with explicit `blocked-by` edges. Routing eval cases added;
+  `evals/routing/floors.json` raised to rank-1 75 / top-3 78. Ideas credited per skill
+  (addyosmani/agent-skills, cursor/plugins pstack, mattpocock/skills; all MIT).
 - **Explicit timeouts on every `hooks/hooks.json` command hook** (previously 1 of 38 had one, so
   the 600 s host default applied). Tiers 15 / 30 / 90 / 150 / 300 s, rationale in
   `docs/hook-protocol.md` §14.
