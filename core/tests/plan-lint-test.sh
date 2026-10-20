@@ -234,5 +234,51 @@ run_lint "$FX"
 check "no-spec-passes" "$(rc_is 0)"
 
 echo
+echo "=== (17) empty verify box -> exit 1 ==="
+FX=$(new_fixture)
+printf -- '- Fill later\n  → verify:\n' >> "$FX/plan.md"
+run_lint "$FX"
+check "empty-verify-fails" "$(rc_is 1)"
+out_has 'verify is empty'; check "empty-verify-named" $?
+out_has 'plan.md:7'; check "empty-verify-line" $?
+for ph in 'TODO' 'TBD' '...' '<fill>' '``'; do
+  FX=$(new_fixture)
+  printf -- '- Placeholder step -> verify: %s\n' "$ph" >> "$FX/plan.md"
+  run_lint "$FX"
+  check "placeholder-verify-fails-$ph" "$(rc_is 1)"
+done
+FX=$(new_fixture)
+printf -- '- Ascii step -> verify:   \n' >> "$FX/plan.md"
+run_lint "$FX"
+check "empty-ascii-verify-fails" "$(rc_is 1)"
+
+echo
+echo "=== (18) fences: tilde, longer opener wrapping a shorter one, unterminated ==="
+# regression: a 4-backtick fence around a literal ``` example used to toggle
+# on/off per ``` line, leaking the example's bullet out as a real step
+FX=$(new_fixture)
+printf '\n````md\n```\n- example step with no verify\n```\n- still inside\n````\n' >> "$FX/plan.md"
+run_lint "$FX"
+check "nested-fence-example-ignored" "$(rc_is 0)"
+FX=$(new_fixture)
+printf '\n~~~\n## Not a header\n- tilde step with no verify\n~~~\n' >> "$FX/plan.md"
+run_lint "$FX"
+check "tilde-fence-ignored" "$(rc_is 0)"
+FX=$(new_fixture)
+printf '\n```\n## Not a header\n- never closed\n' >> "$FX/plan.md"
+run_lint "$FX"
+check "unterminated-fence-fails" "$(rc_is 1)"
+out_has 'unterminated code fence'; check "unterminated-fence-named" $?
+FX=$(new_fixture)
+printf '\n```\n- `ghost-term` x\n```\n' >> "$FX/spec.md"
+run_lint "$FX"
+check "spec-fence-then-text-ok" "$(rc_is 0)"
+# a fenced example of an empty verify must not trip the empty-verify check
+FX=$(new_fixture)
+printf '\n```\n- Example -> verify:\n```\n' >> "$FX/plan.md"
+run_lint "$FX"
+check "fenced-empty-verify-ignored" "$(rc_is 0)"
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ $FAIL -eq 0 ]]
