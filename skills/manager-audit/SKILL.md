@@ -1,6 +1,6 @@
 ---
 name: manager-audit
-description: Meta-audit of a /supervise run — did the supervisor do its job? Runs the machine layer (core/infra/manager-audit.sh: four run lanes, plus a fifth review-completeness lane under --global) over the run's logs, interprets the semantic halves, and turns actionable findings into concrete patch proposals in PROPOSALS.md for one-click user approval. Read-only analysis; NEVER applies a proposal itself and NEVER installs runtime model-switching (rejected, docs/model-routing.md). NOT a code review (that is code-reviewer's lane) and NOT the per-wave audit (that is supervisor-goal-audit.sh inside the loop).
+description: 'Meta-audit of a /supervise run — did the supervisor do its job? Runs the machine layer (core/infra/manager-audit.sh: four run lanes, plus a fifth review-completeness lane under --global) over the run''s logs, interprets the semantic halves, and turns actionable findings into concrete patch proposals in PROPOSALS.md for one-click user approval. Read-only analysis; NEVER applies a proposal itself and NEVER installs runtime model-switching (rejected, docs/model-routing.md). NOT a code review (that is code-reviewer''s lane) and NOT the per-wave audit (that is supervisor-goal-audit.sh inside the loop).'
 when_to_use: After a /supervise run completes (Step 5 offers it), or on demand — "manager audit <slug>", "/manager-audit <slug>", "is the supervisor doing its job", "where did the tokens go", "check the model routing".
 tools: Bash, Read, Grep, Glob, Write
 ---

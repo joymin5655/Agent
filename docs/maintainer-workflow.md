@@ -27,8 +27,7 @@ before any interruption ─▶ handoff file; raw capture ─▶ curated notes �
   ([`model-routing.md`](model-routing.md) → "Work class → tier").
 - **Effort before tier-up.** A bounded task gets more reasoning effort on its rung before it is
   promoted to a more expensive one.
-- **Nothing switches models at runtime.** Hooks only remind. `top-edit-advisor.py` repeats its
-  advisory every +15 direct edits by the top-tier model, and the session still makes the call.
+- **Nothing switches models at runtime.** Hooks only remind, and the session still makes the call.
 
 ## Plan first when the request is fuzzy
 
@@ -106,7 +105,7 @@ written delegation charter and its decision log are personal configuration (**pr
 | A reviewer that died at its session limit reports zero findings and looks clean | `skills/verify-completion/SKILL.md` ("A dead reviewer is not a clean review"); `/supervise` safeguards |
 | A lane that goes idle without a report reads as "nothing found" | `skills/verify-completion/SKILL.md` ("…is a FAILED lane") |
 | An external lane can exit 0 with an empty answer and look finished | `core/infra/call-worker.sh` (empty rc-0 output is a failed lane) |
-| The top-tier model quietly does the implementation itself | `core/hooks/top-edit-advisor.py` (advisory every +15 edits) |
+| The top-tier model quietly does the implementation itself | `skills/supervise/SKILL.md` Model policy (the +15-edit advisory retired to `legacy/top-edit-advisor/`) |
 | A pipeline reports its last command's status, so a failing check can look green | `set -euo pipefail` and the counting idiom, scanned by `core/tests/pipefail-idiom-scan.sh` |
 | Review of a guard-heavy diff can loop for hours | the round cap in `skills/council-review/SKILL.md` |
 | An assumed model weakness expires, and its gate turns into friction | review dates in [`gate-registry.md`](gate-registry.md) |

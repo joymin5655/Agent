@@ -159,7 +159,7 @@ New to this space? These ten terms are all you need to read the rest of this pag
 | Term | Plain meaning |
 |---|---|
 | **harness** | The whole safety layer: agents + hooks + skills + rules, wrapped around your AI. |
-| **hook** | A small script your AI runtime runs automatically before/after an action. It answers **allow**, **ask**, or **deny**. 27 scripts wired via `hooks/hooks.json` (31 incl. shared modules) live in [`core/hooks/`](core/hooks/). |
+| **hook** | A small script your AI runtime runs automatically before/after an action. It answers **allow**, **ask**, or **deny**. 26 scripts wired via `hooks/hooks.json` (31 incl. shared modules) live in [`core/hooks/`](core/hooks/). |
 | **adapter** | A translator from a runtime hook or controlled wrapper event to the harness's canonical JSON. There are 3 runtime adapters (claude-code, codex, antigravity) in [`adapters/`](adapters/). |
 | **agent** | A specialist your AI delegates to — e.g. a security reviewer that only reviews and never writes. 4 ship here ([`agents/`](agents/)). |
 | **skill** | A reusable step-by-step workflow the AI follows, e.g. the commit + PR flow. 15 ship here ([`skills/`](skills/)). |
@@ -325,7 +325,7 @@ flowchart TB
         A3["antigravity/"]
     end
     subgraph CORE["Layer 1 — core/ (the single source of truth)"]
-        H["hooks/ — 27 wired scripts: secret scan · mutex ·<br/>spec-gate · tdd-guard · supervisor …"]
+        H["hooks/ — 26 wired scripts: secret scan · mutex ·<br/>spec-gate · tdd-guard · supervisor …"]
         I["infra/ — sessions · goal mode ·<br/>audits · auto-ship"]
         T["tests/ — 108 self-verification scripts"]
     end
@@ -462,7 +462,7 @@ Model is cost-tiered per work class ([`docs/model-routing.md`](docs/model-routin
 | `code-tour` | Write a human reading path through a codebase or a finished build — stack, file roles, one traced flow, safe experiments, run steps, glossary; every path checked, source untouched |
 | `harness-help` | Router — which skill fits the situation, and the main flow through them |
 
-| Hooks — 27 wired via `hooks/hooks.json` → `core/hooks/` (31 scripts incl. shared modules) | Event |
+| Hooks — 26 wired via `hooks/hooks.json` → `core/hooks/` (31 scripts incl. shared modules) | Event |
 |---|---|
 | secret-content-scan · check-hardcoding | PreToolUse (Write/Edit) |
 | pre-tool-guard · r4-mutex · context-mode-guard | PreToolUse |
@@ -493,7 +493,7 @@ Agent/
 ├── hooks/              # plugin hook wiring (hooks.json)
 │
 ├── core/               # AI-agnostic core — the truth
-│   ├── hooks/          #   31 portable hook scripts (27 wired + shared modules)
+│   ├── hooks/          #   31 portable hook scripts (26 wired + shared modules)
 │   ├── infra/          #   session coordination · goal mode · audits · auto-ship
 │   ├── git-hooks/      #   pre-commit · pre-push
 │   └── tests/          #   108 test scripts (verify-all.sh runs them all)

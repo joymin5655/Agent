@@ -47,7 +47,7 @@
         ]
       },
       {
-        "matcher": "*",
+        "matcher": "Bash|mcp__.*",
         "hooks": [
           { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh r4-mutex-check.sh" }
         ]
@@ -121,14 +121,7 @@
       {
         "matcher": "Write|Edit",
         "hooks": [
-          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh r4-file-mutex-register.sh" },
-          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh top-edit-advisor.py" }
-        ]
-      },
-      {
-        "matcher": "NotebookEdit",
-        "hooks": [
-          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh top-edit-advisor.py" }
+          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh r4-file-mutex-register.sh" }
         ]
       }
     ],

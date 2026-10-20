@@ -4,8 +4,8 @@
 # The guard used to sit under the PreToolUse "*" matcher, so Claude spawned bash + jq for EVERY
 # tool call only for the script to exit 0 on any tool that is not a Context-Mode sandbox tool.
 # It now has its own entry with a regex matcher. This battery pins both halves:
-#   (1) wiring — in hooks/hooks.json AND adapters/claude-code/settings.json.template: "*" keeps
-#       r4-mutex-check.sh but no longer lists the guard; exactly one dedicated entry lists it; its
+#   (1) wiring — in hooks/hooks.json AND adapters/claude-code/settings.json.template: "*" no longer lists the guard
+#       (r4-mutex-check.sh sits under a narrowed Bash|mcp matcher); exactly one dedicated entry lists it; its
 #       matcher is a regex that selects every sandbox tool name the script's own `case` handles
 #       (context-mode / context_mode spellings, plugin-prefixed names included) and nothing else;
 #   (2) behaviour — through the real Claude adapter: a secret-path reference in the sandbox code is
@@ -54,7 +54,9 @@ def emit(ok, name, detail=""):
 
 star = [g for g in groups if g.get("matcher") == "*"]
 own = [g for g in groups if "context-mode-guard.sh" in hook_names(g)]
-emit(any("r4-mutex-check.sh" in hook_names(g) for g in star), "star-keeps-r4-mutex")
+r4 = [g for g in groups if "r4-mutex-check.sh" in hook_names(g)]
+emit(len(r4) == 1 and r4[0].get("matcher") not in ("", "*"), "r4-mutex-narrowed",
+     "r4-mutex-check.sh must sit under a narrowed matcher (Bash + MCP tools), not the * matcher")
 emit(not any("context-mode-guard.sh" in hook_names(g) for g in star), "star-drops-guard",
      "context-mode-guard.sh is still under the * matcher (bash + jq on every tool call)")
 emit(len(own) == 1 and hook_names(own[0]) == ["context-mode-guard.sh"], "own-entry",

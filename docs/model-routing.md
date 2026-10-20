@@ -98,13 +98,12 @@ the leak where the TOP model does the implementation directly and no
 Task/Agent call happens at all. A 2026-09-02 transcript audit measured that
 leak: 511 direct main-loop Edit/Write calls across 26 sessions (17 sessions
 with 10+ edits, one at 65), with earlier single-fire advisories proven
-insufficient — ignored well past their first warning. `core/hooks/top-edit-advisor.py`
-adds a third, accumulation-time layer: a PostToolUse advisory on the TOP
-model's own Write/Edit/MultiEdit calls that repeats every +15 measured edits
-(env `AGENT_TOP_EDIT_THRESHOLD`) instead of warning once and going silent,
-and never caches a not-TOP verdict, since the session model can switch
-mid-session. Same boundary as the other two: advisory only, never blocks,
-never switches a model.
+insufficient — ignored well past their first warning. `top-edit-advisor.py`
+added a third, accumulation-time layer: a PostToolUse advisory on the TOP model's own
+Write/Edit/MultiEdit calls that repeated every +15 measured edits instead of warning once.
+It was retired 2026-10-20 (unregistered; script and test kept under
+`legacy/top-edit-advisor/`), so the two dispatch-time hooks above plus `/supervise` now
+carry the convention. It was advisory only: it never blocked and never switched a model.
 
 ## Intelligence placement — the advisor pattern
 
@@ -231,7 +230,7 @@ just what this doc recommends.
 | Claude Code — specialist pins | `model:` frontmatter, **enforced**: CI `validate-plugin` drift guard reconciles registry ↔ frontmatter | `agents/*.md`, `agents/master-registry.json` |
 | Claude Code — judgment unpinned / per-call MID (execution dispatch) & LOW overrides; coordination-cost check and worker-reuse (cache) | Convention, documented not CI-checked (frontmatter *absence*, call-time overrides, and call-time reuse-vs-spawn choices are not statically verifiable) | `skills/supervise/SKILL.md` Model policy |
 | Claude Code — decision-time reminder | `model-routing-advisor.py` (PreToolUse Task/Agent), advisory: one-line `additionalContext` nudge, never blocks, decision stays with the dispatcher | `core/hooks/model-routing-advisor.py`, `docs/gate-registry.md` GATE model-routing-advisor |
-| Claude Code — accumulation-time reminder | `top-edit-advisor.py` (PostToolUse Write/Edit/MultiEdit), advisory: `systemMessage` every +15 measured main-loop edits, never blocks | `core/hooks/top-edit-advisor.py`, `docs/gate-registry.md` GATE top-edit-advisor |
+| Claude Code — accumulation-time reminder | Retired 2026-10 (unregistered; script kept under `legacy/top-edit-advisor/`) | `legacy/top-edit-advisor/README.md` |
 | Codex CLI | GPT-6 named profiles (per-profile config files): `quick` = LOW (`gpt-6-luna` @ low effort), default = MID (`gpt-6-sol` @ medium effort), `deep` = TOP (`gpt-6-astra` @ xhigh effort); `model_reasoning_effort` is the effort dial | `adapters/codex/codex-config.toml.template` + `quick.config.toml.template` / `deep.config.toml.template` |
 | Antigravity (the live gemini lane) | Tiers keyed by model ID in a single tiers file the antigravity-worker resolves per call — MID/TOP entries, moved from the vendor-owned directory to a harness-owned path so an agy CLI reinstall can't silently reset the pin; `--effort` flag optional alongside the tier's own baked-in reasoning level | `~/.agent/antigravity-tiers.json` (installed from `adapters/antigravity/antigravity-tiers.json.template`), `adapters/antigravity/antigravity-worker.sh` |
 | Claude Code — purpose launchers | Session-start human choice of tier (`claude-build`/`claude-quick`/`claude-research`); a launcher presets the model before the session exists — the allowed side of the no-runtime-switching line | `adapters/claude-code/launchers/`, `docs/launchers.md` |
@@ -391,9 +390,9 @@ shared blind spot doesn't survive review.
   `model-routing-advisor.py` also stays on this side: it is a *deterministic*
   PreToolUse reminder (fixed classification, fixed message, no model logic),
   it never sets `permissionDecision`, and it never touches `model` — the
-  dispatcher reads the nudge and still makes the call. `top-edit-advisor.py`
-  is the same shape one layer later: a deterministic PostToolUse reminder
-  keyed on a measured edit count, never a decision. The boundary is
+  dispatcher reads the nudge and still makes the call. The retired
+  `top-edit-advisor.py` (see `legacy/`) had the same shape one layer later: a deterministic
+  PostToolUse reminder keyed on a measured edit count, never a decision. The boundary is
   narrower than "no automated behavior at decision time"; it is "no automated
   *decision*" — a reminder is inside that line, a classifier or a switch is not.
 - **No automatic tier escalation.** Promotion is a caller decision, made
