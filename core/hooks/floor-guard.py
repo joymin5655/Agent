@@ -321,6 +321,7 @@ def sed_perl_in_place(head: str, args: list[str]) -> bool:
 def sed_perl_parts(head: str, args: list[str]) -> tuple[list[str], list[str]] | None:
     """(scripts, file operands) of a sed / perl command line; None when a script is not inline."""
     script_flag = re.compile(r"-[nEzsru]*e" if head == "sed" else r"-[pnla0-9]*[eE]")
+    attached_flag = re.compile(r"(-[nEzsru]*e)(?=.)" if head == "sed" else r"(-[pnla0-9]*[eE])(?=.)", re.S)
     scripts: list[str] = []
     files: list[str] = []
     options_done = False
@@ -339,6 +340,8 @@ def sed_perl_parts(head: str, args: list[str]) -> tuple[list[str], list[str]] | 
                 return None
             scripts.append(args[i])
             i += 1
+        elif (attached := attached_flag.match(a)):  # -e<script> in one word
+            scripts.append(a[attached.end(1):])
         elif a.startswith("--expression="):
             scripts.append(a.split("=", 1)[1])
     files = [f for f in files if f]  # BSD `sed -i ''` passes an empty suffix word
@@ -381,7 +384,7 @@ def read_substitution(script: str, i: int, bracketed: bool) -> tuple[str, int] |
     if i + 1 >= len(script):
         return None
     d = script[i + 1]
-    if d.isalnum() or d in " \\\n;":
+    if d.isalnum() or d in " \\\n":
         return None
     if bracketed and d in _PAIRS:
         pat = read_delimited(script, i + 2, _PAIRS[d], d)
@@ -475,14 +478,26 @@ def sed_added_text(script: str) -> str | None:
     return "\n".join(added)
 
 
-def perl_added_text(script: str) -> str:
-    """Replacement sides of the s/// operators in a perl one-liner (unparseable ones are skipped)."""
+PERL_SUBST = re.compile(r"(?:^|(?<=[\s;{}(~]))s(?=[^\w\s])")
+
+
+def perl_added_text(script: str) -> str | None:
+    """Replacement sides of the s/// operators in a perl one-liner.
+
+    Scanning resumes after each parsed substitution (text inside it is not code); the first `s`
+    that cannot be parsed makes the whole script unreadable (None = the caller stays silent).
+    """
     added: list[str] = []
-    for m in re.finditer(r"(?:^|(?<=[\s;{}(]))s(?=[^\w\s])", script):
+    pos = 0
+    while True:
+        m = PERL_SUBST.search(script, pos)
+        if m is None:
+            return "\n".join(added)
         sub = read_substitution(script, m.start(), bracketed=True)
-        if sub is not None:
-            added.append(unescape_replacement(sub[0]))
-    return "\n".join(added)
+        if sub is None:
+            return None
+        added.append(unescape_replacement(sub[0]))
+        pos = sub[1]
 
 
 def pytest_deselects(args: list[str]) -> list[str]:
@@ -554,8 +569,8 @@ def segment_findings(words: list[str], depth: int = 0) -> list[tuple[str, str, i
             if opt in GIT_VALUE_OPTS and rest:
                 rest.pop(0)
         if rest and rest[0] == "rm":
-            flags = short_flags(rest[1:])
-            dry_or_keep = "--cached" in rest or "--dry-run" in rest or "n" in flags
+            opts = rest[1:rest.index("--")] if "--" in rest[1:] else rest[1:]  # after `--` = paths
+            dry_or_keep = "--cached" in opts or "--dry-run" in opts or "n" in short_flags(opts)
             if not dry_or_keep:
                 remove_args = rest[1:]
     if remove_args is not None:

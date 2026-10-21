@@ -151,12 +151,12 @@ import os, subprocess
 try:
     r = subprocess.run(["python3", os.environ["HOOK"]], input=os.environ["EV"].encode(), capture_output=True,
                        timeout=5, env={**os.environ, "AGENT_GATE_SINK_DIR": os.environ["SINK"]})
-    print("rc=%d out=%s" % (r.returncode, r.stdout.decode()[:80]))
+    print("rc=%d out=%s err=%s" % (r.returncode, r.stdout.decode()[:80], r.stderr.decode()[:80]))
 except subprocess.TimeoutExpired:
     print("TIMEOUT")
 PY
 )"
-if [[ "$FIFO_RES" == "rc=0 out=" ]]; then ok "write to a FIFO path returns promptly and is skipped"; else no "write to a FIFO path" "$FIFO_RES"; fi
+if [[ "$FIFO_RES" == "rc=0 out= err=" ]]; then ok "write to a FIFO path returns promptly and is skipped"; else no "write to a FIFO path" "$FIFO_RES"; fi
 printf '@pytest.mark.skip\n@pytest.mark.skip\n' > "$WORK/proj/tests/test_w.py"
 expect "write drops 2 skips to 1" silent "$(mkev Write "$(ti file_path="$WORK/proj/tests/test_w.py" content=$'@pytest.mark.skip\n')")"
 
@@ -243,6 +243,22 @@ expect "sed --in-place=.bak adds skip" warn "$(bash_ev "sed --in-place=.bak 's/a
 expect "sed -i -e replacement adds skip" warn "$(bash_ev "sed -i -e 's/^it(/it.skip(/' web/a.spec.js")" "a.spec.js"
 expect "sed -i with unparseable s///" silent "$(bash_ev "sed -i 's/it(/it.skip(' web/a.spec.js")"
 expect "sed -f script file stays silent" silent "$(bash_ev "sed -i -f fix.sed web/a.spec.js")"
+expect "perl s{}{} pattern text that looks like s///skip is not added" silent "$(bash_ev "perl -pi -e 's{ s/x/pytest.mark.skip/ }{plain}' tests/a.py")"
+expect "perl =~ s/// adds skip" warn "$(bash_ev "perl -pi -e '\$_ =~ s/^it\\(/it.skip(/' tests/a.js")" "tests/a.js"
+expect "perl \$_=~s/// (no spaces) adds skip" warn "$(bash_ev "perl -pi -e '\$_=~s/^it\\(/it.skip(/' tests/a.js")" "tests/a.js"
+expect "sed -i attached -e<script> adds skip" warn "$(bash_ev "sed -i -e's/a/xit(/' tests/a.js")" "tests/a.js"
+expect "perl -pi attached -e<script> adds skip" warn "$(bash_ev "perl -pi -e's/a/xit(/' tests/a.js")" "tests/a.js"
+expect "sed -i --expression=<script> adds skip" warn "$(bash_ev "sed -i --expression='s/a/xit(/' tests/a.js")" "tests/a.js"
+expect "sed -i --expression <script> adds skip" warn "$(bash_ev "sed -i --expression 's/a/xit(/' tests/a.js")" "tests/a.js"
+expect "sed -i s;;; delimiter adds skip" warn "$(bash_ev "sed -i 's;a;xit(;' tests/a.js")" "tests/a.js"
+expect "sed -i s with alnum delimiter stays silent" silent "$(bash_ev "sed -i 'sxaxxit(x' tests/a.js")"
+expect "git rm -- <test> --dry-run: after -- is a path" warn "$(bash_ev 'git rm -- tests/test_a.py --dry-run')" "tests/test_a.py"
+# a long run of unterminated `s{` must not go quadratic: time-bound the hook (generous, not flaky)
+LONG_EV="$(bash_ev "perl -pi -e '$(python3 -c "print(' s{' * 6600)")' tests/a.py")"
+LONG_T0=$SECONDS
+run_hook "$LONG_EV"
+LONG_DT=$((SECONDS - LONG_T0))
+if [[ "$RC" -eq 0 && -z "$OUT" && "$LONG_DT" -lt 3 ]]; then ok "perl ' s{' x6600 is silent and fast (${LONG_DT}s)"; else no "perl ' s{' x6600" "rc=$RC out=${OUT:0:80} dt=${LONG_DT}s"; fi
 
 echo
 echo "=== Bash: test-runner deselect flags ==="
