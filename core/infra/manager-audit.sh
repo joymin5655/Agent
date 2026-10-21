@@ -49,7 +49,22 @@ set -uo pipefail
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 ROUTING_LOG="${AGENT_MODEL_ROUTING_SINK:-$REPO_ROOT/.agent/logs/model-routing.jsonl}"
 GOAL_AUDIT_LOG="${AGENT_GOAL_AUDIT_LOG:-$REPO_ROOT/.agent/logs/supervisor-goal-audit.jsonl}"
-PLANS_DIR="${AGENT_PLANS_DIR:-$HOME/.agent/plans}"
+# /spec writes <root>/<slug>/plan.md; the flat <slug>.md is the legacy layout. Same
+# resolution order as supervisor-goal-audit.sh (directory layout first).
+resolve_plan_file() {
+    local slug="$1" cand first=""
+    local -a cands
+    if [[ -n "${AGENT_PLANS_DIR:-}" ]]; then
+        cands=("$AGENT_PLANS_DIR/$slug/plan.md" "$AGENT_PLANS_DIR/$slug.md")
+    else
+        cands=("$REPO_ROOT/.agent/plans/$slug/plan.md" "$HOME/.agent/plans/$slug.md")
+    fi
+    for cand in "${cands[@]}"; do
+        [[ -z "$first" ]] && first="$cand"
+        if [[ -f "$cand" ]]; then echo "$cand"; return; fi
+    done
+    echo "$first"
+}
 ARTIFACTS_DIR="${AGENT_PLAN_ARTIFACTS_DIR:-$REPO_ROOT/.agent/plans}"
 GOAL_DB="${AGENT_GOAL_DB:-$REPO_ROOT/.agent/locks/goal-state.db}"
 REGISTRY="${AGENT_REGISTRY_PATH:-$REPO_ROOT/agents/master-registry.json}"
@@ -148,7 +163,7 @@ else
     # scope-drift heuristic: a plan wave whose title shares no content word with
     # the restatement is a drift CANDIDATE — semantic confirmation is the
     # manager-audit skill's half, not this script's.
-    PLAN_FILE="$PLANS_DIR/$SLUG.md"
+    PLAN_FILE="$(resolve_plan_file "$SLUG")"
     if [[ -f "$PLAN_FILE" ]]; then
         rest_lc=$(tr '[:upper:]' '[:lower:]' < "$RESTATEMENT")
         while IFS= read -r title; do
@@ -311,7 +326,7 @@ fi
 
 # ---------- lane: role-compliance ---------- (slug-scoped: skipped in --global)
 if [[ "$GLOBAL" != true ]]; then
-PLAN_FILE="$PLANS_DIR/$SLUG.md"
+PLAN_FILE="$(resolve_plan_file "$SLUG")"
 if [[ ! -f "$PLAN_FILE" ]]; then
     add role-compliance plan-missing WARN \
         "no plan at $PLAN_FILE — cannot check wave coverage" \

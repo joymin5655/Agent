@@ -21,6 +21,7 @@ wave, auditing after each wave, and aborting on risk-area violations.
 | `/supervise <slug> --goal-mode` | Tracks state in SQLite via `core/infra/supervisor-goal.sh`. Resumable across sessions. Requires `sqlite3` + `jq` (the script exits 127 without them — see README Prerequisites). |
 | `/supervise <slug> --auto-push` | Each wave commits + pushes + opens PR. User merges. |
 | `/supervise <slug> --auto-merge` | Each wave commits + pushes + admin-merges via `auto-ship.sh`. |
+| `/supervise <slug> --converge` | A REFUTED gate becomes a capped new plan wave, not a STOP (`converge.md`). Implies `--verify-blocking`. |
 | `/supervise <slug> --verify-blocking` | Each wave's 2d audit also runs `core/infra/completion-gate.sh` with `AGENT_VERIFY_BLOCKING=block` — a REFUTED completion claim STOPs the wave (default without this flag: `dryrun`, logs only, never blocks). |
 
 ## Permission friction (plan-scope-allow prerequisite)
@@ -127,7 +128,7 @@ serving a goal absent from **Interpreted goal** is flagged as scope drift.
 
 ### 1. Plan validation
 
-a. Read `~/.agent/plans/<slug>.md`.
+a. Read `.agent/plans/<slug>/plan.md` (legacy: `~/.agent/plans/<slug>.md`).
 b. Confirm it has Wave 1..N sections.
 c. Run `bash core/infra/supervisor-goal-audit.sh score --plan <slug> --wave 1`
    — if verdict is `weak`, warn the user and ask whether to proceed.
@@ -148,7 +149,7 @@ than improvising a lane.
 
 ### 2. Per-wave loop
 
-For each wave i ∈ {1..N}:
+For each wave i ∈ {1..N} (N grows under `--converge`):
 
 a. **Read Wave i section** of the plan.
 b. **Classify the wave and pick lanes** based on its content:
@@ -225,12 +226,13 @@ d. **Audit**:
    ```bash
    bash core/infra/completion-gate.sh <slug> <i> [claim-path]
    ```
-   - `--verify-blocking` on the `/supervise` invocation sets
+   - `--verify-blocking` (or `--converge`) on the `/supervise` invocation sets
      `AGENT_VERIFY_BLOCKING=block` for this call (unset/other flags leave the
      script's own default, `dryrun` — logs the verdict, never blocks).
    - block mode + REFUTED (exit 1): STOP, same protocol as a 2d audit FAIL —
      report the printed refutations to the user verbatim, do not auto-fix and
      retry. The user decides next action.
+   - `--converge` + REFUTED: follow `skills/supervise/converge.md` instead of STOP.
    - exit 2 (the gate's own liveness canary failed — a dead completion-verify.py,
      not a refuted claim) is also a STOP: the gate cannot be trusted, report it
      as a harness defect, not a wave failure.
@@ -243,25 +245,8 @@ f. **Wrap** (if `--auto-push` or `--auto-merge`):
 
 ### 2b. Race lanes (opt-in: wave annotated `race: true`)
 
-For a high-stakes wave the plan may annotate `race: true`: the SAME spec goes
-to two independent implementation lanes, and the supervisor picks the stronger
-result. Rules that keep it inside the standing invariants:
-
-- **Two lanes, both patch-only — neither edits the tree.** Lane A is a Claude
-  subagent in an isolated worktree; lane B is the `implementer` role via
-  `core/infra/call-worker.sh` run from a dedicated `.worktrees/race-<slug>/`
-  checkout (which also scopes its workspace-write sandbox). Each lane's
-  deliverable is a patch file under `~/.agent/workers/<project-key>/`, produced with
-  `git diff`, plus a lane report (`skills/supervise/templates/lane-report.md`).
-- **The supervisor is the only tree writer** (one-writer rule preserved): it
-  runs the wave's acceptance command against each patch, compares, applies
-  exactly ONE, and records which lane won and why in RECORD.md.
-- **Race = 2 slots against the wave's fan-out cap.** A race wave carries at
-  most one other concurrent worker.
-- **Judgment stays home**: the compare-and-pick step is main-loop judgment
-  work, never dispatched.
-- If a lane is unavailable (`status: unavailable` capture), the race degrades
-  to a single-lane wave — stated in RECORD.md, never silently.
+Before running a `race: true` wave, read `skills/supervise/race-lanes.md` — it holds
+the one-writer and patch-only rules.
 
 ### 3. Safeguards (immediate abort)
 
@@ -354,7 +339,7 @@ produced; it never blocks completion.
 ## Hard rules
 
 - **Never skip the audit step.** A wave isn't done until the audit passes.
-- **Never auto-retry a failed audit.** Hand off to the user.
+- **Never auto-retry a failed audit** (except the capped `--converge` loop). Hand off to the user.
 - **Never bypass safeguards** even if the user said "full auto".
   "Full auto" = no clarifying-Q at decision forks; it doesn't disable
   safety gates.

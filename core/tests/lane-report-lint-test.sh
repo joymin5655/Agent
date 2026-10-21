@@ -11,6 +11,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 REPORT="$REPO_ROOT/skills/supervise/templates/lane-report.md"
 CONTRACT="$REPO_ROOT/skills/supervise/templates/delegation-contract.md"
 SKILL="$REPO_ROOT/skills/supervise/SKILL.md"
+RACE="$REPO_ROOT/skills/supervise/race-lanes.md"
 
 PASS=0
 FAIL=0
@@ -45,9 +46,9 @@ grep -qi "re-runs\?" "$CONTRACT";             check "contract-caller-reruns" $?
 echo
 echo "=== supervise skill: race lanes stay inside the invariants ==="
 grep -q "race: true" "$SKILL";                check "skill-race-annotation" $?
-grep -qi "patch-only" "$SKILL";               check "skill-race-patch-only" $?
-grep -qi "only tree writer" "$SKILL";         check "skill-one-writer-preserved" $?
-grep -q "lane-report.md" "$SKILL";            check "skill-references-report" $?
+grep -qi "patch-only" "$RACE";               check "skill-race-patch-only" $?
+grep -qi "only tree writer" "$RACE";         check "skill-one-writer-preserved" $?
+grep -q "lane-report.md" "$RACE";            check "skill-references-report" $?
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="

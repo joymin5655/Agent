@@ -25,7 +25,6 @@ set -euo pipefail
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 AUDIT_LOG="$REPO_ROOT/.agent/logs/supervisor-goal-audit.jsonl"
 GOAL_HELPER="$REPO_ROOT/core/infra/supervisor-goal.sh"
-PLANS_DIR="${AGENT_PLANS_DIR:-$HOME/.agent/plans}"
 
 # Project-tunable scoring keywords (override via env vars).
 DOMAIN_OUTPUT_KEYWORDS="${AGENT_DOMAIN_OUTPUT_KEYWORDS:-uncertainty|confidence|tolerance}"
@@ -60,9 +59,20 @@ if [[ -z "$PLAN_SLUG" || -z "$WAVE_NUM" ]]; then
     exit 2
 fi
 
-PLAN_FILE="$PLANS_DIR/${PLAN_SLUG}.md"
+# /spec writes <root>/<slug>/plan.md; the flat <slug>.md is the legacy layout.
+# AGENT_PLANS_DIR (when set) is the plans root; otherwise the directory layout is
+# repo-relative and the legacy flat file lives under $HOME/.agent/plans.
+if [[ -n "${AGENT_PLANS_DIR:-}" ]]; then
+    PLAN_CANDIDATES=("$AGENT_PLANS_DIR/${PLAN_SLUG}/plan.md" "$AGENT_PLANS_DIR/${PLAN_SLUG}.md")
+else
+    PLAN_CANDIDATES=("$REPO_ROOT/.agent/plans/${PLAN_SLUG}/plan.md" "$HOME/.agent/plans/${PLAN_SLUG}.md")
+fi
+PLAN_FILE="${PLAN_CANDIDATES[0]}"
+for cand in "${PLAN_CANDIDATES[@]}"; do
+    if [[ -f "$cand" ]]; then PLAN_FILE="$cand"; break; fi
+done
 if [[ ! -f "$PLAN_FILE" ]]; then
-    echo "ERROR: plan missing: $PLAN_FILE" >&2
+    echo "ERROR: plan missing: ${PLAN_CANDIDATES[*]}" >&2
     exit 3
 fi
 
@@ -88,19 +98,20 @@ fi
 # `grep -c PATTERN FILE` is captured whole: PATTERN may be single- or double-quoted
 # (spaces allowed) and FILE ends the command, so prose after it (`→`, backticks,
 # ` -> `) is never swept into the eval'd check. Option tokens (`-v`, `--`) may precede
-# PATTERN; a match containing `$(` or a backtick is dropped because the check is eval'd.
+# PATTERN. Any match containing `$(` or a backtick is dropped because the check is eval'd.
+# A converge wave's `- fix: <gap> → verify: <cmd>` step contributes only <cmd>: the gap
+# text comes from verifier output and must never reach eval. The completion-gate
+# alternative keeps `<slug> <wave>` (strict charset) so a converge wave can audit itself.
 declare -a CHECKS=()
+# shellcheck disable=SC2016  # the ERE and the sed expression are single-quoted on purpose
 while IFS= read -r cmd; do
     cmd="$(echo "$cmd" | sed -E 's/^[[:space:]]+|[[:space:]]+$//g')"
     [[ -z "$cmd" ]] && continue
-    case "$cmd" in
-        grep\ -c*)
-            # eval'd below: never let a captured command substitution run
-            # shellcheck disable=SC2016  # literal `$(` is the thing being matched
-            case "$cmd" in *'$('*|*'`'*) continue ;; esac ;;
-    esac
+    # eval'd below: never let a captured command substitution run
+    # shellcheck disable=SC2016  # literal `$(` is the thing being matched
+    case "$cmd" in *'$('*|*'`'*) echo "[audit] dropped (substitution): $cmd" >&2; continue ;; esac
     CHECKS+=("$cmd")
-done < <({ echo "$WAVE_SECTION" | grep -oE '(npm run (build|lint|test|test:run|test:e2e|typecheck|test:a11y)|npx tsc[^[:space:]]*|pytest[^"]*|uv run pytest[^"]*|ruff check[^"]*|test -f [^[:space:]]+|test ! -f [^[:space:]]+|bash -n [^[:space:]]+|wc -l [^[:space:]]+|grep -c (-[A-Za-z]+ |-- )*("([^"\\]|\\.)*"|'"'"'[^'"'"']*'"'"'|[^[:space:]`"'"'"']+) ("[^"]+"|'"'"'[^'"'"']+'"'"'|[^[:space:]`"'"'"'|;&<>()$]+)|bash core/[^[:space:]]+\.sh|bash tests/[^[:space:]]+\.sh|tests/integration/[^[:space:]]+\.sh|jq [^"|]+\.(jsonl|json)|time bash [^[:space:]]+\.sh)' || true; } | sort -u)
+done < <({ echo "$WAVE_SECTION" | sed -E 's/^- fix: .* (→|->) verify: /- verify: /' | grep -oE '(npm run (build|lint|test|test:run|test:e2e|typecheck|test:a11y)|npx tsc[^[:space:]`]*|pytest[^"`]*|uv run pytest[^"`]*|ruff check[^"`]*|test -f [^[:space:]`]+|test ! -f [^[:space:]`]+|bash -n [^[:space:]`]+|wc -l [^[:space:]`]+|grep -c (-[A-Za-z]+ |-- )*("([^"\\]|\\.)*"|'"'"'[^'"'"']*'"'"'|[^[:space:]`"'"'"']+) ("[^"]+"|'"'"'[^'"'"']+'"'"'|[^[:space:]`"'"'"'|;&<>()$]+)|bash core/infra/completion-gate\.sh [A-Za-z0-9._-]+ [0-9]+|bash core/[^[:space:]]+\.sh|bash tests/[^[:space:]]+\.sh|tests/integration/[^[:space:]]+\.sh|jq [^"|]+\.(jsonl|json)|time bash [^[:space:]]+\.sh)' || true; } | sort -u)
 
 # ---------- Scoring functions (deterministic — no LLM calls) ----------
 
@@ -228,7 +239,12 @@ ALL_PASS=true
 for cmd in "${CHECKS[@]}"; do
     echo "[audit] running: $cmd" >&2
     LOG_FILE=$(mktemp)
-    if eval "$cmd" > "$LOG_FILE" 2>&1 < /dev/null; then
+    # Any completion-gate check (every converge wave has one) runs as a dryrun liveness
+    # check (exit 2 = dead gate). The blocking verdict is step 2d's own gate call, so an
+    # inherited AGENT_VERIFY_BLOCKING=block must not turn a REFUTED wave into an audit FAIL.
+    run="$cmd"
+    case "$cmd" in "bash core/infra/completion-gate.sh "*) run="AGENT_VERIFY_BLOCKING=dryrun $cmd" ;; esac
+    if eval "$run" > "$LOG_FILE" 2>&1 < /dev/null; then
         PASS=true
         EXIT_CODE=0
     else

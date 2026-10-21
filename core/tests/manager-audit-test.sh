@@ -246,6 +246,14 @@ if has_finding role-compliance wave-audit-missing FAIL; then ok "c1-unaudited-wa
 if jq -e '.findings[] | select(.check=="wave-audit-missing") | .evidence | contains("2")' <<< "$OUT" >/dev/null 2>&1; then
     ok "c2-names-missing-wave"
 else bad "c2" "$(jq -c '.findings[] | select(.check=="wave-audit-missing")' <<< "$OUT")"; fi
+# plan layout: <root>/<slug>/plan.md is read like the legacy flat <slug>.md
+mkdir -p "$PLANS/dirlayout"; cp "$PLANS/good.md" "$PLANS/dirlayout/plan.md"
+run dirlayout
+if has_finding role-compliance wave-audit-missing FAIL && ! has_finding role-compliance plan-missing WARN; then
+    ok "c1b-directory-layout-plan-read"
+else bad "c1b" "$OUT"; fi
+run no-such-plan
+if has_finding role-compliance plan-missing WARN; then ok "c1c-missing-plan-WARN"; else bad "c1c" "$OUT"; fi
 run retry
 if has_finding role-compliance never-auto-retry-violated FAIL; then ok "c3-fail-then-continue-FAIL"; else bad "c3" "$OUT"; fi
 run remedy

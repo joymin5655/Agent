@@ -35,6 +35,9 @@ you could not find a gap.
 5. **Write ownership** — no wave puts two writers on one file.
 6. **Scope** — the plan stays inside the spec's `## Out of scope`; flag steps
    that cross it and in-scope work the plan silently drops.
+7. **Guard coverage** — every `## Must not` and `## Edge cases` line (other
+   than `none —`) has a wave step whose verify actually provokes that
+   situation (a negative test), not just mentions it. Name each uncovered line.
 
 ## Output
 
@@ -50,7 +53,8 @@ else:
     "criteria":  { "passed": 0, "total": 0 },
     "decisions": { "passed": 0, "total": 0 },
     "verify":    { "passed": 0, "total": 0 },
-    "ordering":  { "passed": 0, "total": 0 }
+    "ordering":  { "passed": 0, "total": 0 },
+    "guards":    { "passed": 0, "total": 0 }
   },
   "refutations": [],
   "schema_version": "1.0.0"

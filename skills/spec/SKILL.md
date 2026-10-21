@@ -105,6 +105,14 @@ Pick a short kebab-case `<slug>` and write `.agent/plans/<slug>/spec.md`:
 ## Out of scope
 - <explicitly deferred>
 
+## Must not
+- <behaviour the feature must never show — falsifiable, the thing to check in `backticks`>
+- none — <reason>          <!-- use INSTEAD of lines when nothing is forbidden -->
+
+## Edge cases
+- <unspoken detail: empty input, failure, concurrency, legacy data> → <DECIDED behaviour>
+- none — <reason>          <!-- use INSTEAD of lines when there are none -->
+
 ## Decisions
 - D1: <decision> — settled by <interview|approach|user>
 - none — <reason>          <!-- use INSTEAD of D-lines when nothing was decided -->
@@ -127,6 +135,12 @@ decision, or `- none — <reason>` when nothing was decided. D-IDs are stable �
 never renumber; append new ones. `settled:` in the interview log cites the D-ID.
 `/verify-completion` checks that the completion claim covers each D-ID (advisory,
 dryrun) through the claim's optional `decisions: [{id, evidence}]` field.
+
+`## Must not` and `## Edge cases` are mandatory too, with the same `- none — <reason>`
+escape. Decide them here, with the human, before the model fills the gap silently: each
+line becomes a negative test. `plan-lint.sh` checks their backticked terms like success
+criteria (one term must appear in a Wave step), and `plan-checker` checks that a step's
+verify actually provokes each situation.
 
 The remaining trailing sections are submode-specific — `## Candidate scoring` on
 `--score-candidates` runs, `## Interview log` / `## Open questions` on
@@ -174,9 +188,10 @@ Before asking for approval, lint and review the plan:
 
 1. Run `bash core/infra/plan-lint.sh <slug>` (deterministic). Exit 1 names the
    defects: a missing `## Wave N:` header, a step without `→ verify:`, a prose
-   verify without `reason:`, a spec with no `## Decisions` section, or a success
-   criterion with backticked terms of which none is mentioned in a Wave step
-   (any one hit is enough, not every term).
+   verify without `reason:`, a spec missing `## Decisions`, `## Must not` or
+   `## Edge cases`, or a success criterion, must-not or edge-case line with
+   backticked terms of which none is mentioned in a Wave step (any one hit is
+   enough, not every term).
 2. When lint passes, dispatch the read-only `plan-checker` agent
    (`agent-harness:plan-checker`) with the `spec.md` and `plan.md` paths. It returns
    a verdict-schema object (`docs/scoring-convention.md`); its `refutations` are

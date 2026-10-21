@@ -5,6 +5,7 @@
 #   bash core/infra/supervisor-goal.sh init <plan-slug> <total-waves> [budget] [objective]
 #   bash core/infra/supervisor-goal.sh status [plan-slug]
 #   bash core/infra/supervisor-goal.sh advance-wave <plan-slug> <completed-wave-num>
+#   bash core/infra/supervisor-goal.sh add-wave <plan-slug>
 #   bash core/infra/supervisor-goal.sh pause <plan-slug>
 #   bash core/infra/supervisor-goal.sh resume <plan-slug>
 #   bash core/infra/supervisor-goal.sh complete <plan-slug>
@@ -193,6 +194,31 @@ WHERE plan_slug = '$(sql_escape "$slug")'
   AND status = 'active';
 SQL
 
+    cmd_status "$slug"
+}
+
+# --converge: a REFUTED wave becomes a new plan wave, so the goal grows by one.
+# total_waves is otherwise written only by init.
+cmd_add_wave() {
+    local slug="${1:-}"
+    if [[ -z "$slug" ]]; then
+        echo "usage: supervisor-goal.sh add-wave <plan-slug>" >&2
+        exit 2
+    fi
+    init_db
+    local status
+    status=$(sqlite3 "$DB_FILE" "SELECT status FROM supervisor_goals WHERE plan_slug = '$(sql_escape "$slug")';")
+    if [[ -z "$status" ]]; then
+        echo "ERROR: goal not found: $slug" >&2
+        exit 3
+    fi
+    if [[ "$status" == "complete" || "$status" == "aborted" ]]; then
+        echo "ERROR: goal $slug is $status; cannot add a wave" >&2
+        exit 3
+    fi
+    local _now; _now="$(now_ms)"
+    sqlite3 "$DB_FILE" "UPDATE supervisor_goals SET total_waves = total_waves + 1, updated_at_ms = $_now
+        WHERE plan_slug = '$(sql_escape "$slug")';"
     cmd_status "$slug"
 }
 
@@ -592,6 +618,7 @@ case "${1:-}" in
     init)         shift; cmd_init "$@" ;;
     status)       shift; cmd_status "$@" ;;
     advance-wave) shift; cmd_advance_wave "$@" ;;
+    add-wave)     shift; cmd_add_wave "$@" ;;
     pause)        shift; cmd_pause "$@" ;;
     resume)       shift; cmd_resume "$@" ;;
     complete)     shift; cmd_complete "$@" ;;
@@ -608,6 +635,7 @@ Commands:
   init <plan-slug> <total-waves> [budget] [objective]
   status [plan-slug]
   advance-wave <plan-slug> <completed-wave-num>
+  add-wave <plan-slug>         (total_waves += 1; refused when complete/aborted)
   pause <plan-slug>
   resume <plan-slug>
   complete <plan-slug>

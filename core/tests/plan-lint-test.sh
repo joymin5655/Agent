@@ -22,7 +22,8 @@ check() {
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
-# new_fixture — a clean plan+spec dir; echoes its path.
+# new_fixture — a clean plan+spec dir; echoes its path. Success criteria comes
+# last so cases that append a bullet to spec.md extend that section.
 new_fixture() {
   local fx; fx="$(mktemp -d "$TMP_ROOT/fxXXXXXX")"
   cat > "$fx/plan.md" <<'PLAN'
@@ -38,6 +39,12 @@ PLAN
 
 ## Decisions
 - none (fixture)
+
+## Must not
+- none — fixture
+
+## Edge cases
+- none — fixture
 
 ## Success criteria
 - `widget.sh` exits 0 on a clean input.
@@ -221,10 +228,62 @@ check "dot-is-dir" "$(rc_is 0)"
 echo
 echo "=== (15) fix8: spec without ## Decisions -> FAIL ==="
 FX=$(new_fixture)
-printf '# demo\n\n## Success criteria\n- `widget.sh` ok\n' > "$FX/spec.md"
+printf '# demo\n\n## Success criteria\n- `widget.sh` ok\n\n## Must not\n- none — x\n\n## Edge cases\n- none — x\n' > "$FX/spec.md"
 run_lint "$FX"
 check "no-decisions-fails" "$(rc_is 1)"
 out_has 'spec has no ## Decisions section'; check "no-decisions-named" $?
+
+echo
+echo "=== (15b) spec without ## Must not / ## Edge cases -> FAIL ==="
+FX=$(new_fixture)
+printf '# demo\n\n## Decisions\n- none — x\n\n## Edge cases\n- none — x\n' > "$FX/spec.md"
+run_lint "$FX"
+check "no-mustnot-fails" "$(rc_is 1)"
+out_has 'spec has no ## Must not section'; check "no-mustnot-named" $?
+FX=$(new_fixture)
+printf '# demo\n\n## Decisions\n- none — x\n\n## Must not\n- none — x\n' > "$FX/spec.md"
+run_lint "$FX"
+check "no-edge-fails" "$(rc_is 1)"
+out_has 'spec has no ## Edge cases section'; check "no-edge-named" $?
+# the `- none — reason` bullet has no backticks, so it is skipped by the term check
+FX=$(new_fixture)
+run_lint "$FX"
+check "none-reason-passes" "$(rc_is 0)"
+
+echo
+echo "=== (15b2) present-but-empty Must not / Edge cases -> FAIL ==="
+FX=$(new_fixture)
+printf '# demo\n\n## Decisions\n- none — x\n\n## Must not\n\n## Edge cases\n- none — x\n' > "$FX/spec.md"
+run_lint "$FX"
+check "empty-mustnot-fails" "$(rc_is 1)"
+out_has 'spec ## Must not section is empty'; check "empty-mustnot-named" $?
+FX=$(new_fixture)
+printf '# demo\n\n## Decisions\n- none — x\n\n## Must not\n- none — x\n\n## Edge cases\nprose only, no bullet\n' > "$FX/spec.md"
+run_lint "$FX"
+check "empty-edge-fails" "$(rc_is 1)"
+out_has 'spec ## Edge cases section is empty'; check "empty-edge-named" $?
+FX=$(new_fixture)
+printf '# demo\n\n## Decisions\n\n## Must not\n- none — x\n\n## Edge cases\n- none — x\n' > "$FX/spec.md"
+run_lint "$FX"
+check "empty-decisions-unchanged" "$(rc_is 0)"
+echo
+echo "=== (15c) Must not / Edge cases terms must appear in a Wave step ==="
+FX=$(new_fixture)
+printf '# demo\n\n## Decisions\n- none — x\n\n## Must not\n- `ghost-term` must never happen\n\n## Edge cases\n- none — x\n' > "$FX/spec.md"
+run_lint "$FX"
+check "unref-mustnot-fails" "$(rc_is 1)"
+out_has 'must-not not referenced by plan'; check "unref-mustnot-reason" $?
+out_has 'ghost-term'; check "unref-mustnot-named" $?
+FX=$(new_fixture)
+printf '# demo\n\n## Decisions\n- none — x\n\n## Must not\n- none — x\n\n## Edge cases\n- `ghost-term` is an unhandled edge\n' > "$FX/spec.md"
+run_lint "$FX"
+check "unref-edge-fails" "$(rc_is 1)"
+out_has 'edge case not referenced by plan'; check "unref-edge-reason" $?
+out_has 'ghost-term'; check "unref-edge-named" $?
+FX=$(new_fixture)
+printf '# demo\n\n## Decisions\n- none — x\n\n## Must not\n- none — x\n\n## Edge cases\n- `widget.sh` given empty input exits 2\n' > "$FX/spec.md"
+run_lint "$FX"
+check "ref-edge-passes" "$(rc_is 0)"
 
 echo
 echo "=== (16) fix9: no spec.md -> spec checks skipped ==="

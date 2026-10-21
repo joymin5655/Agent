@@ -87,6 +87,64 @@ echo "=== other extractors unchanged ==="
 check "bash-core-script-still-captured" 'bash core/tests/x.sh' "$(run_audit '- `bash core/tests/x.sh` -> exit 0')"
 check "test-f-still-captured" 'test -f f.txt' "$(run_audit 'Check: test -f f.txt')"
 
+echo "=== plan path: directory layout first, legacy flat file as fallback ==="
+dir_plan() {  # dir_plan <path> <check-file>: write a one-wave plan whose check is `test -f <check-file>`
+  mkdir -p "$(dirname "$1")"
+  printf '## Wave 1: t\n\n- Check: test -f %s\n' "$2" > "$1"
+}
+req() { jq -r '.requirements[]' 2>/dev/null; }
+dir_plan "$AGENT_PLANS_DIR/d/plan.md" dir.txt
+check "env-root-directory-layout" 'test -f dir.txt' "$(bash "$AUDIT" d 1 2>/dev/null | req)"
+dir_plan "$AGENT_PLANS_DIR/b/plan.md" dir.txt
+dir_plan "$AGENT_PLANS_DIR/b.md" flat.txt
+check "env-root-directory-beats-flat" 'test -f dir.txt' "$(bash "$AUDIT" b 1 2>/dev/null | req)"
+dir_plan "$AGENT_PLANS_DIR/l.md" flat.txt
+check "env-root-legacy-flat-still-read" 'test -f flat.txt' "$(bash "$AUDIT" l 1 2>/dev/null | req)"
+dir_plan "$TMP/repo/.agent/plans/r/plan.md" repo.txt
+check "repo-relative-directory-layout" 'test -f repo.txt' "$(env -u AGENT_PLANS_DIR bash "$AUDIT" r 1 2>/dev/null | req)"
+mkdir -p "$TMP/home"
+dir_plan "$TMP/home/.agent/plans/h.md" home.txt
+check "home-legacy-flat-fallback" 'test -f home.txt' "$(env -u AGENT_PLANS_DIR HOME="$TMP/home" bash "$AUDIT" h 1 2>/dev/null | req)"
+env -u AGENT_PLANS_DIR HOME="$TMP/home" bash "$AUDIT" nope 1 >/dev/null 2>&1
+check "missing-plan-exits-3" "3" "$?"
+
+echo "=== converge waves: full gate command kept, gap text never reaches eval ==="
+check "converge-gate-keeps-slug-and-wave" 'bash core/infra/completion-gate.sh demo 2' \
+  "$(run_audit '- fix: file widget.sh missing → verify: `bash core/infra/completion-gate.sh demo 2`')"
+check "gate-without-args-still-captured" 'bash core/infra/completion-gate.sh' \
+  "$(run_audit '- `bash core/infra/completion-gate.sh`')"
+rm -f PWNED
+check "fix-text-command-not-extracted" 'bash core/infra/completion-gate.sh demo 2' \
+  "$(run_audit '- fix: pytest x failed $(touch PWNED) → verify: `bash core/infra/completion-gate.sh demo 2`')"
+check "fix-text-shell-metachars-not-extracted" 'bash core/infra/completion-gate.sh demo 2' \
+  "$(run_audit '- fix: pytest tests/ failed; touch PWNED → verify: `bash core/infra/completion-gate.sh demo 2`')"
+check "plain-pytest-with-substitution-dropped" "" "$(run_audit 'Check: pytest x failed $(touch PWNED)')"
+check "test-f-with-substitution-dropped" "" "$(run_audit 'Check: test -f $(touch PWNED)')"
+check "bash-core-with-backtick-dropped" "" "$(run_audit 'Check: bash core/a`touch PWNED`.sh')"
+check "backticked-pytest-stops-at-backtick" 'pytest tests/' "$(run_audit 'Run `pytest tests/` first')"
+check "backticked-test-f-stops-at-backtick" 'test -f f.txt' "$(run_audit 'Check: `test -f f.txt`')"
+check "backticked-wc-l-stops-at-backtick" 'wc -l f.txt' "$(run_audit 'Check: `wc -l f.txt`')"
+check "nothing-was-executed-by-converge-cases" "no" "$([[ -e PWNED ]] && echo yes || echo no)"
+
+echo "=== a converge wave's gate check runs as a dryrun even under an inherited block mode ==="
+mkdir -p core/infra
+# stub gate: fails only in block mode, like a REFUTED verdict
+printf '#!/usr/bin/env bash\necho "mode=${AGENT_VERIFY_BLOCKING:-unset}"\n[[ "${AGENT_VERIFY_BLOCKING:-}" != block ]]\n' \
+  > core/infra/completion-gate.sh
+printf '## Wave 2: converge 1\n- fix: gap → verify: `bash core/infra/completion-gate.sh p 2`\n' > "$AGENT_PLANS_DIR/p.md"
+OUT=$(AGENT_VERIFY_BLOCKING=block bash "$AUDIT" p 2 2>/dev/null)
+check "inherited-block-gate-check-passes" "true" "$(jq -r '.evidence[0].pass' <<<"$OUT")"
+check "inherited-block-gate-ran-dryrun" "mode=dryrun" "$(jq -r '.evidence[0].log_tail' <<<"$OUT")"
+printf '## Wave 1: t\n- `wc -l f.txt` -> 3\n' > "$AGENT_PLANS_DIR/p.md"
+OUT=$(AGENT_VERIFY_BLOCKING=block bash "$AUDIT" p 1 2>/dev/null)
+check "other-checks-keep-env" "true" "$(jq -r '.evidence[0].pass' <<<"$OUT")"
+echo "=== an ASCII -> marker on a fix step also keeps gap text out ==="
+check "ascii-arrow-fix-text-not-extracted" 'bash core/infra/completion-gate.sh demo 2' \
+  "$(run_audit '- fix: pytest x; touch PWNED -> verify: `bash core/infra/completion-gate.sh demo 2`')"
+echo "=== a dropped command is reported on stderr ==="
+printf '## Wave 1: t\n\nCheck: test -f $(touch PWNED)\n' > "$AGENT_PLANS_DIR/p.md"
+check "drop-is-logged" "1" "$(bash "$AUDIT" p 1 2>&1 >/dev/null | grep -c 'dropped (substitution)')"
+
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]
