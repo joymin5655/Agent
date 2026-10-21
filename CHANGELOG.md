@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `AGENT_FLOOR_GUARD=off`; firings go to `.agent/logs/floor-guard.jsonl` (new `floor-guard` row
   in `docs/gate-registry.md`) so a later block/no-block decision rests on measured data.
 
+### Changed
+- **harness-loop hillclimb discipline** (`extras/skills/harness-loop/SKILL.md`): one change per
+  attempt, frozen measurement for the whole run, a candidate kept only if it beats the best score
+  on 3 grading runs (Pass^3 convention), and no early success before 3 graded attempts unless
+  cap/circuit-breaker. Idea from cursor/plugins pstack `hillclimb` (MIT).
+
 ## [0.12.0] - 2026-10-21
 
 ### Added
