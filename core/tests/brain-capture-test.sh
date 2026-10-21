@@ -20,6 +20,9 @@ export REPO_ROOT
 HOOK="$REPO_ROOT/core/hooks/brain-capture.py"
 BRAIN_DIR="$(mktemp -d)"
 export AGENT_BRAIN_DIR="$BRAIN_DIR"
+# A caller who opted out (AGENT_BRAIN_CAPTURE=off) must not turn every capture case into
+# delta=0; the opt-out cases below set the variable per call.
+unset AGENT_BRAIN_CAPTURE
 DIRTY="$(mktemp -d)"
 CLEAN="$(mktemp -d)"
 cleanup() { rm -rf "$BRAIN_DIR" "$DIRTY" "$CLEAN"; }
