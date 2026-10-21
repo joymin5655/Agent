@@ -125,7 +125,7 @@ FW="$WORK/fw"
 STUBS="core/hooks"
 UNION="pre-tool-guard.sh loop-write-guard.py r4-mutex-check.sh check-hardcoding.py secret-content-scan.py
 r4-file-mutex-check.sh tdd-guard.py spec-gate.py circuit-breaker.py verify-observer.py
-r4-file-mutex-register.sh session-quality-gate.py brain-capture.py session-close.sh"
+r4-file-mutex-register.sh session-quality-gate.py brain-capture.py session-close.sh floor-guard.py"
 fake_fw() {
     rm -rf "$FW"
     mkdir -p "$FW/adapters/antigravity" "$FW/$STUBS/.mode"
@@ -259,7 +259,7 @@ fake_fw
 agy PreToolUse "$(mk run_command "$(J CommandLine="echo hi" Cwd="$PROJ/src")")"
 dump_check "bash-canonical-shape-and-chain" '
 names = [r["hook"] for r in rows]
-assert names == ["pre-tool-guard.sh", "loop-write-guard.py", "r4-mutex-check.sh"], names
+assert names == ["pre-tool-guard.sh", "loop-write-guard.py", "r4-mutex-check.sh", "floor-guard.py"], names
 ev = rows[0]["ev"]
 assert ev["ai"] == "antigravity" and ev["event"] == "PreToolUse" and ev["hook_event_name"] == "PreToolUse", ev
 assert ev["tool_name"] == "Bash" and ev["tool_input"] == {"command": "echo hi"}, ev
@@ -295,7 +295,7 @@ import json, os, sys
 rows = [l.rstrip("\n").split("\t", 4) for l in open(sys.argv[1]) if l.strip()]
 names = [r[0] for r in rows]
 assert names == ["check-hardcoding.py", "secret-content-scan.py", "r4-file-mutex-check.sh", "tdd-guard.py",
-                 "spec-gate.py", "loop-write-guard.py", "r4-mutex-check.sh"], names
+                 "spec-gate.py", "loop-write-guard.py", "r4-mutex-check.sh", "floor-guard.py"], names
 ev = json.loads(rows[0][4])
 assert ev["tool_name"] == "Write" and ev["tool_input"]["content"] == "print(1)\n", ev
 assert ev["tool_input"]["file_path"] == os.path.normpath(os.environ["PROJ"] + "/src/k.py"), ev["tool_input"]
@@ -314,7 +314,7 @@ agy PreToolUse "$(mk multi_replace_file_content "$(multi "$CLEAN_CHUNKS")")"
 if python3 - "$DUMP_FILE" <<'PY'
 import json, sys
 rows = [l.rstrip("\n").split("\t", 4) for l in open(sys.argv[1]) if l.strip()]
-assert len(rows) == 14, len(rows)  # 2 chunks x 7 file-guard hooks
+assert len(rows) == 16, len(rows)  # 2 chunks x 8 file-guard hooks
 edits = [json.loads(r[4]) for r in rows if r[0] == "secret-content-scan.py"]
 assert [(e["tool_name"], e["tool_input"]["old_string"], e["tool_input"]["new_string"]) for e in edits] == \
        [("Edit", "a", "b"), ("Edit", "c", "d")], edits
@@ -468,7 +468,7 @@ done
 : > "$DUMP_FILE"
 pre_expect "send-input-benign-passthrough" ask "$(mk send_command_input "$(J CommandId=c1 Input="ls -la")")"
 dump_check "send-input-runs-bash-chain" '
-assert [r["hook"] for r in rows] == ["pre-tool-guard.sh", "loop-write-guard.py", "r4-mutex-check.sh"], rows
+assert [r["hook"] for r in rows] == ["pre-tool-guard.sh", "loop-write-guard.py", "r4-mutex-check.sh", "floor-guard.py"], rows
 ev = rows[0]["ev"]
 assert ev["tool_name"] == "Bash" and ev["tool_input"] == {"command": "ls -la"}, ev
 '

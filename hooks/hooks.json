@@ -43,7 +43,8 @@
         "matcher": "Bash",
         "hooks": [
           { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" pre-tool-guard.sh", "timeout": 30 },
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" loop-write-guard.py", "timeout": 30 }
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" loop-write-guard.py", "timeout": 30 },
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" floor-guard.py", "timeout": 15 }
         ]
       },
       {
@@ -69,6 +70,12 @@
           { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" loop-write-guard.py", "timeout": 30 },
           { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" supervisor.py", "timeout": 30 },
           { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" plan-scope-allow.py", "timeout": 30 }
+        ]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/adapters/claude-code/adapter.sh\" floor-guard.py", "timeout": 15 }
         ]
       },
       {

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **floor-guard** (`core/hooks/floor-guard.py`, PreToolUse `Write|Edit|MultiEdit` and `Bash`):
+  warn-only advisory (`additionalContext`, never a permission decision) when a change lowers a
+  quality floor. Counts test-skip and type/lint-suppression markers ADDED by an Edit, MultiEdit
+  (summed) or Write (against the file on disk), and, conservatively, `rm`/`git rm` of test
+  files, `sed -i`/`perl -i` adding a skip, and `pytest --deselect` / `-k "not ..."`. Opt out with
+  `AGENT_FLOOR_GUARD=off`; firings go to `.agent/logs/floor-guard.jsonl` (new `floor-guard` row
+  in `docs/gate-registry.md`) so a later block/no-block decision rests on measured data.
+
 ## [0.12.0] - 2026-10-21
 
 ### Added

@@ -51,10 +51,11 @@ The `settings.json.template` wires up:
 | SessionStart | `*` | `agent-session-start.sh`, `session-init.py` |
 | Stop | `*` | `session-quality-gate.py`, `brain-capture.py`, `session-close.sh` |
 | UserPromptSubmit | `*` | `agent-session-heartbeat.sh`, `supervisor.py` |
-| PreToolUse | `Bash` | `pre-tool-guard.sh` |
+| PreToolUse | `Bash` | `pre-tool-guard.sh`, `floor-guard.py` |
 | PreToolUse | `Bash\|mcp__.*` | `r4-mutex-check.sh` |
 | PreToolUse | `mcp__.*context[-_]mode__ctx_(batch_)?execute(_file)?` | `context-mode-guard.sh` |
 | PreToolUse | `Write\|Edit\|MultiEdit` | hardcoding, secret, mutex, TDD, spec, supervisor, plan-scope hooks |
+| PreToolUse | `Write\|Edit\|MultiEdit` | `floor-guard.py` (warn-only) |
 | PreToolUse | selected WebFetch and MCP tools | `secret-content-scan.py` |
 | PostToolUse | `ExitPlanMode\|Task\|Agent` | plan gate, supervisor, model-routing observer |
 | PostToolUse | `Bash` | circuit breaker, rubric commit observer |

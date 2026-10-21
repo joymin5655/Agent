@@ -151,7 +151,7 @@ flowchart LR
 | 용어 | 쉬운 뜻 |
 |---|---|
 | **하네스(harness)** | 에이전트 + 훅 + 스킬 + 규칙을 묶어 AI를 감싸는 안전 계층 전체. |
-| **훅(hook)** | AI 런타임이 어떤 행동 전/후에 자동으로 실행하는 작은 스크립트. **allow**, **ask**, **deny** 중 하나로 답합니다. [`core/hooks/`](core/hooks/)에 `hooks/hooks.json`으로 배선된 스크립트 27개(공유 모듈 포함 31개)가 있습니다. |
+| **훅(hook)** | AI 런타임이 어떤 행동 전/후에 자동으로 실행하는 작은 스크립트. **allow**, **ask**, **deny** 중 하나로 답합니다. [`core/hooks/`](core/hooks/)에 `hooks/hooks.json`으로 배선된 스크립트 27개(공유 모듈 포함 32개)가 있습니다. |
 | **어댑터(adapter)** | 각 AI CLI의 고유 이벤트 형식과 하네스의 표준 JSON 사이를 번역하는 얇은 계층. 런타임 어댑터 3개(claude-code, codex, antigravity)가 [`adapters/`](adapters/)에 있습니다. |
 | **에이전트(agent)** | AI가 일을 위임하는 전문가 — 예: 리뷰만 하고 절대 코드를 쓰지 않는 보안 리뷰어. 코어에 3종([`agents/`](agents/)), extras 플러그인에 1종이 포함됩니다. |
 | **스킬(skill)** | AI가 따라가는 재사용 가능한 단계별 워크플로우 — 예: 커밋+PR 자동화 흐름. 코어에 6종([`skills/`](skills/)), 선택 extras 플러그인에 9종([`extras/skills/`](extras/skills/))이 포함됩니다. |
@@ -439,12 +439,13 @@ manager-audit의 발견은 절대 스스로 적용되지 않습니다 — `PROPO
 | `harness-loop` · `loop` | 횟수 상한이 있는 반복 개선 루프 — 범용(`loop`)과 하네스 자체 리뷰어 프롬프트용(`harness-loop`); 내장 `/loop`와 다르므로 `/agent-harness-extras:loop`로 호출 |
 | `worker-setup` | 크로스벤더 워커 레인 설치 → 인증 → 검증 온보딩(비용 안내 먼저) |
 
-| 훅 — 27개 배선(`hooks/hooks.json` → `core/hooks/`, 공유 모듈 포함 스크립트 31개) | 이벤트 |
+| 훅 — 27개 배선(`hooks/hooks.json` → `core/hooks/`, 공유 모듈 포함 스크립트 32개) | 이벤트 |
 |---|---|
 | secret-content-scan · check-hardcoding | PreToolUse (Write/Edit) |
 | pre-tool-guard · r4-mutex · context-mode-guard | PreToolUse |
 | tdd-guard · spec-gate · supervisor · plan-scope-allow | PreToolUse (Write/Edit) |
 | model-routing-advisor | PreToolUse (Task/Agent) |
+| floor-guard | PreToolUse (Write/Edit/MultiEdit, Bash) |
 | 세션 하트비트 | UserPromptSubmit |
 | plan-gate · model-routing-observer | PostToolUse (ExitPlanMode/Task/Agent) |
 | session-quality-gate · brain-capture · session-close | Stop |
@@ -469,7 +470,7 @@ Agent/
 ├── hooks/              # 플러그인 훅 배선 (hooks.json)
 │
 ├── core/               # AI 무관 코어 — 진실 원천
-│   ├── hooks/          #   이식 가능한 훅 스크립트 31개 (배선 27 + 공유 모듈)
+│   ├── hooks/          #   이식 가능한 훅 스크립트 32개 (배선 27 + 공유 모듈)
 │   ├── infra/          #   세션 조정 · goal 모드 · 감사 · auto-ship
 │   ├── git-hooks/      #   pre-commit · pre-push
 │   └── tests/          #   테스트 스크립트 108개 (verify-all.sh가 전부 실행)

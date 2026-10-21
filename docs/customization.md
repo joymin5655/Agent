@@ -137,6 +137,7 @@ are still hardcoded in the script (`hardcoding:` is documentation only).
 | `r4-mutex-check.sh` | Yes — `resources.<name>.triggers` (extension-only) | Built-in resource triggers first; config adds resources; matches against the lock file |
 | `core/git-hooks/pre-push`, `core/infra/auto-ship.sh` | Yes — `risk_areas.data/deploy/payment` | Built-in/env patterns unioned with config; pre-push advisory (block only on declared `deny`), auto-ship aborts |
 | `check-hardcoding.py` | No — hardcoded in-script (patterns/exempts; wiring = backlog T-4) | Flags hardcoded design literals. Default **dryrun** (advisory + `.agent/logs/hardcoding.jsonl`); `AGENT_HARDCODING_MODE=off\|dryrun\|block` (block restores the pre-2026-07 deny). Note: `off` exits before any logging, so the telemetry digest shows the gate as DEAD while off — unenforced AND untelemetered |
+| `floor-guard.py` | No — markers and test-path shapes are hardcoded in-script | Warn-only (`additionalContext`, never a decision) when a change adds a test skip or lint/type suppression, deletes a test file, or deselects tests. `AGENT_FLOOR_GUARD=off` disables it; firings go to `.agent/logs/floor-guard.jsonl` |
 
 ---
 

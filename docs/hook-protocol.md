@@ -162,7 +162,7 @@ The framework's logical policy precedence for `PreToolUse` is:
 4. sandbox bypass detection    (context-mode-guard if relevant)
 5. specialist dispatch         (supervisor.py)
 6. workflow guards             (plan-gate, tdd-guard)
-7. observation                 (broadcast, record-*, model-routing-observer, model-routing-advisor)
+7. observation                 (broadcast, record-*, model-routing-observer, model-routing-advisor, floor-guard)
 8. allow accelerators          (plan-scope-allow)
 ```
 
@@ -421,7 +421,7 @@ deny itself, so its 30 s outer value can never pre-empt it.
 | Timeout | Hooks | Why this value |
 |---|---|---|
 | 2 s | `session-close.sh` on `SessionEnd` | Unchanged; the event's own 1.5 s shared budget (§12). |
-| 15 s | `session-tier-observer.py`, `model-routing-observer.py`, `model-routing-advisor.py`, `agent-session-heartbeat.sh`, `circuit-breaker.py`, `verify-observer.py`, `r4-file-mutex-register.sh`, `session-close.sh` on `Stop` | Observers, advisories and lock bookkeeping; a stall helps nobody. |
+| 15 s | `session-tier-observer.py`, `model-routing-observer.py`, `model-routing-advisor.py`, `floor-guard.py`, `agent-session-heartbeat.sh`, `circuit-breaker.py`, `verify-observer.py`, `r4-file-mutex-register.sh`, `session-close.sh` on `Stop` | Observers, advisories and lock bookkeeping; a stall helps nobody. |
 | 30 s | `pre-tool-guard.sh`, `loop-write-guard.py`, `r4-mutex-check.sh`, `context-mode-guard.sh`, `check-hardcoding.py`, `secret-content-scan.py`, `r4-file-mutex-check.sh`, `tdd-guard.py`, `spec-gate.py`, `supervisor.py`, `plan-scope-allow.py`, `plan-gate.py`, `agent-session-start.sh`, `session-init.py`, `brain-capture.py` | Guards and session setup. Most internal subprocesses are capped at 2-5 s (regex watchdogs, the 5 s lookup in `r4-mutex-check.sh`), but not all: some `git` calls and `agent-session-start.sh`'s `git fetch` have no cap of their own, so the host timeout is their only bound. |
 | 90 s | `council-escalation-gate.py` | Several internal `git` / threshold subprocesses at 15 s each. |
 | 150 s | `rubric-commit-judge.sh` | Synchronous scorer: per-command cap 60 s, 120 s total, each check clamped to the remaining total (`rubric-score.py`). It only observes, so a kill loses a score record, never a decision. |

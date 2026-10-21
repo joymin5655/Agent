@@ -161,7 +161,7 @@ New to this space? These ten terms are all you need to read the rest of this pag
 | Term | Plain meaning |
 |---|---|
 | **harness** | The whole safety layer: agents + hooks + skills + rules, wrapped around your AI. |
-| **hook** | A small script your AI runtime runs automatically before/after an action. It answers **allow**, **ask**, or **deny**. 26 scripts wired via `hooks/hooks.json` (31 incl. shared modules) live in [`core/hooks/`](core/hooks/). |
+| **hook** | A small script your AI runtime runs automatically before/after an action. It answers **allow**, **ask**, or **deny**. 27 scripts wired via `hooks/hooks.json` (32 incl. shared modules) live in [`core/hooks/`](core/hooks/). |
 | **adapter** | A translator from a runtime hook or controlled wrapper event to the harness's canonical JSON. There are 3 runtime adapters (claude-code, codex, antigravity) in [`adapters/`](adapters/). |
 | **agent** | A specialist your AI delegates to — e.g. a security reviewer that only reviews and never writes. 3 ship in the core plugin ([`agents/`](agents/)) and 1 in the optional extras plugin. |
 | **skill** | A reusable step-by-step workflow the AI follows, e.g. the commit + PR flow. 6 ship in the core plugin ([`skills/`](skills/)) and 9 more in the optional extras plugin ([`extras/skills/`](extras/skills/)). |
@@ -332,7 +332,7 @@ flowchart TB
         A3["antigravity/"]
     end
     subgraph CORE["Layer 1 — core/ (the single source of truth)"]
-        H["hooks/ — 26 wired scripts: secret scan · mutex ·<br/>spec-gate · tdd-guard · supervisor …"]
+        H["hooks/ — 27 wired scripts: secret scan · mutex ·<br/>spec-gate · tdd-guard · supervisor …"]
         I["infra/ — sessions · goal mode ·<br/>audits · auto-ship"]
         T["tests/ — 108 self-verification scripts"]
     end
@@ -474,12 +474,13 @@ Model is cost-tiered per work class ([`docs/model-routing.md`](docs/model-routin
 | `harness-loop` · `loop` | Bounded-attempt improvement loops — generic (`loop`) and specialised to the harness's own reviewer prompts (`harness-loop`); use `/agent-harness-extras:loop` (the built-in `/loop` is a different command) |
 | `worker-setup` | Install → auth → verify onboarding for the cross-vendor worker lanes, with a cost briefing first |
 
-| Hooks — 26 wired via `hooks/hooks.json` → `core/hooks/` (31 scripts incl. shared modules) | Event |
+| Hooks — 27 wired via `hooks/hooks.json` → `core/hooks/` (32 scripts incl. shared modules) | Event |
 |---|---|
 | secret-content-scan · check-hardcoding | PreToolUse (Write/Edit) |
 | pre-tool-guard · r4-mutex · context-mode-guard | PreToolUse |
 | tdd-guard · spec-gate · supervisor · plan-scope-allow | PreToolUse (Write/Edit) |
 | model-routing-advisor | PreToolUse (Task/Agent) |
+| floor-guard | PreToolUse (Write/Edit/MultiEdit, Bash) |
 | session heartbeat | UserPromptSubmit |
 | plan-gate · model-routing-observer | PostToolUse (ExitPlanMode/Task/Agent) |
 | session-quality-gate · brain-capture · session-close | Stop |
@@ -506,7 +507,7 @@ Agent/
 ├── hooks/              # plugin hook wiring (hooks.json)
 │
 ├── core/               # AI-agnostic core — the truth
-│   ├── hooks/          #   31 portable hook scripts (26 wired + shared modules)
+│   ├── hooks/          #   32 portable hook scripts (27 wired + shared modules)
 │   ├── infra/          #   session coordination · goal mode · audits · auto-ship
 │   ├── git-hooks/      #   pre-commit · pre-push
 │   └── tests/          #   108 test scripts (verify-all.sh runs them all)
