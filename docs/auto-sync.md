@@ -2,7 +2,7 @@
 
 A `post-commit` git hook that keeps the remote up to date automatically whenever
 the agent system changes. It pushes the current **feature branch** and ensures a
-**pull request** exists. A human still merges — the hook never merges for you.
+**pull request** exists. The hook never merges; who may merge is set by `AGENTS.md` § 6.
 
 Hook file: `core/git-hooks/post-commit`.
 
@@ -22,14 +22,16 @@ On every commit (when enabled), in order:
 The commit returns instantly: the push and PR happen in a detached background
 subshell. The hook is non-blocking — its exit code never affects the commit.
 
-## Auto-PR mode (human merges)
+## Auto-PR mode (the hook never merges)
 
 This is **Auto-PR**, not auto-merge:
 
 - It targets your repo's own remote via `origin` (whatever its URL is) — no
   hardcoded remote.
 - It pushes **feature branches only**. It **never auto-pushes `main`/`master`**.
-- It opens a PR against `main` and stops. **A human reviews and merges.**
+- It opens a PR against `main` and stops. **The hook never merges.** Merging follows
+  `AGENTS.md` § 6: the owner's supervisor agent may squash-merge planned work after CI and
+  the review ladder; hook, guard, permission-policy and release/deploy PRs wait for a human.
 
 ## Enable
 
