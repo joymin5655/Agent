@@ -165,6 +165,11 @@ parity_case "allow-project-reviews-jsonl" secret-content-scan.py allow Write "" 
 unset AGENT_HARDCODING_MODE   # unset = the shipped default (dryrun/advisory)
 parity_case "advisory-hardcoded-default" check-hardcoding.py advisory Write "" "app.js" "$HC_FIXTURE"
 parity_case "allow-quoted-content"   check-hardcoding.py allow   Write  ""  "app.js"  "const s = \"it's 100% fine\""
+# floor-guard is warn-only: a skip marker is advisory on every adapter, never a decision.
+parity_case "advisory-floor-skip"    floor-guard.py advisory Write  ""  "parity-floor-guard-none.py"  "import x  # noqa"
+parity_case "allow-floor-clean"      floor-guard.py allow    Write  ""  "parity-floor-guard-none.py"  "import x"
+parity_case "advisory-floor-rm-test" floor-guard.py advisory Bash   "rm tests/test_parity.py"  ""  ""
+parity_case "allow-floor-rm-other"   floor-guard.py allow    Bash   "rm build/out.o"  ""  ""
 unset AGENT_HARDCODING_SINK
 rm -rf "$_HC_SCRATCH"
 
@@ -285,6 +290,8 @@ agy_case "allow-project-reviews-jsonl" secret-content-scan.py allow Write "" "/x
 unset AGENT_HARDCODING_MODE
 agy_case "advisory-hardcoded-default" check-hardcoding.py advisory Write "" "app.js" "$HC_FIXTURE"
 agy_case "allow-quoted-content"   check-hardcoding.py allow Write "" "app.js" "const s = \"it's 100% fine\""
+agy_case "advisory-floor-skip"    floor-guard.py advisory Write "" "parity-floor-guard-none.py" "import x  # noqa"
+agy_case "advisory-floor-rm-test" floor-guard.py advisory Bash "rm tests/test_parity.py" "" ""
 unset AGENT_HARDCODING_SINK AGENT_REPRODUCE_TEST
 rm -rf "$_AGY_SCRATCH"
 

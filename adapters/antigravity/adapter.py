@@ -63,9 +63,10 @@ _CONVERSATION_ID_RE = re.compile(r"^[A-Za-z0-9-]{1,64}$")
 # Never handed to core hooks: they have no use for a model API key.
 _SCRUBBED_ENV = ("GEMINI_API_KEY", "GOOGLE_API_KEY")
 
-_BASH_PRE = ["pre-tool-guard.sh", "loop-write-guard.py", "r4-mutex-check.sh"]
+_BASH_PRE = ["pre-tool-guard.sh", "loop-write-guard.py", "r4-mutex-check.sh", "floor-guard.py"]
 _FILE_PRE = ["check-hardcoding.py", "secret-content-scan.py", "r4-file-mutex-check.sh",
-             "tdd-guard.py", "spec-gate.py", "loop-write-guard.py", "r4-mutex-check.sh"]
+             "tdd-guard.py", "spec-gate.py", "loop-write-guard.py", "r4-mutex-check.sh",
+             "floor-guard.py"]
 _FILE_POST = ["r4-file-mutex-register.sh"]
 # Keyed by canonical event, then canonical tool. The Codex template is the
 # reference; the drift test compares these sets against it.

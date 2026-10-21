@@ -39,6 +39,11 @@
             "type": "command",
             "command": "\"${PLUGIN_ROOT}/adapters/codex/adapter.sh\" loop-write-guard.py",
             "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "\"${PLUGIN_ROOT}/adapters/codex/adapter.sh\" floor-guard.py",
+            "timeout": 30
           }
         ]
       },
@@ -83,6 +88,11 @@
           {
             "type": "command",
             "command": "\"${PLUGIN_ROOT}/adapters/codex/adapter.sh\" loop-write-guard.py",
+            "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "\"${PLUGIN_ROOT}/adapters/codex/adapter.sh\" floor-guard.py",
             "timeout": 30
           }
         ]

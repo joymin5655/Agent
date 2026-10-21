@@ -128,7 +128,7 @@ and `setup.sh --doctor` WARNs when both exist and differ, since only the canonic
 
 agy loads hooks from plugin folders. `setup.sh --antigravity` installs one so the core guards
 (`pre-tool-guard.sh`, `secret-content-scan.py`, `check-hardcoding.py`, `tdd-guard.py`,
-`spec-gate.py`, the r4 mutex hooks) run in front of agy's own tool calls. The `PostToolUse`
+`spec-gate.py`, `floor-guard.py`, the r4 mutex hooks) run in front of agy's own tool calls. The `PostToolUse`
 hooks (`circuit-breaker.py`, `verify-observer.py`, `r4-file-mutex-register.sh`) and the Stop
 gates run after the fact as observers; see "Events and tools". Measured on 1.2.12 against a
 workspace plugin on 2026-09-29; the global folder below is documented but its loading by a real

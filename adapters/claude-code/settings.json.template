@@ -43,7 +43,8 @@
         "matcher": "Bash",
         "hooks": [
           { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh pre-tool-guard.sh" },
-          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh loop-write-guard.py" }
+          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh loop-write-guard.py" },
+          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh floor-guard.py" }
         ]
       },
       {
@@ -69,6 +70,12 @@
           { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh loop-write-guard.py" },
           { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh supervisor.py" },
           { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh plan-scope-allow.py" }
+        ]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          { "type": "command", "command": "{{FRAMEWORK_ROOT}}/adapters/claude-code/adapter.sh floor-guard.py" }
         ]
       },
       {
