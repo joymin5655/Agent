@@ -220,6 +220,31 @@ run_case_in() {
     fi
   fi
 }
+# run_case_project <name> <command> <expect> <project_dir> <hook_path>: run_case with the hook at
+# <hook_path> (a symlink to the guard) started inside <project_dir>, which AGENT_PROJECT_DIR names,
+# so the project's .agent/hook-config.yml is what the guard loads.
+run_case_project() {
+  local name="$1" cmd="$2" expect="$3" proj="$4" hook="$5" event out got
+  event=$(printf '%s' "$cmd" | python3 -c 'import sys,json; print(json.dumps({"event":"PreToolUse","tool_name":"Bash","tool_input":{"command":sys.stdin.read()}}))')
+  out=$(cd "$proj" && printf '%s' "$event" | AGENT_PROJECT_DIR="$proj" bash "$hook" 2>/dev/null || true)
+  got="allow"
+  case "$out" in
+    *'"permissionDecision": "deny"'*) got="deny" ;;
+    *'"permissionDecision": "ask"'*) got="ask" ;;
+  esac
+  if [[ "$got" == "$expect" ]]; then
+    echo "  ok   [$name] expected=$expect"; PASS=$((PASS + 1))
+  else
+    echo "  FAIL [$name] expected=$expect got=$got :: $out"; FAIL=$((FAIL + 1))
+  fi
+  if [[ "$expect" != "allow" ]]; then
+    if [[ "$out" == *"WHY:"* && "$out" == *"FIX:"* ]]; then
+      echo "  ok   [$name/teaching] WHY+FIX present"; PASS=$((PASS + 1))
+    else
+      echo "  FAIL [$name/teaching] reason lacks WHY:/FIX: :: $out"; FAIL=$((FAIL + 1))
+    fi
+  fi
+}
 G3A_ROOT="$(mktemp -d)"
 for _r in clean dirty untr; do
   git init -q "$G3A_ROOT/$_r" >/dev/null 2>&1
@@ -281,6 +306,87 @@ mentions ${_RMRF} safely
 EOF
 )\""
 run_case "msg-quoted-heredoc-mention-allow" "$QUO_HEREDOC"                                    allow
+# AG26: the shell ends a heredoc at the FIRST line equal to its delimiter, so a later delimiter
+# line or anything between the terminator and )" runs; a <<- terminator may carry leading tabs.
+AG26_REPEAT="git commit -m \"\$(cat <<'EOF'
+subject
+EOF
+${_RMRF}
+EOF
+)\""
+run_case "ag26-repeated-terminator-deny" "$AG26_REPEAT"                                         deny
+AG26_TRAIL="git commit -m \"\$(cat <<'EOF'
+subject
+EOF
+${_RMRF}
+)\""
+run_case "ag26-trailing-after-terminator-deny" "$AG26_TRAIL"                                    deny
+# Inside an unquoted outer heredoc the outer shell expands the idiom first and the inner shell
+# re-reads the result, so a quote in the message body ends the message there.
+AG26_OUTER="bash <<EOF
+git commit -m \"\$(cat <<'X'
+\"; ${_RMRF}; echo \"
+X
+)\"
+EOF"
+run_case "ag26-outer-heredoc-deny" "$AG26_OUTER"                                                deny
+# The same without any quote in the body: the inner shell expands the $( ) it is handed.
+AG26_OUTER_SUB="bash <<EOF
+git commit -m \"\$(cat <<'X'
+\$(${_RMRF})
+X
+)\"
+EOF"
+run_case "ag26-outer-heredoc-subst-deny" "$AG26_OUTER_SUB"                                      deny
+AG26_DASH=$(printf 'git commit -m "$(cat <<-%sEOF%s\n\tmentions %s in prose\n\tEOF\n)"' "'" "'" "$_RMRF")
+run_case "ag26-dash-tab-terminator-allow" "$AG26_DASH"                                          allow
+AG26_MSGEQ="git commit --message=\"\$(cat <<'EOF'
+mentions ${_RMRF} in prose
+EOF
+)\""
+run_case "ag26-message-eq-heredoc-allow" "$AG26_MSGEQ"                                          allow
+run_case "ag26-message-space-heredoc-allow" "${AG26_MSGEQ/--message=/--message }"               allow
+# Review follow-ups: a backslash newline inside the outer << still makes it a heredoc; a stray )
+# in the body ends the substitution early on bash 3.2; glued text, a space-indented <<- terminator
+# and a body line that only starts with the delimiter are not the idiom; many heads stay bounded.
+run_case "ag26-continued-outer-heredoc-deny" "${AG26_OUTER_SUB/bash <</bash <\\
+<}"                                                                                             deny
+AG26_B32="git commit -m \"\$(cat <<'EOF'
+a ) \"; ${_RMRF}; echo \"
+EOF
+)\""
+run_case "ag26-bash32-stray-paren-deny" "$AG26_B32"                                             deny
+run_case "ag26-glued-after-close-deny" "${QUO_HEREDOC}x"                                        deny
+AG26_DASHSP=$(printf 'git commit -m "$(cat <<-%sEOF%s\nmentions %s\n  EOF\n)"' "'" "'" "$_RMRF")
+run_case "ag26-dash-space-terminator-deny" "$AG26_DASHSP"                                       deny
+AG26_PREFIX="git commit -m \"\$(cat <<'EOF'
+EOFX
+mentions ${_RMRF}
+EOF
+)\""
+run_case "ag26-delimiter-prefix-line-deny" "$AG26_PREFIX"                                       deny
+AG26_HEADS=$(printf 'git commit -m "$(cat <<%sX%s\n%.0s' "'" "'" $(seq 1 3000))
+run_case_timed "ag26-many-heads-deny" "${AG26_HEADS}${_RMRF}"                                   deny
+# A symlinked launch still loads hook_config from the guard's real directory: the declared secret
+# path and the declared T-4 deny apply exactly as in a direct launch.
+AG26_ROOT="$(mktemp -d)"
+mkdir -p "$AG26_ROOT/bin" "$AG26_ROOT/proj/.agent"
+ln -s "$HOOK" "$AG26_ROOT/bin/guard.sh"
+cat > "$AG26_ROOT/proj/.agent/hook-config.yml" <<'YML'
+risk_areas:
+  secrets:
+    paths:
+      - 'vault/**'
+    decision: deny
+  payment:
+    pattern: '^billing/'
+    decision: deny
+YML
+run_case_project "ag26-symlink-declared-secret-deny" 'cat vault/notes.txt' deny \
+  "$AG26_ROOT/proj" "$AG26_ROOT/bin/guard.sh"
+run_case_project "ag26-symlink-risk-area-deny" 'git add billing/plan.py' deny \
+  "$AG26_ROOT/proj" "$AG26_ROOT/bin/guard.sh"
+rm -rf "$AG26_ROOT"
 
 echo
 # no-verify bypasses the repo's own pre-commit/pre-push gate (gitleaks + sanitize).
