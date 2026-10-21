@@ -123,14 +123,24 @@ fi
 #   - double quotes                  - only when free of $ and backtick (nothing can expand) and of
 #     backslashes other than the surrogate spelling \udXXX the decoder writes;
 #   - "$(cat <<'EOF' ... EOF)"       - the standard multi-line idiom; the heredoc delimiter must be
-#     QUOTED (an unquoted body still undergoes command substitution).
-# A " -m " inside another quoted string (echo, printf, ...), a message option of any other command, a
-# word that is not one whole quoted string, and anything the lexer cannot read with certainty (an
-# unterminated quote, an unmatched parenthesis) stay in the scanned text: the old regex matched the
-# flag anywhere and its double-quote pattern ran across quote boundaries to the next quote character,
+#     QUOTED (an unquoted body still undergoes command substitution), the body ends at the FIRST
+#     line equal to the delimiter (<<- allows leading tabs) and only whitespace follows before )" -
+#     the shell ends the heredoc there, so a later delimiter line or text after it runs - and the
+#     body holds no quote, backtick or backslash and only balanced parens (bash 3.2 ends the
+#     substitution at a stray ) inside the body). --message= followed by this idiom counts the same.
+# A " -m " inside another quoted string (echo, printf, ...), a message option of any other command and
+# a word that is not one whole quoted string stay in the scanned text: the old regex matched the flag
+# anywhere and its double-quote pattern ran across quote boundaries to the next quote character,
 # which hid real commands (rm, force push, reset, DROP) between two quoted flag-like texts.
+# The whole command is scanned unchanged when the lexer raises Unreadable (an unterminated quote or
+# backtick, an unclosed $(, or a word the lexer cannot advance past - a defensive check), on a
+# RecursionError, on a heredoc operator outside a recognized message idiom (an outer heredoc fed
+# to a shell expands the idiom before that shell reads it; a backslash newline inside << counts),
+# and on more than 64 << in one command. A bare ( or ) is a separator, not an error. A command with
+# no message option is returned as is.
 # Secrets guards (5+) keep scanning the FULL command: -m "$(cat secrets/key)" is a real read, not a
-# mention. A python failure falls back to the full command (fail-safe = scan more, never less).
+# mention. A python failure falls back to the full command, and so does an empty result for a
+# non-empty command (fail-safe = scan more, never less).
 # The program has no apostrophe or backtick on purpose and is read into a variable first (bash 3.2
 # mis-parses unpaired ones inside a command substitution that holds a heredoc).
 IFS= read -r -d '' _STRIP_PY <<'PY'
@@ -142,7 +152,11 @@ import sys
 # Anything the lexer cannot read with certainty leaves the command untouched (more scanning).
 
 SEPARATORS = ";&|()\n"
-HEREDOC_MSG = re.compile(r"\x22\$\(\s*cat\s+<<-?[\x27\x22](\w+)[\x27\x22]\n.*?\n\1\n?\s*\)\x22", re.S)
+HEREDOC_HEAD = re.compile(r"\x22\$\([ \t\n]*cat[ \t]+<<(-?)([\x27\x22])(\w+)\2\n")
+HEREDOC_TAIL = re.compile(r"[ \t\n]*\)\x22")
+HEREDOC_EQ = "--message="
+HEREDOC_CAP = 64  # more << than this: scan unchanged (each idiom head scans ahead for its end)
+BASH32_UNSAFE = "\x22\x27\x60\\"
 SURROGATE_TEXT = r"\\u[dD][89a-fA-F][0-9a-fA-F]{2}"
 DQ_INERT = re.compile(r"(?:[^\x22$\x60\\]|" + SURROGATE_TEXT + r")*")
 MSG_OPTION = re.compile(r"-[A-Za-z]*m")
@@ -155,6 +169,50 @@ QUICK = re.compile(r"\s-[A-Za-z]*m(?![A-Za-z])|\s--message")
 
 class Unreadable(Exception):
     pass
+
+
+def bash32_ends_early(body):
+    # bash 3.2 (the macOS /bin/bash) finds the end of "$( by counting parens and quotes, not by the
+    # heredoc: a ) without its ( ends the substitution inside the body and the rest runs. Trust a
+    # body only when it holds no quote, backtick or backslash and its parens balance (no # beside
+    # them, which may start a comment bash 3.2 skips).
+    if any(c in body for c in BASH32_UNSAFE):
+        return True
+    depth = 0
+    for c in body:
+        if c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth < 0:
+                return True
+    return depth != 0 or ("#" in body and ("(" in body or ")" in body))
+
+
+def heredoc_message_end(s, i):
+    # index after the closing )" of a "$(cat <<\x27X\x27 ... X)" message at s[i], else None. The
+    # shell ends the body at the FIRST line equal to the delimiter (<<- strips leading tabs), and
+    # only whitespace may follow before )"; a body line that merely starts with the delimiter is not
+    # trusted either, and the idiom must end the word.
+    m = HEREDOC_HEAD.match(s, i)
+    if not m:
+        return None
+    dash, delim = m.group(1), m.group(3)
+    pos = m.end()
+    while True:
+        nl = s.find("\n", pos)
+        eol = len(s) if nl < 0 else nl
+        line = s[pos:eol].lstrip("\t") if dash else s[pos:eol]
+        if line == delim:
+            tail = HEREDOC_TAIL.match(s, eol)
+            if not tail or (tail.end() < len(s) and s[tail.end()] not in " \t" + SEPARATORS):
+                return None
+            if bash32_ends_early(s[m.end():pos]):
+                return None
+            return tail.end()
+        if line.startswith(delim) or nl < 0:
+            return None
+        pos = nl + 1
 
 
 def skip_double(s, i):
@@ -244,7 +302,8 @@ def read_word(s, i):
 
 
 def lex(s):
-    # simple commands as lists of (start, end, kind); kind is heredoc for the cat idiom, else word
+    # simple commands as lists of (start, end, kind); kind is heredoc for the cat idiom, heredoc-eq
+    # for --message= followed by it, else word
     commands = []
     current = []
     i = 0
@@ -262,10 +321,14 @@ def lex(s):
             j = s.find("\n", i)
             i = n if j < 0 else j
         else:
-            m = HEREDOC_MSG.match(s, i) if c == "\x22" else None
-            if m:
-                current.append((i, m.end(), "heredoc"))
-                i = m.end()
+            end = heredoc_message_end(s, i) if c == "\x22" else None
+            kind = "heredoc"
+            if end is None and s.startswith(HEREDOC_EQ + "\x22", i):
+                end = heredoc_message_end(s, i + len(HEREDOC_EQ))
+                kind = "heredoc-eq"
+            if end is not None:
+                current.append((i, end, kind))
+                i = end
             else:
                 j = read_word(s, i)
                 if j <= i:
@@ -315,11 +378,23 @@ def git_message_start(s, words):
 
 
 def strip(s):
-    if not QUICK.search(s):
+    if not QUICK.search(s) or s.count("<<") > HEREDOC_CAP:
         return s
     try:
         commands = lex(s)
     except (Unreadable, RecursionError):
+        return s
+    # a heredoc operator outside the recognized idioms (an outer heredoc fed to a shell expands the
+    # idiom before that shell reads it, so the body is not inert): scan everything. A backslash
+    # newline is removed first, as the shell joins the two halves of < + \ newline + <EOF.
+    rest, last = [], 0
+    for words in commands:
+        for start, end, kind in words:
+            if kind != "word":
+                rest.append(s[last:start])
+                last = end
+    rest.append(s[last:])
+    if "<<" in "".join(rest).replace("\\\n", ""):
         return s
     edits = []
     for words in commands:
@@ -340,6 +415,9 @@ def strip(s):
                 hit = message_replacement(s, body, end, "word")
                 if hit:
                     edits.append(hit)
+                k += 1
+            elif kind == "heredoc-eq":
+                edits.append((start + len(HEREDOC_EQ), end))
                 k += 1
             else:
                 k += 1
@@ -3159,8 +3237,9 @@ fi
 # from them cannot inject a pattern. Covers the read/copy/archive/encrypt family
 # plus curl/wget exfiltration for each declared path. hook_config.py sits next to
 # this script; the project root (where .agent/hook-config.yml lives) is resolved
-# the same way log_violation resolves it.
-_HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null)"
+# the same way log_violation resolves it. _GUARD_DIR is the guard's real directory (symlinks
+# resolved at the top), so a symlinked launch still finds hook_config.py.
+_HOOK_DIR="$(CDPATH='' cd -- "$_GUARD_DIR" && pwd 2>/dev/null)"
 _PROJ_ROOT="${AGENT_PROJECT_DIR:-${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null)}}"
 if [[ -n "$_PROJ_ROOT" && -n "$_HOOK_DIR" ]]; then
   # Secrets-path alternation ONLY (guard 11b): no config regex runs in this call, so the secrets
