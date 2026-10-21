@@ -91,6 +91,26 @@ circuit-breaker checked in step 9.
    best score, then offer `/wrap` on the kept branch. Merging is never
    automatic — a human reviews the PR.
 
+## Hillclimb discipline
+
+Stops a run from ending on a lucky early success (idea from cursor/plugins pstack
+`hillclimb`, MIT; wording ours). These bind steps 2, 8 and 9:
+
+- **One change per attempt.** A candidate changes exactly one thing — one prompt
+  section or one rule — so a score move is attributable. Bundled edits are split
+  into separate attempts, not graded together.
+- **Frozen measurement.** The grader, eval set, floors and scoring script stay
+  fixed for the whole run (the step 6 boundary). A run that needs any of them
+  changed stops and a human starts a new run; never re-baseline mid-run.
+- **Repeat before accepting.** Step 8 keeps a candidate only if it beats the
+  best score on 3 grading runs (the evals' Pass^3 convention): after the
+  `loop-run.sh attempt` run, re-run `core/tests/grade.sh` with the same
+  `--base`/`--target` twice more, output to a log file, and keep only if all
+  three beat it; a split result is a discard.
+- **No early success.** Do not stop, or report the run as done, before 3
+  attempts have been graded unless step 9 prints `LOOP: stop(cap)` or
+  `LOOP: stop(circuit-breaker)`.
+
 ## Notes
 
 - `core/hooks/loop-write-guard.py` is defense-in-depth while the loop's
