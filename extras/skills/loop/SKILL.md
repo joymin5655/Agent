@@ -15,6 +15,10 @@ timeout, or two consecutive GATE failures (circuit breaker) — never on trust
 alone. All mechanical enforcement (state, ledger, cap, breaker) lives in
 `core/infra/loop-run.sh`; this skill is the iteration protocol that calls it.
 
+Run it from the root of a harness checkout: the default grader
+(`core/tests/grade.sh`) replays the harness's own batteries, so a mission in
+another project has no grader yet.
+
 ## Relationship to skills/harness-loop
 
 This skill is the generic protocol: fresh context per iteration, exactly one

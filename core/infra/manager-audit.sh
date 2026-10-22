@@ -47,6 +47,7 @@
 set -uo pipefail
 
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+HARNESS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ROUTING_LOG="${AGENT_MODEL_ROUTING_SINK:-$REPO_ROOT/.agent/logs/model-routing.jsonl}"
 GOAL_AUDIT_LOG="${AGENT_GOAL_AUDIT_LOG:-$REPO_ROOT/.agent/logs/supervisor-goal-audit.jsonl}"
 # /spec writes <root>/<slug>/plan.md; the flat <slug>.md is the legacy layout. Same
@@ -67,7 +68,7 @@ resolve_plan_file() {
 }
 ARTIFACTS_DIR="${AGENT_PLAN_ARTIFACTS_DIR:-$REPO_ROOT/.agent/plans}"
 GOAL_DB="${AGENT_GOAL_DB:-$REPO_ROOT/.agent/locks/goal-state.db}"
-REGISTRY="${AGENT_REGISTRY_PATH:-$REPO_ROOT/agents/master-registry.json}"
+REGISTRY="${AGENT_REGISTRY_PATH:-$HARNESS_ROOT/agents/master-registry.json}"
 TIER_ALIASES="${AGENT_TIER_ALIASES:-}"
 
 JSON_OUT=false

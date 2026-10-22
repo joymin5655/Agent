@@ -28,7 +28,7 @@ sweeps them in one pass, reporting first and rewriting only on explicit confirma
 ### 1. Report (dry-run — always first)
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT:-$PWD/extras}/core/infra/reorg-sync.sh" \
+bash "${CLAUDE_PLUGIN_ROOT}/core/infra/reorg-sync.sh" \
   --old <old-prefix> --new <new-prefix> --root <tree>
 ```
 
@@ -108,7 +108,7 @@ sensitive content.
 Only after the user confirms the reported set, rewrite in place:
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT:-$PWD/extras}/core/infra/reorg-sync.sh" \
+bash "${CLAUDE_PLUGIN_ROOT}/core/infra/reorg-sync.sh" \
   --old <old-prefix> --new <new-prefix> --root <tree> --apply
 ```
 

@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-10-22
+
+### Changed
+- **Codex needs `CLAUDE_PLUGIN_ROOT` in its shell environment for harness skills.** Codex is not
+  documented to substitute `${CLAUDE_PLUGIN_ROOT}` in skill text, and `setup.sh --codex` does not
+  set the variable. Before, the `:-$PWD` fallback and bare `core/...` paths let skill commands
+  run when Codex worked inside a harness checkout; now set `CLAUDE_PLUGIN_ROOT` to the harness
+  checkout in the environment Codex's shell commands inherit.
+
+### Fixed
+- **Skills and agents work outside a harness checkout** (`skills/`, `extras/skills/`,
+  `extras/agents/`): Claude Code replaces only the exact text `${CLAUDE_PLUGIN_ROOT}` in skill,
+  command and agent bodies. `${CLAUDE_PLUGIN_ROOT:-$PWD}` stayed literal, so in the shell it fell
+  back to the current directory, and bare `bash core/...` calls resolved there too; a user's
+  project has no `core/`, so those steps failed. Shipped docs now use the exact form
+  (`bash "${CLAUDE_PLUGIN_ROOT}/core/..."`); extras skills resolve the core root with
+  `harness-root.sh` (`$HR/core/...`); supervise's supporting files write `<harness root>`, which
+  its `SKILL.md` defines. `harness-audit` and `loop` stay checkout-only and now say so;
+  `harness-loop` (human-edited only, unchanged) already works on the harness's own files. New
+  `core/tests/skill-plugin-root-test.sh` fails on a non-exact form, a bare call to a
+  harness script or skill file, a missing rooted path, or a script that cannot find its
+  companions from a project folder.
+- **Scripts that skills run find their companion files next to themselves**
+  (`core/infra/completion-gate.sh`, `supervisor-goal.sh`, `supervisor-goal-audit.sh`,
+  `manager-audit.sh`, `auto-ship.sh`): they looked under the project's git root for the
+  verifier, the SQL schema, the goal helper, the agent registry and the guard scan. They now
+  resolve them from `HARNESS_ROOT`; only `.agent/` state stays in the project.
+  `supervisor-goal-audit.sh` runs the harness's own completion gate for a wave's gate check, and
+  the gate can no longer be pointed at a verifier inside the project
+  (`AGENT_COMPLETION_VERIFY_BIN` is still honored only under `AGENT_REPRODUCE_TEST=1`).
+  `auto-ship.sh` runs its exemption-aware secret scan only in a repo that ships that scan (the
+  harness itself), because its exemptions (`docs/`, `tests/`, …) fit the harness tree; any other
+  repo keeps the grep of every added line.
+- **/verify-completion and /wrap wording** (`skills/verify-completion/SKILL.md`,
+  `skills/wrap/SKILL.md`): the hard rule now names `--light` as the one same-session exception
+  (full mode always runs in a fresh spawned verifier). `/wrap` decides before the run whether to
+  pass `--config=gitleaks.toml` (only when the repo has that file; a missing config exits nonzero
+  like a found secret) and reports which config gitleaks loaded, since without `--config` it reads
+  `GITLEAKS_CONFIG` or the repo's `.gitleaks.toml`. It also says what the fire drill proves
+  outside the harness repo: that gitleaks and the harness's own rules are live, not that the
+  project's allowlist is sane.
+
+### Security
+- **Guards no longer run companion files from the project** (`completion-gate.sh`,
+  `supervisor-goal.sh`, `supervisor-goal-audit.sh`, `auto-ship.sh`): a project could plant its own
+  verifier, SQL schema (piped into `sqlite3`), goal helper or secret scan at the path these
+  scripts looked up, and the script ran it.
+- **`auto-ship.sh`'s grep secret scan works again** (`core/infra/auto-ship.sh`): the default
+  pattern sat inside `${RISK_SECRETS_PATTERN:-…}`, and the `}` of its `{20,}` closed that
+  expansion early, so grep received a malformed pattern. macOS grep rejects it
+  (`invalid repetition count`), `|| true` hid the error, and the check found nothing or aborted on
+  a broken pipe. Every repo without the exemption-aware helper used this path. The default now
+  lives in its own variable.
+
 ## [0.13.0] - 2026-10-22
 
 ### Added

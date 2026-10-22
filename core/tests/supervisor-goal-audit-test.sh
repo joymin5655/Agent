@@ -127,20 +127,36 @@ check "backticked-wc-l-stops-at-backtick" 'wc -l f.txt' "$(run_audit 'Check: `wc
 check "nothing-was-executed-by-converge-cases" "no" "$([[ -e PWNED ]] && echo yes || echo no)"
 
 echo "=== a converge wave's gate check runs as a dryrun even under an inherited block mode ==="
-mkdir -p core/infra
-# stub gate: fails only in block mode, like a REFUTED verdict
-printf '#!/usr/bin/env bash\necho "mode=${AGENT_VERIFY_BLOCKING:-unset}"\n[[ "${AGENT_VERIFY_BLOCKING:-}" != block ]]\n' \
-  > core/infra/completion-gate.sh
+# The audit runs the harness's own gate (next to the script), not a copy in the project. This
+# fixture has no claim file, so the real gate REFUTES: exit 1 in block mode, exit 0 in dryrun.
 printf '## Wave 2: converge 1\n- fix: gap → verify: `bash core/infra/completion-gate.sh p 2`\n' > "$AGENT_PLANS_DIR/p.md"
 OUT=$(AGENT_VERIFY_BLOCKING=block bash "$AUDIT" p 2 2>/dev/null)
 check "inherited-block-gate-check-passes" "true" "$(jq -r '.evidence[0].pass' <<<"$OUT")"
-check "inherited-block-gate-ran-dryrun" "mode=dryrun" "$(jq -r '.evidence[0].log_tail' <<<"$OUT")"
+check "inherited-block-gate-ran-dryrun" "dryrun" "$(tail -n 1 .agent/logs/completion-gate.jsonl | jq -r '.mode')"
 printf '## Wave 1: t\n- `wc -l f.txt` -> 3\n' > "$AGENT_PLANS_DIR/p.md"
 OUT=$(AGENT_VERIFY_BLOCKING=block bash "$AUDIT" p 1 2>/dev/null)
 check "other-checks-keep-env" "true" "$(jq -r '.evidence[0].pass' <<<"$OUT")"
 echo "=== an ASCII -> marker on a fix step also keeps gap text out ==="
 check "ascii-arrow-fix-text-not-extracted" 'bash core/infra/completion-gate.sh demo 2' \
   "$(run_audit '- fix: pytest x; touch PWNED -> verify: `bash core/infra/completion-gate.sh demo 2`')"
+echo "=== converge waves: a suffix on the gate command never reaches the shell the audit evals ==="
+# These run the audit for real: the rewritten gate command executes, so a leaked suffix would
+# create PWNED. The gate's sink gaining one record shows the command ran at all.
+inject_case() { # inject_case <name> <suffix>: a wave-2 gate step carrying <suffix> inside the span
+  local name="$1" suffix="$2" gate="bash core/infra/completion-gate.sh p 2" before
+  rm -f PWNED
+  mkdir -p .agent/logs && touch .agent/logs/completion-gate.jsonl
+  before=$(wc -l < .agent/logs/completion-gate.jsonl)
+  printf '## Wave 2: converge 1\n- fix: gap → verify: `%s%s`\n' "$gate" "$suffix" \
+    > "$AGENT_PLANS_DIR/p.md"
+  OUT=$(bash "$AUDIT" p 2 2>/dev/null)
+  check "$name-suffix-gate-ran-as-rewritten" "$gate" "$(jq -r '.evidence[0].cmd' <<<"$OUT")"
+  check "$name-suffix-gate-wrote-one-record" "1" \
+    "$(( $(wc -l < .agent/logs/completion-gate.jsonl) - before ))"
+  check "$name-suffix-not-executed" "no" "$([[ -e PWNED ]] && echo yes || echo no)"
+}
+inject_case "semicolon" ';touch PWNED'
+inject_case "substitution" ' $(touch PWNED)'
 echo "=== a dropped command is reported on stderr ==="
 printf '## Wave 1: t\n\nCheck: test -f $(touch PWNED)\n' > "$AGENT_PLANS_DIR/p.md"
 check "drop-is-logged" "1" "$(bash "$AUDIT" p 1 2>&1 >/dev/null | grep -c 'dropped (substitution)')"

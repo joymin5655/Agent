@@ -74,9 +74,11 @@
 #                                 seam for the canary death case). Honored
 #                                 ONLY when AGENT_REPRODUCE_TEST=1 is ALSO set —
 #                                 a production block-mode run always uses the
-#                                 hardcoded in-repo path, so this cannot become
-#                                 an arbitrary-binary injection point on a real
-#                                 gating run (security review response).
+#                                 verifier shipped next to this gate (a project
+#                                 repo cannot substitute its own), so this
+#                                 cannot become an arbitrary-binary injection
+#                                 point on a real gating run (security review
+#                                 response).
 #   AGENT_COMPLETION_DIFF_BASE    ref for the --diff-base trajectory audit
 #                                 (default: first of origin/main, origin/master,
 #                                 main, master, HEAD~1 that resolves; omitted
@@ -111,12 +113,14 @@ if [[ "$MODE" == "off" ]]; then
 fi
 
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+HARNESS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 # AGENT_COMPLETION_VERIFY_BIN is honored ONLY under AGENT_REPRODUCE_TEST=1 —
-# a production block-mode run always uses the hardcoded in-repo verifier, so
-# this seam cannot become an arbitrary-binary injection point on a real gate
-# (Major security-review finding: the seam was unconditionally honored before).
-VERIFY_PY="$REPO_ROOT/core/infra/completion-verify.py"
+# a production block-mode run always uses the verifier shipped next to this
+# gate (a project repo cannot substitute its own), so this seam cannot become
+# an arbitrary-binary injection point on a real gate (Major security-review
+# finding: the seam was unconditionally honored before).
+VERIFY_PY="$HARNESS_ROOT/core/infra/completion-verify.py"
 if [[ "${AGENT_REPRODUCE_TEST:-0}" == "1" && -n "${AGENT_COMPLETION_VERIFY_BIN:-}" ]]; then
   VERIFY_PY="$AGENT_COMPLETION_VERIFY_BIN"
 fi

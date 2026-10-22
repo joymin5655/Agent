@@ -54,6 +54,7 @@ if [[ -z "$PR_NUM" || ! "$PR_NUM" =~ ^[0-9]+$ ]]; then
 fi
 
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+HARNESS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
 
 # Project extensions come from the one loader (.agent/hook-config.yml|json). A hook-config.yml at
@@ -67,7 +68,10 @@ fi
 RISK_DATA_PATTERN="${RISK_DATA_PATTERN:-^.*/migrations/.*\.sql$}"
 RISK_DEPLOY_PATTERN="${RISK_DEPLOY_PATTERN:-^.*/functions/.*/index\.ts$}"
 RISK_PAYMENT_PATTERN="${RISK_PAYMENT_PATTERN:-(billing/|stripe|polar|iap|revenue-cat)}"
-RISK_SECRETS_PATTERN="${RISK_SECRETS_PATTERN:-(SERVICE_ROLE_KEY|API_TOKEN|API_KEY|STRIPE_SECRET|sk-[a-zA-Z0-9]{20,}|eyJ[a-zA-Z0-9]{30,})}"
+# The secrets default lives in a variable: inside ${...:-...} its {20,} ends the expansion at the
+# first "}", and the pattern left over is one grep rejects.
+SECRETS_DEFAULT_PATTERN='(SERVICE_ROLE_KEY|API_TOKEN|API_KEY|STRIPE_SECRET|sk-[a-zA-Z0-9]{20,}|eyJ[a-zA-Z0-9]{30,})'
+RISK_SECRETS_PATTERN="${RISK_SECRETS_PATTERN:-$SECRETS_DEFAULT_PATTERN}"
 # Empty = skip domain-output check (project-specific).
 RISK_DOMAIN_OUTPUT_PATTERN="${RISK_DOMAIN_OUTPUT_PATTERN:-}"
 
@@ -210,9 +214,12 @@ if [[ -n "$RISK_PAYMENT_PATTERN" ]]; then
 fi
 
 # secrets — diff content scan
-# Optional helper: $REPO_ROOT/core/infra/auto-ship-guard-scan.py (EXEMPT-aware chunk splitter).
-GUARD_SCAN="$REPO_ROOT/core/infra/auto-ship-guard-scan.py"
-if [[ -x "$GUARD_SCAN" ]] && command -v python3 >/dev/null 2>&1; then
+# The helper's exemptions (docs/, tests/, policy/ ...) are tuned for the harness tree. It runs only
+# when the repo being shipped is the harness (the repo ships the helper), and the copy next to this
+# script runs, never the repo's. Any other repo gets the grep of every added line.
+GUARD_SCAN="$HARNESS_ROOT/core/infra/auto-ship-guard-scan.py"
+if [[ -f "$REPO_ROOT/core/infra/auto-ship-guard-scan.py" && -x "$GUARD_SCAN" ]] \
+    && command -v python3 >/dev/null 2>&1; then
     if ! gh pr diff "$PR_NUM" 2>/dev/null | python3 "$GUARD_SCAN"; then
         exit 15
     fi
@@ -220,11 +227,11 @@ if [[ -x "$GUARD_SCAN" ]] && command -v python3 >/dev/null 2>&1; then
 else
     SECRET_HITS=$(gh pr diff "$PR_NUM" 2>/dev/null | { grep -iE "^\+.*${RISK_SECRETS_PATTERN}" || true; })
     if [[ -n "$SECRET_HITS" ]]; then
-        echo "BLOCK: risk-area 'secrets' violated — secret keyword in diff (fallback grep). abort." >&2
+        echo "BLOCK: risk-area 'secrets' violated — secret keyword in diff (grep of every added line). abort." >&2
         echo "  hits: $(echo "$SECRET_HITS" | head -3)" >&2
         exit 15
     fi
-    echo "  ✓ secrets — 0 hit (fallback grep — helper missing)"
+    echo "  ✓ secrets — 0 hit (grep of every added line)"
 fi
 
 # domain-output — uncertainty/quality field net-removal (project-specific, skip if unset)

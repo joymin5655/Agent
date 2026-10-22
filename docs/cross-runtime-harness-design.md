@@ -363,7 +363,13 @@ other tools' hooks untouched.
 
 Codex sets `PLUGIN_ROOT` and compatibility `CLAUDE_PLUGIN_ROOT` for plugin
 hooks, so the existing relative hook commands migrated without copying the
-core ([Codex plugin packaging][codex-plugin]).
+core ([Codex plugin packaging][codex-plugin]). Claude Code substitutes
+`${CLAUDE_PLUGIN_ROOT}` in skill text when it loads a skill; whether Codex does
+so for skills is unverified, and a runtime that does not substitute needs
+`CLAUDE_PLUGIN_ROOT` exported to the harness checkout in its shell environment.
+`setup.sh --codex` does not set it. Since 0.13.1 the skills no longer fall back
+to the current directory, so without it a skill command fails in Codex even
+inside a harness checkout.
 
 The shell wrapper (`legacy/codex-shell-wrap/codex-shell-wrap.sh`) moved to
 `legacy/` and stays available only as a fallback for `[features] hooks =

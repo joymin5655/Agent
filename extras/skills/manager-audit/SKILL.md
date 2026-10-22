@@ -29,7 +29,7 @@ completeness and runs only in the slug-less `--global` sweep):
 
 A fifth lane runs only with `--global` (no slug):
 `review-completeness` — how often a review was Claude-only (V-6). It reads
-`core/infra/telemetry-digest.sh --review --window 30 --json`: WARN
+`$HR/core/infra/telemetry-digest.sh --review --window 30 --json`: WARN
 `solo-ratio-high` when the share of reviewed diffs with no external-vendor
 complete review exceeds `AGENT_REVIEW_SOLO_MAX` percent (default 50), WARN
 `override-used` when any review override was logged (count only, the reason is
@@ -44,7 +44,7 @@ mirrors harness-audit: deleting this skill weakens no gate.
 ### 1. Run the machine layer
 
 ```bash
-HR="$(bash "${CLAUDE_PLUGIN_ROOT:-$PWD/extras}/scripts/harness-root.sh")"   # core plugin root (extras ships skills only)
+HR="$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/harness-root.sh")"   # core plugin root (extras ships skills only)
 [ -n "$HR" ] && bash "$HR/core/infra/manager-audit.sh" <slug> --json   # empty HR = core not found: stop and tell the user
 ```
 

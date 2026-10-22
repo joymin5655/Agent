@@ -24,9 +24,10 @@
 set -euo pipefail
 
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+HARNESS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 LOCK_DIR="$REPO_ROOT/.agent/locks"
 DB_FILE="$LOCK_DIR/goal-state.db"
-SCHEMA_FILE="$REPO_ROOT/core/infra/sql/001_supervisor_goals.sql"
+SCHEMA_FILE="$HARNESS_ROOT/core/infra/sql/001_supervisor_goals.sql"
 AUDIT_LOG="$REPO_ROOT/.agent/logs/supervisor-goal-audit.jsonl"
 
 # Optional graceful-wrap output paths (consumer project may override).

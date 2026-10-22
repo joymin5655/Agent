@@ -10,7 +10,8 @@ tools: Bash, Read, Grep, Glob
 ## Goal
 
 Re-check a **completion claim** from a context that did **not** build the work
-(the hooks-mastery builder-validator pattern), so "the builder says it's done"
+(the hooks-mastery builder-validator pattern; full mode — `--light` is the one
+same-session exception and says so), so "the builder says it's done"
 is never the last word. It answers one question with evidence: *does the claim
 match reality?* — and defaults to **REFUTED** on any doubt.
 
@@ -72,7 +73,8 @@ is itself half the value.
 ### 1. Deterministic pass
 
 ```bash
-python3 core/infra/completion-verify.py --root "$PWD" .agent/claims/<slug>.yml
+python3 "${CLAUDE_PLUGIN_ROOT}/core/infra/completion-verify.py" \
+    --root "$PWD" .agent/claims/<slug>.yml
 ```
 
 - Exit 0 + `"verdict":"CONFIRMED"` → every cited fact held. Proceed to the
@@ -149,7 +151,7 @@ not about which tool produced it.
 for "done" — fold them into this pass. The *deterministic* dimensions are already
 scored per commit by the `rubric-commit-judge` hook (advisory, appended to
 `.agent/logs/rubric-score.jsonl`); refresh them with
-`python3 core/infra/rubric-score.py --root "$PWD"`. The *semantic-only*
+`python3 "${CLAUDE_PLUGIN_ROOT}/core/infra/rubric-score.py" --root "$PWD"`. The *semantic-only*
 dimensions (those with no `grader_check`) are yours to judge here,
 refute-by-default, exactly like the questions above. A failing rubric dimension
 is a refutation like any other — this is the semantic half of the two-layer
@@ -159,7 +161,7 @@ rubric design, the deterministic half being the commit hook.
 additional evidence input to this pass. Ask the user for cost approval, then:
 
 ```bash
-AGENT_WORKER_YES=1 bash "${CLAUDE_PLUGIN_ROOT:-$PWD}/core/infra/call-worker.sh" second-opinion-verify \
+AGENT_WORKER_YES=1 bash "${CLAUDE_PLUGIN_ROOT}/core/infra/call-worker.sh" second-opinion-verify \
     < <claim + diff/artifacts>          # prints ~/.agent/workers/<project-key>/<ts>-…md
 ```
 
@@ -228,9 +230,11 @@ verify-completion <slug>: CONFIRMED | REFUTED   (score S)
 
 ## Hard rules
 
-- **Independent context is not optional.** The value is a second pair of eyes
-  that did not build the thing. If you built it, you are not the verifier —
-  dispatch one.
+- **Independent context is the default.** The value is a second pair of eyes
+  that did not build the thing. Full mode always runs in a fresh spawned
+  verifier — if you built it, you are not that verifier; dispatch one. The one
+  exception is `--light` for a single small claim: it runs in this session and
+  the report says it is not independent.
 - **Refute-by-default.** Ambiguity, a missing file, an unverifiable claim, a
   trivially-green test → REFUTED. Never upgrade a doubt into a pass.
 - **Never edit the work to make the claim pass.** The verifier reports; the
