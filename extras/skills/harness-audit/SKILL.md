@@ -15,6 +15,8 @@ dry-run. The machine integrity layer (P1-1 `doc-reality.sh`, the CI jobs, and th
 runs it once, reads off a per-check pass/fail table, and turns each failure into a
 diagnosis a maintainer can act on.
 
+Run it from the root of a harness checkout: it audits that checkout's own gates.
+
 Concretely the report answers three questions with evidence:
 
 1. **Is the harness passing its own gates right now?** — a per-check PASS / FAIL /

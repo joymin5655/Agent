@@ -48,7 +48,7 @@ Dispatch notes (caller side):
 
 - Write the spec to a unique temp file per dispatch (`mktemp`), never a fixed
   path — parallel lanes must not clobber each other's specs.
-- Pipe the spec through `core/infra/call-worker.sh <role>` and keep the
+- Pipe the spec through `bash "<harness root>/core/infra/call-worker.sh" <role>` and keep the
   capture path it prints; the capture's `status:` field must agree with the
   lane's STATUS (a disagreement is itself a finding).
 - No silent fallback: if the lane is unavailable, the caller re-routes

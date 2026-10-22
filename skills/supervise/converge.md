@@ -19,7 +19,7 @@ converge step.
    file means the gate logged nothing for this wave: STOP and report it.
 2. Run (`<i>` = the refuted wave's number):
    ```bash
-   bash core/infra/plan-converge.sh <slug> --from .agent/plans/<slug>/verdict-w<i>.json --wave <i>
+   bash "<harness root>/core/infra/plan-converge.sh" <slug> --from .agent/plans/<slug>/verdict-w<i>.json --wave <i>
    ```
    If the remaining gap needs a spec change (a new decision or out-of-scope work),
    not code, add `--spec-change` instead — it stops with exit 7.
@@ -27,7 +27,7 @@ converge step.
 
 | Exit | Meaning | Action |
 |---|---|---|
-| 3 | a `## Wave <N+1>: converge <k>` was appended | under `--goal-mode` run `core/infra/supervisor-goal.sh add-wave <slug>` BEFORE `advance-wave <i>` (advancing the last wave completes the goal and `add-wave` then refuses); wave i is still advanced, its gap is carried by the converge wave. Re-count the waves and continue |
+| 3 | a `## Wave <N+1>: converge <k>` was appended | under `--goal-mode` run `bash "<harness root>/core/infra/supervisor-goal.sh" add-wave <slug>` BEFORE `advance-wave <i>` (advancing the last wave completes the goal and `add-wave` then refuses); wave i is still advanced, its gap is carried by the converge wave. Re-count the waves and continue |
 | 8 | wave i is a planned wave and a converge wave after it is still pending: the new gaps were folded into it | continue; do NOT run `add-wave` (no new wave) |
 | 0 | converged (CONFIRMED, no uncovered decision) | continue normally |
 | 5 | round cap: 3 converge waves already exist | STOP and report |

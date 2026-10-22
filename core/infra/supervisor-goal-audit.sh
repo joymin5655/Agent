@@ -23,8 +23,9 @@
 set -euo pipefail
 
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+HARNESS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 AUDIT_LOG="$REPO_ROOT/.agent/logs/supervisor-goal-audit.jsonl"
-GOAL_HELPER="$REPO_ROOT/core/infra/supervisor-goal.sh"
+GOAL_HELPER="$HARNESS_ROOT/core/infra/supervisor-goal.sh"
 
 # Project-tunable scoring keywords (override via env vars).
 DOMAIN_OUTPUT_KEYWORDS="${AGENT_DOMAIN_OUTPUT_KEYWORDS:-uncertainty|confidence|tolerance}"
@@ -242,8 +243,12 @@ for cmd in "${CHECKS[@]}"; do
     # Any completion-gate check (every converge wave has one) runs as a dryrun liveness
     # check (exit 2 = dead gate). The blocking verdict is step 2d's own gate call, so an
     # inherited AGENT_VERIFY_BLOCKING=block must not turn a REFUTED wave into an audit FAIL.
+    # The gate is a harness tool, not project code: run the copy next to this script so plan
+    # text stays portable (`<slug> <wave>` is charset-checked by the extractor above).
     run="$cmd"
-    case "$cmd" in "bash core/infra/completion-gate.sh "*) run="AGENT_VERIFY_BLOCKING=dryrun $cmd" ;; esac
+    case "$cmd" in "bash core/infra/completion-gate.sh "*)
+        run="AGENT_VERIFY_BLOCKING=dryrun bash $(printf '%q' "$HARNESS_ROOT/core/infra/completion-gate.sh") ${cmd#"bash core/infra/completion-gate.sh "}" ;;
+    esac
     if eval "$run" > "$LOG_FILE" 2>&1 < /dev/null; then
         PASS=true
         EXIT_CODE=0

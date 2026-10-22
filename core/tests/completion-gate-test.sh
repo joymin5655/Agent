@@ -4,10 +4,10 @@
 # completion-verify.py's verdict (docs/gate-registry.md `completion-gate` row).
 #
 # Every scenario runs against a fixture git repo (mktemp -d, git init) so the
-# real repo's .agent/logs and .agent/claims are never touched. The real
-# completion-verify.py is reached via AGENT_COMPLETION_VERIFY_BIN — the gate's
-# test seam — since the fixture repo is not the Agent repo itself and the
-# gate's default resolves the verifier relative to `git rev-parse --show-toplevel`.
+# real repo's .agent/logs and .agent/claims are never touched. The gate finds its
+# verifier next to itself, so the fixture needs no copy; scenarios still pass the
+# real completion-verify.py through AGENT_COMPLETION_VERIFY_BIN — the gate's test
+# seam — so a stubbed scenario differs from the others by one variable.
 # The seam is honored ONLY alongside AGENT_REPRODUCE_TEST=1 (security fix,
 # case (n) proves the negative — without it the seam is ignored even when set).
 #
@@ -307,15 +307,17 @@ grep -q "did not parse/empty" "$SINK_FILE"; check "empty-stdout-explicit-refutat
 
 echo
 echo "=== (n) AGENT_COMPLETION_VERIFY_BIN is IGNORED without AGENT_REPRODUCE_TEST=1 ==="
-# The fixture repo has no core/infra/completion-verify.py of its own — with the
-# seam correctly ignored, the gate tries the (here, nonexistent) hardcoded
-# in-repo path and fails closed at the canary. This proves the override was
-# NOT honored (security fix response to the code-review finding).
+# The override names the always-CONFIRMS stub from case (e). Honored, it would
+# fail the liveness canary (exit 2) or wave the false claim through (exit 0).
+# Ignored, the real verifier next to the gate REFUTES the false claim: exit 1
+# and a REFUTED record. This proves the override was NOT honored (security fix
+# response to the code-review finding).
 reset_sink
-write_true_claim
-RC=$( ( cd "$FIX" && env AGENT_VERIFY_BLOCKING=block AGENT_COMPLETION_VERIFY_BIN="$REAL_VERIFY" \
-    bash "$GATE" demo 1 "$CLAIM_FILE" ); echo $? )
-[[ "$RC" -eq 2 ]]; check "seam-ignored-without-reproduce-flag" $?
+write_false_claim
+RC=$( ( cd "$FIX" && env AGENT_VERIFY_BLOCKING=block AGENT_COMPLETION_VERIFY_BIN="$STUB" \
+    bash "$GATE" demo 1 "$CLAIM_FILE" ) >/dev/null 2>&1; echo $? )
+[[ "$RC" -eq 1 ]]; check "seam-ignored-without-reproduce-flag" $?
+tail -n 1 "$SINK_FILE" | grep -q '"verdict": "REFUTED"'; check "seam-ignored-real-verifier-refuted" $?
 
 echo
 echo "=== (o) claim path fallback: wave-suffixed file exists -> used ==="

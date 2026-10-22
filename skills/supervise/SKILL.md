@@ -13,6 +13,9 @@ Take a written plan (`~/.agent/plans/<slug>.md` with Wave 1..N sections)
 and run it end-to-end, dispatching the right specialist agent for each
 wave, auditing after each wave, and aborting on risk-area violations.
 
+Supporting files here (`converge.md`, `race-lanes.md`, `templates/`) write
+`<harness root>`; it is `${CLAUDE_PLUGIN_ROOT}`.
+
 ## Modes
 
 | Mode | Behavior |
@@ -64,7 +67,7 @@ Who runs on which model — and what enforces it:
 |---|---|---|
 | **Judgment** — planning/design, wave dispatch decisions (who does what), gate verdicts & abort/advance, result synthesis | The main session's top model. Runs in the main loop, or via an agent **without** a `model:` pin (inherit). Never dispatch judgment work to an agent pinned below the session model. | This rule — a convention (frontmatter absence = inherit; a call-time choice is not CI-checkable) |
 | Specialist dispatch (`code-reviewer` → sonnet, `security-reviewer` → opus) | Each agent's own `model:` frontmatter | Runtime applies frontmatter; `validate-plugin` CI drift guard keeps `agents/master-registry.json` in sync |
-| **Execution dispatch** — implementation waves | Workhorse (MID) tier, via an explicit `model` override on the Agent dispatch (no executor agent is shipped) | Delegation-contract `model` field (`skills/supervise/templates/delegation-contract.md`). CI guards the guardable half: the template's model field and reviewer/verifier read-only toolsets (registry-drift gate); the call-time override itself stays a convention |
+| **Execution dispatch** — implementation waves | Workhorse (MID) tier, via an explicit `model` override on the Agent dispatch (no executor agent is shipped) | Delegation-contract `model` field (`${CLAUDE_PLUGIN_ROOT}/skills/supervise/templates/delegation-contract.md`). CI guards the guardable half: the template's model field and reviewer/verifier read-only toolsets (registry-drift gate); the call-time override itself stays a convention |
 | Mechanical fixes (build/type/lint cleanup), lookups, fan-out workers | Low tier, via an explicit `model` override | Per-call override — a convention |
 
 **Wave-dispatch default effort** (advisory — pass `effort` on the Agent call;
@@ -111,7 +114,7 @@ reasoning replay) is advisory in `docs/concepts/fable-5-prompting.md`.
 Before touching the plan, restate the ask so dispatch decisions trace to a
 machine-checkable record rather than to chat prose:
 
-a. Fill `skills/supervise/templates/prompt-restatement.md` from the user's
+a. Fill `${CLAUDE_PLUGIN_ROOT}/skills/supervise/templates/prompt-restatement.md` from the user's
    invocation text and the plan's objective — all six sections (Original ask
    verbatim / Interpreted goal / Assumptions / Out of scope / Success
    criteria / Open questions), plus the `Run started:` UTC timestamp line
@@ -130,11 +133,12 @@ serving a goal absent from **Interpreted goal** is flagged as scope drift.
 
 a. Read `.agent/plans/<slug>/plan.md` (legacy: `~/.agent/plans/<slug>.md`).
 b. Confirm it has Wave 1..N sections.
-c. Run `bash core/infra/supervisor-goal-audit.sh score --plan <slug> --wave 1`
+c. Run
+   `bash "${CLAUDE_PLUGIN_ROOT}/core/infra/supervisor-goal-audit.sh" score --plan <slug> --wave 1`
    — if verdict is `weak`, warn the user and ask whether to proceed.
 d. If `--goal-mode`, initialise:
    ```bash
-   core/infra/supervisor-goal.sh init <slug> <N> [<budget>] "<objective>"
+   bash "${CLAUDE_PLUGIN_ROOT}/core/infra/supervisor-goal.sh" init <slug> <N> [<budget>] "<objective>"
    ```
 
 #### Pattern selection
@@ -168,7 +172,7 @@ b. **Classify the wave and pick lanes** based on its content:
      lane.
 
    Every dispatch is written as a **delegation contract** —
-   `skills/supervise/templates/delegation-contract.md` (goal / output format /
+   `${CLAUDE_PLUGIN_ROOT}/skills/supervise/templates/delegation-contract.md` (goal / output format /
    tools & scope / boundaries, plus an explicit `model` field per the Model
    policy and a `skills` field naming the skills the worker loads — the
    supervisor picks them; workers do not search for skills). Five
@@ -188,7 +192,8 @@ b. **Classify the wave and pick lanes** based on its content:
      isolation is the standing exception: verifiers are always fresh.
    **Liveness (`--goal-mode`).** Register each dispatched agent with a `stuck_after`
    budget (600 s for an edit, more for tests) and its write path:
-   `supervisor-goal.sh agent-spawn <slug> <agent-id> <i> <stuck-after-s> [scope]`.
+   `bash "${CLAUDE_PLUGIN_ROOT}/core/infra/supervisor-goal.sh" agent-spawn <slug>
+   <agent-id> <i> <stuck-after-s> [scope]`.
    Each tick run `stuck-check <slug>`: STUCK = no new side effect (commit or file
    change in scope, or `agent-effect <slug> <agent-id> log`) past the budget. It
    prints only on a transition, so a silent tick needs no narration. An agent
@@ -196,14 +201,15 @@ b. **Classify the wave and pick lanes** based on its content:
    read its output and message or re-dispatch it; `agent-done` when finished.
 
    **Decision log.** Record each non-trivial decision (dispatch, abort/advance,
-   waiver): `supervisor-goal-log.sh append <slug> wave-<i> "<decision>" "<why>"
-   <evidence> <result>`. Evidence is a pointer (SHA, path, `path:line`), never prose.
+   waiver): `bash "${CLAUDE_PLUGIN_ROOT}/core/infra/supervisor-goal-log.sh" append <slug>
+   wave-<i> "<decision>" "<why>" <evidence> <result>`. Evidence is a pointer (SHA,
+   path, `path:line`), never prose.
    Append-only: fix a wrong row with `supersede <slug> <line> …`, never edit it.
 
 c. **Execute** the wave's intended changes — through the dispatched execution
    lane, not inline at the session model (inline is judgment's lane, not
    execution's). Under `--verify-blocking`, the wave's delegation contract
-   (`skills/supervise/templates/delegation-contract.md` "Completion claim
+   (`${CLAUDE_PLUGIN_ROOT}/skills/supervise/templates/delegation-contract.md` "Completion claim
    file") must instruct the worker to write
    `.agent/claims/<slug>-w<i>.yml` (verify-completion schema) on finishing —
    completion-gate.sh in step 2d reads it, falling back to the repo-wide
@@ -214,7 +220,7 @@ c. **Execute** the wave's intended changes — through the dispatched execution
    something to check.
 d. **Audit**:
    ```bash
-   bash core/infra/supervisor-goal-audit.sh <slug> <i>
+   bash "${CLAUDE_PLUGIN_ROOT}/core/infra/supervisor-goal-audit.sh" <slug> <i>
    ```
    - PASS: continue.
    - FAIL: STOP. Report to user. Do not auto-fix and retry — the user
@@ -224,7 +230,7 @@ d. **Audit**:
    row — the first blocking consumer of `completion-verify.py`'s verdict,
    `docs/scoring-convention.md`):
    ```bash
-   bash core/infra/completion-gate.sh <slug> <i> [claim-path]
+   bash "${CLAUDE_PLUGIN_ROOT}/core/infra/completion-gate.sh" <slug> <i> [claim-path]
    ```
    - `--verify-blocking` (or `--converge`) on the `/supervise` invocation sets
      `AGENT_VERIFY_BLOCKING=block` for this call (unset/other flags leave the
@@ -232,20 +238,22 @@ d. **Audit**:
    - block mode + REFUTED (exit 1): STOP, same protocol as a 2d audit FAIL —
      report the printed refutations to the user verbatim, do not auto-fix and
      retry. The user decides next action.
-   - `--converge` + REFUTED: follow `skills/supervise/converge.md` instead of STOP.
+   - `--converge` + REFUTED: follow `${CLAUDE_PLUGIN_ROOT}/skills/supervise/converge.md`
+     instead of STOP.
    - exit 2 (the gate's own liveness canary failed — a dead completion-verify.py,
      not a refuted claim) is also a STOP: the gate cannot be trusted, report it
      as a harness defect, not a wave failure.
 e. **Advance** (if `--goal-mode`):
    ```bash
-   core/infra/supervisor-goal.sh advance-wave <slug> <i>
+   bash "${CLAUDE_PLUGIN_ROOT}/core/infra/supervisor-goal.sh" advance-wave <slug> <i>
    ```
 f. **Wrap** (if `--auto-push` or `--auto-merge`):
    - Invoke `/wrap` with the appropriate flag.
 
 ### 2b. Race lanes (opt-in: wave annotated `race: true`)
 
-Before running a `race: true` wave, read `skills/supervise/race-lanes.md` — it holds
+Before running a `race: true` wave, read
+`${CLAUDE_PLUGIN_ROOT}/skills/supervise/race-lanes.md` — it holds
 the one-writer and patch-only rules.
 
 ### 3. Safeguards (immediate abort)
@@ -270,7 +278,7 @@ On safeguard: emit `blocked` broadcast (R13), report state to user.
 If `--goal-mode` with a budget, after each tool call:
 
 ```bash
-core/infra/supervisor-goal.sh track-tokens <slug> <delta>
+bash "${CLAUDE_PLUGIN_ROOT}/core/infra/supervisor-goal.sh" track-tokens <slug> <delta>
 ```
 
 When `status` transitions to `budget_limited`, the helper auto-writes
@@ -283,8 +291,8 @@ When wave N passes audit, cross-check the decision log against the run record
 **before** declaring the run complete:
 
 ```bash
-core/infra/supervisor-goal-log.sh check <slug>    # prints "## Attention"
-core/infra/supervisor-goal.sh complete <slug>     # if --goal-mode (re-runs the check on stderr)
+bash "${CLAUDE_PLUGIN_ROOT}/core/infra/supervisor-goal-log.sh" check <slug>    # prints "## Attention"
+bash "${CLAUDE_PLUGIN_ROOT}/core/infra/supervisor-goal.sh" complete <slug>     # if --goal-mode (re-runs the check on stderr)
 ```
 
 Copy `## Attention` into the report below (pending/failed decisions, dead evidence
@@ -311,8 +319,9 @@ guarantee the file exists — it never overwrites one you already wrote); on
 non-goal runs writing it is this step's discipline. This keeps an execution
 record on runtimes that have no global recording layer at all.
 
-Finally, auto-run the two model-economics lanes: `bash core/infra/manager-audit.sh
-<slug> --json --since <Run started ts from RESTATEMENT.md>`, then filter its
+Finally, auto-run the two model-economics lanes:
+`bash "${CLAUDE_PLUGIN_ROOT}/core/infra/manager-audit.sh" <slug> --json --since
+<Run started ts from RESTATEMENT.md>`, then filter its
 `findings` array to `lane == "routing-waste"` or `lane == "token-spend"` (the
 script has no per-lane flag — the JSON `lane` field on each finding IS the
 selection interface; the other two lanes' findings are simply ignored in this

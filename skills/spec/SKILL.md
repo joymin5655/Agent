@@ -186,9 +186,10 @@ it>` on the same step — that is the marker `plan-lint.sh` looks for.
 
 Before asking for approval, lint and review the plan:
 
-1. Run `bash core/infra/plan-lint.sh <slug>` (deterministic). Exit 1 names the
-   defects: a missing `## Wave N:` header, a step without `→ verify:`, a prose
-   verify without `reason:`, a spec missing `## Decisions`, `## Must not` or
+1. Run `bash "${CLAUDE_PLUGIN_ROOT}/core/infra/plan-lint.sh" <slug>`
+   (deterministic). Exit 1 names the defects: a missing `## Wave N:` header, a step
+   without `→ verify:`, a prose verify without `reason:`, a spec missing `## Decisions`,
+   `## Must not` or
    `## Edge cases`, or a success criterion, must-not or edge-case line with
    backticked terms of which none is mentioned in a Wave step (any one hit is
    enough, not every term).

@@ -63,7 +63,7 @@ root) and its content must be the CURRENT diff's hash, which only the CLI
 can produce:
 
 ```bash
-CEG="${CLAUDE_PLUGIN_ROOT:-$PWD}/core/hooks/council-escalation-gate.py"
+CEG="${CLAUDE_PLUGIN_ROOT}/core/hooks/council-escalation-gate.py"
 python3 "$CEG" --council-flag set
 ```
 
@@ -82,7 +82,7 @@ empty. Build ONE shared core, identical for every external lane:
 
 - the diff, plus 3-5 lines of stated intent (from the commit message / user);
 - the **impact context**, if any. Run
-  `python3 "${CLAUDE_PLUGIN_ROOT:-$PWD}/core/infra/impact-context.py" <same target>`
+  `python3 "${CLAUDE_PLUGIN_ROOT}/core/infra/impact-context.py" <same target>`
   and paste its block verbatim; empty output means omit it. It names files that
   depend on the changed code but are not in the diff, plus the tests the change
   reaches. Ask each lane to check whether those outside callers still hold,
@@ -142,7 +142,7 @@ External lanes in the background (each capture path lands on stdout):
 ```bash
 # Resolve the dispatcher from the plugin cache (plugin install) or the
 # checkout (repo install) — never bare cwd-relative.
-CW="${CLAUDE_PLUGIN_ROOT:-$PWD}/core/infra/call-worker.sh"
+CW="${CLAUDE_PLUGIN_ROOT}/core/infra/call-worker.sh"
 [[ -f "$CW" ]] || echo "council-review: call-worker.sh not found at $CW — harness root unresolved; external lanes are absent this run" >&2
 
 # Bind every capture to this diff: sha256 over the staged blobs of risk-path files
@@ -152,7 +152,7 @@ CW="${CLAUDE_PLUGIN_ROOT:-$PWD}/core/infra/call-worker.sh"
 DK=""
 DIFF_SEL="${DIFF_SEL:---staged}"   # the selector this run reviews: --staged (default), --head or <range>
 if [[ "$DIFF_SEL" == "--staged" ]]; then
-  DK="$(python3 "${CLAUDE_PLUGIN_ROOT:-$PWD}/core/infra/review-evidence.py" key --staged)" \
+  DK="$(python3 "${CLAUDE_PLUGIN_ROOT}/core/infra/review-evidence.py" key --staged)" \
     || { echo "council-review: diff key failed — dispatch without one" >&2; DK=""; }
 fi
 
@@ -226,7 +226,7 @@ The report header is produced mechanically, never composed by hand. Pass the cap
 path of every lane that ran (each `call-worker.sh` stdout line):
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT:-$PWD}/core/infra/review-evidence.py" summary <capture paths>
+python3 "${CLAUDE_PLUGIN_ROOT}/core/infra/review-evidence.py" summary <capture paths>
 ```
 
 Paste its output verbatim at the top of the report. When no external-vendor lane
@@ -286,7 +286,7 @@ rest of its TTL. Clear it once the report above is produced, whether the run
 succeeded or degraded:
 
 ```bash
-CEG="${CLAUDE_PLUGIN_ROOT:-$PWD}/core/hooks/council-escalation-gate.py"
+CEG="${CLAUDE_PLUGIN_ROOT}/core/hooks/council-escalation-gate.py"
 python3 "$CEG" --council-flag clear
 ```
 

@@ -30,23 +30,40 @@ one skill invocation, with all the safety gates intact.
 
 ### 1. Pre-flight checks (gates)
 
-Run in order; any failure aborts before the commit.
+Run in order; any failure aborts before the commit. A gate whose script is
+missing (a runtime that did not fill in the plugin root) is reported as SKIPPED,
+not as a pass or a fail.
 
 a. **gitleaks** on staged diff:
    ```bash
-   gitleaks protect --staged --redact -v --config=gitleaks.toml --no-banner
+   cd "$(git rev-parse --show-toplevel)" || exit 1
+   if [ -f gitleaks.toml ]; then
+     gitleaks protect --staged --redact -v --config=gitleaks.toml --no-banner
+   else
+     gitleaks protect --staged --redact -v --no-banner
+   fi
    ```
+   Without `--config`, gitleaks loads `GITLEAKS_CONFIG` or the repo's
+   `.gitleaks.toml` when either is set or present, and its built-in rules only
+   otherwise. It does not print which one it loaded at this verbosity, so check
+   those two yourself and say which config ran in the report. Treat any nonzero
+   exit as a finding until its output shows otherwise, and never rerun without
+   `--config` to clear a failure.
    Before trusting a clean result, confirm the gate is actually *live* with the
-   fire drill (W-3) — it plants a synthetic secret matching the repo's own rule
-   and asserts gitleaks catches it, so a misconfigured allowlist can't give a
-   false all-clear:
+   fire drill (W-3) — it plants a synthetic secret matching the harness's own
+   rule and asserts gitleaks catches it, so a misconfigured allowlist can't give
+   a false all-clear. Outside the harness repo the drill proves gitleaks and the
+   harness's own rules are live (it uses the harness's `gitleaks.toml`), not
+   that this project's allowlist is sane, so a PASS there is reported as
+   "gitleaks live (harness rules); project config not drilled":
    ```bash
-   bash core/infra/gitleaks-fire-test.sh   # PASS = gate live; FAIL = misconfigured; exit 2 = gitleaks absent (SKIP)
+   # PASS = gate live; FAIL = misconfigured; exit 2 = gitleaks absent (SKIP)
+   bash "${CLAUDE_PLUGIN_ROOT}/core/infra/gitleaks-fire-test.sh"
    ```
 a2. **Remote-URL credential scan** (W-3) — a token baked into the push remote's
    URL lives in `.git/config`, invisible to the content scanners above:
    ```bash
-   git remote get-url origin | python3 core/git-hooks/scan-remote-url.py
+   git remote get-url origin | python3 "${CLAUDE_PLUGIN_ROOT}/core/git-hooks/scan-remote-url.py"
    ```
    Nonzero exit = the remote URL embeds a credential; strip it before pushing.
    (The pre-push hook also runs this, but checking here fails earlier.)
@@ -54,8 +71,9 @@ a3. **Memory-pollution guard** — a memory plugin's session-context dump
    injected into a tracked instruction file (e.g. `AGENTS.md`) must never
    reach a commit:
    ```bash
-   bash core/tests/memory-pollution-guard.sh
+   bash "${CLAUDE_PLUGIN_ROOT}/core/tests/memory-pollution-guard.sh" "$(git rev-parse --show-toplevel)"
    ```
+   With no argument the guard checks its own copy, not this repo.
    FAIL = revert the injected block (`git checkout -- <file>`) before committing.
 b. **Whitelist path scan** — only files inside allowed paths should be
    staged. Allowed paths default to anything except `secrets/`,
@@ -71,7 +89,7 @@ d. **Review-tier check** — run the review-cadence script, resolved from the
    plugin cache or the checkout (never bare cwd-relative — a plugin install
    has no `core/` under `$PWD`):
    ```bash
-   bash "${CLAUDE_PLUGIN_ROOT:-$PWD}/core/infra/review-tier.sh" --staged
+   bash "${CLAUDE_PLUGIN_ROOT}/core/infra/review-tier.sh" --staged
    ```
    A missing script is not a pass: report the check as SKIPPED (step 1's
    "a skipped gate is reported as skipped" rule) rather than reading its
@@ -81,8 +99,9 @@ d. **Review-tier check** — run the review-cadence script, resolved from the
    - **tier 2** (exit 10, council-scale — line/file threshold or a risk-area
      path) AND no council/degrade review happened this session for this diff
      (no row in `<workers dir>/reviews.jsonl` with `diff_key` equal to
-     `review-evidence.py key --staged`, `status == "complete"` and a vendor other
-     than anthropic — `review-evidence.py check --staged` automates this, and
+     `python3 "${CLAUDE_PLUGIN_ROOT}/core/infra/review-evidence.py" key --staged`,
+     `status == "complete"` and a vendor other than anthropic — that script's
+     `check --staged` automates this, and
      `core/git-hooks/pre-commit` enforces it for risk-area paths; no
      single-vendor degrade note) → recommend `/council-review --staged` and confirm with the user
      before committing solo. For a size-only tier 2 this is advisory, not a
@@ -109,7 +128,7 @@ e. **Impact context** (advisory, never a gate). When the repo has a
    CodeGraph index, list the code outside this diff that depends on it and
    the test files the change reaches:
    ```bash
-   python3 "${CLAUDE_PLUGIN_ROOT:-$PWD}/core/infra/impact-context.py" --staged
+   python3 "${CLAUDE_PLUGIN_ROOT}/core/infra/impact-context.py" --staged
    ```
    Empty output means there was nothing to report: no `.codegraph/`, no
    codegraph installed, or no outside dependents. That is not a failure. When
@@ -138,7 +157,7 @@ re-stage, and create a **new** commit (don't `--amend`).
 - Default `/wrap`: **don't push**. Report the commit SHA and tell the
   user how to push when ready.
 - `--auto-push`: `git push -u origin <branch>` (pre-push hook runs).
-- `--auto-merge`: Push, then invoke `core/infra/auto-ship.sh <PR-N>`.
+- `--auto-merge`: Push, then invoke `bash "${CLAUDE_PLUGIN_ROOT}/core/infra/auto-ship.sh" <PR-N>`.
 
 ### 4. Open PR
 

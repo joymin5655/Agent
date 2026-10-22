@@ -351,7 +351,8 @@ cat > "$STUB/gh" <<'STUBGH'
 case "$1 $2" in
   "pr view") echo '{"state":"OPEN","mergeable":"MERGEABLE","headRefName":"feat","headRefOid":"abc","baseRefName":"main"}' ;;
   "pr checks") echo "all checks passed"; exit 0 ;;
-  "pr diff") if [[ " $* " == *" --name-only "* ]]; then cat "$STUB_DIFF_FILES"; fi ;;
+  "pr diff") if [[ " $* " == *" --name-only "* ]]; then cat "$STUB_DIFF_FILES"
+             elif [[ -n "${STUB_FULL_DIFF:-}" ]]; then cat "$STUB_FULL_DIFF"; fi ;;
   "pr merge") echo "stub: merge refused" >&2; exit 1 ;;
   *) exit 0 ;;
 esac
@@ -408,6 +409,30 @@ check "legacy root hook-config.yml is not read; one line says where to put it" $
 rm "$P/hook-config.yml"
 ! grep -q 'HOOK_CONFIG=' "$AUTOSHIP"; check "dead HOOK_CONFIG variable removed from auto-ship.sh" $?
 ! grep -q 'HOOK_CONFIG_PATH' "$AUTOSHIP"; check "no HOOK_CONFIG_PATH env claim left in auto-ship.sh" $?
+
+# secrets verdict: the helper's docs/ and tests/ exemptions are tuned for the harness tree, so a
+# consumer project gets the grep of every added line. Only a repo that ships the helper uses it,
+# and always the copy next to the script. The planted copy writes <its own path>.ran if it runs.
+fulldiff() { # fulldiff <path> -> $STUB_FULL_DIFF: a one-file diff adding a keyword-style line
+  printf 'diff --git a/%s b/%s\n--- /dev/null\n+++ b/%s\n@@ -0,0 +1 @@\n+API_KEY=placeholder\n' \
+    "$1" "$1" "$1" > "$TMP_ROOT/full.diff"
+}
+export STUB_FULL_DIFF="$TMP_ROOT/full.diff"
+P=$(mkgit as-consumer)
+fulldiff docs/setup.md; as "$P" "" docs/setup.md
+ok=1; [[ $AS_RC -eq 15 && "$AS_OUT" == *"grep of every added line"* ]] && ok=0
+check "secrets: consumer project, key in docs/ aborts (exit 15, grep path)" "$ok"
+PP=$(mkgit as-planted); mkdir -p "$PP/core/infra"
+printf 'import sys\nopen(sys.argv[0] + ".ran", "w").close()\nsys.exit(0)\n' \
+  > "$PP/core/infra/auto-ship-guard-scan.py"
+fulldiff docs/setup.md; as "$PP" "" docs/setup.md
+ok=1; [[ $AS_RC -eq 17 && ! -e "$PP/core/infra/auto-ship-guard-scan.py.ran" ]] && ok=0
+check "secrets: harness helper exempts docs/ (exit 17); the repo's own copy never runs" "$ok"
+fulldiff src/app.py; as "$PP" "" src/app.py
+ok=1; [[ $AS_RC -eq 15 && "$AS_OUT" == *"non-EXEMPT"* \
+  && ! -e "$PP/core/infra/auto-ship-guard-scan.py.ran" ]] && ok=0
+check "secrets: harness helper flags src/ (exit 15), not the planted copy" "$ok"
+unset STUB_FULL_DIFF
 
 echo
 echo "=== (I) r4-mutex-check: resources: triggers ==="

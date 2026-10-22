@@ -20,18 +20,20 @@ gets a lane from absent to healthy.
 ## Step 0 — resolve the harness root
 
 ```bash
-HR="$(bash "${CLAUDE_PLUGIN_ROOT:-$PWD/extras}/scripts/harness-root.sh")" || echo "worker-setup: agent-harness core (backends registry) not found — install agent-harness@agent, or set AGENT_HARNESS_ROOT to a harness checkout" >&2
+HR="$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/harness-root.sh")" || echo "worker-setup: agent-harness core (backends registry) not found — install agent-harness@agent, or set AGENT_HARNESS_ROOT to a harness checkout" >&2
 test -n "$HR" && test -f "$HR/core/infra/backends.json" || echo "worker-setup: backends registry not found at ${HR:-<unresolved>}" >&2
 ```
 
-Stop here with that guidance if the registry does not resolve. Every command
-below is relative to `$HR`.
+Stop here with that guidance if the registry does not resolve. Paths below are
+under `$HR`; every command block resolves it again, because each Bash call is a
+fresh shell.
 
 ## Step 1 — read-only status sweep (zero paid calls)
 
-Read `$HR/core/infra/backends.json` **live** with `jq` — never hardcode the
-lane list, the registry is the source of truth and can grow lanes this skill
-has never seen. For every backend, report one row:
+Read `$HR/core/infra/backends.json` **live** with `jq`, in a block that sets
+`HR` first like the one above — never hardcode the lane list, the registry is
+the source of truth and can grow lanes this skill has never seen. For every
+backend, report one row:
 
 | Column | How to get it |
 |---|---|
@@ -44,13 +46,24 @@ has never seen. For every backend, report one row:
 | tiers | keys of `.backends[$lane].tier_args` |
 | roles served | reverse-lookup: which `.roles[*].backend` (or `.fallback`) names this lane |
 
-Also run once, read-only: `python3 "$HR/core/infra/runtime-profile.py" detect --json`.
+Also run once, read-only:
+
+```bash
+HR="$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/harness-root.sh")"
+[ -n "$HR" ] && python3 "$HR/core/infra/runtime-profile.py" detect --json   # empty HR: stop
+```
+
 It reports `{installed, authenticated, plan}` for claude, codex and antigravity from
 local CLIs/files only (no network, no agy call). Show the plans next to the lane rows
 (claude `max`, codex `plus`, ...). The google plan is `unknown` by design — Antigravity
 exposes no local plan field — so say that rather than guessing; `authenticated: unknown`
 means "not verifiable locally", not "logged out". A `plus` plan is a normal reviewer
-seat. `runtime-profile.py save` records the main/reviewer vendors for later runs.
+seat. The `save` subcommand records the main/reviewer vendors for later runs:
+
+```bash
+HR="$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/harness-root.sh")"
+[ -n "$HR" ] && python3 "$HR/core/infra/runtime-profile.py" save
+```
 
 Also check once, separately: is `$HOME/bin` on `PATH` (workers/preflights
 resolve from there — `setup.sh`'s `ensure_home_bin`/doctor row).
@@ -134,16 +147,22 @@ under `~/.claude/projects/`, and shell history), and never in a repo `.env`.
 **Wire it into the harness**, after auth succeeds:
 
 ```bash
-bash "$HR/setup.sh" --codex        # or --antigravity
+HR="$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/harness-root.sh")"
+[ -n "$HR" ] && bash "$HR/setup.sh" --codex        # or --antigravity
 ```
 
 This lands the symlinks in `~/bin`, seeds the tiers/profile templates, and
 runs `setup.sh`'s own post-install doctor pass. `--antigravity` also installs the native-hook
 plugin into `~/.gemini/config/plugins/agent-harness` (guards the user's own interactive agy
-sessions, not only the worker). Check it with
-`python3 adapters/antigravity/install-plugin.py --root "$PWD" --check`, remove it with `--uninstall`;
-global-folder loading by a real agy was not measured (`adapters/antigravity/README.md`, "Native
-hooks (plugin)").
+sessions, not only the worker). Check it with:
+
+```bash
+HR="$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/harness-root.sh")"
+[ -n "$HR" ] && python3 "$HR/adapters/antigravity/install-plugin.py" --root "$HR" --check
+```
+
+Remove it with the same script and `--uninstall`; global-folder loading by a real agy was
+not measured (`adapters/antigravity/README.md`, "Native hooks (plugin)").
 
 **Verify — with an explicit heads-up before each real call.** Before running
 any of the following, tell the user which ones are real round-trip probes
@@ -170,7 +189,8 @@ backlog, not solved here).
 ## Step 5 — final verification
 
 ```bash
-bash "$HR/setup.sh" --doctor
+HR="$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/harness-root.sh")"
+[ -n "$HR" ] && bash "$HR/setup.sh" --doctor
 ```
 
 Re-print step 1's status table (now reflecting the onboarding just done), and

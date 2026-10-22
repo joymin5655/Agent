@@ -240,27 +240,36 @@ project symlink that points into it must be revalidated after updates.
 
 These are current-state findings, not future design:
 
-1. Some session and supervisor scripts resolve `core/infra` or the agent
-   registry from the active project root. A normal external project scaffold
-   does not copy those trees. Those portions can therefore no-op even though
-   Claude loaded the plugin components successfully. `skills/council-review/SKILL.md`'s
-   external-lane dispatch is resolved (2026-08-20): it resolves
-   `core/infra/call-worker.sh` via `${CLAUDE_PLUGIN_ROOT:-$PWD}` rather than a
-   bare cwd-relative path, so it works from a plugin install. `/wrap` step 1d
-   and `/verify-completion`'s `--second-opinion` were fixed the same way
-   (2026-08-21), and `core/tests/council-dispatch-path-test.sh` check (d) now
-   fails CI if any shipped skill shells into `call-worker.sh`,
-   `council-threshold.sh`, or `council-escalation-gate.py` by bare relative
-   path. **Still open**: the same shape for every OTHER `core/` script a skill
-   invokes — 7 SKILL.md files as of 2026-08-21 (`harness-audit`,
-   `harness-loop`, `loop`, `manager-audit`, `spec`, `supervise`, `wrap`; since
-   2026-10-20 `manager-audit` resolves through `harness-root.sh` and the first four
-   live in `extras/skills/`;
-   `wrap` still appears for its other helper calls, e.g. the gitleaks fire
-   drill), mostly `bash core/tests/…` and `bash core/infra/…` helper calls.
-   Reproduce the current list with:
-   `grep -rlE '(^|[^"$/A-Za-z0-9_])bash core/(infra|hooks|tests)/' skills/*/SKILL.md extras/skills/*/SKILL.md`.
-   Verify per-consumer, not by these fixes.
+1. Skills reach harness files through the plugin root. Claude Code replaces the
+   exact text `${CLAUDE_PLUGIN_ROOT}` in a skill, command or agent body when it
+   loads it; the variable is not in the Bash tool's environment. The default form
+   `${CLAUDE_PLUGIN_ROOT:-$PWD}` is not replaced, so in the shell it fell back to
+   the current directory, which outside a harness checkout has no `core/` (a
+   bare `bash core/…` resolved the same way). Those steps then failed or no-oped
+   even though Claude loaded the plugin components successfully. Resolved
+   (2026-10-22): shipped skills, commands and agents reach core files through the
+   exact form, `bash "${CLAUDE_PLUGIN_ROOT}/core/…"`. Extras skills cannot see the
+   core plugin, so each block resolves its root with
+   `HR="$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/harness-root.sh")"` and calls
+   `$HR/core/…`; the extras plugin's own files stay `${CLAUDE_PLUGIN_ROOT}/…`.
+   Supporting files a skill reads with the Read tool are not substituted: they
+   write `<harness root>/…` and the skill's `SKILL.md` says what that is. Five
+   scripts that skills run looked up their own companion files under the
+   project's git root (`completion-gate.sh`, `supervisor-goal.sh`,
+   `supervisor-goal-audit.sh`, `manager-audit.sh`, `auto-ship.sh`); they now
+   resolve them next to themselves (`HARNESS_ROOT`) and keep only `.agent/` state
+   in the project. `auto-ship.sh` still applies its exemption-aware secret scan
+   only to a repo that ships it (the harness itself). Codex is not documented to
+   substitute the variable and `setup.sh --codex` does not set it, so a Codex
+   shell needs `CLAUDE_PLUGIN_ROOT` set to the harness checkout.
+   `core/tests/skill-plugin-root-test.sh` replaces the old reproduce grep and
+   fails CI on a non-exact form, a bare call to a harness script or skill file, a
+   rooted path that does not exist, or a script that cannot find its companions
+   from a project outside the harness. `core/tests/council-dispatch-path-test.sh`
+   keeps its narrower check. **Still checkout-only by design**: `harness-audit`,
+   `harness-loop` and `loop` act on the harness itself (the loop's default grader
+   replays the harness's own batteries, so a mission in another project has no
+   grader yet) and say so. Verify per-consumer, not by these fixes.
 2. The Claude adapter silently passes when a named core hook is missing. This
    favors session availability but means installation health must be verified
    separately. The same fail-open stance holds in the Codex/Gemini shell
