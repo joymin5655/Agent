@@ -8,7 +8,7 @@
      "positive": ["codex랑 gemini로 교차 리뷰", "get a second opinion on this diff", "council review the staged changes", "다른 벤더 모델로 diff 독립 리뷰 받고 싶어", "review with codex and gemini in parallel", "교차 리뷰 해줘", "다른 AI로 검토해줘", "council 리뷰 돌려줘"],
      "negative": ["보안 취약점 owasp 점검", "커밋하고 PR 올려줘", "이게 진짜 다 끝났는지 다시 검증해줘"]},
     {"skill": "verify-completion",
-     "positive": ["이게 진짜 다 끝난 거 맞는지 독립적으로 검증해줘", "is this actually done? verify completion claim", "builder가 완료했다고 보고했는데 별도 컨텍스트에서 재검증", "verify the wave is complete before accepting it", "완료 주장 검증", "진짜 끝났는지 검증해줘", "완료 검증 부탁"],
+     "positive": ["이게 진짜 다 끝난 거 맞는지 독립적으로 검증해줘", "is this actually done? verify completion claim", "builder가 완료했다고 보고했는데 별도 컨텍스트에서 재검증", "verify the wave is complete before accepting it", "완료 주장 검증", "진짜 끝났는지 검증해줘", "완료 검증 부탁", "방금 한 거 문제 없는거야?", "잘 된건지 검증해줘", "검증 완료한거지?", "설정 반영 다 된 건지 확인해줘"],
      "negative": ["diff를 여러 모델로 교차 리뷰", "harness 전체 건강 점검해줘", "다음 작업 계획 세워줘"]},
     {"skill": "spec",
      "positive": ["이 기능 스펙부터 써줘", "spec this feature before we implement", "구현 전에 spec.md와 plan.md 만들어줘", "brainstorm the feature into a plan and get approval", "요구사항이 애매하니 인터뷰하면서 스펙 작성", "스펙 잡아줘", "계획부터 세우자"],

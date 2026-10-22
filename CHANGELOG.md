@@ -17,6 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in `docs/gate-registry.md`) so a later block/no-block decision rests on measured data.
 
 ### Changed
+- **verify-completion Korean triggers, same-session scope** (`skills/verify-completion/SKILL.md`):
+  `when_to_use` adds the completion-check phrasings users actually type ("문제 없는거야?",
+  "잘 된건지 확인해줘", "잘 된건지 검증해줘", "검증 완료한거지?", "완료된거야?",
+  "반영 다 된 건지 확인해줘", "검증해줘"), a call-before-re-checking line, and a boundary for
+  progress or failure-cause questions. The `description` no longer reads as excluding work built in
+  the same session — that work is in scope and is checked by a fresh spawned verifier or the
+  `--light` pass. `evals/routing/cases.json` gains Korean positives;
+  `evals/datasets/skill-ab.jsonl` flips the self-authored case to `trigger`.
 - **harness-loop hillclimb discipline** (`extras/skills/harness-loop/SKILL.md`): one change per
   attempt, frozen measurement for the whole run, a candidate kept only if it beats the best score
   on 3 grading runs (Pass^3 convention), and no early success before 3 graded attempts unless
