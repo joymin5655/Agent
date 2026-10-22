@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-10-22
+
 ### Added
 - **floor-guard** (`core/hooks/floor-guard.py`, PreToolUse `Write|Edit|MultiEdit` and `Bash`):
   warn-only advisory (`additionalContext`, never a permission decision) when a change lowers a
@@ -15,6 +17,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   files, `sed -i`/`perl -i` adding a skip, and `pytest --deselect` / `-k "not ..."`. Opt out with
   `AGENT_FLOOR_GUARD=off`; firings go to `.agent/logs/floor-guard.jsonl` (new `floor-guard` row
   in `docs/gate-registry.md`) so a later block/no-block decision rests on measured data.
+- **/spec `## Must not` and `## Edge cases`** (`skills/spec/SKILL.md`, `core/infra/plan-lint.sh`,
+  `agents/plan-checker.md`): both sections are mandatory like `## Decisions` (escape
+  `- none — <reason>`). plan-lint rules 8–9 fail a missing or empty section and require each
+  backticked term in them to appear in a Wave step; plan-checker check 7 asks for a step whose
+  verify provokes the situation (a negative test).
+- **/supervise `--converge`** (opt-in; `core/infra/plan-converge.sh`,
+  `skills/supervise/converge.md`): the gaps of a REFUTED completion gate become a new plan wave,
+  one `- fix:` step per refutation, and are re-verified — capped at 3 rounds, stopping on no
+  progress, a plan-lint failure or `--spec-change`; spec.md is never written. Without the flag a
+  REFUTED gate still stops. New `supervisor-goal.sh add-wave`; `supervisor-goal-audit.sh` and
+  manager-audit read `.agent/plans/<slug>/plan.md` before the legacy `~/.agent/plans/<slug>.md`.
 
 ### Changed
 - **verify-completion Korean triggers, same-session scope** (`skills/verify-completion/SKILL.md`):
@@ -29,6 +42,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   attempt, frozen measurement for the whole run, a candidate kept only if it beats the best score
   on 3 grading runs (Pass^3 convention), and no early success before 3 graded attempts unless
   cap/circuit-breaker. Idea from cursor/plugins pstack `hillclimb` (MIT).
+
+### Fixed
+- **pre-tool-guard W-7 heredoc-message gaps and symlinked `hook_config` load**
+  (`core/hooks/pre-tool-guard.sh`): a symlinked launch resolves the hook directory through the
+  symlink, so declared secret paths and T-4 risk areas still load. The quoted-heredoc
+  commit-message idiom is stripped only in its exact shape (body ends at the first delimiter line,
+  only whitespace before `)"`, body safe for bash 3.2's paren/quote scan); a heredoc operator
+  outside the idiom (backslash-newline joined), or more than 64 `<<`, leaves the command
+  unchanged for the destructive guards. `--message=` is handled like `-m`.
 
 ## [0.12.0] - 2026-10-21
 
