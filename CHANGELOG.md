@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.4] - 2026-10-27
+
+### Security
+- **`loop-write-guard` asks on the deletion verbs and shell spellings it used to miss**
+  (`core/hooks/loop-write-guard.py`): while a loop is active, a Bash command that names the
+  grader surface (`core/tests/`, `evals/`, the guards, the results ledger, `.agent/`) and carries
+  `unlink`, `shred`, `rmdir`, `find -delete`, `git clean` (or a git write verb behind global
+  options such as `git -C . clean`), a Homebrew `g`-prefixed GNU tool (`grm`, `gmv`),
+  `perl`/`ruby -i`, or a `python`/`node`/`deno`/`bun`/`ruby`/`php` one-liner that calls a writer
+  or opens a file in a mode that writes (`'wx'`, `'ax+'`, `"w:UTF-8"`, `'xb'`, also behind a
+  nested call as in `openSync(path.join(a, b), 'w')`, and any PHP `fopen` whose mode is not a
+  visible read-only literal) now escalates to `ask`; before, only `rm` and the older verbs did.
+  The path is also matched after the shell's own rewriting (quotes and escapes, `$'...'`, brace
+  lists, globs, dot segments, the value of a `key=value`), so `.age'nt'`, `core/te{s,}ts`,
+  `core/./tests` and `dd of=core/./tests/x` no longer slip past the literal-token match. Only
+  `ask` decisions are added: the old verb pattern is a prefix of the new one and the raw-text
+  match still runs first. A deadline inside the hook (20 s, under the 30 s host timeout) turns a
+  command that would stall the matcher into an `ask`, because the host reads a hook it kills as
+  no decision.
+  `loop-write-guard-test.sh` grows from 62 to 342 checks. Costs: a search for a verb's name
+  (`grep -rn unlink core/tests`) now asks too, and so does a PHP `fopen` that only reads
+  without saying so. Still open, and named in the hook's `RESIDUALS` comment: paths the
+  command computes at run time or splits with `cd`, a command or wildcard that names no
+  guarded path (`git clean -fdx`, `rm -rf *`), case-folded spellings, a mode that is not a
+  quoted literal (`File.open(p, m)`, `O_WRONLY`), a `g`-prefixed tool behind a wrapper
+  option that takes an argument (`nice -n 5 grm`), and library writers the verb table does
+  not name.
+
 ## [0.13.3] - 2026-10-27
 
 ### Changed
