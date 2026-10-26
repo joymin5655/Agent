@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.2] - 2026-10-26
+
+### Changed
+- **`security-reviewer` is now a diff-level reviewer; whole-repository and branch vulnerability
+  scans go to the official `/claude-security` plugin** (`agents/security-reviewer.md`): the
+  description no longer fires on the bare words "security / vulnerability". It asks for a security
+  review of a diff, staged change or pull request (OWASP, secret leaks), says the agent owns
+  security findings "in diff review", and ends with a NOT clause that sends repository or branch
+  scans to `/claude-security` when that plugin is installed. `model`, `effort`, the read-only
+  toolset and the body are unchanged. `agents/master-registry.json` is untouched (its keyword
+  list is a registered gate).
+- **`/harness-help` names the two security lanes** (`skills/harness-help/SKILL.md`): a new
+  `Security` bullet in the Standalone list points diff-level review at `security-reviewer`
+  (auto-dispatched on risk paths) and whole-repository or branch scans at `/claude-security`,
+  with its install command (`/plugin install claude-security@claude-plugins-official`).
+
 ## [0.13.1] - 2026-10-22
 
 ### Changed
