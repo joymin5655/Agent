@@ -23,28 +23,47 @@ failed write is swallowed: the sink must never change what the hook does. Env se
   AGENT_GATE_SINK_DIR         test-runner diversion of the default log directory
   AGENT_REPRODUCE_TEST=1      mark records reproduce_test:true (battery-fed events)
 
-Failure classification — what the runtime actually gives us
------------------------------------------------------------
-MEASURED 2026-07-30 against the live installed hook: Claude Code's PostToolUse
-payload carries **no exit status**. A probe pair proved it — `exit 3` with quiet
-output was NOT recorded, while `exit 0` printing "0 errors" WAS recorded as a
-failure. So two things follow:
+Failure classification — what each runtime actually gives us
+------------------------------------------------------------
+A failure is counted from one of three signals, strongest first:
 
-1. An exit status is honoured when a runtime supplies one, and resolution keys
-   off **presence**, not truthiness. The previous `result.get("exit_code") or
-   result.get("exitCode")` discarded a successful `0` as falsy and fell through
-   to the text heuristic — that is how a passing command got counted as a
-   failure. When a status IS present it is the ONLY signal; text is not consulted.
-2. On this runtime the text heuristic is the only live signal, so it is narrowed:
-   zero-count phrasings ("0 errors", "no failures", "errors: 0") are scrubbed
-   before failure vocabulary is matched, and matching is word-bounded rather
-   than substring.
+1. A PostToolUseFailure event (Claude Code; Antigravity through its adapter). The
+   runtime says the call failed, so nothing is inferred — see main().
+2. A machine exit status in a PostToolUse payload, when a runtime supplies one.
+   Resolution keys off **presence**, not truthiness: the previous
+   `result.get("exit_code") or result.get("exitCode")` discarded a successful `0`
+   as falsy and fell through to the text heuristic — that is how a passing command
+   got counted as a failure. When a status IS present it is the ONLY signal; text
+   is not consulted.
+3. The output text of a PostToolUse result — Codex only (TEXT_FALLBACK_AI), and
+   narrowed: zero-count phrasings ("0 errors", "no failures", "errors: 0") are
+   scrubbed before failure vocabulary is matched, and matching is word-bounded
+   rather than substring.
 
-Known limitation, stated rather than papered over: with no exit status, a
-failure that prints nothing recognisable is invisible here. This hook is an
-advisory nudge and never a gate, so a miss costs a missing hint — not a wrong
-block. Closing it properly needs an exit status from the runtime (the firing
-sink above (X-3) is what lets the residual false-positive rate be measured).
+Why text is NOT read for any other runtime. Claude Code runs PostToolUse only for a
+tool call that SUCCEEDED (hooks docs, checked 2026-10-27), and its payload carries
+no exit status — MEASURED 2026-07-30 against the live installed hook: `exit 3` with
+quiet output was NOT recorded, while `exit 0` printing "0 errors" WAS recorded as a
+failure. So the only thing a text match can find in a Claude Code PostToolUse is a
+success whose output merely contains a failure word (a config file that says
+"failed"). MEASURED 2026-10-27 in a local audit of 2,273 advisories over two weeks:
+of the 531 text-signal fires that could be matched to a transcript, 93.6% had no
+error in the last three Bash results. Narrowing the vocabulary (2026-07-30) removed
+the "0 errors" case but not this one, so the text path is gone for those runtimes
+instead of being narrowed further.
+
+Why Codex keeps it. Codex runs PostToolUse after a Bash command that exits non-zero,
+has no failure event, and documents `tool_response` as "tool-specific output" with no
+exit-code field (learn.chatgpt.com/docs/hooks, checked 2026-10-27), so output text is
+the only signal it offers. The gate is an explicit allowlist on the `ai` field that
+adapters/codex sets: a runtime nobody has measured gets no text reading by default.
+
+Known limitation, stated rather than papered over: on Codex the heuristic's
+false-positive rate is unmeasured (the 2026-10-27 audit covered Claude Code sessions
+only), and a failure that prints nothing recognisable is invisible. This hook is an
+advisory nudge and never a gate, so a miss costs a missing hint — not a wrong block.
+Closing it properly needs Codex to expose an exit status; the firing sink above (X-3)
+records which signal produced each fire, so the residual rate can be measured.
 """
 
 from __future__ import annotations
@@ -234,6 +253,9 @@ _FAILURE_RE = re.compile(
     r"|\berror(?:s|ed)?\b"
     r"|\bfail(?:s|ed|ure|ures)?\b"
 )
+# The one runtime whose PostToolUse output text is still read as a failure signal (module
+# docstring). adapters/codex sets `ai` to this value; Claude Code's pass-through adapter does not.
+TEXT_FALLBACK_AI = "codex"
 
 
 def resolve_exit_status(result) -> int | None:
@@ -260,7 +282,7 @@ def resolve_exit_status(result) -> int | None:
 
 
 def looks_like_failure(result_text: str) -> bool:
-    """Last-resort text signal, consulted ONLY when no exit status is available."""
+    """Last-resort text signal: TEXT_FALLBACK_AI only, and only when no exit status exists."""
     head = result_text[:500]
     if not head.strip():
         return False
@@ -389,13 +411,17 @@ def main() -> None:
     elif isinstance(result, str):
         result_text = result
 
-    # A machine-reported exit status is authoritative and exclusive; text is a
-    # fallback only. See the module docstring for why both paths exist.
+    # A machine-reported exit status is authoritative and exclusive. Without one, output
+    # text is read only for the runtime that has no other failure signal
+    # (TEXT_FALLBACK_AI); anywhere else a PostToolUse result is a success. See the module
+    # docstring for why.
     exit_status = resolve_exit_status(result)
     if exit_status is not None:
         is_error = exit_status != 0
-    else:
+    elif data.get("ai") == TEXT_FALLBACK_AI:
         is_error = looks_like_failure(result_text)
+    else:
+        is_error = False
 
     now = time.time()
 

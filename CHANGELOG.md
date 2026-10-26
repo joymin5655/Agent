@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.3] - 2026-10-27
+
+### Changed
+- **The circuit-breaker battery is re-based on the signals the runtimes really send**
+  (`core/tests/circuit-breaker-test.sh`): failure words in a successful `PostToolUse` must stay
+  clean and unrecorded, including the audit's reproduction (three successful read-only commands)
+  and a native event run through the real Claude Code adapter; `PostToolUseFailure` fires at the
+  threshold; a non-zero exit status is recorded and `0` is not. The Codex gate is checked as an
+  allowlist (another runtime label, a missing or a non-string `ai` is not read) and end to end
+  through `adapters/codex`. Mutation probes open and shut the gate and drop the failure branch.
+- **`core/hooks/README.md` and `docs/gate-registry.md` state the new signals**; the gate-registry
+  row's review date moves to 2026-10-27.
+
+### Fixed
+- **The circuit breaker no longer reads a successful Bash result as a failure**
+  (`core/hooks/circuit-breaker.py`): Claude Code runs `PostToolUse` only for a tool call that
+  succeeded and sends no exit status with it, but the hook still ran a text heuristic over that
+  result, so a `cat` of a file containing "failed" or "error" counted toward "Circuit Breaker: N
+  errors in 60s". A local audit of 2026-10-13 to 2026-10-27 found 2,273 of these advisories in
+  164 sessions; of the 531 text-signal fires that could be matched to a transcript, 93.6% had no
+  error in the last three Bash results. On `PostToolUse` the text is now read only for Codex
+  (next item). Real failures are still counted from `PostToolUseFailure` (Claude Code, and
+  Antigravity through its adapter) and from a non-zero exit status when a payload carries one; a
+  status of `0` stays authoritative over any text.
+- **Codex keeps the narrowed text heuristic, behind an explicit `ai == "codex"` gate.** Its
+  `PostToolUse` also runs after a Bash command that exits non-zero, it has no failure event, and
+  its `tool_response` is documented only as "tool-specific output" with no exit-code field, so
+  output text is the only failure signal it offers. A runtime that is not on the allowlist gets
+  no text reading. The false-positive rate of that Codex path is unmeasured (the audit covered
+  Claude Code sessions only); the firing sink's `signal` field (`failure_event`, `exit_status` or
+  `text`) is how it can be measured.
+
 ## [0.13.2] - 2026-10-26
 
 ### Changed
