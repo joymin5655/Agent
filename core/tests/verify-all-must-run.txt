@@ -1,0 +1,49 @@
+# verify-all must-run list — checks that may NEVER be skipped in the environment the run is in.
+#
+# verify-all.sh reports a check that declared itself inapplicable (exit 2 plus a lone `SKIP` line)
+# as SKIP and still exits 0; only a run in which EVERYTHING skipped fails. That leaves a quiet
+# hole: a host that loses jq, sqlite3 or an FTS5 build, or a skill file that moves, turns a
+# battery into a no-op while the run stays green. A label listed here must END AS PASS: skipped,
+# or absent from the discovered set (renamed, moved, deleted), it fails the run. Labels that are
+# not listed behave as before. The contract is in the header of verify-all.sh.
+#
+# Format: <label> <where>   (`#` starts a comment, on its own line or trailing)
+#   all    must run everywhere
+#   local  must run on a developer machine; CI (GitHub Actions) excuses it
+#   ci     must run in CI; a developer machine excuses it
+# The profile is `ci` when GITHUB_ACTIONS=true and `local` otherwise; VERIFY_ALL_ENV=local|ci
+# overrides it.
+#
+# What is listed, and why
+#   - Every check that can declare itself inapplicable (exit 2 plus a lone SKIP line). Those are
+#     the only checks that can fall silent without failing, and each one runs to a PASS today in
+#     CI and on a developer machine, so listing it changes no result now and turns a future
+#     silent skip into a failure. verify-all-test.sh keeps this complete: a battery that adds a
+#     skip lane must be listed here before its change can pass.
+#   - The two gitleaks checks are `local`. The CI verify job has no gitleaks binary, and its
+#     dedicated secret-scan job is what enforces the scan there, so CI may skip them (and does).
+#     A developer machine runs the same scan before every commit and may not.
+# A check that cannot skip is not listed: it can only fail loudly or be deleted, and a deletion
+# is visible in the diff that makes it. Not covered either: a battery that skips only PART of
+# itself reports that in its own tally and exits 0 (a missing PyYAML, a root user), which this
+# runner cannot see.
+
+# jq
+antigravity-preflight-test.sh      all
+backends-schema-test.sh            all
+# sqlite3 + jq (the log battery also python3)
+loop-run-test.sh                   all
+supervisor-goal-addwave-test.sh    all
+supervisor-goal-log-test.sh        all
+supervisor-goal-record-test.sh     all
+supervisor-goal-stuck-test.sh      all
+# python3 with an FTS5 build of sqlite3
+session-indexer-test.sh            all
+# python3
+skill-plugin-root-test.sh          all
+# the skill file the battery reads (a rename makes the battery skip forever)
+council-dispatch-path-test.sh      all
+worker-setup-skill-test.sh         all
+# gitleaks (secret scan and its allowlist battery)
+gitleaks                           local
+gitleaks-allowlist-test.sh         local

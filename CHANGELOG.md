@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **`verify-all.sh` pins the checks that may never be skipped**
+  (`core/tests/verify-all-must-run.txt`, `core/tests/verify-all.sh`). The floor that refuses a
+  run where every check skipped left a quiet hole: a host that lost `jq`, `sqlite3` or an FTS5
+  build turned a dozen batteries into no-ops and the run still exited 0 (CI today: 118 passed,
+  2 skipped). The list names, per environment, the checks that must end as PASS. For a pinned
+  label a skip (a declared skip, or the gitleaks binary being absent) is printed and counted as
+  FAIL, and a label that is no longer in the check set (renamed, moved, deleted) fails too;
+  unpinned checks behave as before. The profile is `ci` on GitHub Actions and `local`
+  elsewhere (`VERIFY_ALL_ENV=local|ci` overrides it). CI excuses only `gitleaks` and
+  `gitleaks-allowlist-test.sh`, which its secret-scan job enforces; a developer machine excuses
+  nothing. The list holds the 11 checks that can declare a skip and run to PASS in both
+  environments, plus those two for `local`. A sharded run judges only its own checks, except
+  that a pinned label missing from the whole set fails in every shard, and a missing list file
+  in the real tree is an error rather than "nothing pinned".
+- **`verify-all-test.sh` covers the list** (98 to 175 checks, cases 18-22): pinned skip and
+  missing label fail while an unpinned skip stays a SKIP, profiles and their detection, the
+  file format, and a static case that keeps the list complete (a battery that adds a skip lane
+  must be listed before its change can pass). Eleven mutation probes of the runner each turn at
+  least one of the new checks red.
+- **Docs**: `README.md`, `README.ko.md`, `CONTRIBUTING.md` (a clean local run needs `gitleaks`,
+  `jq`, `sqlite3`) and the `harness-audit` skill describe the pinned checks.
+
 ## [0.13.3] - 2026-10-27
 
 ### Changed
