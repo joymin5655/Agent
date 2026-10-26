@@ -40,6 +40,10 @@ trivial work out by design.
   diff (Claude reviewer plus codex/gemini lanes), synthesized with citation checks.
 - **`/project-init`** (command) — scaffold a consumer project with
   `CLAUDE.md`, rules, and `gitleaks.toml`.
+- **Security** — diff-level security review is the `security-reviewer` agent
+  (auto-dispatched on risk paths); a whole-repository or branch vulnerability scan is the
+  official `/claude-security` plugin when installed
+  (`/plugin install claude-security@claude-plugins-official`).
 
 ## Extras plugin (`agent-harness-extras`, optional)
 
