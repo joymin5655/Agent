@@ -98,9 +98,10 @@ An empty `"denied_actions":[]` is not a soft-deny.
 
 | worker exit | meaning | preflight exit |
 |---|---|---|
-| 0 | envelope `status == "SUCCESS"`, no soft-deny signal | 0 if `.response` holds the token |
+| 0 | envelope `status == "SUCCESS"` with a non-blank string `.response`, no soft-deny signal, no print-timeout notice (row 124) | 0 if `.response` holds the token |
 | 9 | agy exited 0 but soft-denied a tool call (envelope or stderr) | 8 — lane **absent** |
-| 10 | agy exited 0 but the envelope is unparseable or `status` is not SUCCESS | 5 |
+| 10 | agy exited 0 but the envelope is unparseable, `status` is not SUCCESS, or `.response` is not a non-blank string | 5 |
+| 124 | agy's own `--print-timeout` fired: the envelope is SUCCESS and a line starting `[agy] print timeout after` is in the last 20 stderr lines. agy still exits 0, with `.response` empty or partial; `call-worker.sh` records the lane `timeout`. A soft-deny, quota error or non-SUCCESS status keeps its own code; `.response` is never matched | 5 |
 | 75 | quota / rate limit (HTTP 429, `RESOURCE_EXHAUSTED`, "quota", "rate limit", "usage limit") in stderr or the envelope's `.error` — EX_TEMPFAIL; `call-worker.sh` records the lane `rate-limited`, not `failed`. The model's own `.response` text is never matched, and watchdog exits 124/137/143 are not reclassified | 5 |
 | 3 | agy's own exit code when the envelope `status` is `ERROR` (undocumented; the docs list 0/1/2) | 5 |
 | 2 | usage/config error, or `ANTIGRAVITY_AUTH=apikey` with no Keychain item / no `security` | 5 |

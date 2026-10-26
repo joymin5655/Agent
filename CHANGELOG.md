@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **A Gemini lane that hit agy's own print timeout is no longer recorded `complete`**
+  (`adapters/antigravity/antigravity-worker.sh`): agy prints `[agy] print timeout after …` on
+  stderr and still exits 0 with a SUCCESS envelope whose `response` is empty or cut short. The
+  worker reported success and `call-worker.sh` saw a non-blank capture (it merges stderr), so all
+  13 local captures carrying that notice (2026-10-11 to 10-25) were recorded `complete`, and an
+  absent lane counted as seated. Past the SUCCESS gate, the notice starting a line in the last 20
+  stderr lines now exits 124, which call-worker records as `timeout`; a soft-deny, quota error or
+  other status keeps its own code, and `.response` is never matched. A SUCCESS envelope whose
+  `response` is not a non-blank string exits 10. The envelope and stderr are still forwarded
+  unchanged. The battery covers the notice with an empty and a partial response, its precedence
+  under a soft-deny, a quota error and a non-SUCCESS status, blank and non-string responses, the
+  phrase inside `.response`, mid-line or above the 20-line window, and the capture status written
+  through `call-worker.sh`.
+
 ## [0.13.3] - 2026-10-27
 
 ### Changed
