@@ -396,7 +396,8 @@ fi
 # rc 0 with nothing but whitespace is not an answer — every role's contract
 # returns text (reviews reply NO-FINDINGS when clean). Seen 2026-10-17: an agy
 # print timeout exited 0 with an empty body and was captured as complete,
-# letting an absent lane count as seated.
+# letting an absent lane count as seated. stderr is merged into $OUT_TMP, so a
+# CLI notice defeats this check: antigravity-worker.sh judges that case itself.
 if ! grep -q '[^[:space:]]' "$OUT_TMP" 2>/dev/null; then
     echo "call-worker: backend '$BACKEND_USED' exited 0 with empty output for role '$ROLE' — treated as failed." >&2
     write_capture "failed" >/dev/null

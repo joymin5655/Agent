@@ -87,6 +87,31 @@ case "\${AGY_STUB_MODE:-success}" in
   long_stderr) printf 'quota exceeded\n' >&2; for i in \$(seq 1 25); do printf 'filler line %s\n' "\$i" >&2; done; exit 1 ;;
   exit0_stderr_quota) printf '{"conversation_id":"c1","status":"ERROR","error":"boom"}\n'; printf 'rate limit reached\n' >&2 ;;
   port_4290)      printf 'Error: connect to port 14290 failed\n' >&2; exit 1 ;;
+  # agy's own --print-timeout (measured 2026-10-11..25, 13 captures): stderr notice as the
+  # last stderr line, then exit 0 with a SUCCESS envelope whose response is empty, or partial.
+  print_timeout) printf '[agy] print timeout after 5m0s with turn in progress; returning partial output\n' >&2
+            printf '{"conversation_id":"c1","status":"SUCCESS","response":"","num_turns":1}\n' ;;
+  print_timeout_partial) printf '[agy] print timeout after 5m0s with turn in progress; returning partial output\n' >&2
+            printf '{"conversation_id":"c1","status":"SUCCESS","response":"half a review"}\n' ;;
+  empty_response) printf '{"conversation_id":"c1","status":"SUCCESS","response":""}\n' ;;
+  blank_response) printf '{"conversation_id":"c1","status":"SUCCESS","response":"  \\\\n\\\\t "}\n' ;;
+  # The phrase inside the model's own text (a review quoting it) is not a timeout.
+  timeout_in_response) printf '{"conversation_id":"c1","status":"SUCCESS","response":"[agy] print timeout after 5m0s with turn in progress"}\n' ;;
+  # Notice FIRST (agy echoing prompt text), then 25 filler lines: outside the window.
+  timeout_early_stderr) printf '[agy] print timeout after 5m0s with turn in progress; returning partial output\n' >&2
+            for i in \$(seq 1 25); do printf 'filler line %s\n' "\$i" >&2; done
+            printf '{"conversation_id":"c1","status":"SUCCESS","response":"ok"}\n' ;;
+  # Inside the window but mid-line (an echoed diff quoting it): not agy's own notice.
+  timeout_quoted_stderr) printf '+  "[agy] print timeout after 5m0s with turn in progress"\n' >&2
+            printf '{"conversation_id":"c1","status":"SUCCESS","response":"ok"}\n' ;;
+  nonstring_response) printf '{"conversation_id":"c1","status":"SUCCESS","response":{"text":"ok"}}\n' ;;
+  # The notice alongside an older signal: that signal keeps its own exit code.
+  timeout_softdeny) printf '[agy] print timeout after 5m0s with turn in progress; returning partial output\n' >&2
+            printf '{"conversation_id":"c1","status":"SUCCESS","response":"","denied_actions":[{"action":"write_file","display_name":"WriteToFile"}]}\n' ;;
+  timeout_quota_envelope) printf '[agy] print timeout after 5m0s with turn in progress; returning partial output\n' >&2
+            printf '{"conversation_id":"c1","status":"ERROR","error":"RESOURCE_EXHAUSTED: quota exceeded for model"}\n' ;;
+  timeout_not_success) printf '[agy] print timeout after 5m0s with turn in progress; returning partial output\n' >&2
+            printf '{"conversation_id":"c1","status":"ERROR","response":"","error":"interrupted"}\n' ;;
 esac
 STUB
 chmod +x "$STUB_DIR/agy"
@@ -282,6 +307,31 @@ printf 'x' | AGY_STUB_MODE=garbage ANTIGRAVITY_TIERS_FILE="$TIERS" bash "$WORKER
 check "unparseable-envelope-exits-10" 10 $?
 printf 'x' | AGY_STUB_MODE=fail1 ANTIGRAVITY_TIERS_FILE="$TIERS" bash "$WORKER" --tier mid >/dev/null 2>&1
 check "agy-nonzero-exit-passed-through" 1 $?
+# agy's print timeout exits 0 with SUCCESS: it is a timeout (124, call-worker records
+# `timeout`), with an empty or a partial response alike; the envelope still reaches stdout.
+out="$(printf 'x' | AGY_STUB_MODE=print_timeout ANTIGRAVITY_TIERS_FILE="$TIERS" bash "$WORKER" --tier mid 2>/dev/null)"
+check "print-timeout-empty-response-exits-124" 124 $?
+check "print-timeout-envelope-still-forwarded" "SUCCESS" "$(printf '%s' "$out" | jq -r '.status' 2>/dev/null)"
+printf 'x' | AGY_STUB_MODE=print_timeout_partial ANTIGRAVITY_TIERS_FILE="$TIERS" bash "$WORKER" --tier mid >/dev/null 2>&1
+check "print-timeout-partial-response-exits-124" 124 $?
+printf 'x' | AGY_STUB_MODE=empty_response ANTIGRAVITY_TIERS_FILE="$TIERS" bash "$WORKER" --tier mid >/dev/null 2>&1
+check "success-with-empty-response-exits-10" 10 $?
+printf 'x' | AGY_STUB_MODE=blank_response ANTIGRAVITY_TIERS_FILE="$TIERS" bash "$WORKER" --tier mid >/dev/null 2>&1
+check "success-with-blank-response-exits-10" 10 $?
+printf 'x' | AGY_STUB_MODE=timeout_in_response ANTIGRAVITY_TIERS_FILE="$TIERS" bash "$WORKER" --tier mid >/dev/null 2>&1
+check "timeout-phrase-in-response-is-not-a-timeout" 0 $?
+printf 'x' | AGY_STUB_MODE=timeout_early_stderr ANTIGRAVITY_TIERS_FILE="$TIERS" bash "$WORKER" --tier mid >/dev/null 2>&1
+check "timeout-notice-outside-stderr-window-ignored" 0 $?
+printf 'x' | AGY_STUB_MODE=timeout_quoted_stderr ANTIGRAVITY_TIERS_FILE="$TIERS" bash "$WORKER" --tier mid >/dev/null 2>&1
+check "timeout-phrase-mid-line-in-stderr-ignored" 0 $?
+printf 'x' | AGY_STUB_MODE=nonstring_response ANTIGRAVITY_TIERS_FILE="$TIERS" bash "$WORKER" --tier mid >/dev/null 2>&1
+check "success-with-non-string-response-exits-10" 10 $?
+printf 'x' | AGY_STUB_MODE=timeout_softdeny ANTIGRAVITY_TIERS_FILE="$TIERS" bash "$WORKER" --tier mid >/dev/null 2>&1
+check "timeout-notice-with-soft-deny-stays-9" 9 $?
+printf 'x' | AGY_STUB_MODE=timeout_quota_envelope ANTIGRAVITY_TIERS_FILE="$TIERS" bash "$WORKER" --tier mid >/dev/null 2>&1
+check "timeout-notice-with-quota-envelope-stays-75" 75 $?
+printf 'x' | AGY_STUB_MODE=timeout_not_success ANTIGRAVITY_TIERS_FILE="$TIERS" bash "$WORKER" --tier mid >/dev/null 2>&1
+check "timeout-notice-with-non-success-status-stays-10" 10 $?
 
 echo
 echo "=== (i) worker-mode flag + opt-in API-key auth (Keychain, env-only) ==="
@@ -453,6 +503,11 @@ cw_status() {  # cw_status <stub-mode> -> prints "<dispatcher rc> <capture statu
 }
 check "call-worker-quota-capture-rate-limited" "1 rate-limited" "$(cw_status quota_stderr)"
 check "call-worker-generic-failure-capture-failed" "1 failed" "$(cw_status fail1)"
+# agy's print timeout (section h) lands as `timeout`, an empty SUCCESS as failed;
+# a real answer stays complete (the control that keeps these two non-vacuous).
+check "call-worker-print-timeout-capture-timeout" "124 timeout" "$(cw_status print_timeout)"
+check "call-worker-empty-response-capture-failed" "1 failed" "$(cw_status empty_response)"
+check "call-worker-success-capture-complete" "0 complete" "$(cw_status success)"
 
 echo
 echo "=== (f) no stray grok-worker reference in the antigravity adapter ==="
