@@ -67,8 +67,10 @@ already includes the machine layer this audit reports on:
 - **every `*-test.sh` battery** — the per-hook and per-gate fixture tests.
 - **`evals:deterministic` and `evals:semantic`** — the two eval layers (same
   invocation CI uses).
-- **`gitleaks`** — the secret scan when present; a loud SKIP (never a silent pass)
-  when the binary is absent.
+- **`gitleaks`** — the secret scan when present. When the binary is absent it is a loud SKIP
+  under the CI profile (CI's own secret-scan job enforces the scan there) and a FAIL on a
+  developer machine, where it is pinned in `core/tests/verify-all-must-run.txt` with every
+  other check that can declare itself inapplicable.
 
 Capture the runner's per-check output and its final `=== verify-all: … ===` tally.
 This is entirely read-only: the runner and every check it dispatches only read the
@@ -120,7 +122,7 @@ registry-drift.sh        PASS     manifests/hooks/agents/registry agree
 … (batteries) …          PASS     fixture tests green
 evals:deterministic      PASS     labeled dataset, Pass^3
 evals:semantic           PASS     test-meaningfulness judge, Pass^3
-gitleaks                 SKIP     binary not installed on this host
+gitleaks                 FAIL     must-run check skipped: binary not installed on this host
 ```
 
 Call out the **doc-reality (P1-1)** line by name — its verdict is the headline of
@@ -141,8 +143,10 @@ security scan), write:
   `docs/internal/harness-improvement-plan.md` (a recurring or structural failure does; a
   one-off local fix does not). Suggest the row; do not add it here.
 
-A SKIP is not a PASS: an absent `gitleaks` is a coverage gap to flag (install it or
-rely on the dedicated CI secret-scan job), not a silent green.
+A SKIP is not a PASS: it is a coverage gap to flag, not a silent green. A check pinned in
+`core/tests/verify-all-must-run.txt` cannot be a SKIP at all: on a developer machine an
+absent `gitleaks` is a FAIL (install it); only the CI profile excuses it, because the
+dedicated CI secret-scan job enforces the scan there.
 
 ### 5. Summarize health + next actions
 

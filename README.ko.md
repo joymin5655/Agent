@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/joymin5655/Agent/actions/workflows/ci.yml/badge.svg)](https://github.com/joymin5655/Agent/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-![Version](https://img.shields.io/badge/version-0.13.3-blue.svg)
+![Version](https://img.shields.io/badge/version-0.13.4-blue.svg)
 ![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-7c3aed.svg)
 ![AI-agnostic](https://img.shields.io/badge/AI-Claude%20%7C%20Codex%20%7C%20Antigravity-orange.svg)
 
@@ -56,7 +56,7 @@
 증명합니다. 런타임마다 다른 것은 CLI 활동 중 얼마나 많은 부분이 그 코어에
 도달하는가입니다 — [런타임 커버리지](#런타임-커버리지) 참고.
 
-> 상태: v0.13.3 · 라이선스: **MIT**
+> 상태: v0.13.4 · 라이선스: **MIT**
 
 ---
 
@@ -515,6 +515,11 @@ bash core/tests/verify-all.sh
 # CI는 같은 검사 집합을 4개 병렬 잡으로 나눠 돌린다. 샤드 하나만 로컬에서 실행할 수도 있다:
 bash core/tests/verify-all.sh --shard 1/4          # --list를 붙이면 그 샤드의 검사 목록만 출력
 ```
+
+건너뛰면 안 되는 검사는 `core/tests/verify-all-must-run.txt`에 고정해 둡니다. 고정된 검사가
+건너뛰어지거나(`jq`·`sqlite3`·`gitleaks` 부재, 스킬 파일 이동) 검사 집합에서 사라지면 `SKIP`으로
+표시하는 대신 실행이 **실패**합니다. CI는 자체 secret-scan 잡이 강제하는 gitleaks 검사 두 개만
+면제하며, `VERIFY_ALL_ENV=ci`를 주면 그 기준으로 판정합니다.
 
 개별 검사를 따로 실행하려면:
 

@@ -19,6 +19,10 @@ no self-approval.
    bash setup.sh --doctor                 # environment / wiring diagnosis
    ```
 
+   A clean local run needs `gitleaks`, `jq` and `sqlite3` on your PATH (and a Python whose
+   `sqlite3` has FTS5): the checks pinned in `core/tests/verify-all-must-run.txt` fail instead
+   of skipping when a tool is missing. CI excuses only the two gitleaks checks.
+
 4. **Open a PR** — the template asks for a test plan. CI must be green
    (8 jobs: secret scan, plugin validation, sanitize, supply-chain,
    doc-reality, evals, verify-all, clean-install).

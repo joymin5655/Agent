@@ -33,6 +33,14 @@
 #   16. WEIGHTS ARE HONOURED: with VERIFY_ALL_WEIGHTS pointing at a fixture, the two heavy
 #       checks land in different shards, run order inside a shard is kept (gates first),
 #       and a shard run executes only its own checks.
+#   17. CI MATRIX is 1..N for `--shard N`, and a repeated --shard is rejected.
+#   18-22. MUST-RUN (verify-all-must-run.txt): a pinned check that skips is a FAIL (a declared
+#       skip, or gitleaks absent) while an unpinned one stays a SKIP; a pinned label missing from
+#       the whole set fails in every shard but one living in another shard does not; the local /
+#       ci profiles, their detection and the VERIFY_ALL_ENV override; the list file's format
+#       (comments, duplicates, malformed lines) and a missing list being an error, in the real
+#       tree or behind a mistyped override; the shipped list has no stale label, pins every
+#       battery that declares a skip lane in the right profile, and keeps gitleaks local-only.
 #
 # Uses VERIFY_ALL_TESTS_DIR to point the glob at a hermetic fixture dir and
 # VERIFY_ALL_SKIP_FIXED=1 to drop the evals + gitleaks checks so logic cases run
@@ -434,6 +442,233 @@ while [[ -n "$CI_N" && $i -le $CI_N ]]; do WANT="${WANT:+$WANT,}$i"; i=$((i + 1)
 [[ -n "$CI_N" && "$MATRIX" == "$WANT" ]]; check "ci-matrix-is-1..N-for-shard-N" $?
 bash "$RUNNER" --shard 1/2 --shard 2/2 --list >/dev/null 2>&1; RC=$?
 [[ $RC -eq 1 ]]; check "repeated-shard-exits-1" $?
+
+# The must-run cases pin the profile explicitly: under GitHub Actions the caller's own
+# GITHUB_ACTIONS=true would otherwise decide it. run_env <dir> <GITHUB_ACTIONS> <VERIFY_ALL_ENV> [args]
+run_env() {
+  local d="$1" gha="$2" venv="$3"; shift 3
+  GITHUB_ACTIONS="$gha" VERIFY_ALL_ENV="$venv" VERIFY_ALL_MUST_RUN='' VERIFY_ALL_SKIP_EVALS='' \
+    VERIFY_ALL_TESTS_DIR="$d" VERIFY_ALL_SKIP_FIXED=1 bash "$RUNNER" "$@" 2>&1
+}
+must_run() { local d="$1" prof="$2"; shift 2; run_env "$d" "" "$prof" "$@"; }
+# a skip-declaring battery stub: exit 2 with `SKIP: <reason>` as its only line
+write_skip_stub() { printf '%s\n' '#!/usr/bin/env bash' "echo \"SKIP: $2\"" 'exit 2' > "$1"; }
+
+echo
+echo "=== (18) MUST-RUN: a pinned check that skips is a FAIL; an unpinned one stays a SKIP ==="
+# The floor in (11) trips only when EVERYTHING skipped, so one battery going quiet (jq gone from
+# the host, a skill file moved) left the run green. verify-all-must-run.txt names the checks that
+# must END AS PASS. It lives beside the checks, so a fixture dir carries its own list.
+D=$(fresh_dir)
+write_pass_stub "$D/aaa-pass-test.sh"
+write_skip_stub "$D/zzz-skip-test.sh" "widget-tool not installed"
+OUT="$(must_run "$D" local)"; RC=$?
+[[ $RC -eq 0 ]]; check "no-list-skip-stays-exit-0" $?
+printf '%s\n' "$OUT" | grep -qE '^SKIP  zzz-skip-test\.sh  \(widget-tool not installed\)'; check "no-list-skip-stays-SKIP" $?
+if printf '%s\n' "$OUT" | grep -qF 'must-run'; then bad=1; else bad=0; fi
+[[ $bad -eq 0 ]]; check "no-list-prints-nothing-about-must-run" $?
+printf '%s\n' 'zzz-skip-test.sh all' > "$D/verify-all-must-run.txt"
+OUT="$(must_run "$D" local)"; RC=$?
+[[ $RC -eq 1 ]]; check "pinned-skip-exit-1" $?
+printf '%s\n' "$OUT" | grep -qE '^FAIL  zzz-skip-test\.sh  \(must-run check skipped: widget-tool not installed\)  \([0-9]+s\)$'
+check "pinned-skip-reported-FAIL-with-reason" $?
+if printf '%s\n' "$OUT" | grep -qE '^SKIP  zzz-skip-test\.sh'; then bad=1; else bad=0; fi
+[[ $bad -eq 0 ]]; check "pinned-skip-never-reported-SKIP" $?
+printf '%s\n' "$OUT" | grep -qF '1 passed, 1 failed, 0 skipped'; check "pinned-skip-tallied-failed-not-skipped" $?
+printf '%s\n' "$OUT" | grep -qF '1 must-run check(s) did not run to a PASS under the local profile'; check "pinned-skip-error-line" $?
+printf '%s\n' "$OUT" | grep -qF '=== verify-all: must-run profile local — 1 pinned, 1 in this run ==='; check "pinned-run-prints-its-profile" $?
+# the pin is selective: a PASS stays a PASS, and an unpinned skip beside it stays a SKIP
+printf '%s\n' 'aaa-pass-test.sh all' > "$D/verify-all-must-run.txt"
+OUT="$(must_run "$D" local)"; RC=$?
+[[ $RC -eq 0 ]]; check "pinned-pass-exit-0" $?
+printf '%s\n' "$OUT" | grep -qF '1 passed, 0 failed, 1 skipped'; check "pinned-pass-leaves-unpinned-skip-skipped" $?
+# a pinned check that FAILS is one ordinary FAIL — not a second must-run finding
+D=$(fresh_dir)
+write_pass_stub "$D/aaa-pass-test.sh"
+write_fail_stub "$D/yyy-fail-test.sh"
+printf '%s\n' 'yyy-fail-test.sh all' > "$D/verify-all-must-run.txt"
+OUT="$(must_run "$D" local)"; RC=$?
+[[ $RC -eq 1 ]]; check "pinned-fail-exit-1" $?
+printf '%s\n' "$OUT" | grep -qF '1 passed, 1 failed, 0 skipped'; check "pinned-fail-counted-once" $?
+if printf '%s\n' "$OUT" | grep -qF 'did not run to a PASS'; then bad=1; else bad=0; fi
+[[ $bad -eq 0 ]]; check "pinned-fail-is-not-a-must-run-finding" $?
+
+echo
+echo "=== (19) MUST-RUN: a pinned label that is not in the check set fails, in every shard ==="
+# Renamed, moved or deleted: nothing skipped, the check simply is not there. Judged against the
+# WHOLE set (before --shard narrows it), so a label that lives in the OTHER shard is not "gone".
+D=$(fresh_dir)
+write_pass_stub "$D/aaa-test.sh"
+write_pass_stub "$D/bbb-test.sh"
+printf '%s\n' 'aaa-test.sh all' 'gone-test.sh all' > "$D/verify-all-must-run.txt"
+OUT="$(must_run "$D" local)"; RC=$?
+[[ $RC -eq 1 ]]; check "missing-pinned-exit-1" $?
+printf '%s\n' "$OUT" | grep -qE '^FAIL  gone-test\.sh  \(must-run check not found: .*verify-all-must-run\.txt\)'
+check "missing-pinned-reported-FAIL" $?
+printf '%s\n' "$OUT" | grep -qF '2 passed, 1 failed, 0 skipped'; check "missing-pinned-tallied-failed" $?
+for k in 1 2; do
+  OUT="$(must_run "$D" local --shard "$k/2")"; RC=$?
+  [[ $RC -eq 1 ]]; check "missing-pinned-fails-in-shard-$k" $?
+  printf '%s\n' "$OUT" | grep -qE '^FAIL  gone-test\.sh'; check "missing-pinned-named-in-shard-$k" $?
+done
+printf '%s\n' 'aaa-test.sh all' 'bbb-test.sh all' > "$D/verify-all-must-run.txt"
+for k in 1 2; do
+  OUT="$(must_run "$D" local --shard "$k/2")"; RC=$?
+  [[ $RC -eq 0 ]]; check "pinned-in-other-shard-is-not-missing-shard-$k" $?
+  printf '%s\n' "$OUT" | grep -qF '=== verify-all: must-run profile local — 2 pinned, 1 in this run ==='
+  check "shard-$k-counts-only-its-own-pinned" $?
+done
+
+echo
+echo "=== (20) MUST-RUN PROFILES: local-only pins are excused in CI; the profile is detected and overridable ==="
+D=$(fresh_dir)
+write_pass_stub "$D/aaa-pass-test.sh"
+write_skip_stub "$D/zzz-skip-test.sh" "widget-tool not installed"
+printf '%s\n' 'zzz-skip-test.sh local' > "$D/verify-all-must-run.txt"
+OUT="$(must_run "$D" local)"; RC=$?
+[[ $RC -eq 1 ]]; check "local-pin-fails-under-local" $?
+OUT="$(must_run "$D" ci)"; RC=$?
+[[ $RC -eq 0 ]]; check "local-pin-excused-under-ci-exit-0" $?
+printf '%s\n' "$OUT" | grep -qE '^SKIP  zzz-skip-test\.sh'; check "local-pin-excused-under-ci-still-reported-SKIP" $?
+printf '%s\n' "$OUT" | grep -qF '=== verify-all: must-run profile ci — 0 pinned, 0 in this run ==='; check "ci-profile-pins-nothing-here" $?
+printf '%s\n' 'zzz-skip-test.sh ci' > "$D/verify-all-must-run.txt"
+OUT="$(must_run "$D" local)"; RC=$?
+[[ $RC -eq 0 ]]; check "ci-pin-excused-under-local" $?
+OUT="$(must_run "$D" ci)"; RC=$?
+[[ $RC -eq 1 ]]; check "ci-pin-fails-under-ci" $?
+printf '%s\n' 'zzz-skip-test.sh all' > "$D/verify-all-must-run.txt"
+OUT="$(must_run "$D" local)"; RC=$?; [[ $RC -eq 1 ]]; check "all-pin-fails-under-local" $?
+OUT="$(must_run "$D" ci)"; RC=$?; [[ $RC -eq 1 ]]; check "all-pin-fails-under-ci" $?
+# detection: GITHUB_ACTIONS=true means ci, anything else local, and an explicit VERIFY_ALL_ENV wins
+printf '%s\n' 'zzz-skip-test.sh local' > "$D/verify-all-must-run.txt"
+OUT="$(run_env "$D" true "")"; RC=$?; [[ $RC -eq 0 ]]; check "github-actions-detected-as-ci" $?
+OUT="$(run_env "$D" "" "")"; RC=$?; [[ $RC -eq 1 ]]; check "no-github-actions-detected-as-local" $?
+OUT="$(run_env "$D" false "")"; RC=$?; [[ $RC -eq 1 ]]; check "github-actions-false-is-local" $?
+OUT="$(run_env "$D" true local)"; RC=$?; [[ $RC -eq 1 ]]; check "explicit-env-beats-github-actions" $?
+OUT="$(run_env "$D" "" ci)"; RC=$?; [[ $RC -eq 0 ]]; check "explicit-ci-beats-default-local" $?
+OUT="$(run_env "$D" "" staging)"; RC=$?
+[[ $RC -eq 1 ]]; check "bad-env-value-exits-1" $?
+printf '%s\n' "$OUT" | grep -qF "VERIFY_ALL_ENV must be 'local' or 'ci' (got 'staging')"; check "bad-env-value-message" $?
+# the gitleaks check is the same lane, through the binary being absent (see (8) for the PATH scrub)
+if PATH="$SCRUBBED" command -v gitleaks >/dev/null 2>&1 \
+   || ! PATH="$SCRUBBED" command -v bash >/dev/null 2>&1; then
+  echo "  ok   [must-run-gitleaks-unavailable-on-this-host]"; PASS=$((PASS + 1))
+else
+  D=$(fresh_dir)
+  write_pass_stub "$D/aaa-pass-test.sh"
+  printf '%s\n' 'gitleaks local' > "$D/verify-all-must-run.txt"
+  OUT="$(GITHUB_ACTIONS='' VERIFY_ALL_ENV=local VERIFY_ALL_TESTS_DIR="$D" VERIFY_ALL_SKIP_EVALS=1 PATH="$SCRUBBED" bash "$RUNNER" 2>&1)"; RC=$?
+  [[ $RC -eq 1 ]]; check "gitleaks-absent-pinned-exit-1" $?
+  printf '%s\n' "$OUT" | grep -qE '^FAIL  gitleaks  \(must-run check skipped: gitleaks not installed\)$'; check "gitleaks-absent-pinned-reported-FAIL" $?
+  OUT="$(GITHUB_ACTIONS='' VERIFY_ALL_ENV=ci VERIFY_ALL_TESTS_DIR="$D" VERIFY_ALL_SKIP_EVALS=1 PATH="$SCRUBBED" bash "$RUNNER" 2>&1)"; RC=$?
+  [[ $RC -eq 0 ]]; check "gitleaks-absent-excused-under-ci-exit-0" $?
+  printf '%s\n' "$OUT" | grep -qE '^SKIP  gitleaks  \(gitleaks not installed\)$'; check "gitleaks-absent-excused-under-ci-reported-SKIP" $?
+fi
+
+echo
+echo "=== (21) MUST-RUN LIST FILE: comments, malformed lines, and a missing list in the real tree ==="
+D=$(fresh_dir)
+write_pass_stub "$D/aaa-pass-test.sh"
+write_skip_stub "$D/zzz-skip-test.sh" "widget-tool not installed"
+{
+  echo "# a comment"
+  echo
+  echo "   "
+  echo "zzz-skip-test.sh   all   # trailing comment"
+  echo "   # indented comment"
+} > "$D/verify-all-must-run.txt"
+OUT="$(must_run "$D" local)"; RC=$?
+[[ $RC -eq 1 ]]; check "comments-and-blanks-tolerated-pin-still-applies" $?
+printf '%s\n' "$OUT" | grep -qE '^FAIL  zzz-skip-test\.sh  \(must-run check skipped'; check "trailing-comment-does-not-hide-the-label" $?
+# a malformed line is an error, never a silently dropped pin — in a run and under --list
+for badline in 'zzz-skip-test.sh' 'zzz-skip-test.sh sometimes' 'zzz-skip-test.sh all extra' 'zzz-skip-test.sh ALL'; do
+  printf '%s\n' '# fine' "$badline" > "$D/verify-all-must-run.txt"
+  OUT="$(must_run "$D" local)"; RC=$?
+  [[ $RC -eq 1 ]]; check "malformed-[$badline]-exits-1" $?
+  printf '%s\n' "$OUT" | grep -qF 'malformed line(s) 2'; check "malformed-[$badline]-names-the-line" $?
+  must_run "$D" local --list >/dev/null; [[ $? -eq 1 ]]; check "malformed-[$badline]-fails-list-too" $?
+done
+# duplicate lines pin the label once: one "pinned", one FAIL line, one failure in the tally
+printf '%s\n' 'zzz-skip-test.sh all' 'zzz-skip-test.sh local' 'gone-test.sh all' 'gone-test.sh local' \
+  > "$D/verify-all-must-run.txt"
+OUT="$(must_run "$D" local)"; RC=$?
+printf '%s\n' "$OUT" | grep -qF '=== verify-all: must-run profile local — 2 pinned, 1 in this run ==='; check "duplicate-labels-pinned-once" $?
+[[ "$(printf '%s\n' "$OUT" | grep -c -E '^FAIL  (zzz-skip-test|gone-test)\.sh')" -eq 2 ]]; check "duplicate-labels-fail-once-each" $?
+printf '%s\n' "$OUT" | grep -qF '1 passed, 2 failed, 0 skipped'; check "duplicate-labels-tallied-once-each" $?
+# an override that names a file that is not there is an error as well — a typo must not pin nothing
+OUT="$(GITHUB_ACTIONS='' VERIFY_ALL_ENV=local VERIFY_ALL_MUST_RUN="$D/no-such-list.txt" VERIFY_ALL_TESTS_DIR="$D" \
+  VERIFY_ALL_SKIP_FIXED=1 bash "$RUNNER" 2>&1)"; RC=$?
+[[ $RC -eq 1 ]]; check "override-naming-a-missing-file-exits-1" $?
+printf '%s\n' "$OUT" | grep -qF 'must-run list missing'; check "override-naming-a-missing-file-message" $?
+# in the REAL tree (no VERIFY_ALL_TESTS_DIR) a missing list is an error, not "nothing pinned":
+# deleting the file must not switch the guard off. A copy of the runner stands in for the tree.
+T=$(fresh_dir)
+mkdir -p "$T/core/tests"
+cp "$RUNNER" "$T/core/tests/verify-all.sh"
+write_pass_stub "$T/core/tests/aaa-pass-test.sh"
+OUT="$(env -u VERIFY_ALL_TESTS_DIR -u VERIFY_ALL_MUST_RUN GITHUB_ACTIONS= VERIFY_ALL_ENV=local VERIFY_ALL_SKIP_FIXED=1 \
+  bash "$T/core/tests/verify-all.sh" 2>&1)"; RC=$?
+[[ $RC -eq 1 ]]; check "real-tree-missing-list-exits-1" $?
+printf '%s\n' "$OUT" | grep -qF 'must-run list missing'; check "real-tree-missing-list-message" $?
+if printf '%s\n' "$OUT" | grep -qE '^(PASS|FAIL|SKIP) '; then bad=1; else bad=0; fi
+[[ $bad -eq 0 ]]; check "real-tree-missing-list-runs-nothing" $?
+printf '%s\n' 'aaa-pass-test.sh all' > "$T/core/tests/verify-all-must-run.txt"
+OUT="$(env -u VERIFY_ALL_TESTS_DIR -u VERIFY_ALL_MUST_RUN GITHUB_ACTIONS= VERIFY_ALL_ENV=local VERIFY_ALL_SKIP_FIXED=1 \
+  bash "$T/core/tests/verify-all.sh" 2>&1)"; RC=$?
+[[ $RC -eq 0 ]]; check "real-tree-restored-list-passes" $?
+printf '%s\n' "$OUT" | grep -qF '1 passed, 0 failed, 0 skipped'; check "real-tree-restored-list-tally" $?
+
+echo
+echo "=== (22) THE SHIPPED MUST-RUN LIST matches the tree: no stale label, every skip lane pinned, CI excuses only gitleaks ==="
+LIST_FILE="$REAL_TESTS_DIR/verify-all-must-run.txt"
+[[ -s "$LIST_FILE" ]]; check "shipped-list-exists" $?
+SHIPPED="$(awk '{ sub(/[ \t]*#.*/, "") } NF { print $1 " " $2 }' "$LIST_FILE")"
+# the full label set, whatever test seams the caller has exported (they would drop gitleaks)
+FULL_LIST="$(env -u VERIFY_ALL_SKIP_FIXED -u VERIFY_ALL_SKIP_EVALS -u VERIFY_ALL_TESTS_DIR -u VERIFY_ALL_MUST_RUN \
+  bash "$RUNNER" --list 2>&1)"
+stale=0
+while read -r lab _; do
+  [[ -n "$lab" ]] || continue
+  if ! printf '%s\n' "$FULL_LIST" | grep -qxF "$lab"; then echo "    STALE (not in --list): $lab"; stale=$((stale + 1)); fi
+done <<EOF
+$SHIPPED
+EOF
+[[ $stale -eq 0 ]]; check "shipped-list-has-no-stale-label" $?
+# skip_declared_with_exit_2 <file> — 0 if the file prints `SKIP…` and exits 2 on that line or the next:
+# a battery with a declared skip lane. The sibling of (13)'s exit-0 tripwire, same source-text heuristic.
+skip_declared_with_exit_2() {
+  grep -A1 -E "(echo|printf)[[:space:]]+(-e[[:space:]]+)?('%s.n'|\"%s.n\")?[[:space:]]*[\"']?SKIP([[:space:]]|:|\\\\n|\"|')" "$1" 2>/dev/null \
+    | grep -qE 'exit[[:space:]]+2'
+}
+D=$(fresh_dir)
+printf '%s\n' '#!/usr/bin/env bash' 'echo "SKIP: widget not installed"' 'exit 2' > "$D/next-line.sh"
+skip_declared_with_exit_2 "$D/next-line.sh"; check "ratchet-detects-skip-then-exit-2" $?
+printf '%s\n' '#!/usr/bin/env bash' 'command -v jq || { echo "SKIP: jq"; exit 2; }' 'run' > "$D/same-line.sh"
+skip_declared_with_exit_2 "$D/same-line.sh"; check "ratchet-detects-same-line-guard" $?
+printf '%s\n' '#!/usr/bin/env bash' 'echo "=== (n) missing log -> LOUD SKIP, exit 2 ==="' 'run' 'exit 2' > "$D/prose.sh"
+if skip_declared_with_exit_2 "$D/prose.sh"; then fp=1; else fp=0; fi
+[[ $fp -eq 0 ]]; check "ratchet-no-false-positive-on-prose" $?
+unpinned=""
+for f in "$REAL_TESTS_DIR"/*.sh; do
+  base="$(basename "$f")"
+  case "$base" in verify-all.sh|verify-all-test.sh) continue ;; esac
+  if skip_declared_with_exit_2 "$f"; then
+    # `all`, except the one battery that needs the binary CI does not have
+    want=all; [[ "$base" == "gitleaks-allowlist-test.sh" ]] && want=local
+    have="$(printf '%s\n' "$SHIPPED" | awk -v b="$base" '$1 == b { print $2 }' | paste -sd, -)"
+    [[ "$have" == "$want" ]] || unpinned="$unpinned $base(${have:-not listed})"
+  fi
+done
+[[ -z "$unpinned" ]]; check "every-skip-lane-battery-is-pinned-in-the-right-profile" $?
+[[ -n "$unpinned" ]] && echo "    skip lanes pinned wrongly:$unpinned — core/tests/verify-all-must-run.txt (all; local for the gitleaks allowlist battery)"
+# the environment split the list exists for: CI's verify job has no gitleaks (its secret-scan job
+# enforces it), a developer machine does and may not skip it
+CI_PINNED="$(printf '%s\n' "$SHIPPED" | awk '$2 == "all" || $2 == "ci" { print $1 }')"
+LOCAL_PINNED="$(printf '%s\n' "$SHIPPED" | awk '$2 == "all" || $2 == "local" { print $1 }')"
+if printf '%s\n' "$CI_PINNED" | grep -q '^gitleaks'; then bad=1; else bad=0; fi
+[[ $bad -eq 0 ]]; check "ci-profile-does-not-pin-gitleaks" $?
+printf '%s\n' "$LOCAL_PINNED" | grep -qxF 'gitleaks'; check "local-profile-pins-the-gitleaks-scan" $?
+printf '%s\n' "$LOCAL_PINNED" | grep -qxF 'gitleaks-allowlist-test.sh'; check "local-profile-pins-the-allowlist-battery" $?
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="

@@ -18,6 +18,7 @@
 #   4. gitleaks             — secret scan when the binary is present; otherwise a
 #      LOUD SKIP (a silently-skipped security scan reported as pass is exactly the
 #      false-green this repo guards against — a SKIP is not a pass, and is printed).
+#      On a developer machine it is pinned (MUST-RUN contract below): absent = FAIL.
 #
 # SKIP contract for DISCOVERED checks: a check declares itself INAPPLICABLE (an
 # optional binary it needs is absent) by exiting 2 with `SKIP <reason>` as its
@@ -30,6 +31,19 @@
 # green: a battery that skips one SUB-PROBE, runs on, and then genuinely breaks
 # must stay a FAIL. Partial skips belong in a battery's own tally, not here.
 # Exits 0 and 1 keep their meanings (pass / fail).
+#
+# MUST-RUN contract: an honest SKIP is still a check that did not run, and the floor at the
+# bottom trips only when EVERYTHING skipped — so a host that loses jq, sqlite3 or an FTS5 build
+# can turn a dozen batteries into no-ops while the run exits 0. core/tests/verify-all-must-run.txt
+# (`<label> <where>`, `#` comments, where = all | local | ci) pins the checks that must END AS
+# PASS in the environment the run is in. For a pinned label, a skip (a declared skip, or the
+# gitleaks binary being absent) is reported and counted as FAIL, and a label that is not in the
+# discovered set at all (renamed, moved, deleted) is a FAIL too. A label that is not pinned
+# behaves exactly as before. The profile is `ci` on GitHub Actions (GITHUB_ACTIONS=true) and
+# `local` everywhere else; VERIFY_ALL_ENV=local|ci overrides it. CI excuses only what its own
+# jobs enforce (gitleaks: the secret-scan job); a developer machine excuses nothing. A sharded
+# run judges only its own checks, except that a pinned label missing from the WHOLE set fails in
+# every shard. A missing list file is an error in the real tree, never "nothing pinned".
 #
 # Design: NOT `set -e`. Every check runs even if an earlier one fails (run all,
 # report all). Each check runs in a SUBSHELL with combined output captured to a
@@ -63,12 +77,21 @@
 #                          gitleaks check listed — lets a test exercise the
 #                          gitleaks present/absent branch offline without paying
 #                          for the evals subprocesses.
+#   VERIFY_ALL_MUST_RUN    override the must-run list file (default: verify-all-must-run.txt
+#                          beside the checks, i.e. in VERIFY_ALL_TESTS_DIR when that is set —
+#                          a hermetic fixture dir is its own world: no list there pins nothing.
+#                          A file named here that does not exist exits 1.)
+#
+# Environment:
+#   VERIFY_ALL_ENV=local|ci  which must-run profile applies (default: ci iff
+#                          GITHUB_ACTIONS=true, else local). Any other value exits 1.
 #
 # Usage:
 #   bash core/tests/verify-all.sh          # run the full suite
 #   bash core/tests/verify-all.sh --list   # print the check labels only
 #   bash core/tests/verify-all.sh --shard 2/4          # run shard 2 of 4
 #   bash core/tests/verify-all.sh --shard 2/4 --list   # print shard 2's labels only
+#   VERIFY_ALL_ENV=ci bash core/tests/verify-all.sh    # the CI profile (gitleaks excused)
 set -u
 
 # W1-4: tag every record this run's batteries produce in security-violations.jsonl
@@ -168,6 +191,61 @@ if [[ "${VERIFY_ALL_SKIP_FIXED:-}" != "1" ]]; then
   add_check "gitleaks" "@gitleaks@"
 fi
 
+# --- must-run list: the labels that must END AS PASS in this environment (see header) ---
+# The list lives beside the checks it names, so a hermetic VERIFY_ALL_TESTS_DIR fixture is its
+# own world (no list there pins nothing). In the real tree, or when VERIFY_ALL_MUST_RUN names a
+# file, a missing list is an error: deleting the file or mistyping the override must not switch
+# the guard off.
+MUST_RUN_FILE="${VERIFY_ALL_MUST_RUN:-$TESTS_DIR/verify-all-must-run.txt}"
+case "${VERIFY_ALL_ENV:-}" in
+  local|ci) PROFILE="$VERIFY_ALL_ENV" ;;
+  "") if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then PROFILE=ci; else PROFILE=local; fi ;;
+  *) die_usage "VERIFY_ALL_ENV must be 'local' or 'ci' (got '$VERIFY_ALL_ENV')" ;;
+esac
+MUST_LABELS=()
+MUST_LOADED=0
+if [[ -f "$MUST_RUN_FILE" ]]; then
+  MUST_LOADED=1
+  # `<label> <all|local|ci>` per line, `#` starts a comment (own line or trailing). A label that
+  # applies to this profile comes out as `OK <label>`, a malformed line as `BAD <line number>`.
+  MUST_PARSED="$(awk -v prof="$PROFILE" '
+    { sub(/[ \t]*#.*/, ""); sub(/^[ \t]+/, "") }
+    $0 == "" { next }
+    NF != 2 || ($2 != "all" && $2 != "local" && $2 != "ci") { print "BAD " NR; next }
+    ($2 == "all" || $2 == prof) && !seen[$1]++ { print "OK " $1 }
+  ' "$MUST_RUN_FILE")"
+  MUST_BAD="$(printf '%s\n' "$MUST_PARSED" | sed -n 's/^BAD //p' | paste -sd, -)"
+  [[ -z "$MUST_BAD" ]] \
+    || die_usage "$MUST_RUN_FILE: malformed line(s) $MUST_BAD (expected '<label> <all|local|ci>')"
+  while IFS= read -r ml; do
+    MUST_LABELS+=("$ml")
+  done < <(printf '%s\n' "$MUST_PARSED" | sed -n 's/^OK //p')
+elif [[ -n "${VERIFY_ALL_MUST_RUN:-}" || -z "${VERIFY_ALL_TESTS_DIR:-}" ]]; then
+  # the real tree, or an override that names a file that is not there (a typo must not pin nothing)
+  die_usage "must-run list missing: $MUST_RUN_FILE (restore it — without it nothing is pinned)"
+fi
+
+# A pinned label that is not in the WHOLE check set was renamed, moved or deleted. Judged here,
+# before --shard narrows LABELS, so that every shard agrees and none mistakes "belongs to
+# another shard" for "gone".
+MUST_MISSING=()
+for ml in ${MUST_LABELS[@]+"${MUST_LABELS[@]}"}; do
+  found=0
+  for l in ${LABELS[@]+"${LABELS[@]}"}; do
+    if [[ "$l" == "$ml" ]]; then found=1; break; fi
+  done
+  [[ $found -eq 1 ]] || MUST_MISSING+=("$ml")
+done
+
+# is_must_run <label> — 0 if the label is pinned for this run's profile
+is_must_run() {
+  local m
+  for m in ${MUST_LABELS[@]+"${MUST_LABELS[@]}"}; do
+    [[ "$m" == "$1" ]] && return 0
+  done
+  return 1
+}
+
 # --- --shard K/N: keep only this shard's checks (deterministic LPT, see header) ---
 # awk does the bin-packing so no associative array is needed in bash 3.2. Input is
 # the label list in run order; output is `T <est-seconds>` then the 0-based indices
@@ -252,6 +330,33 @@ fi
 passed=0
 failed=0
 skipped=0
+must_failed=0
+
+# Printed whenever a list was loaded, so a log shows which profile the run was judged under.
+if [[ $MUST_LOADED -eq 1 ]]; then
+  pinned_here=0
+  for l in ${LABELS[@]+"${LABELS[@]}"}; do
+    if is_must_run "$l"; then pinned_here=$((pinned_here + 1)); fi
+  done
+  printf '=== verify-all: must-run profile %s — %d pinned, %d in this run ===\n' \
+    "$PROFILE" "${#MUST_LABELS[@]}" "$pinned_here"
+fi
+
+# skip_or_fail <label> <reason> [<seconds>] — a check that did not run. A SKIP, unless the label
+# is pinned for this profile (MUST-RUN contract in the header): then it is a FAIL, so a pinned
+# check can never be reported as skipped.
+skip_or_fail() {
+  local took=""
+  [[ -z "${3:-}" ]] || took="  (${3}s)"
+  if is_must_run "$1"; then
+    printf 'FAIL  %s  (must-run check skipped: %s)%s\n' "$1" "$2" "$took"
+    failed=$((failed + 1))
+    must_failed=$((must_failed + 1))
+  else
+    printf 'SKIP  %s  (%s)%s\n' "$1" "$2" "$took"
+    skipped=$((skipped + 1))
+  fi
+}
 
 i=0
 n=${#LABELS[@]}
@@ -260,13 +365,13 @@ while [[ $i -lt $n ]]; do
   cmd="${CMDS[$i]}"
   i=$((i + 1))
 
-  # gitleaks: present -> run; absent -> loud SKIP (not a failure, not silent).
+  # gitleaks: present -> run; absent -> loud SKIP (not a failure, not silent) — or a FAIL when the
+  # profile pins it (a developer machine; CI's own secret-scan job is the enforcer there).
   if [[ "$cmd" == "@gitleaks@" ]]; then
     if command -v gitleaks >/dev/null 2>&1; then
       cmd="gitleaks detect --no-git --source $(printf '%q' "$REPO_ROOT") --config $(printf '%q' "$REPO_ROOT/gitleaks.toml")"
     else
-      printf 'SKIP  %s  (%s)\n' "$label" "gitleaks not installed"
-      skipped=$((skipped + 1))
+      skip_or_fail "$label" "gitleaks not installed"
       continue
     fi
   fi
@@ -294,8 +399,8 @@ while [[ $i -lt $n ]]; do
   #     that battery declares its sub-probe skip first and runs on afterwards.
   # So the declaration must be the ONLY non-empty line of output. That is what
   # an inapplicable check actually looks like: it detects the missing dependency
-  # up front, says so, and exits without doing anything else. Both current users
-  # (gitleaks-allowlist-test.sh, loop-run-test.sh) are exactly this shape. Any
+  # up front, says so, and exits without doing anything else. Every battery that uses
+  # the lane today (see verify-all-must-run.txt) is exactly this shape. Any
   # other output means the battery RAN, so its rc 2 is a failure, not an
   # inapplicability, and it falls through to FAIL where the tail explains it.
   # A battery that must skip only part of itself reports that in its own tally
@@ -313,14 +418,14 @@ while [[ $i -lt $n ]]; do
   if [[ $declared_skip -eq 1 ]]; then
     # Exit 2 + a SKIP line = the check declared itself INAPPLICABLE (an optional
     # binary it needs is absent). Counted as skipped and printed loudly, never as
-    # a pass: a discovered battery that cannot run must not be indistinguishable
+    # a pass — or as a FAIL when the label is pinned in the must-run list (skip_or_fail):
+    # a discovered battery that cannot run must not be indistinguishable
     # from one that ran and passed. The sentinel is the same one
     # core/infra/gitleaks-fire-test.sh and skills/wrap already use, and it is
     # what lets a battery guarded by an optional tool live under core/tests/
     # (inside the guarded surface) instead of being hidden outside discovery.
     reason="$(printf '%s' "$first_line" | sed -E 's/^SKIP[[:space:]]*[:—-]*[[:space:]]*//')"
-    printf 'SKIP  %s  (%s)  (%ss)\n' "$label" "${reason:-check declared itself inapplicable}" "$dur"
-    skipped=$((skipped + 1))
+    skip_or_fail "$label" "${reason:-check declared itself inapplicable}" "$dur"
   elif [[ $rc -eq 0 ]]; then
     printf 'PASS  %s  (%ss)\n' "$label" "$dur"
     passed=$((passed + 1))
@@ -331,7 +436,19 @@ while [[ $i -lt $n ]]; do
   fi
 done
 
+# Pinned labels that are not in the check set at all (judged before sharding, see above).
+for ml in ${MUST_MISSING[@]+"${MUST_MISSING[@]}"}; do
+  printf 'FAIL  %s  (must-run check not found: renamed, moved or deleted? fix the label in %s)\n' \
+    "$ml" "$(basename "$MUST_RUN_FILE")"
+  failed=$((failed + 1))
+  must_failed=$((must_failed + 1))
+done
+
 printf '=== verify-all: %d passed, %d failed, %d skipped ===\n' "$passed" "$failed" "$skipped"
+if [[ $must_failed -gt 0 ]]; then
+  printf 'ERROR: %d must-run check(s) did not run to a PASS under the %s profile — a pinned check may not skip or vanish: install what it needs, or fix %s if the list is stale.\n' \
+    "$must_failed" "$PROFILE" "$(basename "$MUST_RUN_FILE")" >&2
+fi
 
 # Floor guard: `[[ $failed -eq 0 ]]` is vacuously true when NOTHING ran, which
 # would report success on an empty/broken discovery (dir moved, glob returns
