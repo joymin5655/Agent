@@ -414,9 +414,10 @@ one Claude Code applies a 600 s default, so a hung hook would stall the session 
 minutes. A hook the host kills on timeout is a **non-blocking error**: on `PreToolUse` the
 tool call proceeds, so a timeout is fail-open. The values below are therefore generous
 ceilings, not budgets. A typical invocation through the adapter costs about 0.4 s (1 s for
-`agent-session-start.sh`), so each ceiling is 15x or more above normal runtime. The one
-guard with its own internal budget, `pre-tool-guard.sh`, arms a 2 s alarm that decides a
-deny itself, so its 30 s outer value can never pre-empt it.
+`agent-session-start.sh`), so each ceiling is 15x or more above normal runtime. Two guards
+keep an internal budget of their own: `pre-tool-guard.sh` arms a 2 s alarm that decides a
+deny itself, and `loop-write-guard.py` arms a 20 s alarm (`AGENT_LOOP_GUARD_TIMEOUT` can
+only shorten it) that decides an `ask` itself, so neither 30 s outer value can pre-empt it.
 
 | Timeout | Hooks | Why this value |
 |---|---|---|
