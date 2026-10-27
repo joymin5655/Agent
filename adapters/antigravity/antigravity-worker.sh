@@ -49,9 +49,11 @@
 #
 # SUCCESS: agy's exit 0 alone proves nothing. Headless agy SOFT-DENIES a tool
 # call it cannot get approval for — the run continues, exits 0, and prints a
-# notice on stderr (docs/cli/headless). So a dispatch counts only when the
-# --output-format json envelope says status "SUCCESS" AND no soft-deny notice
-# was printed; the envelope and stderr are forwarded unchanged either way.
+# notice on stderr (docs/cli/headless). agy's own --print-timeout exits 0 too.
+# So a dispatch counts only when the --output-format json envelope says status
+# "SUCCESS" with a non-blank string response AND no soft-deny notice was printed
+# AND no print-timeout notice starts a line in the last 20 stderr lines; the
+# envelope and stderr are forwarded unchanged either way.
 # agy 1.2.12 (measured 2026-09-29) reports a soft-deny structurally — the
 # envelope gains a non-empty "denied_actions" array and the run ends at the first
 # denial — so that is the primary signal. The stderr notice (wording differs
@@ -66,9 +68,12 @@
 #        ERROR); 2 usage/config (incl. a missing Keychain item); 6 mktemp failure;
 #        7 sandbox unavailable (fail closed); 8 unsafe $HOME for a scheme string;
 #        9 agy exited 0 but soft-denied a tool call; 10 agy exited 0 but the
-#        envelope is unparseable or its status is not SUCCESS; 75 quota / rate limit
+#        envelope is unparseable, its status is not SUCCESS, or its response is
+#        not a non-blank string; 75 quota / rate limit
 #        (HTTP 429, RESOURCE_EXHAUSTED, quota, rate limit in stderr or the
-#        envelope's .error) — EX_TEMPFAIL, call-worker records `rate-limited`
+#        envelope's .error) — EX_TEMPFAIL, call-worker records `rate-limited`;
+#        124 agy exited 0 with a SUCCESS envelope after its own --print-timeout
+#        notice — call-worker records `timeout`
 set -euo pipefail
 
 self="${BASH_SOURCE[0]}"
@@ -334,6 +339,22 @@ if [[ "$status" != "SUCCESS" ]]; then
         exit 75
     fi
     echo "antigravity-worker: agy exited 0 but the json envelope status is '${status:-<unparseable>}', not SUCCESS — not reporting success" >&2
+    exit 10
+fi
+# agy's own --print-timeout also exits 0 with a SUCCESS envelope, its response
+# empty or cut short (measured 2026-10-11..25: 13 timed-out runs recorded complete,
+# the notice always the last stderr line). Checked only past the SUCCESS gate so a
+# soft-deny, quota or bad status keeps its code; 124 makes call-worker record
+# `timeout`. Same last-20-lines scope as the quota scan, never .response.
+if grep -Eq '^\[agy\] print timeout after ' <(tail -n 20 "$CAP_DIR/err"); then
+    echo "antigravity-worker: agy hit its own --print-timeout (notice above) — the response is partial or empty; exiting 124 (timeout)" >&2
+    exit 124
+fi
+# Every role's contract returns text. call-worker's own blank check cannot see
+# an empty answer here: it merges stderr, so any notice makes its capture non-blank.
+has_text="$(jq -rs 'if length == 1 and (.[0].response | type) == "string" then (.[0].response | test("[^[:space:]]")) else false end' "$CAP_DIR/out" 2>/dev/null || true)"
+if [[ "$has_text" != "true" ]]; then
+    echo "antigravity-worker: agy exited 0 with a SUCCESS envelope but no text response — not reporting success" >&2
     exit 10
 fi
 exit 0

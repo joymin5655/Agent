@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/joymin5655/Agent/actions/workflows/ci.yml/badge.svg)](https://github.com/joymin5655/Agent/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-![Version](https://img.shields.io/badge/version-0.13.3-blue.svg)
+![Version](https://img.shields.io/badge/version-0.13.4-blue.svg)
 ![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-7c3aed.svg)
 ![AI-agnostic](https://img.shields.io/badge/AI-Claude%20%7C%20Codex%20%7C%20Antigravity-orange.svg)
 
@@ -61,7 +61,7 @@ The rules are written once: when an event reaches the core, it returns the same
 `core/tests/adapter-parity.sh`. What *differs* per runtime is how much of the
 CLI's activity reaches that core; see [Runtime coverage](#runtime-coverage).
 
-> Status: v0.13.3 · License: **MIT**
+> Status: v0.13.4 · License: **MIT**
 
 ---
 
@@ -552,6 +552,11 @@ bash core/tests/verify-all.sh
 # CI fans the same set out over 4 parallel jobs; any shard can be run locally:
 bash core/tests/verify-all.sh --shard 1/4          # add --list to print its checks only
 ```
+
+Checks that must never be skipped are pinned in `core/tests/verify-all-must-run.txt`. A pinned
+check that skips (a missing `jq`, `sqlite3` or `gitleaks`, a moved skill file) or has vanished
+from the set **fails** the run instead of printing `SKIP`. CI excuses only the two gitleaks
+checks, which its own secret-scan job enforces; `VERIFY_ALL_ENV=ci` judges a run by that profile.
 
 The individual checks, run on their own:
 
