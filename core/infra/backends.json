@@ -85,7 +85,7 @@
           "top"
         ]
       },
-      "timeout_s": 300,
+      "timeout_s": 900,
       "preflight": [
         "antigravity-preflight"
       ],

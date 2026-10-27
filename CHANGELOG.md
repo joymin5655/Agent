@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **The Gemini lane gets 15 minutes instead of 5** (`core/infra/backends.json` `gemini.timeout_s`
+  300 → 900; `adapters/antigravity/antigravity-worker.sh` default `--print-timeout` 5m → 14m).
+  Both caps were 300s, and the long thinking phase of the pinned Gemini models outran them: the
+  8 local runs that returned text took 274–710s of agy time, 6 of them past 300s, while a run
+  cut at the cap still spent its thinking output (one 294s run: 40,438 thinking tokens) and
+  returned nothing. The print timeout stays one minute under the lane cap, so agy ends the run
+  itself before `call-worker.sh`'s hard kill. A council now waits up to 15 minutes for this
+  lane; `ANTIGRAVITY_WORKER_PRINT_TIMEOUT` and `AGENT_WORKER_TIMEOUT_S` still override both caps.
+
 ### Fixed
 - **A Gemini lane that hit agy's own print timeout is no longer recorded `complete`**
   (`adapters/antigravity/antigravity-worker.sh`): agy prints `[agy] print timeout after …` on
