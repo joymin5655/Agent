@@ -553,6 +553,11 @@ bash core/tests/verify-all.sh
 bash core/tests/verify-all.sh --shard 1/4          # add --list to print its checks only
 ```
 
+Checks that must never be skipped are pinned in `core/tests/verify-all-must-run.txt`. A pinned
+check that skips (a missing `jq`, `sqlite3` or `gitleaks`, a moved skill file) or has vanished
+from the set **fails** the run instead of printing `SKIP`. CI excuses only the two gitleaks
+checks, which its own secret-scan job enforces; `VERIFY_ALL_ENV=ci` judges a run by that profile.
+
 The individual checks, run on their own:
 
 ```bash

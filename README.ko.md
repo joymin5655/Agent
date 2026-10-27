@@ -516,6 +516,11 @@ bash core/tests/verify-all.sh
 bash core/tests/verify-all.sh --shard 1/4          # --list를 붙이면 그 샤드의 검사 목록만 출력
 ```
 
+건너뛰면 안 되는 검사는 `core/tests/verify-all-must-run.txt`에 고정해 둡니다. 고정된 검사가
+건너뛰어지거나(`jq`·`sqlite3`·`gitleaks` 부재, 스킬 파일 이동) 검사 집합에서 사라지면 `SKIP`으로
+표시하는 대신 실행이 **실패**합니다. CI는 자체 secret-scan 잡이 강제하는 gitleaks 검사 두 개만
+면제하며, `VERIFY_ALL_ENV=ci`를 주면 그 기준으로 판정합니다.
+
 개별 검사를 따로 실행하려면:
 
 ```bash
