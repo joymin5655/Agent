@@ -59,7 +59,8 @@
 #
 # usage: antigravity-worker [--tier mid|top] < prompt.md
 # env:   ANTIGRAVITY_TIERS_FILE, ANTIGRAVITY_WORKER_ALLOW_UNSANDBOXED=1,
-#        ANTIGRAVITY_WORKER_PRINT_TIMEOUT (agy --print-timeout, default 5m),
+#        ANTIGRAVITY_WORKER_PRINT_TIMEOUT (agy --print-timeout, default 14m: under the
+#        gemini lane's 900s timeout_s, so agy ends the run before the hard kill),
 #        ANTIGRAVITY_AUTH=apikey (opt-in Keychain API key, see AUTH)
 # exit:  agy's own nonzero exit code (incl. the undocumented 3 = envelope status
 #        ERROR); 2 usage/config (incl. a missing Keychain item); 6 mktemp failure;
@@ -152,7 +153,7 @@ if [[ -n "$EFFORT" ]]; then
     valid_effort "$EFFORT" || { echo "antigravity-worker: resolved effort '$EFFORT' is not a valid agy effort level — refusing" >&2; exit 2; }
 fi
 
-PRINT_TIMEOUT="${ANTIGRAVITY_WORKER_PRINT_TIMEOUT:-5m}"
+PRINT_TIMEOUT="${ANTIGRAVITY_WORKER_PRINT_TIMEOUT:-14m}"
 
 if [[ "${ANTIGRAVITY_AUTH:-}" == "apikey" ]]; then
     command -v security >/dev/null 2>&1 || { echo "antigravity-worker: ANTIGRAVITY_AUTH=apikey needs the macOS 'security' CLI to read Keychain service 'gemini-api-key' — not found on PATH" >&2; exit 2; }
