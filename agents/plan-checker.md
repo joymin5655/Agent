@@ -52,9 +52,10 @@ you could not find a gap.
      marking them private.
    - *Hand-synced list* — two lists kept in step by hand; the plan needs one
      generated from the other, or a check that compares them.
-   Record each as a `refutations` entry prefixed `design:` (the dimensions
-   object is unchanged). Count it a real gap only when it breaks a spec
-   criterion, decision, or guard.
+   Record each as an `advisories` entry prefixed `design:` (non-gating; the
+   dimensions object is unchanged). Only a flag that breaks a spec criterion,
+   decision, or guard is a real gap: record that one in `refutations`, naming
+   the spec item.
 
 ## Output
 
@@ -78,12 +79,13 @@ else:
 }
 ```
 
-- `verdict` is `CONFIRMED` only when `refutations` is empty (or holds only
-  `design:` flags that break no spec item) and the totals are non-zero;
-  otherwise `REFUTED`.
+- `verdict` is `CONFIRMED` only when `refutations` is empty and the totals are
+  non-zero; otherwise `REFUTED`.
 - `score` is passed/total across dimensions, in `[0, 1]`.
 - `refutations` lists each specific gap, most load-bearing first, each naming
   the spec item and the step (or its absence).
+- `advisories` (optional, omitted when empty) holds the `design:` flags that
+  break no spec item; they never change `verdict` or `score`.
 
 ## What you don't do
 
