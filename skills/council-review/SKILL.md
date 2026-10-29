@@ -193,7 +193,19 @@ sleep-polling.
    quote. No match after dedup → DROP the finding, and count drops per lane
    (reported — a lane's drop rate is signal about that lane).
 4. **Severity re-rating**: re-rate every surviving finding against repo
-   context yourself; external self-ratings are input, not verdict.
+   context yourself; external self-ratings are input, not verdict. Filter
+   before bucketing (each drop is **Dismissed** with its reason, never silent):
+   - A lane whose findings are all trivia or taste → say the change is
+     largely fine; don't fill Act on to look useful.
+   - "What if X is null / empty / huge?" counts only if a real caller can pass
+     it — trace the call sites; reason = the call site that rules it out.
+   - "I'd have done it differently" with no defect → Dismissed (a genuine
+     trade-off → Consider).
+   - A finding that ignores a repo convention → check the convention; reason =
+     where it is used.
+   - A security or correctness claim from one lane is verified against the
+     code, never waved off on judgment; unverifiable → Consider. Security
+     claims stay security-reviewer's.
 5. **Source tagging**: `[claude]` `[codex]` `[gemini]`. Findings reached
    independently by ≥2 seated vendors are marked **high-signal** and listed
    first. Lenses don't weaken this rule — a defect two lanes reached through

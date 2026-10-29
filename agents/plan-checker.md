@@ -38,6 +38,24 @@ you could not find a gap.
 7. **Guard coverage** — every `## Must not` and `## Edge cases` line (other
    than `none —`) has a wave step whose verify actually provokes that
    situation (a negative test), not just mentions it. Name each uncovered line.
+8. **Design red flags** — judgment calls, not automatic failures. Look for:
+   - *Shallow module* — a new unit whose interface is about as big as what it hides.
+   - *Information leakage* — one design decision (format, layout, order) that
+     several units must all know.
+   - *Temporal decomposition* — units split by when things run, not by what each owns.
+   - *Pass-through method* — a layer that only forwards calls and adds nothing.
+   - *Split ownership* — one rule or datum written in two places, so fixing one
+     leaves the other stale.
+   - *Two ways to do one task* — a new path beside an existing one, with no
+     step retiring either.
+   - *Importable internals* — helpers a caller could reach into, with nothing
+     marking them private.
+   - *Hand-synced list* — two lists kept in step by hand; the plan needs one
+     generated from the other, or a check that compares them.
+   Record each as an `advisories` entry prefixed `design:` (non-gating; the
+   dimensions object is unchanged). Only a flag that breaks a spec criterion,
+   decision, or guard is a real gap: record that one in `refutations`, naming
+   the spec item.
 
 ## Output
 
@@ -66,6 +84,8 @@ else:
 - `score` is passed/total across dimensions, in `[0, 1]`.
 - `refutations` lists each specific gap, most load-bearing first, each naming
   the spec item and the step (or its absence).
+- `advisories` (optional, omitted when empty) holds the `design:` flags that
+  break no spec item; they never change `verdict` or `score`.
 
 ## What you don't do
 
