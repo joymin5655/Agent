@@ -22,7 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a hard `git reset`, `gh pr merge`, download-piped-to-shell, or writes to `/dev/*`. A denied
   command is neither passed nor failed: it is listed under the verdict's `denied` key (audit:
   `denied:true`, `all_pass:null`, exit 4). Rules live in `_DENY_RULES`; text screening only,
-  not a sandbox.
+  not a sandbox. Only the command position is judged (quoted words such as `grep -c 'rm -rf' f`
+  pass; `git -C r push`, `rm -v -rf x`, `| /bin/bash`, `tee /dev/disk1` are caught). A denied claim
+  command is REFUTED (exit 1) in `completion-verify.py` and exit 4 (unverified) in the audit.
+- **`advance-wave` reads the audit log line by line.** A torn line no longer hides a failed record,
+  and an unreadable log or non-numeric wave refuses (exit 3) instead of advancing.
 
 ### Changed
 - **The Gemini lane gets 15 minutes instead of 5** (`core/infra/backends.json` `gemini.timeout_s`

@@ -191,17 +191,25 @@ cmd_advance_wave() {
     # runs before advance in /supervise, supervisor-goal-audit.sh appends to AUDIT_LOG) must not be
     # a failure. No record is only a warning — direct callers advance without an audit run — and
     # a re-run audit that passes clears an earlier failure (the latest record wins).
-    local last_audit="null"
+    # The log is read line by line so one torn line cannot hide a failure: broken lines are skipped
+    # (fromjson?). If jq itself fails (e.g. a non-numeric wave) the verdict is unknown, so refuse.
+    local last_audit="" audit_rows
     if [[ -s "$AUDIT_LOG" ]]; then
-        last_audit=$(jq -cs --arg s "$slug" --argjson w "$wave_num" \
-            '[.[] | select(.plan_slug == $s and .wave == $w and has("all_pass"))] | last | .all_pass' \
-            "$AUDIT_LOG" 2>/dev/null || echo null)
+        if ! audit_rows=$(jq -cR --arg s "$slug" --argjson w "$wave_num" \
+            'fromjson? | select(type == "object" and .plan_slug == $s and .wave == $w and has("all_pass")) | .all_pass' \
+            "$AUDIT_LOG" 2>/dev/null); then
+            echo "ERROR: goal $slug wave $wave_num: cannot read the audit log; refusing to advance" >&2
+            exit 3
+        fi
+        last_audit=$(printf '%s\n' "$audit_rows" | tail -n 1)
     fi
     if [[ "$last_audit" == "false" ]]; then
         echo "ERROR: goal $slug wave $wave_num: latest audit record failed; re-run the audit before advancing" >&2
         exit 3
+    elif [[ "$last_audit" == "null" ]]; then
+        echo "WARN: goal $slug wave $wave_num: latest audit record is unverified (all_pass null); advancing unverified" >&2
     elif [[ "$last_audit" != "true" ]]; then
-        echo "WARN: goal $slug wave $wave_num: no audit record with a pass verdict; advancing unverified" >&2
+        echo "WARN: goal $slug wave $wave_num: no audit record; advancing unverified" >&2
     fi
 
     local new_completed

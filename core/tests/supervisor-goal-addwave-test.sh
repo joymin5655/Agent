@@ -81,6 +81,8 @@ sg init adv-budget 3 >/dev/null
 sqlite3 .agent/locks/goal-state.db "UPDATE supervisor_goals SET status='budget_limited' WHERE plan_slug='adv-budget';"
 sg advance-wave adv-budget 1 >/dev/null 2>&1
 check "advance-budget-limited-exits-3" "3" "$?"
+# In the real flow a failed audit aborts the goal; "a re-run pass clears an earlier failure" below only
+# applies to a caller that writes the audit records directly.
 sg init adv-fail 3 >/dev/null
 printf '%s\n' '{"plan_slug":"adv-fail","wave":1,"all_pass":false}' >> .agent/logs/supervisor-goal-audit.jsonl
 sg advance-wave adv-fail 1 >/dev/null 2>&1
@@ -98,6 +100,27 @@ sg init adv-none 3 >/dev/null
 WARN=$(sg advance-wave adv-none 1 2>&1 >/dev/null)
 check "advance-without-audit-record-ok" "2" "$(cur adv-none)"
 check "advance-without-audit-record-warns" "1" "$(grep -c 'no audit record' <<<"$WARN")"
+sg init adv-torn 3 >/dev/null
+printf '%s\n' '{"plan_slug":"adv-torn","wave":1,"all_pass":false}' 'not json {' >> .agent/logs/supervisor-goal-audit.jsonl
+sg advance-wave adv-torn 1 >/dev/null 2>&1
+check "advance-torn-line-does-not-hide-failure" "3" "$?"
+check "advance-torn-line-row-untouched" "1" "$(cur adv-torn)"
+sg init adv-badwave 3 >/dev/null
+sg advance-wave adv-badwave x >/dev/null 2>&1
+check "advance-non-numeric-wave-refused" "3" "$?"
+sg init adv-samewave 3 >/dev/null
+printf '%s\n' '{"plan_slug":"someone-else","wave":1,"all_pass":false}' >> .agent/logs/supervisor-goal-audit.jsonl
+sg advance-wave adv-samewave 1 >/dev/null 2>&1
+check "advance-other-plan-same-wave-ignored" "0" "$?"
+sg init adv-null 3 >/dev/null
+printf '%s\n' '{"plan_slug":"adv-null","wave":1,"all_pass":null}' >> .agent/logs/supervisor-goal-audit.jsonl
+WARN=$(sg advance-wave adv-null 1 2>&1 >/dev/null)
+check "advance-null-record-moves" "2" "$(cur adv-null)"
+check "advance-null-record-warns-unverified" "1" "$(grep -c 'unverified (all_pass null)' <<<"$WARN")"
+sg init adv-done 1 >/dev/null
+sg advance-wave adv-done 1 >/dev/null 2>&1
+sg advance-wave adv-done 1 >/dev/null 2>&1
+check "advance-complete-goal-exits-3" "3" "$?"
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="

@@ -19,7 +19,8 @@
 #   dryrun  — (default) canary + verify + log, but NEVER blocks: exit 0 regardless
 #             of verdict. Observation phase, same as every other gate's default.
 #   block   — canary + verify + log; exit 1 on a REFUTED verdict, refutations
-#             printed verbatim to stderr.
+#             printed verbatim to stderr; exit 4 when the claim cites nothing
+#             checkable (unverified, not a pass).
 #
 # Decision order:
 #   [0] Liveness canary — BEFORE trusting any verdict on the real claim, prove

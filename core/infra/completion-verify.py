@@ -73,24 +73,154 @@ _MAX_CONTAINS_BYTES = 5_000_000
 
 # Static deny list for commands a claim (or a plan's audit check) asks us to run. It screens
 # the text only — a shell can spell any of these a thousand ways — so it is a guard against
-# the plain forms, not a sandbox. Keep it short; add a rule only with a test.
-_DENY_RULES = [
-    (re.compile(r"\brm\s+(?:-[A-Za-z]*[rRf][A-Za-z]*|--recursive|--force)\b"), "recursive/forced delete (rm)"),
-    (re.compile(r"\bgit\s+push\b"), "git push"),
-    (re.compile(r"\bgit\s+reset\s+(?:\S+\s+)*--hard\b"), "git reset --hard"),
-    (re.compile(r"\bgh\s+pr\s+merge\b"), "gh pr merge"),
-    (re.compile(r"\b(?:curl|wget)\b[^|;&\n]*\|\s*(?:sudo\s+)?(?:ba|z|da|k)?sh\b"), "download piped to a shell"),
-    (re.compile(r">>?\s*/dev/(?!null\b|stdout\b|stderr\b|fd/)|\bof=/dev/"), "write to a device path"),
-]
+# the plain forms, not a sandbox. The command is split into simple commands and only the command
+# position is judged, so a dangerous word inside a quoted argument (`grep -c 'rm -rf' f`) is
+# not a command. Keep it short; add a rule only with a test.
+_SEPARATORS = ";&|()`\n"
+_WRAPPERS = {"sudo", "xargs", "env", "command", "nohup", "time", "exec", "nice"}
+_SHELLS = {"sh", "bash", "zsh", "dash", "ksh"}
+_DEV_OK = re.compile(r"/dev/(?:null|stdout|stderr)$|/dev/fd/")
+_GIT_ARG_OPTS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"}
+_ASSIGN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
+
+
+def _split_commands(cmd):
+    """Split `cmd` into [(prev_op, words, redirect_targets)] simple commands. Quotes are
+    removed from word values; separators inside quotes do not split."""
+    out, words, redirs = [], [], []
+    prev, cur, have, quote, i, n = "", "", False, None, 0, len(cmd)
+    want_redir = False
+
+    def flush():
+        nonlocal cur, have, want_redir
+        if have:
+            (redirs if want_redir else words).append(cur)
+            want_redir = False
+        cur, have = "", False
+
+    def end(op):
+        nonlocal words, redirs, prev
+        flush()
+        if words or redirs:
+            out.append((prev, words, redirs))
+        words, redirs, prev = [], [], op
+
+    while i < n:
+        c = cmd[i]
+        if quote:
+            if c == quote:
+                quote = None
+            elif c == "\\" and quote == '"' and i + 1 < n:
+                i += 1
+                cur += cmd[i]
+            else:
+                cur += c
+        elif c in "'\"":
+            quote, have = c, True
+        elif c == "\\" and i + 1 < n:
+            i += 1
+            cur, have = cur + cmd[i], True
+        elif c == "&" and i + 1 < n and cmd[i + 1] == ">":
+            i += 1  # `&>file`
+            flush()
+            want_redir = True
+        elif c == "&" and cmd[i - 1:i] == ">":
+            pass  # the `&` of `2>&1`: not a separator
+        elif c in _SEPARATORS:
+            if c in "&|" and i + 1 < n and cmd[i + 1] == c:
+                i += 1
+                c += c
+            end(c)
+        elif c == ">":
+            if have and cur.isdigit():
+                cur, have = "", False  # the fd of `2>`
+            else:
+                flush()
+            if i + 1 < n and cmd[i + 1] == ">":
+                i += 1
+            want_redir = True
+        elif c in " \t":
+            flush()
+        else:
+            cur, have = cur + c, True
+        i += 1
+    end("")
+    return out
+
+
+def _command_words(words):
+    """Drop leading VAR=value words and wrappers (sudo, xargs, env, command...) with their
+    options, returning the real command and its arguments."""
+    i = 0
+    while i < len(words):
+        base = os.path.basename(words[i])
+        if _ASSIGN.match(words[i]):
+            i += 1
+        elif base in _WRAPPERS:
+            i += 1
+            while i < len(words) and (words[i].startswith("-") or _ASSIGN.match(words[i])):
+                i += 2 if base == "sudo" and words[i] in ("-u", "-g") else 1
+        else:
+            break
+    return words[i:]
+
+
+def _screen_simple(words, redirs, prev_words):
+    """Return the deny reason for one simple command, or None."""
+    for t in redirs:
+        if t.startswith("/dev/") and not _DEV_OK.match(t):
+            return "write to a device path"
+    words = _command_words(words)
+    if not words:
+        return None
+    name, args = os.path.basename(words[0]), words[1:]
+    if name == "rm":
+        for a in args:
+            if a == "--":
+                break
+            if a == "--recursive" or (a.startswith("-") and not a.startswith("--") and set(a) & set("rR")):
+                return "recursive delete (rm)"
+    elif name == "git":
+        j = 0
+        while j < len(args) and args[j].startswith("-"):
+            j += 2 if args[j] in _GIT_ARG_OPTS else 1
+        sub, rest = (args[j], args[j + 1:]) if j < len(args) else ("", [])
+        if sub == "push" and not {"--dry-run", "-n"} & set(rest):
+            return "git push"
+        if sub == "reset" and "--hard" in rest:
+            return "git reset --hard"
+    elif name == "gh":
+        j = 0
+        while j < len(args) and args[j].startswith("-"):
+            j += 2 if args[j] in ("-R", "--repo") else 1
+        if args[j:j + 2] == ["pr", "merge"]:
+            return "gh pr merge"
+    elif name == "tee":
+        if any(a.startswith("/dev/") and not _DEV_OK.match(a) for a in args):
+            return "write to a device path"
+    elif name == "dd":
+        if any(a.startswith("of=/dev/") and not _DEV_OK.match(a[3:]) for a in args):
+            return "write to a device path"
+    elif name in _SHELLS:
+        if "-c" in args and args.index("-c") + 1 < len(args):
+            return denied_reason(args[args.index("-c") + 1])
+        if prev_words:
+            pw = _command_words(prev_words)
+            if pw and os.path.basename(pw[0]) in ("curl", "wget"):
+                return "download piped to a shell"
+    return None
 
 
 def denied_reason(cmd):
     """Return why `cmd` is on the deny list, or None when it may run."""
     if not isinstance(cmd, str):
         return None
-    for pat, why in _DENY_RULES:
-        if pat.search(cmd):
+    prev_words = None
+    for op, words, redirs in _split_commands(cmd):
+        why = _screen_simple(words, redirs, prev_words if op == "|" else None)
+        if why:
             return why
+        prev_words = words
     return None
 
 

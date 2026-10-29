@@ -225,7 +225,7 @@ d. **Audit**:
    - PASS: continue.
    - FAIL: STOP. Report to user. Do not auto-fix and retry — the user
      decides next action.
-   - exit 4 (UNVERIFIED: zero runnable checks, or a check denied unrun): STOP like a FAIL.
+   - exit 4 (UNVERIFIED: zero runnable checks, a check denied unrun, or no section for the wave): STOP like a FAIL.
 
    Then, the **completion-claim gate** (`docs/gate-registry.md` `completion-gate`
    row — the first blocking consumer of `completion-verify.py`'s verdict,
