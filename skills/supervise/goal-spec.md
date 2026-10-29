@@ -2,7 +2,7 @@
 
 A goal-mode run is resumable, budgeted and can run for hours, so it must begin from a goal that
 can be checked, not from a direction. Write the spec to `.agent/plans/<slug>/goal.json`, make
-`goal-spec-check.py` pass, then start with `supervisor-goal.sh init ... --spec <file>`.
+`goal-spec-check.py` pass, then start the run with `init ... --spec <file>`:
 
 ```bash
 python3 "${CLAUDE_PLUGIN_ROOT}/core/infra/goal-spec-check.py" .agent/plans/<slug>/goal.json
@@ -17,7 +17,7 @@ Exit 2 from either one means the goal is not started; the stderr line names the 
 | Field | Type | What it must say |
 |---|---|---|
 | `outcome` | string | One sentence stating what is true when the goal is done. Not an activity. |
-| `verify` | list of strings | One or more commands a stranger can run to see the outcome. Each must pass the deny list (`completion-verify.py --check-command`). |
+| `verify` | list of strings | One or more commands a stranger can run to see the outcome. Each must pass the deny list (`${CLAUDE_PLUGIN_ROOT}/core/infra/completion-verify.py --check-command`). |
 | `threshold` | string | What result of `verify` counts as done: a true/false condition, or a number with its unit and how many runs. |
 | `scope_in` | list of strings | Paths or areas the run may change. |
 | `scope_out` | list of strings | Paths or areas it must not touch. |
