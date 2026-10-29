@@ -13,7 +13,7 @@ Take a written plan (`~/.agent/plans/<slug>.md` with Wave 1..N sections)
 and run it end-to-end, dispatching the right specialist agent for each
 wave, auditing after each wave, and aborting on risk-area violations.
 
-Supporting files here (`converge.md`, `race-lanes.md`, `templates/`) write
+Supporting files here (`converge.md`, `goal-spec.md`, `race-lanes.md`, `templates/`) write
 `<harness root>`; it is `${CLAUDE_PLUGIN_ROOT}`.
 
 ## Modes
@@ -21,7 +21,7 @@ Supporting files here (`converge.md`, `race-lanes.md`, `templates/`) write
 | Mode | Behavior |
 |---|---|
 | `/supervise <slug>` | Default: full-auto. Dispatch, audit, advance. Stops on Wave fail or safeguard. |
-| `/supervise <slug> --goal-mode` | Tracks state in SQLite via `core/infra/supervisor-goal.sh`. Resumable across sessions. Requires `sqlite3` + `jq` (the script exits 127 without them — see README Prerequisites). |
+| `/supervise <slug> --goal-mode` | Tracks state in SQLite via `core/infra/supervisor-goal.sh`. Resumable across sessions. Requires `sqlite3` + `jq` (exit 127 without them — see README Prerequisites). |
 | `/supervise <slug> --auto-push` | Each wave commits + pushes + opens PR. User merges. |
 | `/supervise <slug> --auto-merge` | Each wave commits + pushes + admin-merges via `auto-ship.sh`. |
 | `/supervise <slug> --converge` | A REFUTED gate becomes a capped new plan wave, not a STOP (`converge.md`). Implies `--verify-blocking`. |
@@ -61,7 +61,6 @@ edit wave to a background dispatch on an unverified permission surface.
 
 ## Model policy
 
-Who runs on which model — and what enforces it:
 
 | Work | Model | Enforced by |
 |---|---|---|
@@ -118,8 +117,7 @@ a. Fill `${CLAUDE_PLUGIN_ROOT}/skills/supervise/templates/prompt-restatement.md`
    invocation text and the plan's objective — all six sections (Original ask
    verbatim / Interpreted goal / Assumptions / Out of scope / Success
    criteria / Open questions), plus the `Run started:` UTC timestamp line
-   (the routing log accumulates across sessions; this is the audit window's
-   start).
+   (start of the audit window).
 b. Persist it to `.agent/plans/<slug>/RESTATEMENT.md`. (RECORD.md stays a
    mechanical completion ledger — intake interpretation never goes there.)
 c. If **Open questions** is non-empty and the run is not full-auto, surface
@@ -136,9 +134,10 @@ b. Confirm it has Wave 1..N sections.
 c. Run
    `bash "${CLAUDE_PLUGIN_ROOT}/core/infra/supervisor-goal-audit.sh" score --plan <slug> --wave 1`
    — if verdict is `weak`, warn the user and ask whether to proceed.
-d. If `--goal-mode`, initialise:
+d. If `--goal-mode`, write `.agent/plans/<slug>/goal.json` per `goal-spec.md` and pass
+   `core/infra/goal-spec-check.py` on it, then:
    ```bash
-   bash "${CLAUDE_PLUGIN_ROOT}/core/infra/supervisor-goal.sh" init <slug> <N> [<budget>] "<objective>"
+   bash "${CLAUDE_PLUGIN_ROOT}/core/infra/supervisor-goal.sh" init <slug> <N> [<budget>] "<objective>" --spec <file>
    ```
 
 #### Pattern selection

@@ -114,6 +114,26 @@ while IFS= read -r cmd; do
     CHECKS+=("$cmd")
 done < <({ echo "$WAVE_SECTION" | sed -E 's/^- fix: .* (→|->) verify: /- verify: /' | grep -oE '(npm run (build|lint|test|test:run|test:e2e|typecheck|test:a11y)|npx tsc[^[:space:]`]*|pytest[^"`]*|uv run pytest[^"`]*|ruff check[^"`]*|test -f [^[:space:]`]+|test ! -f [^[:space:]`]+|bash -n [^[:space:]`]+|wc -l [^[:space:]`]+|grep -c (-[A-Za-z]+ |-- )*("([^"\\]|\\.)*"|'"'"'[^'"'"']*'"'"'|[^[:space:]`"'"'"']+) ("[^"]+"|'"'"'[^'"'"']+'"'"'|[^[:space:]`"'"'"'|;&<>()$]+)|bash core/infra/completion-gate\.sh [A-Za-z0-9._-]+ [0-9]+|bash core/[^[:space:]]+\.sh|bash tests/[^[:space:]]+\.sh|tests/integration/[^[:space:]]+\.sh|jq [^"|]+\.(jsonl|json)|time bash [^[:space:]]+\.sh)' || true; } | sort -u)
 
+# ---------- Goal-spec verify commands (final wave only) ----------
+# A goal-mode run started with `init --spec` keeps its measurable end state in
+# <plan dir>/goal.json. Its `verify` commands are the completion check, so the audit of the
+# LAST wave runs them too (earlier waves have not reached the end state yet). Same eval
+# hygiene as the extractor above: substitutions are dropped; the deny list still applies below.
+SPEC_FILE="$(dirname "$PLAN_FILE")/goal.json"
+GOAL_DB="$REPO_ROOT/.agent/locks/goal-state.db"
+if [[ "$MODE" == "audit" && -f "$SPEC_FILE" && -f "$GOAL_DB" ]] && command -v jq >/dev/null 2>&1 && command -v sqlite3 >/dev/null 2>&1; then
+    SPEC_TOTAL=""
+    [[ "$PLAN_SLUG" =~ ^[A-Za-z0-9._-]+$ ]] && SPEC_TOTAL=$(sqlite3 "$GOAL_DB" "SELECT total_waves FROM supervisor_goals WHERE plan_slug = '$PLAN_SLUG';" 2>/dev/null || true)
+    if [[ "$SPEC_TOTAL" =~ ^[0-9]+$ && "$WAVE_NUM" =~ ^[0-9]+$ && "$WAVE_NUM" -ge "$SPEC_TOTAL" ]]; then
+        while IFS= read -r cmd; do
+            [[ -z "$cmd" ]] && continue
+            # shellcheck disable=SC2016  # literal `$(` is the thing being matched
+            case "$cmd" in *'$('*|*'`'*) echo "[audit] dropped (substitution): $cmd" >&2; continue ;; esac
+            CHECKS+=("$cmd")
+        done < <(jq -r '.verify[]? | select(type == "string")' "$SPEC_FILE" 2>/dev/null || true)
+    fi
+fi
+
 # ---------- Scoring functions (deterministic — no LLM calls) ----------
 
 score_target_state() {

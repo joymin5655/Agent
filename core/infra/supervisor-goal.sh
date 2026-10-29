@@ -2,7 +2,7 @@
 # supervisor-goal.sh — Goal state machine (SQLite-backed) for multi-wave plan execution.
 #
 # Usage:
-#   bash core/infra/supervisor-goal.sh init <plan-slug> <total-waves> [budget] [objective]
+#   bash core/infra/supervisor-goal.sh init <plan-slug> <total-waves> [budget] [objective] [--spec <goal.json>]
 #   bash core/infra/supervisor-goal.sh status [plan-slug]
 #   bash core/infra/supervisor-goal.sh advance-wave <plan-slug> <completed-wave-num>
 #   bash core/infra/supervisor-goal.sh add-wave <plan-slug>
@@ -83,11 +83,29 @@ cmd_init() {
     # statement: bash 3.2 + set -u treats a same-line reference as unbound,
     # which made every objective-less `init <slug> <waves>` crash (latent
     # until the F-2 battery first exercised the 2-arg form).
-    local slug="${1:-}" waves="${2:-}" budget="${3:-}"
-    local objective="${4:-$slug}"
-    if [[ -z "$slug" || -z "$waves" ]]; then
-        echo "usage: supervisor-goal.sh init <plan-slug> <total-waves> [budget] [objective]" >&2
+    # --spec <file> may sit anywhere; strip it before the positionals are read.
+    local spec="" spec_given=0 pos=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --spec) spec_given=1; spec="${2:-}"; shift; [[ $# -gt 0 ]] && shift ;;
+            *) pos+=("$1"); shift ;;
+        esac
+    done
+    local slug="${pos[0]:-}" waves="${pos[1]:-}" budget="${pos[2]:-}"
+    local objective="${pos[3]:-$slug}"
+    if [[ -z "$slug" || -z "$waves" || ( "$spec_given" -eq 1 && -z "$spec" ) ]]; then
+        echo "usage: supervisor-goal.sh init <plan-slug> <total-waves> [budget] [objective] [--spec <goal.json>]" >&2
         exit 2
+    fi
+    # Start gate: a goal-mode run needs a measurable goal definition. No spec = warning only,
+    # so direct callers (tests, loop-run) keep working; the supervise skill always passes one.
+    if [[ -n "$spec" ]]; then
+        python3 "$HARNESS_ROOT/core/infra/goal-spec-check.py" "$spec" >&2 || {
+            echo "ERROR: goal spec rejected: $spec — goal not started" >&2
+            exit 2
+        }
+    else
+        echo "[goal] warning: no --spec given; this goal has no measurable end state or verify command (see skills/supervise/goal-spec.md)" >&2
     fi
 
     init_db
@@ -671,7 +689,7 @@ case "${1:-}" in
 supervisor-goal.sh — SQLite goal state machine
 
 Commands:
-  init <plan-slug> <total-waves> [budget] [objective]
+  init <plan-slug> <total-waves> [budget] [objective] [--spec <goal.json>]
   status [plan-slug]
   advance-wave <plan-slug> <completed-wave-num>
   add-wave <plan-slug>         (total_waves += 1; refused when complete/aborted)

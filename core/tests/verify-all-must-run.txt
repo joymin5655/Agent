@@ -36,6 +36,7 @@ loop-run-test.sh                   all
 supervisor-goal-addwave-test.sh    all
 supervisor-goal-log-test.sh        all
 supervisor-goal-record-test.sh     all
+goal-spec-test.sh                  all
 supervisor-goal-stuck-test.sh      all
 # python3 with an FTS5 build of sqlite3
 session-indexer-test.sh            all
