@@ -114,6 +114,80 @@ while IFS= read -r cmd; do
     CHECKS+=("$cmd")
 done < <({ echo "$WAVE_SECTION" | sed -E 's/^- fix: .* (→|->) verify: /- verify: /' | grep -oE '(npm run (build|lint|test|test:run|test:e2e|typecheck|test:a11y)|npx tsc[^[:space:]`]*|pytest[^"`]*|uv run pytest[^"`]*|ruff check[^"`]*|test -f [^[:space:]`]+|test ! -f [^[:space:]`]+|bash -n [^[:space:]`]+|wc -l [^[:space:]`]+|grep -c (-[A-Za-z]+ |-- )*("([^"\\]|\\.)*"|'"'"'[^'"'"']*'"'"'|[^[:space:]`"'"'"']+) ("[^"]+"|'"'"'[^'"'"']+'"'"'|[^[:space:]`"'"'"'|;&<>()$]+)|bash core/infra/completion-gate\.sh [A-Za-z0-9._-]+ [0-9]+|bash core/[^[:space:]]+\.sh|bash tests/[^[:space:]]+\.sh|tests/integration/[^[:space:]]+\.sh|jq [^"|]+\.(jsonl|json)|time bash [^[:space:]]+\.sh)' || true; } | sort -u)
 
+# ---------- Goal-spec verify commands (final wave only) ----------
+# A goal-mode run started with `init --spec` keeps its measurable end state in the goal state
+# (supervisor_goal_specs: the spec text + sha256, fixed at init). Its `verify` commands are the
+# completion check, so the audit of the LAST wave runs the stored ones (earlier waves have not
+# reached the end state yet); <plan dir>/goal.json must still match the stored sha256. One
+# `verify` element is one command, run exactly as written (never split into lines). For such a
+# run a missing/changed goal.json or a missing, malformed or dropped check FAILS the audit — a
+# check that vanished must not read as a pass. A run started without --spec (legacy) only warns.
+SPEC_FILE="$(bash "$GOAL_HELPER" spec-path "$PLAN_SLUG")"
+GOAL_DB="$REPO_ROOT/.agent/locks/goal-state.db"
+declare -a SPEC_FAILS=()
+
+# collect_verify <spec-json> <strict 0|1> — append each verify element to CHECKS; a bad element
+# is a SPEC_FAILS entry when strict, else a warning and skipped.
+collect_verify() {
+    local json="$1" strict="$2" enc cmd kind n=0 reason
+    if ! printf '%s' "$json" | jq -e '(.verify | type) == "array" and (.verify | length) > 0' >/dev/null 2>&1; then
+        reason="goal spec verify is missing, empty or not a list"
+        if [[ "$strict" == "1" ]]; then SPEC_FAILS+=("$reason"); else echo "[audit] warning: $reason — no spec checks run" >&2; fi
+        return 0
+    fi
+    while IFS= read -r enc; do
+        kind=$(printf '%s' "$enc" | jq -r 'if type != "string" then "type" elif test("[\u0000\n\r]") then "multiline" elif test("^\\s*$") then "empty" else "ok" end')
+        reason=""
+        case "$kind" in
+            ok)
+                cmd=$(printf '%s' "$enc" | jq -r '.')
+                # shellcheck disable=SC2016  # literal `$(` is the thing being matched
+                case "$cmd" in *'$('*|*'`'*) reason="verify[$n] dropped (command substitution)" ;; esac ;;
+            type) reason="verify[$n] is not a string" ;;
+            multiline) reason="verify[$n] holds a newline or NUL — one entry is one command" ;;
+            empty) reason="verify[$n] is empty" ;;
+        esac
+        if [[ -n "$reason" ]]; then
+            if [[ "$strict" == "1" ]]; then SPEC_FAILS+=("$reason"); else echo "[audit] warning: $reason" >&2; fi
+        else
+            CHECKS+=("$cmd")
+        fi
+        n=$((n + 1))
+    done < <(printf '%s' "$json" | jq -c '.verify[]' 2>/dev/null || true)
+}
+
+# `init --spec` marks the goal row (spec_required), so a deleted or unreadable stored spec still
+# fails. Only a goal without the mark (or a state db that predates it) takes the legacy warning.
+# The slug is quote-escaped for the SQL literals (init --spec accepts only plain slugs).
+if [[ "$MODE" == "audit" && -f "$GOAL_DB" ]] && command -v jq >/dev/null 2>&1 && command -v sqlite3 >/dev/null 2>&1; then
+    SQL_SLUG="${PLAN_SLUG//\'/\'\'}"
+    SPEC_TOTAL="" SPEC_REQUIRED=0
+    if row=$(sqlite3 -separator ' ' "$GOAL_DB" "SELECT total_waves, spec_required FROM supervisor_goals WHERE plan_slug = '$SQL_SLUG';" 2>/dev/null); then
+        read -r SPEC_TOTAL SPEC_REQUIRED <<< "$row" || true
+    elif tables=$(sqlite3 "$GOAL_DB" "SELECT name FROM sqlite_master WHERE name = 'supervisor_goals';" 2>/dev/null); then
+        # readable db without the mark column (older state db) = legacy goal; no goals table = nothing to check
+        [[ -n "$tables" ]] && SPEC_TOTAL=$(sqlite3 "$GOAL_DB" "SELECT total_waves FROM supervisor_goals WHERE plan_slug = '$SQL_SLUG';" 2>/dev/null || true)
+    else
+        SPEC_FAILS+=("goal state db is unreadable — the goal's spec checks cannot be looked up")
+    fi
+    if [[ "$SPEC_TOTAL" =~ ^[0-9]+$ && "$WAVE_NUM" =~ ^[0-9]+$ && "$WAVE_NUM" -ge "$SPEC_TOTAL" ]]; then
+        STORED_SHA=$(sqlite3 "$GOAL_DB" "SELECT spec_sha256 FROM supervisor_goal_specs WHERE plan_slug = '$SQL_SLUG';" 2>/dev/null || true)
+        if [[ -n "$STORED_SHA" ]]; then
+            if [[ ! -f "$SPEC_FILE" ]]; then
+                SPEC_FAILS+=("goal.json is missing from the plan dir (stored sha256 ${STORED_SHA:0:12})")
+            else
+                FILE_SHA=$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$SPEC_FILE" 2>/dev/null || true)
+                [[ "$FILE_SHA" == "$STORED_SHA" ]] || SPEC_FAILS+=("goal.json changed since init (sha256 ${FILE_SHA:0:12} != stored ${STORED_SHA:0:12})")
+            fi
+            collect_verify "$(sqlite3 "$GOAL_DB" "SELECT spec_json FROM supervisor_goal_specs WHERE plan_slug = '$SQL_SLUG';" 2>/dev/null || true)" 1
+        elif [[ "$SPEC_REQUIRED" == "1" ]]; then
+            SPEC_FAILS+=("stored goal spec is missing — this goal was started with --spec")
+        elif [[ -f "$SPEC_FILE" ]]; then
+            collect_verify "$(cat "$SPEC_FILE")" 0
+        fi
+    fi
+fi
+
 # ---------- Scoring functions (deterministic — no LLM calls) ----------
 
 score_target_state() {
@@ -214,7 +288,7 @@ if [[ "$MODE" == "score" ]]; then
 fi
 
 # ---------- audit mode: run commands + collect evidence ----------
-if [[ "${#CHECKS[@]}" -eq 0 ]]; then
+if [[ "${#CHECKS[@]}" -eq 0 && "${#SPEC_FAILS[@]}" -eq 0 ]]; then
     echo "WARN: Wave $WAVE_NUM has 0 verification commands — unverified (exit 4), not a pass. Strengthen plan §verification." >&2
     RESULT_JSON=$(jq -n \
         --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
@@ -238,7 +312,15 @@ EVIDENCE_JSON='[]'
 ALL_PASS=true
 ANY_DENIED=false
 
-for cmd in "${CHECKS[@]}"; do
+if [[ "${#SPEC_FAILS[@]}" -gt 0 ]]; then
+    ALL_PASS=false
+    for why in "${SPEC_FAILS[@]}"; do
+        echo "[audit] goal spec: $why" >&2
+        EVIDENCE_JSON=$(echo "$EVIDENCE_JSON" | jq --arg why "$why" '. + [{cmd:"goal-spec", pass:false, exit_code:null, log_tail:$why}]')
+    done
+fi
+
+for cmd in ${CHECKS[@]+"${CHECKS[@]}"}; do
     echo "[audit] running: $cmd" >&2
     LOG_FILE=$(mktemp)
     # Any completion-gate check (every converge wave has one) runs as a dryrun liveness

@@ -2,7 +2,7 @@
 # supervisor-goal.sh — Goal state machine (SQLite-backed) for multi-wave plan execution.
 #
 # Usage:
-#   bash core/infra/supervisor-goal.sh init <plan-slug> <total-waves> [budget] [objective]
+#   bash core/infra/supervisor-goal.sh init <plan-slug> <total-waves> [budget] [objective] [--spec <goal.json>]
 #   bash core/infra/supervisor-goal.sh status [plan-slug]
 #   bash core/infra/supervisor-goal.sh advance-wave <plan-slug> <completed-wave-num>
 #   bash core/infra/supervisor-goal.sh add-wave <plan-slug>
@@ -67,7 +67,19 @@ CREATE TABLE IF NOT EXISTS supervisor_agents (
     stuck_flagged_ms INTEGER,
     PRIMARY KEY (plan_slug, agent_id)
 );
+-- Goal spec fixed at `init --spec`: the last-wave audit runs these verify commands, not the
+-- editable plan-dir goal.json (which must still match spec_sha256).
+CREATE TABLE IF NOT EXISTS supervisor_goal_specs (
+    plan_slug TEXT PRIMARY KEY,
+    spec_sha256 TEXT NOT NULL,
+    spec_json TEXT NOT NULL
+);
 SQL
+    # spec_required marks a goal started with --spec: the audit then fails (never warns) when its
+    # stored spec is missing. Added in place so an older goal-state.db picks it up.
+    if [[ -z "$(sqlite3 "$DB_FILE" "SELECT 1 FROM pragma_table_info('supervisor_goals') WHERE name = 'spec_required';")" ]]; then
+        sqlite3 "$DB_FILE" "ALTER TABLE supervisor_goals ADD COLUMN spec_required INTEGER NOT NULL DEFAULT 0;"
+    fi
 }
 
 # AGENT_NOW_MS pins the clock (tests only).
@@ -78,22 +90,69 @@ now_iso() { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
 
 sql_escape() { printf "%s" "$1" | sed "s/'/''/g"; }
 
+# Where a goal's spec copy lives. `init --spec` writes it and the last-wave audit reads it
+# (`spec-path`), so both follow the same rule whatever the plan file layout (<slug>/plan.md or <slug>.md).
+goal_spec_path() { printf '%s/%s/goal.json' "${AGENT_PLANS_DIR:-$REPO_ROOT/.agent/plans}" "$1"; }
+
 cmd_init() {
     # objective's default references slug, so it must be a SEPARATE local
     # statement: bash 3.2 + set -u treats a same-line reference as unbound,
     # which made every objective-less `init <slug> <waves>` crash (latent
     # until the F-2 battery first exercised the 2-arg form).
-    local slug="${1:-}" waves="${2:-}" budget="${3:-}"
-    local objective="${4:-$slug}"
-    if [[ -z "$slug" || -z "$waves" ]]; then
-        echo "usage: supervisor-goal.sh init <plan-slug> <total-waves> [budget] [objective]" >&2
+    # --spec <file> may sit anywhere; strip it before the positionals are read.
+    local spec="" spec_given=0 pos=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --spec) spec_given=1; spec="${2:-}"; shift; [[ $# -gt 0 ]] && shift ;;
+            *) pos+=("$1"); shift ;;
+        esac
+    done
+    local slug="${pos[0]:-}" waves="${pos[1]:-}" budget="${pos[2]:-}"
+    local objective="${pos[3]:-$slug}"
+    if [[ -z "$slug" || -z "$waves" || ( "$spec_given" -eq 1 && -z "$spec" ) ]]; then
+        echo "usage: supervisor-goal.sh init <plan-slug> <total-waves> [budget] [objective] [--spec <goal.json>]" >&2
         exit 2
+    fi
+    # Start gate: a goal-mode run needs a measurable goal definition. No spec = warning only,
+    # so direct callers (tests, loop-run) keep working; the supervise skill always passes one.
+    if [[ -n "$spec" ]]; then
+        # a spec goal's slug becomes a plan dir name and a state key: keep it plain
+        if [[ ! "$slug" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+            echo "ERROR: plan slug '$slug' must match [A-Za-z0-9][A-Za-z0-9._-]* with --spec — goal not started" >&2
+            exit 2
+        fi
+        python3 "$HARNESS_ROOT/core/infra/goal-spec-check.py" "$spec" >&2 || {
+            echo "ERROR: goal spec rejected: $spec — goal not started" >&2
+            exit 2
+        }
+    else
+        echo "[goal] warning: no --spec given; this goal has no measurable end state or verify command (see skills/supervise/goal-spec.md)" >&2
+    fi
+
+    local spec_sha="" plan_spec=""
+    if [[ -n "$spec" ]]; then
+        spec_sha="$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$spec")"
+        # The audit compares <plan dir>/goal.json with the stored spec: put a copy there when
+        # there is none; a different goal.json already there is a conflict.
+        plan_spec="$(goal_spec_path "$slug")"
+        if [[ -f "$plan_spec" ]]; then
+            if [[ "$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$plan_spec")" != "$spec_sha" ]]; then
+                echo "ERROR: $plan_spec differs from --spec $spec — goal not started" >&2
+                exit 2
+            fi
+        else
+            mkdir -p "$(dirname "$plan_spec")"
+            cp "$spec" "$plan_spec"
+        fi
     fi
 
     init_db
     local goal_id
     goal_id="goal_$(uuidgen 2>/dev/null | tr 'A-Z' 'a-z' | tr -d '-' | head -c 16 || date +%s)"
     local ts; ts="$(now_ms)"
+
+    local spec_required=0
+    [[ -n "$spec" ]] && spec_required=1
 
     local budget_sql="NULL"
     if [[ -n "$budget" && "$budget" =~ ^[0-9]+$ ]]; then
@@ -103,7 +162,7 @@ cmd_init() {
     sqlite3 "$DB_FILE" <<SQL
 INSERT INTO supervisor_goals (
     goal_id, plan_slug, objective, status, token_budget,
-    current_wave, total_waves, created_at_ms, updated_at_ms, last_heartbeat_ms
+    current_wave, total_waves, created_at_ms, updated_at_ms, last_heartbeat_ms, spec_required
 ) VALUES (
     '$goal_id',
     '$(sql_escape "$slug")',
@@ -114,9 +173,16 @@ INSERT INTO supervisor_goals (
     $waves,
     $ts,
     $ts,
-    $ts
+    $ts,
+    $spec_required
 );
 SQL
+
+    sqlite3 "$DB_FILE" "DELETE FROM supervisor_goal_specs WHERE plan_slug = '$(sql_escape "$slug")';"
+    if [[ -n "$spec" ]]; then
+        sqlite3 "$DB_FILE" "INSERT INTO supervisor_goal_specs (plan_slug, spec_sha256, spec_json)
+            VALUES ('$(sql_escape "$slug")', '$spec_sha', '$(sql_escape "$(cat "$spec")")');"
+    fi
 
     sqlite3 "$DB_FILE" "SELECT json_object(
         'goal_id', goal_id,
@@ -359,7 +425,8 @@ cmd_clear() {
     [[ -z "$slug" ]] && { echo "usage: ... clear <plan-slug>" >&2; exit 2; }
     init_db
     sqlite3 "$DB_FILE" "DELETE FROM supervisor_goals WHERE plan_slug = '$(sql_escape "$slug")';
-        DELETE FROM supervisor_agents WHERE plan_slug = '$(sql_escape "$slug")';"
+        DELETE FROM supervisor_agents WHERE plan_slug = '$(sql_escape "$slug")';
+        DELETE FROM supervisor_goal_specs WHERE plan_slug = '$(sql_escape "$slug")';"
     echo "{\"cleared\":\"$slug\"}"
 }
 
@@ -666,12 +733,13 @@ case "${1:-}" in
     check-active) shift; cmd_check_active "$@" ;;
     track-tokens) shift; cmd_track_tokens "$@" ;;
     heartbeat)    shift; cmd_heartbeat "$@" ;;
+    spec-path)    shift; goal_spec_path "${1:?usage: spec-path <plan-slug>}"; echo ;;
     *)
         cat >&2 <<EOF
 supervisor-goal.sh — SQLite goal state machine
 
 Commands:
-  init <plan-slug> <total-waves> [budget] [objective]
+  init <plan-slug> <total-waves> [budget] [objective] [--spec <goal.json>]
   status [plan-slug]
   advance-wave <plan-slug> <completed-wave-num>
   add-wave <plan-slug>         (total_waves += 1; refused when complete/aborted)
@@ -683,6 +751,7 @@ Commands:
   check-active
   track-tokens <plan-slug> <delta>
   heartbeat <plan-slug>
+  spec-path <plan-slug>        (where the goal's goal.json copy lives)
   agent-spawn <plan-slug> <agent-id> <wave> <stuck-after-s> [scope-path]
   agent-effect <plan-slug> <agent-id> [commit|log|file]
   agent-wait|agent-resume|agent-done <plan-slug> <agent-id>
