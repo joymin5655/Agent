@@ -122,7 +122,7 @@ done < <({ echo "$WAVE_SECTION" | sed -E 's/^- fix: .* (→|->) verify: /- verif
 # `verify` element is one command, run exactly as written (never split into lines). For such a
 # run a missing/changed goal.json or a missing, malformed or dropped check FAILS the audit — a
 # check that vanished must not read as a pass. A run started without --spec (legacy) only warns.
-SPEC_FILE="$(dirname "$PLAN_FILE")/goal.json"
+SPEC_FILE="$(bash "$GOAL_HELPER" spec-path "$PLAN_SLUG")"
 GOAL_DB="$REPO_ROOT/.agent/locks/goal-state.db"
 declare -a SPEC_FAILS=()
 
@@ -156,11 +156,22 @@ collect_verify() {
     done < <(printf '%s' "$json" | jq -c '.verify[]' 2>/dev/null || true)
 }
 
+# `init --spec` marks the goal row (spec_required), so a deleted or unreadable stored spec still
+# fails. Only a goal without the mark (or a state db that predates it) takes the legacy warning.
+# The slug is quote-escaped for the SQL literals (init --spec accepts only plain slugs).
 if [[ "$MODE" == "audit" && -f "$GOAL_DB" ]] && command -v jq >/dev/null 2>&1 && command -v sqlite3 >/dev/null 2>&1; then
-    SPEC_TOTAL=""
-    [[ "$PLAN_SLUG" =~ ^[A-Za-z0-9._-]+$ ]] && SPEC_TOTAL=$(sqlite3 "$GOAL_DB" "SELECT total_waves FROM supervisor_goals WHERE plan_slug = '$PLAN_SLUG';" 2>/dev/null || true)
+    SQL_SLUG="${PLAN_SLUG//\'/\'\'}"
+    SPEC_TOTAL="" SPEC_REQUIRED=0
+    if row=$(sqlite3 -separator ' ' "$GOAL_DB" "SELECT total_waves, spec_required FROM supervisor_goals WHERE plan_slug = '$SQL_SLUG';" 2>/dev/null); then
+        read -r SPEC_TOTAL SPEC_REQUIRED <<< "$row" || true
+    elif tables=$(sqlite3 "$GOAL_DB" "SELECT name FROM sqlite_master WHERE name = 'supervisor_goals';" 2>/dev/null); then
+        # readable db without the mark column (older state db) = legacy goal; no goals table = nothing to check
+        [[ -n "$tables" ]] && SPEC_TOTAL=$(sqlite3 "$GOAL_DB" "SELECT total_waves FROM supervisor_goals WHERE plan_slug = '$SQL_SLUG';" 2>/dev/null || true)
+    else
+        SPEC_FAILS+=("goal state db is unreadable — the goal's spec checks cannot be looked up")
+    fi
     if [[ "$SPEC_TOTAL" =~ ^[0-9]+$ && "$WAVE_NUM" =~ ^[0-9]+$ && "$WAVE_NUM" -ge "$SPEC_TOTAL" ]]; then
-        STORED_SHA=$(sqlite3 "$GOAL_DB" "SELECT spec_sha256 FROM supervisor_goal_specs WHERE plan_slug = '$PLAN_SLUG';" 2>/dev/null || true)
+        STORED_SHA=$(sqlite3 "$GOAL_DB" "SELECT spec_sha256 FROM supervisor_goal_specs WHERE plan_slug = '$SQL_SLUG';" 2>/dev/null || true)
         if [[ -n "$STORED_SHA" ]]; then
             if [[ ! -f "$SPEC_FILE" ]]; then
                 SPEC_FAILS+=("goal.json is missing from the plan dir (stored sha256 ${STORED_SHA:0:12})")
@@ -168,7 +179,9 @@ if [[ "$MODE" == "audit" && -f "$GOAL_DB" ]] && command -v jq >/dev/null 2>&1 &&
                 FILE_SHA=$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$SPEC_FILE" 2>/dev/null || true)
                 [[ "$FILE_SHA" == "$STORED_SHA" ]] || SPEC_FAILS+=("goal.json changed since init (sha256 ${FILE_SHA:0:12} != stored ${STORED_SHA:0:12})")
             fi
-            collect_verify "$(sqlite3 "$GOAL_DB" "SELECT spec_json FROM supervisor_goal_specs WHERE plan_slug = '$PLAN_SLUG';" 2>/dev/null || true)" 1
+            collect_verify "$(sqlite3 "$GOAL_DB" "SELECT spec_json FROM supervisor_goal_specs WHERE plan_slug = '$SQL_SLUG';" 2>/dev/null || true)" 1
+        elif [[ "$SPEC_REQUIRED" == "1" ]]; then
+            SPEC_FAILS+=("stored goal spec is missing — this goal was started with --spec")
         elif [[ -f "$SPEC_FILE" ]]; then
             collect_verify "$(cat "$SPEC_FILE")" 0
         fi

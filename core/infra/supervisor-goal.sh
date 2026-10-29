@@ -75,6 +75,11 @@ CREATE TABLE IF NOT EXISTS supervisor_goal_specs (
     spec_json TEXT NOT NULL
 );
 SQL
+    # spec_required marks a goal started with --spec: the audit then fails (never warns) when its
+    # stored spec is missing. Added in place so an older goal-state.db picks it up.
+    if [[ -z "$(sqlite3 "$DB_FILE" "SELECT 1 FROM pragma_table_info('supervisor_goals') WHERE name = 'spec_required';")" ]]; then
+        sqlite3 "$DB_FILE" "ALTER TABLE supervisor_goals ADD COLUMN spec_required INTEGER NOT NULL DEFAULT 0;"
+    fi
 }
 
 # AGENT_NOW_MS pins the clock (tests only).
@@ -84,6 +89,10 @@ now_ms() {
 now_iso() { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
 
 sql_escape() { printf "%s" "$1" | sed "s/'/''/g"; }
+
+# Where a goal's spec copy lives. `init --spec` writes it and the last-wave audit reads it
+# (`spec-path`), so both follow the same rule whatever the plan file layout (<slug>/plan.md or <slug>.md).
+goal_spec_path() { printf '%s/%s/goal.json' "${AGENT_PLANS_DIR:-$REPO_ROOT/.agent/plans}" "$1"; }
 
 cmd_init() {
     # objective's default references slug, so it must be a SEPARATE local
@@ -107,6 +116,11 @@ cmd_init() {
     # Start gate: a goal-mode run needs a measurable goal definition. No spec = warning only,
     # so direct callers (tests, loop-run) keep working; the supervise skill always passes one.
     if [[ -n "$spec" ]]; then
+        # a spec goal's slug becomes a plan dir name and a state key: keep it plain
+        if [[ ! "$slug" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+            echo "ERROR: plan slug '$slug' must match [A-Za-z0-9][A-Za-z0-9._-]* with --spec — goal not started" >&2
+            exit 2
+        fi
         python3 "$HARNESS_ROOT/core/infra/goal-spec-check.py" "$spec" >&2 || {
             echo "ERROR: goal spec rejected: $spec — goal not started" >&2
             exit 2
@@ -118,15 +132,16 @@ cmd_init() {
     local spec_sha="" plan_spec=""
     if [[ -n "$spec" ]]; then
         spec_sha="$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$spec")"
-        # The audit compares <plan dir>/goal.json with the stored spec: put a copy there when the
-        # plan dir exists and has none; a different goal.json already there is a conflict.
-        if [[ -n "${AGENT_PLANS_DIR:-}" ]]; then plan_spec="$AGENT_PLANS_DIR/$slug/goal.json"; else plan_spec="$REPO_ROOT/.agent/plans/$slug/goal.json"; fi
+        # The audit compares <plan dir>/goal.json with the stored spec: put a copy there when
+        # there is none; a different goal.json already there is a conflict.
+        plan_spec="$(goal_spec_path "$slug")"
         if [[ -f "$plan_spec" ]]; then
             if [[ "$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$plan_spec")" != "$spec_sha" ]]; then
                 echo "ERROR: $plan_spec differs from --spec $spec — goal not started" >&2
                 exit 2
             fi
-        elif [[ -d "$(dirname "$plan_spec")" ]]; then
+        else
+            mkdir -p "$(dirname "$plan_spec")"
             cp "$spec" "$plan_spec"
         fi
     fi
@@ -136,6 +151,9 @@ cmd_init() {
     goal_id="goal_$(uuidgen 2>/dev/null | tr 'A-Z' 'a-z' | tr -d '-' | head -c 16 || date +%s)"
     local ts; ts="$(now_ms)"
 
+    local spec_required=0
+    [[ -n "$spec" ]] && spec_required=1
+
     local budget_sql="NULL"
     if [[ -n "$budget" && "$budget" =~ ^[0-9]+$ ]]; then
         budget_sql="$budget"
@@ -144,7 +162,7 @@ cmd_init() {
     sqlite3 "$DB_FILE" <<SQL
 INSERT INTO supervisor_goals (
     goal_id, plan_slug, objective, status, token_budget,
-    current_wave, total_waves, created_at_ms, updated_at_ms, last_heartbeat_ms
+    current_wave, total_waves, created_at_ms, updated_at_ms, last_heartbeat_ms, spec_required
 ) VALUES (
     '$goal_id',
     '$(sql_escape "$slug")',
@@ -155,7 +173,8 @@ INSERT INTO supervisor_goals (
     $waves,
     $ts,
     $ts,
-    $ts
+    $ts,
+    $spec_required
 );
 SQL
 
@@ -714,6 +733,7 @@ case "${1:-}" in
     check-active) shift; cmd_check_active "$@" ;;
     track-tokens) shift; cmd_track_tokens "$@" ;;
     heartbeat)    shift; cmd_heartbeat "$@" ;;
+    spec-path)    shift; goal_spec_path "${1:?usage: spec-path <plan-slug>}"; echo ;;
     *)
         cat >&2 <<EOF
 supervisor-goal.sh — SQLite goal state machine
@@ -731,6 +751,7 @@ Commands:
   check-active
   track-tokens <plan-slug> <delta>
   heartbeat <plan-slug>
+  spec-path <plan-slug>        (where the goal's goal.json copy lives)
   agent-spawn <plan-slug> <agent-id> <wave> <stuck-after-s> [scope-path]
   agent-effect <plan-slug> <agent-id> [commit|log|file]
   agent-wait|agent-resume|agent-done <plan-slug> <agent-id>

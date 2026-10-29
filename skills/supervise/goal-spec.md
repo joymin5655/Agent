@@ -34,11 +34,16 @@ Exit 2 from either one means the goal is not started; the stderr line names the 
 - Each `verify` command is run through the same deny list the completion gate uses; a refused
   command is never run.
 - One `verify` entry is one command, run as written; an entry with a newline or NUL is refused.
+- A `verify` entry may not contain `$(` or a backtick: the audit never runs command substitution,
+  so the check refuses it (write the comparison in a helper script instead of `test "$(cat f)" = ok`).
+- With `--spec`, `<slug>` must match `[A-Za-z0-9][A-Za-z0-9._-]*` (`init` exits 2 otherwise), and the
+  spec copy always lives at `<plans>/<slug>/goal.json` — also when the plan is a flat `<slug>.md`.
 - `init --spec` stores the spec in the goal state. The audit of the goal's last wave runs the
   stored `verify` commands next to the checks it reads from the plan, so the end state is checked
   by the same record that gates `advance-wave`. If `goal.json` in the plan dir was changed or
-  deleted since `init`, or a stored check is missing or malformed, that audit fails. A goal
-  started without `--spec` only warns.
+  deleted since `init`, or a stored check is missing or malformed — or the stored spec itself is gone
+  or the state db cannot be read — that audit fails (`init --spec` marks the goal). A goal started
+  without `--spec` only warns.
 
 ## Limits
 

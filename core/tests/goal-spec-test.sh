@@ -250,6 +250,53 @@ printf '%s' "$GOOD" > "$fx/spec.json"
 (cd "$fx" && bash core/infra/supervisor-goal.sh init sd 2 --spec spec.json >/dev/null 2>&1)
 check "init-conflicting-plan-goal-json-exit-2" 2 "$?"
 
+echo "=== checker: command substitution in a verify entry is refused ==="
+check "dollar-paren-verify" 2 "$(spec_rc "$(mutate '.verify = ["test \"$(cat out.txt)\" = ok"]')")"
+check "dollar-paren-verify-named" 1 "$(grep -c '^goal-spec: verify\[0\]: command substitution' "$TMP/err")"
+check "backtick-verify" 2 "$(spec_rc "$(mutate '.verify = ["test \"`cat out.txt`\" = ok"]')")"
+
+echo "=== audit: stored verify entries that are multi-line, empty, non-string or hold NUL fail ==="
+for bad in '{"verify": ["a\nb"]}' '{"verify": [""]}' '{"verify": [1]}' '{"verify": ["a\u0000b"]}' '{"verify": ["a\rb"]}'; do
+  spec_plan sb 2 '["test -f one.txt"]'
+  sqlite3 "$fx/.agent/locks/goal-state.db" "UPDATE supervisor_goal_specs SET spec_json = '$bad' WHERE plan_slug = 'sb';"
+  check "stored-verify-shape-fails: $bad" false "$(last_audit sb | jq -r '.all_pass')"
+done
+
+echo "=== audit: a spec run whose stored spec row is gone fails the last wave ==="
+spec_plan sr 2 '["test -f one.txt"]'
+sqlite3 "$fx/.agent/locks/goal-state.db" "DELETE FROM supervisor_goal_specs WHERE plan_slug = 'sr';"
+printf '{"verify":[]}' > "$fx/.agent/plans/sr/goal.json"
+w="$(last_audit sr)"
+check "spec-row-deleted-fails" false "$(printf '%s' "$w" | jq -r '.all_pass')"
+check "spec-row-deleted-says-missing" 1 "$(printf '%s' "$w" | jq -r '[.evidence[] | select(.log_tail | test("stored goal spec is missing"))] | length')"
+spec_plan sr2 2 '["test -f one.txt"]'
+sqlite3 "$fx/.agent/locks/goal-state.db" "DROP TABLE supervisor_goal_specs;"
+check "spec-table-gone-fails" false "$(last_audit sr2 | jq -r '.all_pass')"
+spec_plan sr3 2 '["test -f one.txt"]'
+printf 'not a database' > "$fx/.agent/locks/goal-state.db"
+check "goal-state-unreadable-fails" false "$(last_audit sr3 | jq -r '.all_pass')"
+
+echo "=== init --spec: a slug the audit cannot look up is refused ==="
+fx="$(build_fixture)"; printf '%s' "$GOOD" > "$fx/goal.json"
+for s in "a'b" 'a b' '../x' '.hidden' 'a;b'; do
+  (cd "$fx" && bash core/infra/supervisor-goal.sh init "$s" 2 --spec goal.json >/dev/null 2>&1)
+  check "init-spec-bad-slug-exit-2: $s" 2 "$?"
+done
+check "init-spec-bad-slug-no-goal-row" "" "$(cd "$fx" && bash core/infra/supervisor-goal.sh status 'a b' 2>/dev/null)"
+
+echo "=== audit: a flat plan file (<plans>/<slug>.md) with --spec from elsewhere passes ==="
+fx="$(build_fixture)"; mkdir -p "$fx/plans" "$fx/elsewhere"; touch "$fx/one.txt" "$fx/two.txt"
+printf '## Wave 1: a\n\n- `test -f one.txt`\n\n## Wave 2: b\n\n- `test -f one.txt`\n' > "$fx/plans/sf.md"
+printf '%s' "$(mutate '.verify = ["test -f two.txt"]')" > "$fx/elsewhere/spec.json"
+(cd "$fx" && AGENT_PLANS_DIR="$fx/plans" bash core/infra/supervisor-goal.sh init sf 2 --spec elsewhere/spec.json >/dev/null 2>&1)
+check "flat-plan-init-exit-0" 0 "$?"
+w="$(cd "$fx" && AGENT_PLANS_DIR="$fx/plans" bash core/infra/supervisor-goal-audit.sh sf 2 2>/dev/null)"
+check "flat-plan-last-audit-passes" true "$(printf '%s' "$w" | jq -r '.all_pass')"
+check "flat-plan-runs-spec-verify" '["test -f one.txt","test -f two.txt"]' "$(printf '%s' "$w" | jq -c '.requirements')"
+rm -f "$fx/two.txt"
+w="$(cd "$fx" && AGENT_PLANS_DIR="$fx/plans" bash core/infra/supervisor-goal-audit.sh sf 2 2>/dev/null)"
+check "flat-plan-failing-verify-fails" false "$(printf '%s' "$w" | jq -r '.all_pass')"
+
 echo
 echo "goal-spec-test: $PASS passed, $FAIL failed"
 [[ "$FAIL" -eq 0 ]]

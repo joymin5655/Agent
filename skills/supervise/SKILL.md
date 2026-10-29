@@ -121,8 +121,8 @@ a. Fill `${CLAUDE_PLUGIN_ROOT}/skills/supervise/templates/prompt-restatement.md`
 b. Persist it to `.agent/plans/<slug>/RESTATEMENT.md`. (RECORD.md stays a
    mechanical completion ledger — intake interpretation never goes there.)
 c. If **Open questions** is non-empty and the run is not full-auto, surface
-   them to the user before Wave 1. Full-auto runs note the resolution chosen
-   under Assumptions instead.
+   them to the user before Wave 1. Full-auto runs record the
+   resolution used under Assumptions.
 
 `/manager-audit` grades this file (lane `restatement-quality`) — a wave
 serving a goal absent from **Interpreted goal** is flagged as scope drift.
@@ -133,22 +133,22 @@ a. Read `.agent/plans/<slug>/plan.md` (legacy: `~/.agent/plans/<slug>.md`).
 b. Confirm it has Wave 1..N sections.
 c. Run
    `bash "${CLAUDE_PLUGIN_ROOT}/core/infra/supervisor-goal-audit.sh" score --plan <slug> --wave 1`
-   — if verdict is `weak`, warn the user and ask whether to proceed.
-d. If `--goal-mode`, write `.agent/plans/<slug>/goal.json` per `goal-spec.md` and pass
-   `core/infra/goal-spec-check.py` on it, then:
+   — on a `weak` verdict, warn the user and ask whether to proceed.
+d. If `--goal-mode`, write `.agent/plans/<slug>/goal.json` per `goal-spec.md`, pass
+   `${CLAUDE_PLUGIN_ROOT}/core/infra/goal-spec-check.py` on it, then:
    ```bash
    bash "${CLAUDE_PLUGIN_ROOT}/core/infra/supervisor-goal.sh" init <slug> <N> [<budget>] "<objective>" --spec <file>
    ```
 
 #### Pattern selection
 
-While reading the plan, name each wave's shape (Pipeline, Fan-out/Fan-in,
+When reading the plan, name each wave's shape (Pipeline, Fan-out/Fan-in,
 Expert Pool, Producer-Reviewer; Supervisor is always the outer frame) using
 [`docs/concepts/team-patterns.md`](../../docs/concepts/team-patterns.md), which
 maps each pattern to the lanes and caps in Step 2. A plan that needs
 Hierarchical Delegation is split into separate plans, not nested. If a wave's
 shape does not fit any pattern, say so in the restatement's Assumptions rather
-than improvising a lane.
+than inventing a lane.
 
 ### 2. Per-wave loop
 
