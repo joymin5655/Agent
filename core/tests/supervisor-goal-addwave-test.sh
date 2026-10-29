@@ -108,6 +108,16 @@ check "advance-torn-line-row-untouched" "1" "$(cur adv-torn)"
 sg init adv-badwave 3 >/dev/null
 sg advance-wave adv-badwave x >/dev/null 2>&1
 check "advance-non-numeric-wave-refused" "3" "$?"
+FX2="$TMP_ROOT/fx2"  # fresh state dir: no audit log exists, so the jq check cannot catch it
+mkdir -p "$FX2/core/infra/sql"
+(cd "$FX2" && git init -q)
+cp "$REPO_ROOT/core/infra/supervisor-goal.sh" "$FX2/core/infra/"
+cp "$REPO_ROOT/core/infra/sql/001_supervisor_goals.sql" "$FX2/core/infra/sql/"
+(cd "$FX2" && bash core/infra/supervisor-goal.sh init nolog 3 >/dev/null \
+  && bash core/infra/supervisor-goal.sh advance-wave nolog x >/dev/null 2>&1)
+check "advance-non-numeric-wave-refused-without-audit-log" "3" "$?"
+check "advance-non-numeric-wave-no-audit-log-row-untouched" "[]" \
+  "$(cd "$FX2" && bash core/infra/supervisor-goal.sh status nolog | jq -r '.waves_completed')"
 sg init adv-samewave 3 >/dev/null
 printf '%s\n' '{"plan_slug":"someone-else","wave":1,"all_pass":false}' >> .agent/logs/supervisor-goal-audit.jsonl
 sg advance-wave adv-samewave 1 >/dev/null 2>&1

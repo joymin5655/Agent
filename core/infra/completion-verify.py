@@ -77,18 +77,51 @@ _MAX_CONTAINS_BYTES = 5_000_000
 # position is judged, so a dangerous word inside a quoted argument (`grep -c 'rm -rf' f`) is
 # not a command. Keep it short; add a rule only with a test.
 _SEPARATORS = ";&|()`\n"
-_WRAPPERS = {"sudo", "xargs", "env", "command", "nohup", "time", "exec", "nice"}
+_WRAPPERS = {"sudo", "doas", "env", "xargs", "command", "exec", "nice", "nohup", "timeout",
+             "time", "stdbuf", "ionice"}
+_RESERVED = {"if", "then", "elif", "else", "do", "while", "until", "!", "{", "("}
 _SHELLS = {"sh", "bash", "zsh", "dash", "ksh"}
+# After a wrapper the options and their arguments are not modelled; the rest of the words are
+# scanned forward for the first name the screen knows, and judged from there.
+_TARGETS = {"rm", "git", "gh", "tee", "dd", "find", "eval", "curl", "wget"} | _SHELLS
+_FIND_EXEC = {"-exec", "-execdir", "-ok", "-okdir"}
 _DEV_OK = re.compile(r"/dev/(?:null|stdout|stderr)$|/dev/fd/")
 _GIT_ARG_OPTS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"}
 _ASSIGN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 
 
+def _subst_in(text):
+    """Return the bodies of the `$( )` and backtick substitutions in `text`."""
+    out, i, n = [], 0, len(text)
+    while i < n:
+        c = text[i]
+        if c == "\\":
+            i += 2
+        elif c == "$" and text.startswith("(", i + 1):
+            depth, j = 1, i + 2
+            while j < n and depth:
+                depth += (text[j] == "(") - (text[j] == ")")
+                j += 1
+            out.append(text[i + 2:j - 1 if depth == 0 else j])
+            i = j
+        elif c == "`":
+            j = text.find("`", i + 1)
+            j = n if j < 0 else j
+            out.append(text[i + 1:j])
+            i = j + 1
+        else:
+            i += 1
+    return out
+
+
 def _split_commands(cmd):
-    """Split `cmd` into [(prev_op, words, redirect_targets)] simple commands. Quotes are
-    removed from word values; separators inside quotes do not split."""
-    out, words, redirs = [], [], []
-    prev, cur, have, quote, i, n = "", "", False, None, 0, len(cmd)
+    """Split `cmd` into ([(prev_op, words, redirect_targets)] simple commands, [substitution
+    bodies to screen again]). Quotes are removed from word values; separators inside quotes do
+    not split; heredoc bodies are not commands. A `$( )`/backtick inside double quotes or an
+    unquoted heredoc body is returned for a second look (the shell runs it)."""
+    cmd = cmd.replace("\\\n", "")
+    out, words, redirs, subs, heredocs = [], [], [], [], []
+    prev, cur, have, quote, qstart, i, n = "", "", False, None, 0, 0, len(cmd)
     want_redir = False
 
     def flush():
@@ -99,8 +132,9 @@ def _split_commands(cmd):
         cur, have = "", False
 
     def end(op):
-        nonlocal words, redirs, prev
+        nonlocal words, redirs, prev, want_redir
         flush()
+        want_redir = False
         if words or redirs:
             out.append((prev, words, redirs))
         words, redirs, prev = [], [], op
@@ -109,6 +143,8 @@ def _split_commands(cmd):
         c = cmd[i]
         if quote:
             if c == quote:
+                if quote == '"':
+                    subs.extend(_subst_in(cmd[qstart:i]))
                 quote = None
             elif c == "\\" and quote == '"' and i + 1 < n:
                 i += 1
@@ -116,7 +152,7 @@ def _split_commands(cmd):
             else:
                 cur += c
         elif c in "'\"":
-            quote, have = c, True
+            quote, have, qstart = c, True, i + 1
         elif c == "\\" and i + 1 < n:
             i += 1
             cur, have = cur + cmd[i], True
@@ -131,6 +167,40 @@ def _split_commands(cmd):
                 i += 1
                 c += c
             end(c)
+            if c == "\n" and heredocs:
+                pos = i + 1
+                for delim, quoted, tabs in heredocs:
+                    body = []
+                    while pos < n:
+                        e = cmd.find("\n", pos)
+                        e = n if e < 0 else e
+                        line, pos = cmd[pos:e], e + 1
+                        if (line.lstrip("\t") if tabs else line) == delim:
+                            break
+                        body.append(line)
+                    if not quoted:
+                        subs.extend(_subst_in("\n".join(body)))
+                heredocs.clear()
+                i = pos - 1
+        elif c == "<" and cmd.startswith("<<", i) and not cmd.startswith("<<<", i):
+            j = i + 2
+            tabs = j < n and cmd[j] == "-"
+            j += tabs
+            while j < n and cmd[j] in " \t":
+                j += 1
+            q = cmd[j] if j < n and cmd[j] in "'\"" else None
+            if q:
+                k = cmd.find(q, j + 1)
+                k = n if k < 0 else k
+                delim, j = cmd[j + 1:k], k + 1
+            else:
+                k = j
+                while k < n and cmd[k] not in " \t\n" + _SEPARATORS + "<>":
+                    k += 1
+                delim, j = cmd[j:k], k
+            flush()
+            heredocs.append((delim.replace("\\", ""), q is not None or "\\" in delim, tabs))
+            i = j - 1
         elif c == ">":
             if have and cur.isdigit():
                 cur, have = "", False  # the fd of `2>`
@@ -145,21 +215,23 @@ def _split_commands(cmd):
             cur, have = cur + c, True
         i += 1
     end("")
-    return out
+    return out, subs
 
 
 def _command_words(words):
-    """Drop leading VAR=value words and wrappers (sudo, xargs, env, command...) with their
-    options, returning the real command and its arguments."""
+    """Drop leading VAR=value words, shell reserved words and wrappers (sudo, xargs, env,
+    timeout...), returning the real command and its arguments. After a wrapper the rest of the
+    words are scanned for the first name the screen judges (rm, git, a shell...); none found
+    means nothing to judge."""
     i = 0
     while i < len(words):
         base = os.path.basename(words[i])
-        if _ASSIGN.match(words[i]):
+        if _ASSIGN.match(words[i]) or words[i] in _RESERVED:
             i += 1
         elif base in _WRAPPERS:
             i += 1
-            while i < len(words) and (words[i].startswith("-") or _ASSIGN.match(words[i])):
-                i += 2 if base == "sudo" and words[i] in ("-u", "-g") else 1
+            while i < len(words) and os.path.basename(words[i]) not in _TARGETS:
+                i += 1
         else:
             break
     return words[i:]
@@ -185,8 +257,15 @@ def _screen_simple(words, redirs, prev_words):
         while j < len(args) and args[j].startswith("-"):
             j += 2 if args[j] in _GIT_ARG_OPTS else 1
         sub, rest = (args[j], args[j + 1:]) if j < len(args) else ("", [])
-        if sub == "push" and not {"--dry-run", "-n"} & set(rest):
-            return "git push"
+        if sub == "push":
+            dry = False
+            for a in rest:
+                if a in ("--dry-run", "-n"):
+                    dry = True
+                elif a == "--no-dry-run":
+                    dry = False
+            if not dry:
+                return "git push"
         if sub == "reset" and "--hard" in rest:
             return "git reset --hard"
     elif name == "gh":
@@ -201,9 +280,27 @@ def _screen_simple(words, redirs, prev_words):
     elif name == "dd":
         if any(a.startswith("of=/dev/") and not _DEV_OK.match(a[3:]) for a in args):
             return "write to a device path"
+    elif name == "eval":
+        return denied_reason(" ".join(args))
+    elif name == "find":
+        for k, a in enumerate(args):
+            if a in _FIND_EXEC:
+                sub = []
+                for b in args[k + 1:]:
+                    if b in (";", "+"):
+                        break
+                    sub.append(b)
+                why = _screen_simple(sub, [], None)
+                if why:
+                    return why
     elif name in _SHELLS:
-        if "-c" in args and args.index("-c") + 1 < len(args):
-            return denied_reason(args[args.index("-c") + 1])
+        for k, a in enumerate(args):
+            if a.startswith("-") and not a.startswith("--") and "c" in a:
+                if k + 1 < len(args):
+                    why = denied_reason(args[k + 1])
+                    if why:
+                        return why
+                break
         if prev_words:
             pw = _command_words(prev_words)
             if pw and os.path.basename(pw[0]) in ("curl", "wget"):
@@ -216,11 +313,16 @@ def denied_reason(cmd):
     if not isinstance(cmd, str):
         return None
     prev_words = None
-    for op, words, redirs in _split_commands(cmd):
+    simple, subs = _split_commands(cmd)
+    for op, words, redirs in simple:
         why = _screen_simple(words, redirs, prev_words if op == "|" else None)
         if why:
             return why
         prev_words = words
+    for body in subs:
+        why = denied_reason(body)
+        if why:
+            return why
     return None
 
 
@@ -565,7 +667,10 @@ def verify(claim, root, require_evidence=False, diff_base=None, claim_path=None)
 
     def _run_cited(dim, cmd, fail_msg):
         dims[dim]["total"] += 1
-        why = denied_reason(cmd)
+        try:
+            why = denied_reason(cmd)
+        except Exception:
+            why = "deny-list screen failed; command not run"
         if why:
             denied.append({"cmd": _label(cmd)[:_MAX_CMD_LEN], "reason": why})
             refutations.append("%s denied (not run): %s [%s]" % (dim[:-1], _label(cmd), why))
@@ -668,7 +773,10 @@ def main(argv=None):
                     help="opt-in: audit `git diff REF` added lines for skip markers + scope")
     args = ap.parse_args(argv)
     if args.check_command is not None:
-        why = denied_reason(args.check_command)
+        try:
+            why = denied_reason(args.check_command)
+        except Exception:
+            why = "deny-list screen failed"
         if why:
             print("denied: %s" % why)
         return 1 if why else 0

@@ -23,8 +23,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   command is neither passed nor failed: it is listed under the verdict's `denied` key (audit:
   `denied:true`, `all_pass:null`, exit 4). Rules live in `_DENY_RULES`; text screening only,
   not a sandbox. Only the command position is judged (quoted words such as `grep -c 'rm -rf' f`
-  pass; `git -C r push`, `rm -v -rf x`, `| /bin/bash`, `tee /dev/disk1` are caught). A denied claim
-  command is REFUTED (exit 1) in `completion-verify.py` and exit 4 (unverified) in the audit.
+  pass; `git -C r push`, `rm -v -rf x`, `| /bin/bash`, `tee /dev/disk1` are caught). Also looked
+  into: `$( )`/backticks inside double quotes and unquoted heredoc bodies, words after wrappers
+  (`sudo -u u`, `timeout 5`, `xargs -n 1`), shell reserved words, `bash -lc`, `eval`, `find -exec`,
+  `--no-dry-run`, and line continuations; heredoc bodies are not commands. Limit: this is a
+  text-shape screen, so a command held in a variable (`$CMD`), a function or alias definition, or
+  `eval "$x"` is not caught. A screen that raises denies the cited command instead of passing it.
+  A denied claim command is REFUTED (exit 1) in `completion-verify.py` and exit 4 (unverified)
+  in the audit.
 - **`advance-wave` reads the audit log line by line.** A torn line no longer hides a failed record,
   and an unreadable log or non-numeric wave refuses (exit 3) instead of advancing.
 

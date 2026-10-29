@@ -168,6 +168,10 @@ cmd_advance_wave() {
         echo "usage: supervisor-goal.sh advance-wave <plan-slug> <completed-wave-num>" >&2
         exit 2
     fi
+    if ! [[ "$wave_num" =~ ^[0-9]+$ ]]; then
+        echo "ERROR: wave number must be a non-negative integer: $wave_num" >&2
+        exit 3
+    fi
     init_db
     local ts; ts="$(now_ms)"
 

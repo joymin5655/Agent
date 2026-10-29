@@ -512,7 +512,15 @@ python3 "$VERIFY" --check-command 'rm -rf keep' >/dev/null 2>&1; [[ $? -eq 1 ]];
 python3 "$VERIFY" --check-command 'bash core/tests/x.sh' >/dev/null 2>&1; [[ $? -eq 0 ]]; check "check-command-allows" $?
 
 # Command-position screening: spelling variants are denied, quoted words and look-alike commands are not.
-denied_shape() { python3 "$VERIFY" --check-command "$1" >/dev/null 2>&1; echo $?; }
+# Prints 1 only for a real denial (exit 1, `denied:` line, no traceback), 0 only for a clean allow
+# (exit 0, no output); a parser crash prints bad:<rc> so it can never pass as either.
+denied_shape() {
+  local out rc
+  out=$(python3 "$VERIFY" --check-command "$1" 2>&1); rc=$?
+  if [[ $rc -eq 1 && "$out" == denied:* && "$out" != *Traceback* ]]; then echo 1
+  elif [[ $rc -eq 0 && -z "$out" ]]; then echo 0
+  else echo "bad:$rc"; fi
+}
 [[ "$(denied_shape 'rm -v -rf keep')" == "1" ]]; check "deny-shape-0" $?
 [[ "$(denied_shape 'rm -i -rf x')" == "1" ]]; check "deny-shape-1" $?
 [[ "$(denied_shape 'rm x -rf')" == "1" ]]; check "deny-shape-2" $?
@@ -545,6 +553,74 @@ denied_shape() { python3 "$VERIFY" --check-command "$1" >/dev/null 2>&1; echo $?
 [[ "$(denied_shape 'gh -R r pr view 1')" == "0" ]]; check "allow-shape-11" $?
 [[ "$(denied_shape 'echo '\''a;b'\'' | cat')" == "0" ]]; check "allow-shape-12" $?
 [[ "$(denied_shape 'ls &>/dev/null')" == "0" ]]; check "allow-shape-13" $?
+
+# Second-round shapes: substitutions in double quotes, wrapper options, reserved words, shell -c
+# bundles, eval, find -exec, push --no-dry-run, line continuation, redirect-before-separator, heredocs.
+n=0
+for c in \
+  'echo "$(rm -rf keep)"' \
+  'echo "`rm -rf keep`"' \
+  'sudo --user root rm -rf keep' \
+  'sudo -u u rm -rf x' \
+  'env -u VAR rm -rf keep' \
+  'xargs -I {} rm -rf {}' \
+  'xargs -n 1 rm -rf' \
+  'timeout 5 rm -rf x' \
+  'nice -n 10 rm -rf x' \
+  'for f in x; do rm -rf $f; done' \
+  'if true; then rm -rf x; fi' \
+  '{ rm -rf x; }' \
+  '! rm -rf x' \
+  'while true; do rm -rf x; done' \
+  "bash -lc 'rm -rf x'" \
+  "sh -ec 'rm -rf x'" \
+  'eval "rm -rf x"' \
+  'find . -exec rm -rf {} \;' \
+  'find . -execdir rm -rf {} +' \
+  'find . -ok rm -rf {} \;' \
+  'git push --dry-run --no-dry-run origin main' \
+  $'rm \\\n-rf x' \
+  $'git \\\npush origin main' \
+  $'echo x >|f\nrm -rf x' \
+  $'cat <<EOF\n$(rm -rf x)\nEOF' \
+  $'cat <<"EOF"\nbody\nEOF\nrm -rf x' \
+  $'cat <<-EOF\n\tbody\n\tEOF\nrm -rf x'; do
+  [[ "$(denied_shape "$c")" == "1" ]]; check "deny-r2-$n" $?
+  n=$((n + 1))
+done
+n=0
+for c in \
+  $'cat <<\'EOF\'\nrm -rf x\nEOF' \
+  $'cat <<EOF\nrm -rf x\nEOF' \
+  $'cat <<-"EOF"\n\trm -rf x\n\tEOF' \
+  'git push --dry-run' \
+  "echo 'rm -rf x'" \
+  "echo '\$(rm -rf x)'" \
+  'grep -c "git push" f' \
+  'pytest -k "rm"' \
+  'npm test && git status' \
+  "find . -name '*.pyc' -print" \
+  'xargs -n 1 echo' \
+  'timeout 60 npm test' \
+  'sudo -u u ls' \
+  'for f in x; do echo $f; done'; do
+  [[ "$(denied_shape "$c")" == "0" ]]; check "allow-r2-$n" $?
+  n=$((n + 1))
+done
+
+# A parser that raises must never read as a pass: the cited command is denied, not run.
+python3 - "$VERIFY" "$PROJ" <<'PYEOF2'
+import importlib.util, sys, os
+spec = importlib.util.spec_from_file_location("cv", sys.argv[1])
+cv = importlib.util.module_from_spec(spec); spec.loader.exec_module(cv)
+def boom(_cmd): raise RuntimeError("parser crashed")
+cv.denied_reason = boom
+marker = os.path.join(sys.argv[2], "parser-crash-ran")
+v = cv.verify({"summary": "x", "tests": ["touch " + marker]}, sys.argv[2])
+ok = v["verdict"] == "REFUTED" and v.get("denied") and not os.path.exists(marker)
+sys.exit(0 if ok else 1)
+PYEOF2
+check "parser-exception-denies-cited-command" $?
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
