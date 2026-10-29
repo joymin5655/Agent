@@ -178,6 +178,32 @@ cmd_advance_wave() {
         exit 3
     fi
 
+    # Only a live goal advances (cmd_add_wave guards the same way): a paused, budget-limited,
+    # aborted or complete goal must not move its wave counters.
+    local status
+    status=$(sqlite3 "$DB_FILE" "SELECT status FROM supervisor_goals WHERE plan_slug = '$(sql_escape "$slug")';")
+    if [[ "$status" != "active" ]]; then
+        echo "ERROR: goal $slug is $status; cannot advance a wave" >&2
+        exit 3
+    fi
+
+    # The wave's own audit decides: the latest audit record for this slug+wave (the audit step
+    # runs before advance in /supervise, supervisor-goal-audit.sh appends to AUDIT_LOG) must not be
+    # a failure. No record is only a warning — direct callers advance without an audit run — and
+    # a re-run audit that passes clears an earlier failure (the latest record wins).
+    local last_audit="null"
+    if [[ -s "$AUDIT_LOG" ]]; then
+        last_audit=$(jq -cs --arg s "$slug" --argjson w "$wave_num" \
+            '[.[] | select(.plan_slug == $s and .wave == $w and has("all_pass"))] | last | .all_pass' \
+            "$AUDIT_LOG" 2>/dev/null || echo null)
+    fi
+    if [[ "$last_audit" == "false" ]]; then
+        echo "ERROR: goal $slug wave $wave_num: latest audit record failed; re-run the audit before advancing" >&2
+        exit 3
+    elif [[ "$last_audit" != "true" ]]; then
+        echo "WARN: goal $slug wave $wave_num: no audit record with a pass verdict; advancing unverified" >&2
+    fi
+
     local new_completed
     new_completed=$(echo "$current_completed" | jq --argjson w "$wave_num" '. + [$w] | unique')
 

@@ -49,7 +49,8 @@
 #           (files + tests + assertions all cite zero items) AND neither the
 #           `evidence` nor the `trajectory` dimension actually FAILED ->
 #           needs_semantic: print guidance to dispatch /verify-completion's
-#           semantic pass and exit 0. NEVER hard-block here — a claim that is
+#           semantic pass; exit 4 ("unverified" — zero checks is not a pass) in
+#           block mode, exit 0 in dryrun. Never REFUTED/exit 1 here — a claim that is
 #           true but not mechanically checkable (a design/UX claim, say) is
 #           not a false claim, and the deterministic layer has nothing to
 #           refute it with. Critically, this is NOT the same test as "core
@@ -341,6 +342,9 @@ if [[ ! "$SEMANTIC_ELIGIBLE" =~ ^[0-9]+$ ]]; then SEMANTIC_ELIGIBLE=0; fi
 
 if [[ "$SEMANTIC_ELIGIBLE" -eq 1 ]]; then
   echo "completion-gate: '$CLAIM' cites no deterministically-checkable evidence (no files/tests/assertions) — dispatch /verify-completion for an independent semantic pass before accepting this claim as done." >&2
+  # Zero checks is "could not verify", not a pass: block mode says so with exit 4. The dryrun
+  # default stays exit 0 (it never blocks — consumers rely on that).
+  if [[ "$MODE" == "block" ]]; then exit 4; fi
   exit 0
 fi
 

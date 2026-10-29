@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`supervisor-goal.sh advance-wave` no longer moves a goal that is not live or whose wave failed
+  its audit.** It now refuses with exit 3 unless the goal is `active` (paused, budget-limited,
+  aborted and complete goals used to advance), and when the latest audit record for that
+  slug+wave (`.agent/logs/supervisor-goal-audit.jsonl`) has `all_pass:false`. No audit record is
+  a warning only: direct callers advance without running the audit.
+- **Zero checks is "unverified", not a pass.** `supervisor-goal-audit.sh` with no runnable checks
+  records `all_pass:null` and exits 4 (it recorded `all_pass:true`, exit 0); `completion-gate.sh`
+  exits 4 in block mode when the claim cites nothing checkable. The dryrun default is unchanged
+  (exit 0).
+- **Static deny list before shell execution.** `completion-verify.py` (cited tests/assertions)
+  and `supervisor-goal-audit.sh` (before `eval`) do not run recursive/forced `rm`, `git push`,
+  a hard `git reset`, `gh pr merge`, download-piped-to-shell, or writes to `/dev/*`. A denied
+  command is neither passed nor failed: it is listed under the verdict's `denied` key (audit:
+  `denied:true`, `all_pass:null`, exit 4). Rules live in `_DENY_RULES`; text screening only,
+  not a sandbox.
+
 ### Changed
 - **The Gemini lane gets 15 minutes instead of 5** (`core/infra/backends.json` `gemini.timeout_s`
   300 → 900; `adapters/antigravity/antigravity-worker.sh` default `--print-timeout` 5m → 14m).

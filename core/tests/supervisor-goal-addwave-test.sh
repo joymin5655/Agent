@@ -67,6 +67,38 @@ check "aborted-goal-total-unchanged" "2" "$(total dead)"
 sg add-wave >/dev/null 2>&1
 check "no-slug-exits-2" "2" "$?"
 
+echo "=== advance-wave refuses a goal that is not active, and a wave whose audit failed ==="
+cur() { sg status "$1" | jq -r '.current_wave'; }
+mkdir -p .agent/logs
+for st in paused aborted; do
+  sg init adv-$st 3 >/dev/null
+  if [[ "$st" == "paused" ]]; then sg pause adv-$st >/dev/null; else sg abort adv-$st "t" >/dev/null; fi
+  sg advance-wave adv-$st 1 >/dev/null 2>&1
+  check "advance-$st-exits-3" "3" "$?"
+  check "advance-$st-row-untouched" "1" "$(cur adv-$st)"
+done
+sg init adv-budget 3 >/dev/null
+sqlite3 .agent/locks/goal-state.db "UPDATE supervisor_goals SET status='budget_limited' WHERE plan_slug='adv-budget';"
+sg advance-wave adv-budget 1 >/dev/null 2>&1
+check "advance-budget-limited-exits-3" "3" "$?"
+sg init adv-fail 3 >/dev/null
+printf '%s\n' '{"plan_slug":"adv-fail","wave":1,"all_pass":false}' >> .agent/logs/supervisor-goal-audit.jsonl
+sg advance-wave adv-fail 1 >/dev/null 2>&1
+check "advance-after-failed-audit-exits-3" "3" "$?"
+check "advance-after-failed-audit-row-untouched" "1" "$(cur adv-fail)"
+printf '%s\n' '{"plan_slug":"adv-fail","wave":1,"all_pass":true}' >> .agent/logs/supervisor-goal-audit.jsonl
+sg advance-wave adv-fail 1 >/dev/null 2>&1
+check "advance-after-rerun-pass-ok" "0" "$?"
+check "advance-after-rerun-pass-moved" "2" "$(cur adv-fail)"
+sg init adv-other 3 >/dev/null
+printf '%s\n' '{"plan_slug":"adv-other","wave":2,"all_pass":false}' >> .agent/logs/supervisor-goal-audit.jsonl
+sg advance-wave adv-other 1 >/dev/null 2>&1
+check "advance-failed-audit-of-other-wave-ignored" "0" "$?"
+sg init adv-none 3 >/dev/null
+WARN=$(sg advance-wave adv-none 1 2>&1 >/dev/null)
+check "advance-without-audit-record-ok" "2" "$(cur adv-none)"
+check "advance-without-audit-record-warns" "1" "$(grep -c 'no audit record' <<<"$WARN")"
+
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]

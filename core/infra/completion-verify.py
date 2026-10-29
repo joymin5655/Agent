@@ -29,6 +29,13 @@ Usage:
                          changed code file outside the claim's declared files/scope.
                          New `trajectory` dimension.
   Exit 0 iff CONFIRMED; exit 1 otherwise — usable as a CI / wave GATE.
+  completion-verify.py --check-command CMD
+                         print the deny-list reason and exit 1 when CMD is denied, else
+                         exit 0 (used by supervisor-goal-audit.sh before it runs a check).
+
+Cited commands are screened by a static deny list (_DENY_RULES) before they run. A denied
+command is neither run nor counted as passed or failed: it is listed under the verdict's
+top-level `denied` key and refutes the claim ("denied (not run)").
 
 Decision coverage (advisory, dryrun): when `.agent/plans/<slug>/spec.md` has a
 `## Decisions` section, each `- D<n>:` not listed in the claim's optional
@@ -62,6 +69,29 @@ _MAX_CMD_LEN = 500
 # past it does not match (refute-by-default's safe direction — a false REFUTED, not
 # a crash or a false CONFIRMED).
 _MAX_CONTAINS_BYTES = 5_000_000
+
+
+# Static deny list for commands a claim (or a plan's audit check) asks us to run. It screens
+# the text only — a shell can spell any of these a thousand ways — so it is a guard against
+# the plain forms, not a sandbox. Keep it short; add a rule only with a test.
+_DENY_RULES = [
+    (re.compile(r"\brm\s+(?:-[A-Za-z]*[rRf][A-Za-z]*|--recursive|--force)\b"), "recursive/forced delete (rm)"),
+    (re.compile(r"\bgit\s+push\b"), "git push"),
+    (re.compile(r"\bgit\s+reset\s+(?:\S+\s+)*--hard\b"), "git reset --hard"),
+    (re.compile(r"\bgh\s+pr\s+merge\b"), "gh pr merge"),
+    (re.compile(r"\b(?:curl|wget)\b[^|;&\n]*\|\s*(?:sudo\s+)?(?:ba|z|da|k)?sh\b"), "download piped to a shell"),
+    (re.compile(r">>?\s*/dev/(?!null\b|stdout\b|stderr\b|fd/)|\bof=/dev/"), "write to a device path"),
+]
+
+
+def denied_reason(cmd):
+    """Return why `cmd` is on the deny list, or None when it may run."""
+    if not isinstance(cmd, str):
+        return None
+    for pat, why in _DENY_RULES:
+        if pat.search(cmd):
+            return why
+    return None
 
 
 def _parse_timeout(raw):
@@ -401,19 +431,24 @@ def verify(claim, root, require_evidence=False, diff_base=None, claim_path=None)
                 continue
         dims["files"]["passed"] += 1
 
-    for cmd in _section("tests", _MAX_TESTS, "tests"):
-        dims["tests"]["total"] += 1
-        if _run(cmd, root):
-            dims["tests"]["passed"] += 1
+    denied = []
+
+    def _run_cited(dim, cmd, fail_msg):
+        dims[dim]["total"] += 1
+        why = denied_reason(cmd)
+        if why:
+            denied.append({"cmd": _label(cmd)[:_MAX_CMD_LEN], "reason": why})
+            refutations.append("%s denied (not run): %s [%s]" % (dim[:-1], _label(cmd), why))
+        elif _run(cmd, root):
+            dims[dim]["passed"] += 1
         else:
-            refutations.append("test did not pass: %s" % _label(cmd))
+            refutations.append("%s: %s" % (fail_msg, _label(cmd)))
+
+    for cmd in _section("tests", _MAX_TESTS, "tests"):
+        _run_cited("tests", cmd, "test did not pass")
 
     for cmd in _section("assertions", _MAX_ASSERTIONS, "assertions"):
-        dims["assertions"]["total"] += 1
-        if _run(cmd, root):
-            dims["assertions"]["passed"] += 1
-        else:
-            refutations.append("assertion did not hold: %s" % _label(cmd))
+        _run_cited("assertions", cmd, "assertion did not hold")
 
     # --- opt-in: --require-evidence ---
     # code changed (uncommitted, vs HEAD) but the claim cites zero runnable
@@ -479,6 +514,8 @@ def verify(claim, root, require_evidence=False, diff_base=None, claim_path=None)
         "refutations": refutations[:50],
         "schema_version": SCHEMA_VERSION,
     }
+    if denied:
+        verdict["denied"] = denied[:50]
     advisories = _decision_advisories(claim, root, claim_path)
     if advisories:
         verdict["advisories"] = advisories[:50]
@@ -490,7 +527,9 @@ def main(argv=None):
         prog="completion-verify.py",
         description="Independent completion-claim verifier (P3-5).",
     )
-    ap.add_argument("claim", help="path to a JSON/YAML completion claim")
+    ap.add_argument("claim", nargs="?", help="path to a JSON/YAML completion claim")
+    ap.add_argument("--check-command", default=None, metavar="CMD",
+                    help="exit 1 (printing the reason) when CMD is on the deny list, else 0")
     ap.add_argument("--root", default=None,
                     help="project root the claim resolves against (default: CWD)")
     ap.add_argument("--require-evidence", action="store_true",
@@ -498,6 +537,13 @@ def main(argv=None):
     ap.add_argument("--diff-base", default=None, metavar="REF",
                     help="opt-in: audit `git diff REF` added lines for skip markers + scope")
     args = ap.parse_args(argv)
+    if args.check_command is not None:
+        why = denied_reason(args.check_command)
+        if why:
+            print("denied: %s" % why)
+        return 1 if why else 0
+    if not args.claim:
+        ap.error("a claim file is required")
     root = args.root or os.getcwd()
 
     try:
