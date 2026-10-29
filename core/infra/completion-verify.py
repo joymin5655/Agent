@@ -29,6 +29,13 @@ Usage:
                          changed code file outside the claim's declared files/scope.
                          New `trajectory` dimension.
   Exit 0 iff CONFIRMED; exit 1 otherwise — usable as a CI / wave GATE.
+  completion-verify.py --check-command CMD
+                         print the deny-list reason and exit 1 when CMD is denied, else
+                         exit 0 (used by supervisor-goal-audit.sh before it runs a check).
+
+Cited commands are screened by a static deny list (_DENY_RULES) before they run. A denied
+command is neither run nor counted as passed or failed: it is listed under the verdict's
+top-level `denied` key and refutes the claim ("denied (not run)").
 
 Decision coverage (advisory, dryrun): when `.agent/plans/<slug>/spec.md` has a
 `## Decisions` section, each `- D<n>:` not listed in the claim's optional
@@ -62,6 +69,261 @@ _MAX_CMD_LEN = 500
 # past it does not match (refute-by-default's safe direction — a false REFUTED, not
 # a crash or a false CONFIRMED).
 _MAX_CONTAINS_BYTES = 5_000_000
+
+
+# Static deny list for commands a claim (or a plan's audit check) asks us to run. It screens
+# the text only — a shell can spell any of these a thousand ways — so it is a guard against
+# the plain forms, not a sandbox. The command is split into simple commands and only the command
+# position is judged, so a dangerous word inside a quoted argument (`grep -c 'rm -rf' f`) is
+# not a command. Keep it short; add a rule only with a test.
+_SEPARATORS = ";&|()`\n"
+_WRAPPERS = {"sudo", "doas", "env", "xargs", "command", "exec", "nice", "nohup", "timeout",
+             "time", "stdbuf", "ionice"}
+_RESERVED = {"if", "then", "elif", "else", "do", "while", "until", "!", "{", "("}
+_SHELLS = {"sh", "bash", "zsh", "dash", "ksh"}
+# After a wrapper the options and their arguments are not modelled; the rest of the words are
+# scanned forward for the first name the screen knows, and judged from there.
+_TARGETS = {"rm", "git", "gh", "tee", "dd", "find", "eval", "curl", "wget"} | _SHELLS
+_FIND_EXEC = {"-exec", "-execdir", "-ok", "-okdir"}
+_DEV_OK = re.compile(r"/dev/(?:null|stdout|stderr)$|/dev/fd/")
+_GIT_ARG_OPTS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"}
+_ASSIGN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
+
+
+def _subst_in(text):
+    """Return the bodies of the `$( )` and backtick substitutions in `text`."""
+    out, i, n = [], 0, len(text)
+    while i < n:
+        c = text[i]
+        if c == "\\":
+            i += 2
+        elif c == "$" and text.startswith("(", i + 1):
+            depth, j = 1, i + 2
+            while j < n and depth:
+                depth += (text[j] == "(") - (text[j] == ")")
+                j += 1
+            out.append(text[i + 2:j - 1 if depth == 0 else j])
+            i = j
+        elif c == "`":
+            j = text.find("`", i + 1)
+            j = n if j < 0 else j
+            out.append(text[i + 1:j])
+            i = j + 1
+        else:
+            i += 1
+    return out
+
+
+def _split_commands(cmd):
+    """Split `cmd` into ([(prev_op, words, redirect_targets)] simple commands, [substitution
+    bodies to screen again]). Quotes are removed from word values; separators inside quotes do
+    not split; heredoc bodies are not commands. A `$( )`/backtick inside double quotes or an
+    unquoted heredoc body is returned for a second look (the shell runs it)."""
+    cmd = cmd.replace("\\\n", "")
+    out, words, redirs, subs, heredocs = [], [], [], [], []
+    prev, cur, have, quote, qstart, i, n = "", "", False, None, 0, 0, len(cmd)
+    want_redir = False
+
+    def flush():
+        nonlocal cur, have, want_redir
+        if have:
+            (redirs if want_redir else words).append(cur)
+            want_redir = False
+        cur, have = "", False
+
+    def end(op):
+        nonlocal words, redirs, prev, want_redir
+        flush()
+        want_redir = False
+        if words or redirs:
+            out.append((prev, words, redirs))
+        words, redirs, prev = [], [], op
+
+    while i < n:
+        c = cmd[i]
+        if quote:
+            if c == quote:
+                if quote == '"':
+                    subs.extend(_subst_in(cmd[qstart:i]))
+                quote = None
+            elif c == "\\" and quote == '"' and i + 1 < n:
+                i += 1
+                cur += cmd[i]
+            else:
+                cur += c
+        elif c in "'\"":
+            quote, have, qstart = c, True, i + 1
+        elif c == "\\" and i + 1 < n:
+            i += 1
+            cur, have = cur + cmd[i], True
+        elif c == "&" and i + 1 < n and cmd[i + 1] == ">":
+            i += 1  # `&>file`
+            flush()
+            want_redir = True
+        elif c == "&" and cmd[i - 1:i] == ">":
+            pass  # the `&` of `2>&1`: not a separator
+        elif c in _SEPARATORS:
+            if c in "&|" and i + 1 < n and cmd[i + 1] == c:
+                i += 1
+                c += c
+            end(c)
+            if c == "\n" and heredocs:
+                pos = i + 1
+                for delim, quoted, tabs in heredocs:
+                    body = []
+                    while pos < n:
+                        e = cmd.find("\n", pos)
+                        e = n if e < 0 else e
+                        line, pos = cmd[pos:e], e + 1
+                        if (line.lstrip("\t") if tabs else line) == delim:
+                            break
+                        body.append(line)
+                    if not quoted:
+                        subs.extend(_subst_in("\n".join(body)))
+                heredocs.clear()
+                i = pos - 1
+        elif c == "<" and cmd.startswith("<<", i) and not cmd.startswith("<<<", i):
+            j = i + 2
+            tabs = j < n and cmd[j] == "-"
+            j += tabs
+            while j < n and cmd[j] in " \t":
+                j += 1
+            q = cmd[j] if j < n and cmd[j] in "'\"" else None
+            if q:
+                k = cmd.find(q, j + 1)
+                k = n if k < 0 else k
+                delim, j = cmd[j + 1:k], k + 1
+            else:
+                k = j
+                while k < n and cmd[k] not in " \t\n" + _SEPARATORS + "<>":
+                    k += 1
+                delim, j = cmd[j:k], k
+            flush()
+            heredocs.append((delim.replace("\\", ""), q is not None or "\\" in delim, tabs))
+            i = j - 1
+        elif c == ">":
+            if have and cur.isdigit():
+                cur, have = "", False  # the fd of `2>`
+            else:
+                flush()
+            if i + 1 < n and cmd[i + 1] == ">":
+                i += 1
+            want_redir = True
+        elif c in " \t":
+            flush()
+        else:
+            cur, have = cur + c, True
+        i += 1
+    end("")
+    return out, subs
+
+
+def _command_words(words):
+    """Drop leading VAR=value words, shell reserved words and wrappers (sudo, xargs, env,
+    timeout...), returning the real command and its arguments. After a wrapper the rest of the
+    words are scanned for the first name the screen judges (rm, git, a shell...); none found
+    means nothing to judge."""
+    i = 0
+    while i < len(words):
+        base = os.path.basename(words[i])
+        if _ASSIGN.match(words[i]) or words[i] in _RESERVED:
+            i += 1
+        elif base in _WRAPPERS:
+            i += 1
+            while i < len(words) and os.path.basename(words[i]) not in _TARGETS:
+                i += 1
+        else:
+            break
+    return words[i:]
+
+
+def _screen_simple(words, redirs, prev_words):
+    """Return the deny reason for one simple command, or None."""
+    for t in redirs:
+        if t.startswith("/dev/") and not _DEV_OK.match(t):
+            return "write to a device path"
+    words = _command_words(words)
+    if not words:
+        return None
+    name, args = os.path.basename(words[0]), words[1:]
+    if name == "rm":
+        for a in args:
+            if a == "--":
+                break
+            if a == "--recursive" or (a.startswith("-") and not a.startswith("--") and set(a) & set("rR")):
+                return "recursive delete (rm)"
+    elif name == "git":
+        j = 0
+        while j < len(args) and args[j].startswith("-"):
+            j += 2 if args[j] in _GIT_ARG_OPTS else 1
+        sub, rest = (args[j], args[j + 1:]) if j < len(args) else ("", [])
+        if sub == "push":
+            dry = False
+            for a in rest:
+                if a in ("--dry-run", "-n"):
+                    dry = True
+                elif a == "--no-dry-run":
+                    dry = False
+            if not dry:
+                return "git push"
+        if sub == "reset" and "--hard" in rest:
+            return "git reset --hard"
+    elif name == "gh":
+        j = 0
+        while j < len(args) and args[j].startswith("-"):
+            j += 2 if args[j] in ("-R", "--repo") else 1
+        if args[j:j + 2] == ["pr", "merge"]:
+            return "gh pr merge"
+    elif name == "tee":
+        if any(a.startswith("/dev/") and not _DEV_OK.match(a) for a in args):
+            return "write to a device path"
+    elif name == "dd":
+        if any(a.startswith("of=/dev/") and not _DEV_OK.match(a[3:]) for a in args):
+            return "write to a device path"
+    elif name == "eval":
+        return denied_reason(" ".join(args))
+    elif name == "find":
+        for k, a in enumerate(args):
+            if a in _FIND_EXEC:
+                sub = []
+                for b in args[k + 1:]:
+                    if b in (";", "+"):
+                        break
+                    sub.append(b)
+                why = _screen_simple(sub, [], None)
+                if why:
+                    return why
+    elif name in _SHELLS:
+        for k, a in enumerate(args):
+            if a.startswith("-") and not a.startswith("--") and "c" in a:
+                if k + 1 < len(args):
+                    why = denied_reason(args[k + 1])
+                    if why:
+                        return why
+                break
+        if prev_words:
+            pw = _command_words(prev_words)
+            if pw and os.path.basename(pw[0]) in ("curl", "wget"):
+                return "download piped to a shell"
+    return None
+
+
+def denied_reason(cmd):
+    """Return why `cmd` is on the deny list, or None when it may run."""
+    if not isinstance(cmd, str):
+        return None
+    prev_words = None
+    simple, subs = _split_commands(cmd)
+    for op, words, redirs in simple:
+        why = _screen_simple(words, redirs, prev_words if op == "|" else None)
+        if why:
+            return why
+        prev_words = words
+    for body in subs:
+        why = denied_reason(body)
+        if why:
+            return why
+    return None
 
 
 def _parse_timeout(raw):
@@ -401,19 +663,27 @@ def verify(claim, root, require_evidence=False, diff_base=None, claim_path=None)
                 continue
         dims["files"]["passed"] += 1
 
-    for cmd in _section("tests", _MAX_TESTS, "tests"):
-        dims["tests"]["total"] += 1
-        if _run(cmd, root):
-            dims["tests"]["passed"] += 1
+    denied = []
+
+    def _run_cited(dim, cmd, fail_msg):
+        dims[dim]["total"] += 1
+        try:
+            why = denied_reason(cmd)
+        except Exception:
+            why = "deny-list screen failed; command not run"
+        if why:
+            denied.append({"cmd": _label(cmd)[:_MAX_CMD_LEN], "reason": why})
+            refutations.append("%s denied (not run): %s [%s]" % (dim[:-1], _label(cmd), why))
+        elif _run(cmd, root):
+            dims[dim]["passed"] += 1
         else:
-            refutations.append("test did not pass: %s" % _label(cmd))
+            refutations.append("%s: %s" % (fail_msg, _label(cmd)))
+
+    for cmd in _section("tests", _MAX_TESTS, "tests"):
+        _run_cited("tests", cmd, "test did not pass")
 
     for cmd in _section("assertions", _MAX_ASSERTIONS, "assertions"):
-        dims["assertions"]["total"] += 1
-        if _run(cmd, root):
-            dims["assertions"]["passed"] += 1
-        else:
-            refutations.append("assertion did not hold: %s" % _label(cmd))
+        _run_cited("assertions", cmd, "assertion did not hold")
 
     # --- opt-in: --require-evidence ---
     # code changed (uncommitted, vs HEAD) but the claim cites zero runnable
@@ -479,6 +749,8 @@ def verify(claim, root, require_evidence=False, diff_base=None, claim_path=None)
         "refutations": refutations[:50],
         "schema_version": SCHEMA_VERSION,
     }
+    if denied:
+        verdict["denied"] = denied[:50]
     advisories = _decision_advisories(claim, root, claim_path)
     if advisories:
         verdict["advisories"] = advisories[:50]
@@ -490,7 +762,9 @@ def main(argv=None):
         prog="completion-verify.py",
         description="Independent completion-claim verifier (P3-5).",
     )
-    ap.add_argument("claim", help="path to a JSON/YAML completion claim")
+    ap.add_argument("claim", nargs="?", help="path to a JSON/YAML completion claim")
+    ap.add_argument("--check-command", default=None, metavar="CMD",
+                    help="exit 1 (printing the reason) when CMD is on the deny list, else 0")
     ap.add_argument("--root", default=None,
                     help="project root the claim resolves against (default: CWD)")
     ap.add_argument("--require-evidence", action="store_true",
@@ -498,6 +772,16 @@ def main(argv=None):
     ap.add_argument("--diff-base", default=None, metavar="REF",
                     help="opt-in: audit `git diff REF` added lines for skip markers + scope")
     args = ap.parse_args(argv)
+    if args.check_command is not None:
+        try:
+            why = denied_reason(args.check_command)
+        except Exception:
+            why = "deny-list screen failed"
+        if why:
+            print("denied: %s" % why)
+        return 1 if why else 0
+    if not args.claim:
+        ap.error("a claim file is required")
     root = args.root or os.getcwd()
 
     try:

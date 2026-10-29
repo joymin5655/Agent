@@ -175,14 +175,17 @@ RC=$( ( cd "$FIX" && env AGENT_VERIFY_BLOCKING=dryrun AGENT_COMPLETION_VERIFY_BI
 grep -q '"reproduce": true' "$SINK_FILE"; check "reproduce-flag-marked" $?
 
 echo
-echo "=== (h) claim cites nothing but PARSES -> needs_semantic, exit 0 (never a hard block) ==="
+echo "=== (h) claim cites nothing but PARSES -> needs_semantic, exit 4 in block mode (unverified), exit 0 in dryrun ==="
 reset_sink
 write_empty_but_valid_claim
 OUT="$( ( cd "$FIX" && env AGENT_VERIFY_BLOCKING=block AGENT_COMPLETION_VERIFY_BIN="$REAL_VERIFY" \
     AGENT_REPRODUCE_TEST=1 bash "$GATE" demo 1 "$CLAIM_FILE" ) 2>&1 )"
 RC=$?
-[[ "$RC" -eq 0 ]]; check "needs-semantic-exit-0-even-in-block-mode" $?
+[[ "$RC" -eq 4 ]]; check "needs-semantic-exit-4-unverified-in-block-mode" $?
 [[ "$OUT" == *"verify-completion"* ]]; check "needs-semantic-guidance-printed" $?
+RC=$( ( cd "$FIX" && env AGENT_VERIFY_BLOCKING=dryrun AGENT_COMPLETION_VERIFY_BIN="$REAL_VERIFY" \
+    AGENT_REPRODUCE_TEST=1 bash "$GATE" demo 1 "$CLAIM_FILE" >/dev/null 2>&1 ); echo $? )
+[[ "$RC" -eq 0 ]]; check "needs-semantic-dryrun-default-unchanged-exit-0" $?
 
 echo
 echo "=== (i) explicit claim path is missing -> distinct 'claim file missing', block mode exit 1 ==="

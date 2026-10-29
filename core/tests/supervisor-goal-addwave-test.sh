@@ -67,6 +67,71 @@ check "aborted-goal-total-unchanged" "2" "$(total dead)"
 sg add-wave >/dev/null 2>&1
 check "no-slug-exits-2" "2" "$?"
 
+echo "=== advance-wave refuses a goal that is not active, and a wave whose audit failed ==="
+cur() { sg status "$1" | jq -r '.current_wave'; }
+mkdir -p .agent/logs
+for st in paused aborted; do
+  sg init adv-$st 3 >/dev/null
+  if [[ "$st" == "paused" ]]; then sg pause adv-$st >/dev/null; else sg abort adv-$st "t" >/dev/null; fi
+  sg advance-wave adv-$st 1 >/dev/null 2>&1
+  check "advance-$st-exits-3" "3" "$?"
+  check "advance-$st-row-untouched" "1" "$(cur adv-$st)"
+done
+sg init adv-budget 3 >/dev/null
+sqlite3 .agent/locks/goal-state.db "UPDATE supervisor_goals SET status='budget_limited' WHERE plan_slug='adv-budget';"
+sg advance-wave adv-budget 1 >/dev/null 2>&1
+check "advance-budget-limited-exits-3" "3" "$?"
+# In the real flow a failed audit aborts the goal; "a re-run pass clears an earlier failure" below only
+# applies to a caller that writes the audit records directly.
+sg init adv-fail 3 >/dev/null
+printf '%s\n' '{"plan_slug":"adv-fail","wave":1,"all_pass":false}' >> .agent/logs/supervisor-goal-audit.jsonl
+sg advance-wave adv-fail 1 >/dev/null 2>&1
+check "advance-after-failed-audit-exits-3" "3" "$?"
+check "advance-after-failed-audit-row-untouched" "1" "$(cur adv-fail)"
+printf '%s\n' '{"plan_slug":"adv-fail","wave":1,"all_pass":true}' >> .agent/logs/supervisor-goal-audit.jsonl
+sg advance-wave adv-fail 1 >/dev/null 2>&1
+check "advance-after-rerun-pass-ok" "0" "$?"
+check "advance-after-rerun-pass-moved" "2" "$(cur adv-fail)"
+sg init adv-other 3 >/dev/null
+printf '%s\n' '{"plan_slug":"adv-other","wave":2,"all_pass":false}' >> .agent/logs/supervisor-goal-audit.jsonl
+sg advance-wave adv-other 1 >/dev/null 2>&1
+check "advance-failed-audit-of-other-wave-ignored" "0" "$?"
+sg init adv-none 3 >/dev/null
+WARN=$(sg advance-wave adv-none 1 2>&1 >/dev/null)
+check "advance-without-audit-record-ok" "2" "$(cur adv-none)"
+check "advance-without-audit-record-warns" "1" "$(grep -c 'no audit record' <<<"$WARN")"
+sg init adv-torn 3 >/dev/null
+printf '%s\n' '{"plan_slug":"adv-torn","wave":1,"all_pass":false}' 'not json {' >> .agent/logs/supervisor-goal-audit.jsonl
+sg advance-wave adv-torn 1 >/dev/null 2>&1
+check "advance-torn-line-does-not-hide-failure" "3" "$?"
+check "advance-torn-line-row-untouched" "1" "$(cur adv-torn)"
+sg init adv-badwave 3 >/dev/null
+sg advance-wave adv-badwave x >/dev/null 2>&1
+check "advance-non-numeric-wave-refused" "3" "$?"
+FX2="$TMP_ROOT/fx2"  # fresh state dir: no audit log exists, so the jq check cannot catch it
+mkdir -p "$FX2/core/infra/sql"
+(cd "$FX2" && git init -q)
+cp "$REPO_ROOT/core/infra/supervisor-goal.sh" "$FX2/core/infra/"
+cp "$REPO_ROOT/core/infra/sql/001_supervisor_goals.sql" "$FX2/core/infra/sql/"
+(cd "$FX2" && bash core/infra/supervisor-goal.sh init nolog 3 >/dev/null \
+  && bash core/infra/supervisor-goal.sh advance-wave nolog x >/dev/null 2>&1)
+check "advance-non-numeric-wave-refused-without-audit-log" "3" "$?"
+check "advance-non-numeric-wave-no-audit-log-row-untouched" "[]" \
+  "$(cd "$FX2" && bash core/infra/supervisor-goal.sh status nolog | jq -r '.waves_completed')"
+sg init adv-samewave 3 >/dev/null
+printf '%s\n' '{"plan_slug":"someone-else","wave":1,"all_pass":false}' >> .agent/logs/supervisor-goal-audit.jsonl
+sg advance-wave adv-samewave 1 >/dev/null 2>&1
+check "advance-other-plan-same-wave-ignored" "0" "$?"
+sg init adv-null 3 >/dev/null
+printf '%s\n' '{"plan_slug":"adv-null","wave":1,"all_pass":null}' >> .agent/logs/supervisor-goal-audit.jsonl
+WARN=$(sg advance-wave adv-null 1 2>&1 >/dev/null)
+check "advance-null-record-moves" "2" "$(cur adv-null)"
+check "advance-null-record-warns-unverified" "1" "$(grep -c 'unverified (all_pass null)' <<<"$WARN")"
+sg init adv-done 1 >/dev/null
+sg advance-wave adv-done 1 >/dev/null 2>&1
+sg advance-wave adv-done 1 >/dev/null 2>&1
+check "advance-complete-goal-exits-3" "3" "$?"
+
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]

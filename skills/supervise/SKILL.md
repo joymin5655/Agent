@@ -225,6 +225,7 @@ d. **Audit**:
    - PASS: continue.
    - FAIL: STOP. Report to user. Do not auto-fix and retry — the user
      decides next action.
+   - exit 4 (UNVERIFIED: zero runnable checks, a check denied unrun, or no section for the wave): STOP like a FAIL.
 
    Then, the **completion-claim gate** (`docs/gate-registry.md` `completion-gate`
    row — the first blocking consumer of `completion-verify.py`'s verdict,
@@ -240,10 +241,11 @@ d. **Audit**:
      retry. The user decides next action.
    - `--converge` + REFUTED: follow `${CLAUDE_PLUGIN_ROOT}/skills/supervise/converge.md`
      instead of STOP.
+   - block mode + exit 4 (UNVERIFIED: no checkable evidence): STOP; run `/verify-completion`.
    - exit 2 (the gate's own liveness canary failed — a dead completion-verify.py,
      not a refuted claim) is also a STOP: the gate cannot be trusted, report it
      as a harness defect, not a wave failure.
-e. **Advance** (if `--goal-mode`):
+e. **Advance** (if `--goal-mode`; refuses exit 3 if not `active` or the wave's audit failed):
    ```bash
    bash "${CLAUDE_PLUGIN_ROOT}/core/infra/supervisor-goal.sh" advance-wave <slug> <i>
    ```

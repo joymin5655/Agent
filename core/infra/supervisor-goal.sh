@@ -168,6 +168,10 @@ cmd_advance_wave() {
         echo "usage: supervisor-goal.sh advance-wave <plan-slug> <completed-wave-num>" >&2
         exit 2
     fi
+    if ! [[ "$wave_num" =~ ^[0-9]+$ ]]; then
+        echo "ERROR: wave number must be a non-negative integer: $wave_num" >&2
+        exit 3
+    fi
     init_db
     local ts; ts="$(now_ms)"
 
@@ -176,6 +180,40 @@ cmd_advance_wave() {
     if [[ -z "$current_completed" ]]; then
         echo "ERROR: goal not found: $slug" >&2
         exit 3
+    fi
+
+    # Only a live goal advances (cmd_add_wave guards the same way): a paused, budget-limited,
+    # aborted or complete goal must not move its wave counters.
+    local status
+    status=$(sqlite3 "$DB_FILE" "SELECT status FROM supervisor_goals WHERE plan_slug = '$(sql_escape "$slug")';")
+    if [[ "$status" != "active" ]]; then
+        echo "ERROR: goal $slug is $status; cannot advance a wave" >&2
+        exit 3
+    fi
+
+    # The wave's own audit decides: the latest audit record for this slug+wave (the audit step
+    # runs before advance in /supervise, supervisor-goal-audit.sh appends to AUDIT_LOG) must not be
+    # a failure. No record is only a warning — direct callers advance without an audit run — and
+    # a re-run audit that passes clears an earlier failure (the latest record wins).
+    # The log is read line by line so one torn line cannot hide a failure: broken lines are skipped
+    # (fromjson?). If jq itself fails (e.g. a non-numeric wave) the verdict is unknown, so refuse.
+    local last_audit="" audit_rows
+    if [[ -s "$AUDIT_LOG" ]]; then
+        if ! audit_rows=$(jq -cR --arg s "$slug" --argjson w "$wave_num" \
+            'fromjson? | select(type == "object" and .plan_slug == $s and .wave == $w and has("all_pass")) | .all_pass' \
+            "$AUDIT_LOG" 2>/dev/null); then
+            echo "ERROR: goal $slug wave $wave_num: cannot read the audit log; refusing to advance" >&2
+            exit 3
+        fi
+        last_audit=$(printf '%s\n' "$audit_rows" | tail -n 1)
+    fi
+    if [[ "$last_audit" == "false" ]]; then
+        echo "ERROR: goal $slug wave $wave_num: latest audit record failed; re-run the audit before advancing" >&2
+        exit 3
+    elif [[ "$last_audit" == "null" ]]; then
+        echo "WARN: goal $slug wave $wave_num: latest audit record is unverified (all_pass null); advancing unverified" >&2
+    elif [[ "$last_audit" != "true" ]]; then
+        echo "WARN: goal $slug wave $wave_num: no audit record; advancing unverified" >&2
     fi
 
     local new_completed

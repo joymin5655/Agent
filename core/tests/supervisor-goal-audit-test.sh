@@ -161,6 +161,22 @@ echo "=== a dropped command is reported on stderr ==="
 printf '## Wave 1: t\n\nCheck: test -f $(touch PWNED)\n' > "$AGENT_PLANS_DIR/p.md"
 check "drop-is-logged" "1" "$(bash "$AUDIT" p 1 2>&1 >/dev/null | grep -c 'dropped (substitution)')"
 
+echo "=== zero extracted checks is unverified (exit 4), not a pass ==="
+printf '## Wave 1: t\n\nnothing runnable here\n' > "$AGENT_PLANS_DIR/p.md"
+OUT=$(bash "$AUDIT" p 1 2>/dev/null); RC=$?
+check "zero-checks-exit-4" "4" "$RC"
+check "zero-checks-all-pass-null" "null" "$(jq -c '.all_pass' <<<"$OUT")"
+
+echo "=== a denied check is recorded as denied: not run, neither pass nor fail ==="
+# the pytest extractor takes everything up to a quote/backtick, so a plan line can smuggle a second command
+: > f.txt
+printf '## Wave 1: t\n\nCheck: pytest -q nothing ; rm -rf f.txt\n' > "$AGENT_PLANS_DIR/p.md"
+OUT=$(bash "$AUDIT" p 1 2>/dev/null); RC=$?
+check "denied-check-recorded" "true" "$(jq -r '.evidence[0].denied // false' <<<"$OUT")"
+check "denied-check-exit-4" "4" "$RC"
+check "denied-check-all-pass-null" "null" "$(jq -c '.all_pass' <<<"$OUT")"
+check "denied-command-did-not-run" "yes" "$([[ -e f.txt ]] && echo yes || echo no)"
+
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]

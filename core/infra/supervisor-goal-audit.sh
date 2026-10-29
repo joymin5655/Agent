@@ -215,7 +215,7 @@ fi
 
 # ---------- audit mode: run commands + collect evidence ----------
 if [[ "${#CHECKS[@]}" -eq 0 ]]; then
-    echo "WARN: Wave $WAVE_NUM has 0 verification commands. Strengthen plan §verification." >&2
+    echo "WARN: Wave $WAVE_NUM has 0 verification commands — unverified (exit 4), not a pass. Strengthen plan §verification." >&2
     RESULT_JSON=$(jq -n \
         --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
         --arg slug "$PLAN_SLUG" \
@@ -227,15 +227,16 @@ if [[ "${#CHECKS[@]}" -eq 0 ]]; then
         --argjson stop "$D_STOP" \
         --argjson total "$TOTAL" \
         --arg verdict "$VERDICT" \
-        '{ts:$ts, plan_slug:$slug, wave:$wave, requirements:[], evidence:[], all_pass:true, dimension_scores:[$target,$ac,$validation,$boundaries,$stop], total:$total, verdict:$verdict, note:"no check commands found", audit_protocol:"strong_goal_v1"}')
+        '{ts:$ts, plan_slug:$slug, wave:$wave, requirements:[], evidence:[], all_pass:null, unverified:true, dimension_scores:[$target,$ac,$validation,$boundaries,$stop], total:$total, verdict:$verdict, note:"no check commands found", audit_protocol:"strong_goal_v1"}')
     echo "$RESULT_JSON" >> "$AUDIT_LOG"
     echo "$RESULT_JSON"
     [[ "$VERDICT" == "weak" ]] && echo "[audit advisory] Wave $WAVE_NUM weak (total=$TOTAL/25)." >&2
-    exit 0
+    exit 4
 fi
 
 EVIDENCE_JSON='[]'
 ALL_PASS=true
+ANY_DENIED=false
 
 for cmd in "${CHECKS[@]}"; do
     echo "[audit] running: $cmd" >&2
@@ -249,6 +250,19 @@ for cmd in "${CHECKS[@]}"; do
     case "$cmd" in "bash core/infra/completion-gate.sh "*)
         run="AGENT_VERIFY_BLOCKING=dryrun bash $(printf '%q' "$HARNESS_ROOT/core/infra/completion-gate.sh") ${cmd#"bash core/infra/completion-gate.sh "}" ;;
     esac
+    # Static deny list (completion-verify.py _DENY_RULES) — a denied check is not run and is
+    # recorded as denied: neither pass nor fail.
+    if DENY_WHY=$(python3 "$HARNESS_ROOT/core/infra/completion-verify.py" --check-command "$cmd" 2>/dev/null); then
+        :
+    else
+        echo "[audit] denied (not run): $cmd" >&2
+        ANY_DENIED=true
+        rm -f "$LOG_FILE"
+        EVIDENCE_JSON=$(echo "$EVIDENCE_JSON" | jq \
+            --arg cmd "$cmd" --arg why "${DENY_WHY#denied: }" \
+            '. + [{cmd:$cmd, pass:null, denied:true, exit_code:null, log_tail:$why}]')
+        continue
+    fi
     if eval "$run" > "$LOG_FILE" 2>&1 < /dev/null; then
         PASS=true
         EXIT_CODE=0
@@ -267,12 +281,16 @@ for cmd in "${CHECKS[@]}"; do
         '. + [{cmd:$cmd, pass:$pass, exit_code:$code, log_tail:$tail}]')
 done
 
+# all_pass: false when any check failed; null (unverified) when none failed but one was denied.
+ALL_PASS_JSON="$ALL_PASS"
+if [[ "$ALL_PASS" == "true" && "$ANY_DENIED" == "true" ]]; then ALL_PASS_JSON=null; fi
+
 RESULT_JSON=$(jq -n \
     --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --arg slug "$PLAN_SLUG" \
     --argjson wave "$WAVE_NUM" \
     --argjson evidence "$EVIDENCE_JSON" \
-    --argjson all_pass "$ALL_PASS" \
+    --argjson all_pass "$ALL_PASS_JSON" \
     --argjson target "$D_TARGET" \
     --argjson ac "$D_AC" \
     --argjson validation "$D_VALIDATION" \
@@ -293,6 +311,12 @@ if [[ "$ALL_PASS" == "false" ]]; then
         bash "$GOAL_HELPER" abort "$PLAN_SLUG" "audit-fail wave-$WAVE_NUM" >/dev/null 2>&1 || true
     fi
     exit 1
+fi
+
+# A denied check was never run, so the wave is unverified rather than passed.
+if [[ "$ANY_DENIED" == "true" ]]; then
+    echo "[audit] UNVERIFIED — a check was denied by the static deny list (exit 4)" >&2
+    exit 4
 fi
 
 exit 0
