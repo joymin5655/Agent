@@ -167,6 +167,89 @@ printf '%s' "$(mutate '.verify = ["test -f $(touch PWNED)"]')" > "$fx/.agent/pla
 (cd "$fx" && bash core/infra/supervisor-goal-audit.sh sv 2 >/dev/null 2>&1)
 check "audit-substitution-not-run" no "$([[ -e "$fx/PWNED" ]] && echo yes || echo no)"
 
+echo "=== checker: one verify entry is one command (no newline / NUL) ==="
+check "multiline-verify" 2 "$(spec_rc "$(mutate '.verify = ["printf x\nrm -rf marker"]')")"
+check "multiline-verify-named" 1 "$(grep -c '^goal-spec: verify\[0\]: one command per entry' "$TMP/err")"
+check "cr-verify" 2 "$(spec_rc "$(mutate '.verify = ["test -f a\rtest -f b"]')")"
+check "nul-verify" 2 "$(spec_rc "$(mutate '.verify = ["test -f a\u0000b"]')")"
+
+# spec_plan <slug> <waves> <verify-json> — fixture with a 2-wave plan and a started --spec goal
+# whose goal.json sits in the plan dir. Sets $fx.
+spec_plan() {
+  fx="$(build_fixture)"
+  mkdir -p "$fx/.agent/plans/$1"
+  printf '## Wave 1: a\n\n- `test -f one.txt`\n\n## Wave 2: b\n\n- `test -f one.txt`\n' > "$fx/.agent/plans/$1/plan.md"
+  touch "$fx/one.txt"
+  printf '%s' "$(mutate ".verify = $3")" > "$fx/.agent/plans/$1/goal.json"
+  (cd "$fx" && bash core/infra/supervisor-goal.sh init "$1" "$2" --spec ".agent/plans/$1/goal.json" >/dev/null 2>&1)
+}
+# last_audit <slug> -> audit JSON of the last wave (stderr dropped)
+last_audit() { (cd "$fx" && bash core/infra/supervisor-goal-audit.sh "$1" 2 2>/dev/null); }
+
+echo "=== audit: a hand-edited multi-line verify entry is not run and fails the audit ==="
+spec_plan sm 2 '["test -f one.txt"]'
+mkdir -p "$fx/marker"
+# the stored spec, not the edited file, is what runs; the edit also trips the changed-file check
+printf '%s' "$(mutate '.verify = ["printf x\nrm -rf marker"]')" > "$fx/.agent/plans/sm/goal.json"
+w="$(last_audit sm)"
+check "multiline-edit-audit-fails" false "$(printf '%s' "$w" | jq -r '.all_pass')"
+check "multiline-edit-marker-kept" yes "$([[ -d "$fx/marker" ]] && echo yes || echo no)"
+check "multiline-edit-names-change" 1 "$(printf '%s' "$w" | jq -r '[.evidence[] | select(.cmd == "goal-spec" and (.log_tail | test("changed since init")))] | length')"
+
+echo "=== audit: one verify element runs as one command, quotes and all ==="
+spec_plan sq 2 '["test \"a b\" = \"a b\""]'
+w="$(last_audit sq)"
+check "element-runs-whole" '["test -f one.txt","test \"a b\" = \"a b\""]' "$(printf '%s' "$w" | jq -c '.requirements')"
+check "element-runs-whole-passes" true "$(printf '%s' "$w" | jq -r '.all_pass')"
+
+echo "=== audit: a spec run fails when its verify is gone; a legacy run only warns ==="
+# stored spec with a broken verify can only come from a hand-edited state db: poke it directly
+for bad in '{"verify": []}' '{"verify": "bash x.sh"}' 'not json' '{"verify": ["test -f $(echo x)"]}'; do
+  spec_plan sb 2 '["test -f one.txt"]'
+  sqlite3 "$fx/.agent/locks/goal-state.db" "UPDATE supervisor_goal_specs SET spec_json = '$bad' WHERE plan_slug = 'sb';"
+  w="$(last_audit sb)"
+  check "spec-run-bad-verify-fails: $bad" false "$(printf '%s' "$w" | jq -r '.all_pass')"
+done
+# a run started without --spec keeps the old leniency: a bad goal.json only warns
+for bad in '{"verify": []}' '{"verify": "bash x.sh"}' 'not json'; do
+  fx="$(build_fixture)"; mkdir -p "$fx/.agent/plans/sl"; touch "$fx/one.txt"
+  printf '## Wave 1: a\n\n- `test -f one.txt`\n\n## Wave 2: b\n\n- `test -f one.txt`\n' > "$fx/.agent/plans/sl/plan.md"
+  printf '%s' "$bad" > "$fx/.agent/plans/sl/goal.json"
+  (cd "$fx" && bash core/infra/supervisor-goal.sh init sl 2 >/dev/null 2>&1)
+  w="$(last_audit sl)"
+  check "legacy-run-bad-goal-json-warns: $bad" true "$(printf '%s' "$w" | jq -r '.all_pass')"
+done
+
+echo "=== audit: --spec from another location is what the last wave runs ==="
+fx="$(build_fixture)"; mkdir -p "$fx/.agent/plans/so" "$fx/elsewhere"; touch "$fx/one.txt"
+printf '## Wave 1: a\n\n- `test -f one.txt`\n\n## Wave 2: b\n\n- `test -f one.txt`\n' > "$fx/.agent/plans/so/plan.md"
+printf '%s' "$(mutate '.verify = ["test -f two.txt"]')" > "$fx/elsewhere/spec.json"
+(cd "$fx" && bash core/infra/supervisor-goal.sh init so 2 --spec elsewhere/spec.json >/dev/null 2>&1)
+w="$(last_audit so)"
+check "other-location-spec-verify-runs" '["test -f one.txt","test -f two.txt"]' "$(printf '%s' "$w" | jq -c '.requirements')"
+check "other-location-spec-copied-to-plan-dir" yes "$([[ -f "$fx/.agent/plans/so/goal.json" ]] && echo yes || echo no)"
+touch "$fx/two.txt"
+check "other-location-spec-passes" true "$(last_audit so | jq -r '.all_pass')"
+
+echo "=== audit: editing or deleting goal.json after init fails the last wave ==="
+spec_plan se 2 '["test -f one.txt"]'
+check "unedited-goal-json-passes" true "$(last_audit se | jq -r '.all_pass')"
+printf '%s' "$(mutate '.verify = ["true"]')" > "$fx/.agent/plans/se/goal.json"
+w="$(last_audit se)"
+check "edited-goal-json-fails" false "$(printf '%s' "$w" | jq -r '.all_pass')"
+check "edited-goal-json-still-runs-stored-verify" '["test -f one.txt","test -f one.txt"]' "$(printf '%s' "$w" | jq -c '.requirements | map(select(. != "goal-spec"))')"
+rm -f "$fx/.agent/plans/se/goal.json"
+w="$(last_audit se)"
+check "deleted-goal-json-fails" false "$(printf '%s' "$w" | jq -r '.all_pass')"
+check "deleted-goal-json-says-missing" 1 "$(printf '%s' "$w" | jq -r '[.evidence[] | select(.log_tail | test("missing"))] | length')"
+
+echo "=== init --spec: a different goal.json already in the plan dir is refused ==="
+fx="$(build_fixture)"; mkdir -p "$fx/.agent/plans/sd"
+printf '%s' "$(mutate '.verify = ["true"]')" > "$fx/.agent/plans/sd/goal.json"
+printf '%s' "$GOOD" > "$fx/spec.json"
+(cd "$fx" && bash core/infra/supervisor-goal.sh init sd 2 --spec spec.json >/dev/null 2>&1)
+check "init-conflicting-plan-goal-json-exit-2" 2 "$?"
+
 echo
 echo "goal-spec-test: $PASS passed, $FAIL failed"
 [[ "$FAIL" -eq 0 ]]

@@ -67,6 +67,13 @@ CREATE TABLE IF NOT EXISTS supervisor_agents (
     stuck_flagged_ms INTEGER,
     PRIMARY KEY (plan_slug, agent_id)
 );
+-- Goal spec fixed at `init --spec`: the last-wave audit runs these verify commands, not the
+-- editable plan-dir goal.json (which must still match spec_sha256).
+CREATE TABLE IF NOT EXISTS supervisor_goal_specs (
+    plan_slug TEXT PRIMARY KEY,
+    spec_sha256 TEXT NOT NULL,
+    spec_json TEXT NOT NULL
+);
 SQL
 }
 
@@ -108,6 +115,22 @@ cmd_init() {
         echo "[goal] warning: no --spec given; this goal has no measurable end state or verify command (see skills/supervise/goal-spec.md)" >&2
     fi
 
+    local spec_sha="" plan_spec=""
+    if [[ -n "$spec" ]]; then
+        spec_sha="$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$spec")"
+        # The audit compares <plan dir>/goal.json with the stored spec: put a copy there when the
+        # plan dir exists and has none; a different goal.json already there is a conflict.
+        if [[ -n "${AGENT_PLANS_DIR:-}" ]]; then plan_spec="$AGENT_PLANS_DIR/$slug/goal.json"; else plan_spec="$REPO_ROOT/.agent/plans/$slug/goal.json"; fi
+        if [[ -f "$plan_spec" ]]; then
+            if [[ "$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$plan_spec")" != "$spec_sha" ]]; then
+                echo "ERROR: $plan_spec differs from --spec $spec — goal not started" >&2
+                exit 2
+            fi
+        elif [[ -d "$(dirname "$plan_spec")" ]]; then
+            cp "$spec" "$plan_spec"
+        fi
+    fi
+
     init_db
     local goal_id
     goal_id="goal_$(uuidgen 2>/dev/null | tr 'A-Z' 'a-z' | tr -d '-' | head -c 16 || date +%s)"
@@ -135,6 +158,12 @@ INSERT INTO supervisor_goals (
     $ts
 );
 SQL
+
+    sqlite3 "$DB_FILE" "DELETE FROM supervisor_goal_specs WHERE plan_slug = '$(sql_escape "$slug")';"
+    if [[ -n "$spec" ]]; then
+        sqlite3 "$DB_FILE" "INSERT INTO supervisor_goal_specs (plan_slug, spec_sha256, spec_json)
+            VALUES ('$(sql_escape "$slug")', '$spec_sha', '$(sql_escape "$(cat "$spec")")');"
+    fi
 
     sqlite3 "$DB_FILE" "SELECT json_object(
         'goal_id', goal_id,
@@ -377,7 +406,8 @@ cmd_clear() {
     [[ -z "$slug" ]] && { echo "usage: ... clear <plan-slug>" >&2; exit 2; }
     init_db
     sqlite3 "$DB_FILE" "DELETE FROM supervisor_goals WHERE plan_slug = '$(sql_escape "$slug")';
-        DELETE FROM supervisor_agents WHERE plan_slug = '$(sql_escape "$slug")';"
+        DELETE FROM supervisor_agents WHERE plan_slug = '$(sql_escape "$slug")';
+        DELETE FROM supervisor_goal_specs WHERE plan_slug = '$(sql_escape "$slug")';"
     echo "{\"cleared\":\"$slug\"}"
 }
 

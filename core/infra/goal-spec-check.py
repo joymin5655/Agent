@@ -10,7 +10,8 @@ and/or `tokens` are positive integers.
 
 This is a shape check, not a judgement: a well-formed spec can still describe a poor goal.
 It rejects empty or mistyped fields, an outcome that only names an activity, a threshold
-with nothing measurable in it, and a verify command on the completion-verify.py deny list.
+with nothing measurable in it, a verify entry holding a newline or NUL (one entry is one
+command, run as written), and a verify command on the completion-verify.py deny list.
 """
 import json
 import os
@@ -79,6 +80,9 @@ def check(spec):
         for i, cmd in enumerate(verify):
             if not _nonempty_str(cmd):
                 errs.append("verify[%d]: must be a non-empty command string" % i)
+                continue
+            if "\n" in cmd or "\r" in cmd or "\x00" in cmd:
+                errs.append("verify[%d]: one command per entry — no newline or NUL inside" % i)
                 continue
             why = _denied(cmd)
             if why:

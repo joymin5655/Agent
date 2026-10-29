@@ -16,8 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   field, an outcome that only names an activity, a threshold with nothing measurable, or a
   `verify` command on the `completion-verify.py` deny list exits 2 and names the field.
   `supervisor-goal.sh init ... --spec <goal.json>` runs it and refuses to start on failure (exit 2);
-  `init` without `--spec` still works and only warns. The audit of the goal's last wave
-  (`supervisor-goal-audit.sh`) also runs the spec's `verify` commands. The check is a shape check
+  `init` without `--spec` still works and only warns. `init --spec` stores the spec (and its
+  sha256) in the goal state; the audit of the goal's last wave (`supervisor-goal-audit.sh`) runs
+  the stored `verify` commands, one entry = one command as written, and fails when `goal.json`
+  in the plan dir was changed or deleted or a stored check is missing or malformed. The check is a shape check
   and cannot judge whether a goal is a good one; the criteria live in
   `skills/supervise/goal-spec.md`. Idea adapted from openai/skills `define-goal` (unlicensed; no
   text copied). Test: `core/tests/goal-spec-test.sh`.

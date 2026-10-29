@@ -33,8 +33,12 @@ Exit 2 from either one means the goal is not started; the stderr line names the 
   none / all / every / no / exit.
 - Each `verify` command is run through the same deny list the completion gate uses; a refused
   command is never run.
-- The audit of the goal's last wave runs the `verify` commands next to the checks it reads from
-  the plan, so the end state is checked by the same record that gates `advance-wave`.
+- One `verify` entry is one command, run as written; an entry with a newline or NUL is refused.
+- `init --spec` stores the spec in the goal state. The audit of the goal's last wave runs the
+  stored `verify` commands next to the checks it reads from the plan, so the end state is checked
+  by the same record that gates `advance-wave`. If `goal.json` in the plan dir was changed or
+  deleted since `init`, or a stored check is missing or malformed, that audit fails. A goal
+  started without `--spec` only warns.
 
 ## Limits
 
