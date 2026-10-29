@@ -35,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and an unreadable log or non-numeric wave refuses (exit 3) instead of advancing.
 
 ### Changed
+- **`/council-review` synthesis filters lead-side before bucketing:** trivia-only lanes read as "largely fine"; unreachable null/empty/huge claims, taste-only and convention-blind findings are Dismissed with a reason; a lone security/correctness claim is verified (else Consider), never dropped silently.
+- **`plan-checker` gains check 8, design red flags:** eight judgment flags recorded as `design:` refutations; only flags that break a spec item count as real gaps.
 - **The Gemini lane gets 15 minutes instead of 5** (`core/infra/backends.json` `gemini.timeout_s`
   300 → 900; `adapters/antigravity/antigravity-worker.sh` default `--print-timeout` 5m → 14m).
   Both caps were 300s, and the long thinking phase of the pinned Gemini models outran them: the
