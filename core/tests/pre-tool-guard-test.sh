@@ -506,6 +506,33 @@ run_case "grep-unset-mention-allow"     'grep unset AGENT_BACKENDS_FILE f'      
 run_case "workers-dir-unset-allow"      'unset AGENT_WORKERS_DIR AGENT_LOGS_DIR'                     allow
 run_case "backends-file-longer-name-allow" 'AGENT_BACKENDS_FILE_X=1 echo ok'                         allow
 run_case "backends-file-prefixed-name-allow" 'MY_AGENT_BACKENDS_FILE=1 echo ok'                      allow
+# E2: shapes that slipped past the first 4a2 (C round-3 review)
+run_case "policy-cmd-command-dashdash-unset-deny" 'command -- unset AGENT_WORKER_POLICY_CMD'          deny
+run_case "policy-cmd-builtin-dashdash-unset-deny" 'builtin -- unset AGENT_WORKER_POLICY_CMD'          deny
+run_case "policy-cmd-command-p-unset-deny" 'command -p unset AGENT_WORKER_POLICY_CMD'                deny
+run_case "policy-cmd-assign-prefix-unset-deny" 'X=1 unset AGENT_WORKER_POLICY_CMD'                   deny
+run_case "policy-cmd-case-arm-unset-deny" 'case x in x) unset AGENT_WORKER_POLICY_CMD;; esac'        deny
+run_case "env-i-call-worker-glob-deny"  'env -i bash core/infra/call-w*.sh r'                        deny
+run_case "exec-c-call-worker-deny"      'exec -c bash core/infra/call-worker.sh r'                   deny
+run_case "policy-cmd-env-S-quoted-deny" "env -S'-u AGENT_WORKER_POLICY_CMD' bash x.sh"               deny
+run_case "policy-cmd-env-S-dquoted-deny" 'env -S "-u AGENT_WORKER_POLICY_CMD" bash x.sh'             deny
+run_case "policy-cmd-env-unse-eq-deny"  'env --unse=AGENT_WORKER_POLICY_CMD bash x.sh'               deny
+run_case "policy-cmd-env-uns-sp-deny"   'env --uns AGENT_WORKER_POLICY_CMD bash x.sh'                deny
+run_case "env-ignore-env-abbrev-call-worker-deny" 'env --ignore-env bash core/infra/call-worker.sh r' deny
+run_case "command-v-unset-allow"        'command -v unset'                                           allow
+run_case "echo-unset-mention-allow"     'echo unset AGENT_WORKER_POLICY_CMD'                         allow
+run_case "policy-cmd-grep-plain-allow"  'grep AGENT_WORKER_POLICY_CMD f'                             allow
+run_case "unset-other-var-allow"        'unset OTHER_VAR'                                            allow
+run_case "env-i-ls-allow"               'env -i ls'                                                  allow
+run_case "exec-bash-allow"              'exec bash'                                                  allow
+run_case "exec-c-other-allow"           'exec -c bash x.sh'                                          allow
+run_case "env-uns-other-allow"          'env --uns FOO bash x.sh'                                    allow
+run_case "assign-prefix-unset-other-allow" 'X=1 unset OTHER_VAR'                                     allow
+# E2 review: a quoted value holding a space is one word in SCAN_CMD, two in _CMD_RO
+run_case "policy-cmd-quoted-assign-unset-deny" 'X="a b" unset AGENT_WORKER_POLICY_CMD'               deny
+run_case "exec-a-quoted-c-call-worker-deny" "exec -a 'worker name' -c bash core/infra/call-worker.sh r" deny
+run_case "quoted-assign-unset-other-allow" 'X="a b" unset OTHER_VAR'                                 allow
+run_case "exec-a-quoted-no-c-allow"     "exec -a 'worker name' bash core/infra/call-worker.sh r"     allow
 # not guarded on purpose: /council-review sets these itself after the person approves
 run_case "worker-yes-assign-allow"      'AGENT_WORKER_YES=1 echo ok'                                 allow
 run_case "author-vendor-export-allow"   'export AGENT_AUTHOR_VENDOR=openai'                          allow
@@ -552,6 +579,8 @@ run_case "author-record-sed-i-deny"    "sed -i '' '/openai/d' .git/agent-author-
 run_case "author-record-python-write-deny" "python3 -c \"open('.git/agent-author-vendors','w')\""    deny
 run_case "author-record-cat-allow"     'cat .git/agent-author-vendors'                               allow
 run_case "author-record-grep-allow"    'grep openai .git/agent-author-vendors'                       allow
+run_case "author-record-unlink-deny"   'unlink .git/agent-author-vendors'                            deny
+run_case "unlink-other-allow"          'unlink /tmp/x'                                               allow
 
 # --- guard 5 (secrets/ read): two-stage match ---------------------------------------------
 # Stage 1 (the broad verb-then-secrets/ regex) only nominates a candidate; stage 2 lexes the

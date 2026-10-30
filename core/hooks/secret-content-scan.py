@@ -265,20 +265,6 @@ def log_violation(reason: str) -> None:
     except Exception:
         pass
 
-    # Optional broadcast — work-feed visibility for multi-session coordination
-    try:
-        broadcast = Path(repo_root) / "core" / "infra" / "agent-session.sh"
-        if broadcast.is_file() and os.access(broadcast, os.X_OK):
-            subprocess.run(
-                [str(broadcast), "broadcast", "blocked",
-                 f"[security] secret-content-scan.py: {reason}"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=2,
-            )
-    except Exception:
-        pass
-
 
 def emit_deny(reason: str) -> None:
     output = {

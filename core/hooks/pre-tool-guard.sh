@@ -101,9 +101,6 @@ log_violation() {
   printf '{"ts":"%s","guard":"%s","hook":"pre-tool-guard.sh","reason":%s,"session_id":"%s","decision":"%s","reproduce_test":%s,"origin":"%s","schema_version":"2.0.0"}\n' \
     "$ts" "$guard" "$(printf '%s' "$reason" | python3 -I -c 'import sys,json; print(json.dumps(sys.stdin.read()))' 2>/dev/null || echo "\"$reason\"")" "$sid" "$decision" "$repro" "$origin" \
     >> "$log_file" 2>/dev/null || true
-  [[ -x "$repo_root/core/infra/agent-session.sh" ]] && \
-    "$repo_root/core/infra/agent-session.sh" broadcast blocked \
-      "[security] pre-tool-guard.sh: $reason" >/dev/null 2>&1 || true
 }
 
 if [[ $_DECODE_RC -ne 0 ]]; then
@@ -2988,18 +2985,35 @@ fi
 # stays allowed for them. Without AGENT_WORKER_POLICY_CMD, though, call-worker.sh treats the
 # call as unpoliced and AGENT_WORKER_YES=1 alone passes a cap the policy would hold, and a
 # cleared AGENT_BACKENDS_FILE swaps the registry back. So, for these two names only, DENY
-# `unset … NAME` (one name among several too, after unset options, as a command), `env -u NAME`
-# / `env -uNAME` / `env --unset=NAME` / `env --unset NAME`, and, in a command that mentions
-# call-worker, `env -i` / `env -` / `env --ignore-environment` (which drops every variable,
-# the policy included). Any other `env -i` stays allowed. Mentions (echo "$NAME",
+# `unset … NAME` (one name among several too, after unset options, as a command, also behind
+# `X=1 `, `command`/`builtin` with -p or --, or a case-arm `)`), `env -u NAME`
+# / `env -uNAME` / `env --unset=NAME` / `env --unset NAME` (and the GNU abbreviations --u to
+# --unse; any of these inside `env -S'…'`), and, in a command that mentions call-worker (any
+# word starting call-w, so a glob counts), `env -i` / `env -` / `env --ignore-environment` (or
+# an abbreviation down to --i) and `exec -c` (which drop every variable, the policy included).
+# Any other `env -i` stays allowed. Mentions (echo "$NAME",
 # grep NAME f) never match. Same speed bump as 4a: indirection (unset "$v", a name built
 # from pieces) and interpreter one-liners (python -c 'del os.environ[...]') are not caught.
+# _CMD_RO has its quotes deleted, so a quoted assignment value or exec -a name holding a space
+# (X="a b" unset NAME, exec -a 'w n' -c …) falls apart into two words there; the _Q shapes
+# test the same lead and exec forms on the quote-preserving SCAN_CMD, where it is one word.
 _UNSET_NAMES='(AGENT_WORKER_POLICY_CMD|AGENT_BACKENDS_FILE)'
 _ENV_WORD='(^|[^A-Za-z0-9_.-])env[[:space:]]+([^;&|]*[[:space:]])?'
-if echo "$_CMD_RO" | grep -qE "${_RO_LEAD}((command|builtin)[[:space:]]+)?unset[[:space:]]+([^;&|]*[^A-Za-z0-9_;&|])?${_UNSET_NAMES}([^A-Za-z0-9_]|$)" \
-   || echo "$_CMD_RO" | grep -qE "${_ENV_WORD}(-[A-Za-z0-9]*u[[:space:]]*|--unset(=|[[:space:]]+))${_UNSET_NAMES}([^A-Za-z0-9_]|$)" \
-   || { echo "$_CMD_RO" | grep -qE "${_ENV_WORD}(-[A-Za-z0-9]*i[A-Za-z0-9]*|-|--ignore-environment)([[:space:]]|$)" \
-        && echo "$_CMD_RO" | grep -qE 'call-worker'; }; then
+_UNSET_LEAD="((${_RO_LEAD})|[)][[:space:]]*)([A-Za-z_][A-Za-z0-9_]*[+]?=[^[:space:];&|]*[[:space:]]+)*((command|builtin)[[:space:]]+((-p+|--)[[:space:]]+)*)*"
+_QVAL="(\"[^\"]*\"|'[^']*'|[^[:space:];&|\"'])"
+_UNSET_LEAD_Q="((${_RO_LEAD})|[)][[:space:]]*)([A-Za-z_][A-Za-z0-9_]*[+]?=${_QVAL}*[[:space:]]+)*((command|builtin)[[:space:]]+((-p+|--)[[:space:]]+)*)*"
+_ENV_SPLIT='(-[A-Za-z0-9]*S[[:space:]]*)?'
+_ENV_UNSET_LONG='--(u|un|uns|unse|unset)'
+_ENV_IGNORE_LONG='--(i|ig|ign|igno|ignor|ignore|ignore-|ignore-e|ignore-en|ignore-env|ignore-envi|ignore-envir|ignore-enviro|ignore-environ|ignore-environm|ignore-environme|ignore-environmen|ignore-environment)'
+_EXEC_CLEAR='(^|[^A-Za-z0-9_.-])exec([[:space:]]+-[A-Za-z]+|[[:space:]]+-a[[:space:]]+[^[:space:];&|]+)*[[:space:]]+-[A-Za-z]*c[A-Za-z]*([[:space:]]|$)'
+_EXEC_CLEAR_Q="(^|[^A-Za-z0-9_.-])exec([[:space:]]+-[A-Za-z]+|[[:space:]]+-a[[:space:]]+${_QVAL}+)*[[:space:]]+-[A-Za-z]*c[A-Za-z]*([[:space:]]|$)"
+if echo "$_CMD_RO" | grep -qE "${_UNSET_LEAD}unset[[:space:]]+([^;&|]*[^A-Za-z0-9_;&|])?${_UNSET_NAMES}([^A-Za-z0-9_]|$)" \
+   || echo "$SCAN_CMD" | grep -qE "${_UNSET_LEAD_Q}unset[[:space:]]+([^;&|]*[^A-Za-z0-9_;&|])?${_UNSET_NAMES}([^A-Za-z0-9_]|$)" \
+   || echo "$_CMD_RO" | grep -qE "${_ENV_WORD}${_ENV_SPLIT}(-[A-Za-z0-9]*u[[:space:]]*|${_ENV_UNSET_LONG}(=|[[:space:]]+))${_UNSET_NAMES}([^A-Za-z0-9_]|$)" \
+   || { { echo "$_CMD_RO" | grep -qE "${_ENV_WORD}${_ENV_SPLIT}(-[A-Za-z0-9]*i[A-Za-z0-9]*|-|${_ENV_IGNORE_LONG})([[:space:]]|$)" \
+          || echo "$_CMD_RO" | grep -qE "$_EXEC_CLEAR" \
+          || echo "$SCAN_CMD" | grep -qE "$_EXEC_CLEAR_Q"; } \
+        && echo "$_CMD_RO" | grep -qE '(^|[^A-Za-z0-9_])call-w'; }; then
   log_violation review-override "agent attempted to remove AGENT_WORKER_POLICY_CMD/AGENT_BACKENDS_FILE from the environment"
   emit_deny "Removing AGENT_WORKER_POLICY_CMD or AGENT_BACKENDS_FILE from the environment (unset, env -u, or env -i around call-worker) is blocked.
 WHY: review-override guard — without the usage policy call-worker.sh takes AGENT_WORKER_YES=1 alone as approval and would pass a cap the policy holds, and the lane registry decides which company each lane is; an agent clearing either could approve its own spend.
@@ -3013,8 +3027,9 @@ fi
 # record would let review-evidence.py author-vendor fall back to the branch prefix alone, so a
 # company that wrote the change could pass as its outside reviewer. DENY (case-insensitive:
 # APFS) a Bash command that writes one: a `>`/`>>`/`>|` redirect onto one (`: > f` included); a
-# write verb (tee/cp/mv/ln/dd/rsync/scp/install/truncate/rm/shred/unzip/7z/tar/gpg/openssl/age —
-# the write-capable members of the secrets guard's verb list) with a ledger name or the
+# write verb (tee/cp/mv/ln/dd/rsync/scp/install/truncate/rm/unlink/shred/unzip/7z/tar/gpg/
+# openssl/age — the write-capable members of the secrets guard's verb list, plus unlink) with a
+# ledger name or the
 # .agent/workers directory as ANY argument; sed -i naming one; or python
 # open(...,'a'|'w'|'x'|'+') naming one.
 # Reading (cat, grep, jq, open(...,'r')) is allowed. Same speed-bump caveat as 4a.
@@ -3024,7 +3039,7 @@ fi
 _LEDGER_NAME='((reviews|review-override)\.jsonl|agent-author-vendors)'
 _LEDGER="(^|[[:space:]/=])${_LEDGER_NAME}"
 _LEDGER_Q='[/"'"'"']'"${_LEDGER_NAME}"
-_WRITE_VERBS='tee|cp|mv|ln|dd|rsync|scp|install|truncate|rm|shred|unzip|7z|tar|gpg|openssl|age'
+_WRITE_VERBS='tee|cp|mv|ln|dd|rsync|scp|install|truncate|rm|unlink|shred|unzip|7z|tar|gpg|openssl|age'
 if echo "$_CMD_RO" | grep -qiE ">[>|]?[[:space:]]*([^[:space:];&|]*/)?${_LEDGER_NAME}" \
    || echo "$_CMD_RO" | grep -qiE "(^|[^A-Za-z0-9_./-])(${_WRITE_VERBS})[[:space:]]+([^;&|]*[[:space:]/=])?(${_LEDGER_NAME}|\.agent/workers)" \
    || echo "$_CMD_RO" | grep -qiE "(^|[^A-Za-z0-9_./-])sed[[:space:]]+[^;&|]*-[A-Za-z]*i[^;&|]*${_LEDGER}" \

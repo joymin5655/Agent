@@ -20,6 +20,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   MID), neither with a fallback, and never set `AGENT_WORKER_YES`. Offline battery:
   `core/tests/writing-critique-test.sh`.
 
+### Changed
+- **Security blocks no longer go to the work feed.** `pre-tool-guard.sh`,
+  `secret-content-scan.py` and `context-mode-guard.sh` stopped calling
+  `agent-session.sh broadcast blocked "[security] …"` on every deny or ask. Those lines were
+  about 98% of `.agent/locks/work-feed.jsonl`, and test batteries wrote them into the real
+  feed. Each block is still recorded in `security-violations.jsonl`. The R4 mutex collision
+  broadcast in `r4-mutex-check.sh` stays. Test: `core/tests/guard-feed-quiet-test.sh`.
+  `pre-tool-guard.sh` 4a2 also denies `command`/`builtin` with `-p` or `--` before `unset`,
+  `X=1 unset` (also `X="a b" unset`), `unset` after a case-arm `)`, `env -S'-u NAME'`, the GNU
+  abbreviations `--u`…`--unset` and `--i`…`--ignore-environment`, `exec -c` around call-worker
+  (also after `exec -a 'two words'`), and a call-worker name written as a glob (`call-w*`);
+  4b adds `unlink` to its write verbs.
+
 ## [0.13.6] - 2026-10-30
 
 ### Added
