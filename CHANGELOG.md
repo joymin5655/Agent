@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.7] - 2026-10-30
+
 ### Added
 - **`writing-critique` skill (extras plugin).** Two critics from other companies (codex,
   gemini) read an anonymised Korean document against a six-category rubric and return JSON
