@@ -36,6 +36,9 @@
      "negative": ["세션 transcript 그냥 기록해줘", "새 관찰 캡처", "코드 투어 만들어줘"]},
     {"skill": "code-tour",
      "positive": ["이 코드베이스 읽는 순서 알려줘", "make a code tour of what was just built", "how do I read this codebase reading path", "방금 만든 빌드를 사람이 이해할 수 있게 투어 문서", "teammate handoff용 코드 투어 작성"],
-     "negative": ["소스에 주석 달아줘", "코드 리뷰해줘", "brain raw 증류"]}
+     "negative": ["소스에 주석 달아줘", "코드 리뷰해줘", "brain raw 증류"]},
+    {"skill": "writing-critique",
+     "positive": ["critique this draft before I send it", "get an outside read on this Korean document", "/writing-critique report.md", "보고서 초안 critique 받아줘", "rubric critique of my proposal draft by other-vendor AIs"],
+     "negative": ["council review the staged diff with codex", "commit this README change and open a PR", "make a code tour of this build"]}
   ]
 }

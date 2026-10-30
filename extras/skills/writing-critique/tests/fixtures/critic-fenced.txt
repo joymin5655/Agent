@@ -1,0 +1,27 @@
+검토 결과를 정리했습니다.
+
+```json
+{
+  "verdict": "revise",
+  "findings": [
+    {
+      "quote": "따라서 전사 도입이 타당하다.",
+      "problem": "개발팀 6명의 4주 시범만으로 전사 도입을 결론짓는 것은 비약이다.",
+      "suggestion": "시범 범위에 맞춰 결론을 좁힌다.",
+      "category": "logic",
+      "severity": "major",
+      "changes_fact": false
+    },
+    {
+      "quote": "인덱싱 지연이 RPO 기준 안에 들어온다.",
+      "problem": "RPO가 정의되지 않아 비전문가 독자가 문장을 이해할 수 없다.",
+      "suggestion": "용어를 풀어 쓰거나 첫 등장에서 정의한다.",
+      "category": "reader",
+      "severity": "major",
+      "changes_fact": false
+    }
+  ]
+}
+```
+
+이상입니다.

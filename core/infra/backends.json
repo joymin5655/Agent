@@ -46,6 +46,20 @@
       "fallback": null,
       "readonly": true,
       "comment": "council's google voting lane. Lens: architecture & consistency (design/simplification, contract coherence, doc-code drift) — prompt framing in skills/council-review/SKILL.md step 1. fallback deliberately null: falling back to an openai-vendor lane would duplicate the codex lane's vendor and fake the independence signal — an absent lane is reported absent instead."
+    },
+    "advisor-writing-openai": {
+      "backend": "codex",
+      "tier": "TOP",
+      "fallback": null,
+      "readonly": true,
+      "comment": "writing-critique's openai critic (extras/skills/writing-critique): rubric findings on an anonymised draft. fallback deliberately null: the two critics must come from two companies, so an absent critic is reported absent (critique.sh says one critic only) instead of answered by the other vendor."
+    },
+    "advisor-writing-google": {
+      "backend": "gemini",
+      "tier": "MID",
+      "fallback": null,
+      "readonly": true,
+      "comment": "writing-critique's google critic, MID tier (the google lane's quota is the tighter one). fallback deliberately null for the same reason as advisor-writing-openai."
     }
   },
   "backends": {
