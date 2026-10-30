@@ -10,11 +10,14 @@
 #   bash setup.sh --project        # +current project scaffold (CLAUDE.md, hook-config.yml, etc.)
 #   bash setup.sh --hooks-only     # install git-hooks (pre-commit, pre-push) only
 #   bash setup.sh --all            # alias for default (claude + codex)
-#   bash setup.sh --instructions-only  # sync common Claude/Codex policy; preserve personal text
+#   bash setup.sh --instructions-only  # sync common Claude/Codex (+agy if ~/.gemini) policy;
+#                                       # preserve personal text
+#   bash setup.sh --instructions-only --dry-run  # report drift only, change nothing
 #   bash setup.sh --doctor         # environment diagnosis only — no installs, read-only
 #   bash setup.sh --bootstrap      # install MISSING deps (gitleaks/sqlite3/jq/gh) via
 #                                   # brew/apt, one y/N prompt per package — never auto-yes
 #   bash setup.sh --bootstrap --dry-run   # print the install plan only, install nothing
+#   --dry-run is valid only with --bootstrap or --instructions-only alone; else exit 2
 #
 # Combinations OK:
 #   bash setup.sh --claude --project
@@ -64,6 +67,28 @@ for arg in "$@"; do
             ;;
     esac
 done
+
+# --dry-run is honoured only by --bootstrap and --instructions-only; every other
+# mode would ignore it and install for real. Refuse before doing anything unless
+# exactly one of those two modes is on (--doctor included, to keep the rule simple).
+if [[ $BOOTSTRAP_DRY_RUN -eq 1 ]]; then
+    dry_run_modes=()
+    for mode_pair in "claude:$DO_CLAUDE" "codex:$DO_CODEX" "antigravity:$DO_ANTIGRAVITY" \
+                     "launchers:$DO_LAUNCHERS" "project:$DO_PROJECT" "hooks-only:$DO_HOOKS" \
+                     "doctor:$DO_DOCTOR" "bootstrap:$DO_BOOTSTRAP" \
+                     "instructions-only:$DO_INSTRUCTIONS"; do
+        if [[ "${mode_pair#*:}" == "1" ]]; then
+            dry_run_modes+=("--${mode_pair%%:*}")
+        fi
+    done
+    if [[ ${#dry_run_modes[@]} -ne 1 ||
+          ( "${dry_run_modes[0]}" != "--bootstrap" &&
+            "${dry_run_modes[0]}" != "--instructions-only" ) ]]; then
+        echo "ERROR: --dry-run applies only to --bootstrap and --instructions-only" \
+             "(modes given: ${dry_run_modes[*]:-none})" >&2
+        exit 2
+    fi
+fi
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1495,9 +1520,16 @@ if [[ $DO_INSTRUCTIONS -eq 1 ]]; then
     if [[ $BOOTSTRAP_DRY_RUN -eq 1 ]]; then
         instruction_mode=(--check)
     fi
+    # agy is opt-in: sync its global AGENTS.md only when asked for by env or
+    # when ~/.gemini already exists, so setup never creates that directory.
+    gemini_target=()
+    if [[ -n "${GEMINI_GLOBAL_AGENTS:-}" || -d "$HOME/.gemini" ]]; then
+        gemini_target=(--gemini "${GEMINI_GLOBAL_AGENTS:-$HOME/.gemini/AGENTS.md}")
+    fi
     python3 "$FRAMEWORK_ROOT/core/infra/sync-instructions.py" \
         --claude "${CLAUDE_GLOBAL_INSTRUCTIONS:-$HOME/.claude/CLAUDE.md}" \
         --codex "${CODEX_GLOBAL_AGENTS:-${CODEX_HOME:-$HOME/.codex}/AGENTS.md}" \
+        ${gemini_target[@]+"${gemini_target[@]}"} \
         ${instruction_mode[@]+"${instruction_mode[@]}"}
     exit $?
 fi

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Behavioral tests for instruction synchronization, isolated from user settings."""
 import importlib.util
+import os
 import subprocess
 import tempfile
 import unittest
@@ -78,6 +79,39 @@ class SyncTests(unittest.TestCase):
             result = subprocess.run(['python3', str(SCRIPT), '--codex', str(link)], capture_output=True, check=False)
             self.assertNotEqual(result.returncode, 0)
             self.assertTrue(link.is_symlink())
+
+    def test_gemini_target_create_repeat_and_drift(self):
+        with tempfile.TemporaryDirectory() as directory:
+            p = Path(directory) / '.gemini' / 'AGENTS.md'
+            cmd = ['python3', str(SCRIPT), '--gemini', str(p)]
+            subprocess.run(cmd, check=True, capture_output=True)
+            text = p.read_text()
+            self.assertIn(module.START, text)
+            self.assertIn(module.END, text)
+            again = subprocess.run(cmd, check=True, capture_output=True, text=True)
+            self.assertIn(f'OK {p}', again.stdout)
+            self.assertEqual(p.read_text(), text)
+            p.write_text(text.replace(module.END, 'tampered\n' + module.END))
+            drift = subprocess.run(cmd + ['--check'], capture_output=True, check=False, text=True)
+            self.assertEqual(drift.returncode, 1)
+            self.assertIn(f'DRIFT {p}', drift.stdout)
+
+    def test_default_targets_include_gemini_only_when_home_exists(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            env = {k: v for k, v in os.environ.items() if k != 'CODEX_HOME'}
+            env['HOME'] = str(home)
+            cmd = ['python3', str(SCRIPT)]
+            result = subprocess.run(cmd, check=True, capture_output=True, text=True, env=env)
+            self.assertNotIn('.gemini', result.stdout)
+            self.assertFalse((home / '.gemini').exists())
+            self.assertTrue((home / '.claude/CLAUDE.md').exists())
+            self.assertTrue((home / '.codex/AGENTS.md').exists())
+            (home / '.gemini').mkdir()
+            result = subprocess.run(cmd, check=True, capture_output=True, text=True, env=env)
+            gemini = home / '.gemini/AGENTS.md'
+            self.assertIn(f'UPDATED {gemini}', result.stdout)
+            self.assertIn(module.START, gemini.read_text())
 
 
 if __name__ == '__main__':

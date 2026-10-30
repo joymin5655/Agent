@@ -85,7 +85,9 @@ cp ~/Agent/adapters/codex/AGENTS.md.template /your/repo/AGENTS.md
 
 `setup.sh --codex` runs steps 2-4 for you (via `merge-hooks.py`) and asks
 before replacing a differing file. For policy updates alone use
-`setup.sh --instructions-only`, which preserves personal text. The full Codex
+`setup.sh --instructions-only`, which preserves personal text and also syncs
+agy's `~/.gemini/AGENTS.md` when `~/.gemini` exists; add `--dry-run` to report
+drift without changing anything (`docs/instruction-sync.md`). The full Codex
 install also installs the `quick`/`deep` tier profiles (`docs/model-routing.md`)
 beside `~/.codex/config.toml` — invoke them with `codex --profile quick` or
 `codex --profile deep`.
