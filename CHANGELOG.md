@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.6] - 2026-10-30
+
 ### Added
 - **Common instruction sync now covers agy's global instructions.**
   `core/infra/sync-instructions.py` takes `--gemini PATH`; with no target arguments it adds
