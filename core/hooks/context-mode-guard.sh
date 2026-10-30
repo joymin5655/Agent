@@ -97,9 +97,6 @@ log_violation() {
   printf '{"ts":"%s","guard":"%s","hook":"context-mode-guard.sh","tool":"%s","reason":%s,"session_id":"%s","decision":"%s","reproduce_test":%s,"origin":"%s","schema_version":"2.0.0"}\n' \
     "$ts" "$guard" "$TOOL_NAME" "$(printf '%s' "$reason" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))' 2>/dev/null || echo "\"$reason\"")" "$sid" "$decision" "$repro" "$origin" \
     >> "$log_file" 2>/dev/null || true
-  [[ -x "$ROOT/core/infra/agent-session.sh" ]] && \
-    "$ROOT/core/infra/agent-session.sh" broadcast blocked \
-      "[security] context-mode-guard.sh: $reason" >/dev/null 2>&1 || true
 }
 
 # Decision: §2 Secret = deny; R4 production-data / deploy = ask (user confirms)
