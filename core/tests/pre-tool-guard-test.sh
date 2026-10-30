@@ -2459,6 +2459,76 @@ run_case_in "push-force-abbrev-main-deny"      "$GBF" 'git push --force-with ori
 run_case_in "push-force-abbrev2-main-deny"     "$GBF" 'git push --forc origin master'  deny
 run_case_in "push-plain-no-ref-on-main-allow"  "$GBM" 'git push origin'                allow
 
+echo "--- literal cd then git probe, ssh remote string is code not a command name"
+# verdicts for the ssh cases below were measured by running the origin/main copy of this hook on the same input
+G3A_CD="$G3A_ROOT/cdclean"; G3A_CDD="$G3A_ROOT/cddirty"
+for _r in cdclean cddirty; do
+  git init -q "$G3A_ROOT/$_r" >/dev/null 2>&1
+  mkdir "$G3A_ROOT/$_r/sub"; printf 'one\n' > "$G3A_ROOT/$_r/f"; printf 'one\n' > "$G3A_ROOT/$_r/sub/g"
+  git -C "$G3A_ROOT/$_r" add f sub/g
+  git -C "$G3A_ROOT/$_r" -c user.name=t -c user.email=t@example.invalid -c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q -m init
+done
+printf 'two\n' >> "$G3A_CDD/f"
+run_case "ssh-quoted-remote-pipeline-no-ask" \
+  "SSH_AUTH_SOCK= ssh -o ConnectTimeout=10 example-host 'export PATH=\"\$HOME/.local/bin:\$PATH\"; agy --help 2>&1 | head -n 60'" allow
+run_case "ssh-quoted-remote-rm-root-deny"    "ssh host 'rm -rf /'"                    deny
+run_case "ssh-bare-rm-root-main-parity"      'ssh host rm -rf /'                      deny
+run_case "ssh-quoted-then-args-reset-main-parity" "ssh host 'cd /repo &&' git reset --hard" deny
+run_case "ssh-quoted-then-args-rm-main-parity"    "ssh host 'x y' rm -rf /z"           deny
+run_case_in "cd-abs-clean-checkout-allow"   "$G3A_NOREPO" "cd $G3A_CD && git checkout HEAD -- f" allow
+run_case_in "cd-abs-dirty-checkout-deny"    "$G3A_NOREPO" "cd $G3A_CDD && git checkout HEAD -- f" deny
+run_case_in "C-abs-dirty-checkout-deny"     "$G3A_NOREPO" "git -C $G3A_CDD checkout HEAD -- f"    deny
+run_case_in "cd-var-checkout-ask"           "$GC" 'cd $W && git checkout HEAD -- f'               ask
+run_case_in "cd-nonexistent-restore-ask"    "$GC" 'cd /nonexistent/x && git restore f'            ask
+run_case_in "cd-then-write-restore-ask"     "$G3A_NOREPO" "cd $G3A_CD && echo x > f && git restore f" ask
+run_case_in "cd-subshell-then-checkout-ask" "$G3A_NOREPO" "(cd $G3A_CD && true); git checkout HEAD -- f" ask
+run_case_in "cd-piped-then-checkout-ask"    "$G3A_NOREPO" "cd $G3A_CD | cat; git checkout HEAD -- f"    ask
+run_case_in "cd-relative-second-cd-ask"     "$G3A_NOREPO" "cd $G3A_CD && cd sub && git checkout HEAD -- f" ask
+run_case_in "cd-then-status-checkout-allow" "$G3A_NOREPO" "cd $G3A_CD && git status --short && git checkout HEAD -- f" allow
+run_case_in "cd-then-source-checkout-ask"   "$G3A_NOREPO" "cd $G3A_CD && . ./x.sh && git checkout HEAD -- f" ask
+run_case_in "cd-then-function-restore-ask"  "$G3A_NOREPO" "cd $G3A_CD && z proj && git restore f"         ask
+run_case_in "cd-tilde-nonexistent-ask"      "$G3A_NOREPO" 'cd ~/g3-no-such-dir-xyz && git restore f' ask
+# the cd is trusted only on a pure && chain: after ; or || the restore runs even when the cd was skipped
+run_case_in "cd-conditional-semicolon-ask"  "$G3A_NOREPO" "test -d /nonexistent && cd $G3A_CD; git restore -- f" ask
+run_case_in "cd-semicolon-checkout-ask"     "$G3A_NOREPO" "cd $G3A_CD; git checkout HEAD -- f"              ask
+run_case_in "cd-newline-checkout-ask"       "$G3A_NOREPO" "cd $G3A_CD"$'\n'"git checkout HEAD -- f"         ask
+run_case_in "cd-or-then-restore-ask"        "$G3A_NOREPO" "false || cd $G3A_CD && git restore f"            ask
+run_case_in "cd-coproc-restore-ask"         "$G3A_NOREPO" "coproc cd $G3A_CD && git restore f"              ask
+run_case_in "cd-negated-restore-ask"        "$G3A_NOREPO" "! cd $G3A_CD && git restore f"                   ask
+run_case_in "cd-assign-prefix-restore-ask"  "$G3A_NOREPO" "X=1 cd $G3A_CD && git restore f"                 ask
+run_case_in "cd-home-tilde-restore-ask"     "$G3A_NOREPO" "export HOME=$G3A_CD && cd ~ && git restore f"    ask
+run_case_in "cd-and-chain-after-test-allow" "$G3A_NOREPO" "true && cd $G3A_CD && git checkout HEAD -- f"    allow
+run_case_in "cd-dirty-restore-deny"         "$G3A_NOREPO" "cd $G3A_CDD && git restore f"                    deny
+run_case_in "cd-then-C-sub-checkout-allow"  "$G3A_NOREPO" "cd $G3A_CD && git -C sub checkout HEAD -- g"     allow
+run_case_in "cd-main-push-force-deny"       "$G3A_NOREPO" "cd $GBM && git push -f origin"                   deny
+run_case_in "cd-feature-push-force-allow"   "$G3A_NOREPO" "cd $GBF && git push -f origin"                   allow
+# the shell's cd is logical: lnk/.. is the dirty repo while the physical parent of the link target is the clean one
+ln -s "$G3A_CD/sub" "$G3A_CDD/lnk"
+run_case_in "cd-symlink-dotdot-restore-ask" "$G3A_NOREPO" "cd $G3A_CDD/lnk/.. && git restore f"             ask
+run_case_in "cd-dot-segment-restore-ask"    "$G3A_NOREPO" "cd $G3A_CD/. && git restore f"                   ask
+run_case_in "cd-trailing-slash-clean-allow" "$G3A_NOREPO" "cd $G3A_CD/ && git checkout HEAD -- f"           allow
+run_case_in "cd-trailing-slash-dirty-deny"  "$G3A_NOREPO" "cd $G3A_CDD/ && git checkout HEAD -- f"          deny
+run_case_in "cd-git-config-env-ask"         "$G3A_NOREPO" "cd $G3A_CD && GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.worktree GIT_CONFIG_VALUE_0=$G3A_CDD git restore f" ask
+run_case_in "C-git-config-env-ask"          "$G3A_NOREPO" "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.worktree GIT_CONFIG_VALUE_0=$G3A_CDD git -C $G3A_CD restore f" ask
+# NAME+=value on an unset name sets it like NAME=value
+run_case_in "cd-git-dir-append-ask"         "$G3A_NOREPO" "cd $G3A_CD && GIT_DIR+=$G3A_CDD/.git GIT_WORK_TREE+=$G3A_CDD git restore f" ask
+run_case_in "C-git-config-append-ask"       "$G3A_NOREPO" "GIT_CONFIG_COUNT+=1 GIT_CONFIG_KEY_0+=core.worktree GIT_CONFIG_VALUE_0+=$G3A_CDD git -C $G3A_CD restore f" ask
+run_case_in "export-work-tree-append-ask"   "$G3A_NOREPO" "export GIT_WORK_TREE+=$G3A_CDD && git -C $G3A_CD restore f" ask
+# already asked before the cd change (an earlier command that may change state); kept as regressions
+run_case_in "cd-expanded-name-restore-ask"  "$G3A_NOREPO" "X=true && cd $G3A_CD && \$X && git restore f"    ask
+run_case_in "cd-trap-before-restore-ask"    "$G3A_NOREPO" "trap f DEBUG && cd $G3A_CD && git restore f"     ask
+# only a plain `cd <path>` on a line with no coproc is trusted
+run_case_in "cd-coproc-before-restore-ask"  "$G3A_NOREPO" "coproc true && cd $G3A_CD && git restore f"      ask
+run_case_in "cd-command-prefix-restore-ask" "$G3A_NOREPO" "command cd $G3A_CD && git restore f"             ask
+run_case_in "cd-builtin-prefix-restore-ask" "$G3A_NOREPO" "builtin cd $G3A_CD && git restore f"             ask
+run_case_in "cd-time-prefix-restore-ask"    "$G3A_NOREPO" "time cd $G3A_CD && git restore f"                ask
+run_case_in "cd-physical-flag-restore-ask"  "$G3A_NOREPO" "cd -P $G3A_CD && git restore f"                  ask
+run_case_in "cd-dashdash-restore-ask"       "$G3A_NOREPO" "cd -- $G3A_CD && git restore f"                  ask
+run_case_in "cd-two-args-restore-ask"       "$G3A_NOREPO" "cd $G3A_CD $G3A_CDD && git restore f"            ask
+run_case_in "pushd-restore-ask"             "$G3A_NOREPO" "pushd $G3A_CD && git restore f"                  ask
+run_case_in "cd-comment-semicolon-ask"      "$G3A_NOREPO" "cd $G3A_CD && git restore f # a; b"              ask
+run_case "watch-quoted-rm-root-deny"        "watch -n 5 'rm -rf /'"                                         deny
+
 echo "--- deny text never echoes the arguments of env"
 G3A_OUT=$(printf '%s' '{"event":"PreToolUse","tool_name":"Bash","tool_input":{"command":"env API_KEY=not-a-secret-marker"}}' | AGENT_GATE_SINK_DIR="$AGENT_GATE_SINK_DIR" bash "$HOOK" 2>/dev/null || true)
 if [[ "$G3A_OUT" == *'"permissionDecision": "deny"'* && "$G3A_OUT" != *not-a-secret-marker* ]]; then

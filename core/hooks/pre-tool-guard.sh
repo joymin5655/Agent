@@ -2160,7 +2160,8 @@ G3_LAUNCH_VAL = {
             "-B", "-E", "-I"},
 }
 G3_LAUNCH_POS = {"timeout": 1, "gtimeout": 1, "flock": 1, "ssh": 1, "taskset": 1, "chrt": 1}  # leading operands
-G3_GITVARS = r"(?:GIT_DIR|GIT_WORK_TREE|GIT_INDEX_FILE|GIT_COMMON_DIR|GIT_CEILING_DIRECTORIES)="
+G3_GITVARS = (r"(?:GIT_DIR|GIT_WORK_TREE|GIT_INDEX_FILE|GIT_COMMON_DIR|GIT_CEILING_DIRECTORIES"
+              r"|GIT_CONFIG_(?:COUNT|PARAMETERS|GLOBAL|SYSTEM|KEY_\d+|VALUE_\d+))(?:\[[^\]]*\])?\+?=")  # config from env can set core.worktree; tail as in ASSIGN (NAME+= on an unset name sets it)
 G3_HEADS = frozenset("git rm find rsync env printenv export declare typeset set ps eval command builtin".split()) | SHELLS | LAUNCHERS
 G3_COARSE_WORD = re.compile(
     r"(?<![\w.-])(?:env|printenv|export|declare|typeset|set|ps|rm|find|rsync)(?![\w-])|/proc/[^/\s]+/environ", re.I)
@@ -2193,7 +2194,7 @@ G3_READONLY = frozenset("echo printf ls pwd true false : test [ [[ cat head tail
                         "whoami basename dirname which type stat file du id uname hostname".split())
 G3_GIT_READONLY = frozenset("status log diff show rev-parse rev-list branch remote describe ls-files ls-tree "
                             "blame shortlog cat-file fetch commit add tag push".split())  # not config: it can point the work tree elsewhere
-G3 = {"branch_moved": False, "maybe_val": False, "deny": [], "ask": [], "unsure": False, "unsure_name": False, "fails": [], "unknown_state": False, "probes": {}, "n": 0, "branch": {}}
+G3 = {"branch_moved": False, "maybe_val": False, "deny": [], "ask": [], "unsure": False, "unsure_name": False, "fails": [], "unknown_state": False, "known_cwd": None, "flat": False, "probes": {}, "n": 0, "branch": {}}
 G3_DEADLINE = [0.0]
 
 
@@ -2393,6 +2394,39 @@ def g3_discard_ask(sub, unknown):
         "run git status first; stash (git stash) or commit what you want to keep.")
 
 
+G3_NOT_FLAT = re.compile(
+    r"[(){}`|]|(?:^|[\s;&])(?:if|then|elif|else|fi|case|for|while|until|select|do|done|function|coproc|always)(?=[\s;]|$)")
+G3_AMP_OK = re.compile(r"&&|[<>]&|&>")
+
+
+def g3_flat(text):
+    """Is the command line only simple commands chained by &&? The lexer flattens subshells, groups, pipelines,
+    substitutions, loops and lists into one list, so a cd in it is known to have run before every later command
+    only when none of those can be present: after ; or a newline the next command runs even when the cd was
+    skipped (`test -d x && cd /a; git restore f`) or failed."""
+    t = text.strip()
+    return not G3_NOT_FLAT.search(t) and "&" not in G3_AMP_OK.sub("", t) and ";" not in t and "\n" not in t
+
+
+def g3_literal_cd(words, lits, depth, prefixed):
+    """The existing directory a top-level `cd <absolute path>` with no prefix word (`!`, coproc, an
+    assignment) moves to, else None. `~` is not trusted: HOME may be set earlier on the line. A path
+    with `.` or `..` segments is not trusted either: the shell's cd is logical (`/link/..` is the
+    link's parent) while git -C and this probe resolve it physically (the target's parent).
+    ponytail: the line is all this sees - a cd wrapper function or chpwd hook from the user's shell
+    startup files could still move elsewhere; upgrade path: refuse when the shell defines cd."""
+    if depth or prefixed or not G3["flat"] or lits[0] != "cd" or len(lits) != 2:
+        return None
+    text = words[1][0]
+    path = lits[1]
+    if not path or PH in text or G3_MARKS.search(text) or re.search(r"[$*?\[\]\x60\\]", path):
+        return None
+    path = path.rstrip("/") or "/"
+    if not path.startswith("/") or os.path.normpath(path) != path or not os.path.isdir(path):
+        return None
+    return path
+
+
 def g3_git(lits, prior_unsafe):
     args = lits[1:]
     k, cdirs, extra = 0, [], False
@@ -2428,6 +2462,8 @@ def g3_git(lits, prior_unsafe):
     if any(a in ("-h", "--help") for a in rest):
         return  # usage text, nothing runs
     cdir = cdirs[-1] if cdirs else None
+    if G3["known_cwd"] is not None:  # after a literal cd: -C is relative to it, and without -C it is the directory
+        cdir = os.path.join(G3["known_cwd"], cdir) if cdir is not None else G3["known_cwd"]
     if cdir is not None and cdir.startswith("-"):
         cdir = "./" + cdir
     unknown = G3["unknown_state"] or prior_unsafe or len(cdirs) > 1 or extra
@@ -2717,6 +2753,7 @@ def g3_cmd(words, redirs, bodies, depth, prior_unsafe):
         if re.match(G3_GITVARS, t):
             G3["unknown_state"] = True
         k += 1
+    prefixed = k > 0
     words = words[k:]
     for r in redirs:
         if re.search(r"/proc/[^/]+/environ", g3_lit(r)):
@@ -2728,6 +2765,9 @@ def g3_cmd(words, redirs, bodies, depth, prior_unsafe):
         return bool(redirs)
     lits = [g3_lit(t) for t, _ in words]
     name = norm(lits[0])
+    if G3["known_cwd"] is not None and name not in CWD and name not in ("popd", "git") and name not in G3_READONLY:
+        G3["known_cwd"] = None  # a sourced file, a shell function, a prefix or an expanded name may cd: only git and read-only words keep it
+        G3["unknown_state"] = True
     if "$" in name or PH in words[0][0] or "{}" in name:
         G3["unsure_name"] = True
         return True
@@ -2744,8 +2784,13 @@ def g3_cmd(words, redirs, bodies, depth, prior_unsafe):
                 "including every secret the process holds.",
                 "test whether one variable is set without printing it: test -n " + G3_DEAD + " && echo set")
     if name in CWD or name == "popd":
-        G3["unknown_state"] = True
-        return True
+        cwd = g3_literal_cd(words, lits, depth, prefixed)
+        if cwd is None:
+            G3["known_cwd"] = None
+            G3["unknown_state"] = True
+            return True
+        G3["known_cwd"] = cwd  # probed like git -C <cwd>
+        return False
     if name in ("command", "builtin"):
         j = 1
         while j < len(lits) and lits[j].startswith("-"):
@@ -2822,7 +2867,9 @@ def g3_cmd(words, redirs, bodies, depth, prior_unsafe):
             G3["unknown_state"] = True
         G3["maybe_val"] = False
         j = g3_cmd_index(lits, 0, len(lits)) if name in G3_LAUNCH_VAL else 0
-        if j > 0 and j < len(words):
+        if j > 0 and j == len(words) - 1 and name in CARRIERS and not words[j][1] and re.search(r"\s", lits[j]):
+            pass  # the lone last quoted string was scanned as code above; ssh joins later words into it, so only then is it not a command name
+        elif j > 0 and j < len(words):
             g3_cmd(words[j:], redirs, bodies, depth + 1, prior_unsafe)
             if G3["maybe_val"]:  # also judge the first later word that is a judged verb, as if it were a value
                 for jj in range(j + 1, len(lits)):
@@ -2869,6 +2916,7 @@ def g3_main():
     text = os.fdopen(3, "rb").read().decode("utf-8", "replace")
     G3_DEADLINE[0] = time.monotonic() + 10.0
     verdict_reset()
+    G3["flat"] = g3_flat(text)
     try:
         g3_scan(text, 0)
     except Limit:
