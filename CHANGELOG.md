@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Common instruction sync now covers agy's global instructions.**
+  `core/infra/sync-instructions.py` takes `--gemini PATH`; with no target arguments it adds
+  `~/.gemini/AGENTS.md` only when `~/.gemini` already exists. `setup.sh --instructions-only`
+  passes `--gemini "${GEMINI_GLOBAL_AGENTS:-$HOME/.gemini/AGENTS.md}"` only when
+  `GEMINI_GLOBAL_AGENTS` is set or `~/.gemini` exists, so no directory is created for people
+  who do not use agy. Tests: `core/tests/sync-instructions-test.py`,
+  `core/tests/instruction-setup-test.sh`.
+
+### Fixed
+- **`setup.sh --dry-run` no longer installs for real.** It used to be honoured only by
+  `--bootstrap` and `--instructions-only` and silently ignored by every other mode
+  (`--claude --dry-run` installed). Right after argument parsing, `--dry-run` now requires
+  exactly one of those two modes; anything else (another mode alongside, `--doctor`, or
+  `--dry-run` alone) prints the given modes to stderr and exits 2 before any output or install.
+  Test: `core/tests/instruction-setup-test.sh`.
+
 ## [0.13.5] - 2026-10-29
 
 ### Added

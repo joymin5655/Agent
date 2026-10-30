@@ -1,8 +1,9 @@
 # Shared instructions without shared runtime assumptions
 
 `rules/policy/operating-contract.md` owns the common behavioral policy. The updater
-copies its text into a bounded managed block in Claude's user CLAUDE.md and Codex's
-user AGENTS.md. Runtime/personal text outside the block stays byte-for-byte intact.
+copies its text into a bounded managed block in Claude's user CLAUDE.md, Codex's
+user AGENTS.md and, when `~/.gemini` already exists, agy's global
+`~/.gemini/AGENTS.md`. Runtime/personal text outside the block stays byte-for-byte intact.
 It does not merge JSON/TOML settings or install hooks, permissions, MCPs, or plugins.
 
 ```bash
@@ -10,9 +11,17 @@ bash setup.sh --instructions-only --dry-run # read-only; 1 means drift, 0 means 
 bash setup.sh --instructions-only           # backup changed files, then sync
 ```
 
-Targets can be overridden with `CLAUDE_GLOBAL_INSTRUCTIONS` and
-`CODEX_GLOBAL_AGENTS`; default Codex home also respects `CODEX_HOME`.
-The direct Python command accepts `--claude PATH`, `--codex PATH`, and `--check`.
+`--dry-run` is accepted only with `--bootstrap` or `--instructions-only` on its own.
+Any other combination (including `--dry-run` alone or with `--doctor`) exits 2 before
+anything is installed.
+
+Targets can be overridden with `CLAUDE_GLOBAL_INSTRUCTIONS`, `CODEX_GLOBAL_AGENTS`
+and `GEMINI_GLOBAL_AGENTS`; default Codex home also respects `CODEX_HOME`. The agy
+target is skipped unless `GEMINI_GLOBAL_AGENTS` is set or `~/.gemini` exists, so
+setup never creates that directory for people who do not use agy.
+The direct Python command accepts `--claude PATH`, `--codex PATH`, `--gemini PATH`,
+and `--check`. Without target arguments it uses the same defaults (agy only when
+`~/.gemini` exists).
 Supplying only one target updates only that runtime. Malformed managed markers
 and symlinks fail before any target is changed. Backups use unique names beside
 each changed file; repeated application is a no-op. Restore a backup to undo it.

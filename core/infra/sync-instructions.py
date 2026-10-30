@@ -27,12 +27,18 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--claude', type=Path, help='Claude instruction file (not settings JSON)')
     parser.add_argument('--codex', type=Path, help='Codex instruction file (not config TOML)')
+    parser.add_argument('--gemini', type=Path, help='agy global instruction file')
     parser.add_argument('--check', action='store_true', help='read-only; exit 1 on drift')
     args = parser.parse_args()
-    targets = [p for p in (args.claude, args.codex) if p is not None]
+    targets = [p for p in (args.claude, args.codex, args.gemini) if p is not None]
     if not targets:
         targets = [Path.home() / '.claude/CLAUDE.md',
                    Path(os.environ.get('CODEX_HOME', str(Path.home() / '.codex'))) / 'AGENTS.md']
+        # agy is opt-in: only target it when its home already exists, so
+        # people who do not use agy never get a ~/.gemini directory.
+        gemini_home = Path.home() / '.gemini'
+        if gemini_home.is_dir():
+            targets.append(gemini_home / 'AGENTS.md')
     policy = (ROOT / 'rules/policy/operating-contract.md').read_text()
     # Validate every target before changing any of them.
     pending = []
