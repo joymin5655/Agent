@@ -154,7 +154,7 @@ flowchart LR
 | **훅(hook)** | AI 런타임이 어떤 행동 전/후에 자동으로 실행하는 작은 스크립트. **allow**, **ask**, **deny** 중 하나로 답합니다. [`core/hooks/`](core/hooks/)에 `hooks/hooks.json`으로 배선된 스크립트 27개(공유 모듈 포함 32개)가 있습니다. |
 | **어댑터(adapter)** | 각 AI CLI의 고유 이벤트 형식과 하네스의 표준 JSON 사이를 번역하는 얇은 계층. 런타임 어댑터 3개(claude-code, codex, antigravity)가 [`adapters/`](adapters/)에 있습니다. |
 | **에이전트(agent)** | AI가 일을 위임하는 전문가 — 예: 리뷰만 하고 절대 코드를 쓰지 않는 보안 리뷰어. 코어에 3종([`agents/`](agents/)), extras 플러그인에 1종이 포함됩니다. |
-| **스킬(skill)** | AI가 따라가는 재사용 가능한 단계별 워크플로우 — 예: 커밋+PR 자동화 흐름. 코어에 6종([`skills/`](skills/)), 선택 extras 플러그인에 9종([`extras/skills/`](extras/skills/))이 포함됩니다. |
+| **스킬(skill)** | AI가 따라가는 재사용 가능한 단계별 워크플로우 — 예: 커밋+PR 자동화 흐름. 코어에 6종([`skills/`](skills/)), 선택 extras 플러그인에 10종([`extras/skills/`](extras/skills/))이 포함됩니다. |
 | **게이트(gate)** | 훅의 결정 지점(deny / ask / block). 모든 게이트는 자신이 가정하는 모델 약점과 함께 등록됩니다 — [`docs/gate-registry.md`](docs/gate-registry.md). |
 | **웨이브(wave)** | `/supervise` 플랜 안의 작업 묶음 하나 — 디스패치·실행·감사를 마쳐야 다음 웨이브가 시작됩니다. |
 | **판정(verdict)** | 모든 검증기가 뱉는 공용 CONFIRMED / REFUTED 결과 스키마 — [`docs/scoring-convention.md`](docs/scoring-convention.md). |
@@ -239,7 +239,7 @@ Antigravity(agy 1.2.12)는 훅의 `{}`를 deny로 처리하므로 통과는 `ask
 4. *(선택)* 훅이 많은 다른 플러그인을 쓰는 저장소에서는 `/plugin`으로 agent-harness를 꺼도 됩니다 — 에이전트는 `agent-harness:*` 네임스페이스라 어느 쪽이든 충돌하지 않습니다.
 5. *(선택)* 크로스벤더 워커 레인(codex/antigravity 세컨드 오피니언)을 쓰려면 `/agent-harness-extras:worker-setup`(extras 플러그인 설치 필요)을 실행하세요 — 설치→인증→검증을 비용 안내와 함께 안내합니다.
 
-코어 플러그인에 포함: **에이전트 3종**, **스킬 6종**, 훅 세트, `/project-init` 커맨드. 선택 플러그인 **`agent-harness-extras`**(같은 마켓플레이스)에 에이전트 1종과 잘 안 쓰는 스킬 9종이 있습니다. `loop`·`harness-loop`·`harness-audit`·`manager-audit`·`persona-review`·`reorg-sync`·`worker-setup`·`code-tour`·`brain-ingest`를 쓰던 사용자는 `/plugin install agent-harness-extras@agent`를 한 번 실행하세요(이후 `/agent-harness-extras:<이름>`으로 호출).
+코어 플러그인에 포함: **에이전트 3종**, **스킬 6종**, 훅 세트, `/project-init` 커맨드. 선택 플러그인 **`agent-harness-extras`**(같은 마켓플레이스)에 에이전트 1종과 잘 안 쓰는 스킬 10종이 있습니다. `loop`·`harness-loop`·`harness-audit`·`manager-audit`·`persona-review`·`reorg-sync`·`worker-setup`·`code-tour`·`brain-ingest`·`writing-critique`를 쓰던 사용자는 `/plugin install agent-harness-extras@agent`를 한 번 실행하세요(이후 `/agent-harness-extras:<이름>`으로 호출).
 
 ### Path B — 셸 설치 (Codex CLI / Antigravity CLI / 전부)
 
@@ -438,6 +438,7 @@ manager-audit의 발견은 절대 스스로 적용되지 않습니다 — `PROPO
 | `code-tour` | 코드베이스나 끝난 빌드를 사람이 읽는 순서로 안내하는 투어 문서 작성 — 스택·파일 역할·흐름 하나 추적·안전한 실습·실행 단계·용어 사전, 인용 경로 전부 검사, 소스는 수정하지 않음 |
 | `harness-loop` · `loop` | 횟수 상한이 있는 반복 개선 루프 — 범용(`loop`)과 하네스 자체 리뷰어 프롬프트용(`harness-loop`); 내장 `/loop`와 다르므로 `/agent-harness-extras:loop`로 호출 |
 | `worker-setup` | 크로스벤더 워커 레인 설치 → 인증 → 검증 온보딩(비용 안내 먼저) |
+| `writing-critique` | 다른 회사 AI 둘이 작성자를 모른 채 기준표로 새 한국어 문서를 비평 — 근거 있는 지적만 반영한 뒤 윤문·교정·의미 변화 검사·기록 |
 
 | 훅 — 27개 배선(`hooks/hooks.json` → `core/hooks/`, 공유 모듈 포함 스크립트 32개) | 이벤트 |
 |---|---|
@@ -465,7 +466,7 @@ Agent/
 │
 ├── agents/             # 에이전트 정의 3종 + master-registry.json
 ├── skills/             # 코어 스킬 6종 (spec · supervise · verify-completion · wrap · harness-help · council-review)
-├── extras/             # 선택 플러그인 `agent-harness-extras`: skills/ 9종 · agents/ 1종 · scripts/harness-root.sh · core/infra/reorg-sync.sh
+├── extras/             # 선택 플러그인 `agent-harness-extras`: skills/ 10종 · agents/ 1종 · scripts/harness-root.sh · core/infra/reorg-sync.sh
 ├── commands/           # 슬래시 커맨드 1개 (/project-init)
 ├── hooks/              # 플러그인 훅 배선 (hooks.json)
 │

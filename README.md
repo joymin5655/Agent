@@ -164,7 +164,7 @@ New to this space? These ten terms are all you need to read the rest of this pag
 | **hook** | A small script your AI runtime runs automatically before/after an action. It answers **allow**, **ask**, or **deny**. 27 scripts wired via `hooks/hooks.json` (32 incl. shared modules) live in [`core/hooks/`](core/hooks/). |
 | **adapter** | A translator from a runtime hook or controlled wrapper event to the harness's canonical JSON. There are 3 runtime adapters (claude-code, codex, antigravity) in [`adapters/`](adapters/). |
 | **agent** | A specialist your AI delegates to — e.g. a security reviewer that only reviews and never writes. 3 ship in the core plugin ([`agents/`](agents/)) and 1 in the optional extras plugin. |
-| **skill** | A reusable step-by-step workflow the AI follows, e.g. the commit + PR flow. 6 ship in the core plugin ([`skills/`](skills/)) and 9 more in the optional extras plugin ([`extras/skills/`](extras/skills/)). |
+| **skill** | A reusable step-by-step workflow the AI follows, e.g. the commit + PR flow. 6 ship in the core plugin ([`skills/`](skills/)) and 10 more in the optional extras plugin ([`extras/skills/`](extras/skills/)). |
 | **gate** | A hook decision point (deny / ask / block). Every gate is registered with the model weakness it assumes — [`docs/gate-registry.md`](docs/gate-registry.md). |
 | **wave** | One batch of work inside a `/supervise` plan — dispatched, executed, and audited before the next wave starts. |
 | **verdict** | The shared CONFIRMED / REFUTED result schema every verifier emits — [`docs/scoring-convention.md`](docs/scoring-convention.md). |
@@ -260,9 +260,9 @@ Then:
 
 The core plugin bundles: **3 agents**, **6 skills**, the hook set, and the
 `/agent-harness:project-init` command. **`agent-harness-extras`** (optional, same marketplace)
-adds **1 agent** and **9 rarely used skills** — see the [Catalog](#catalog) below.
+adds **1 agent** and **10 rarely used skills** — see the [Catalog](#catalog) below.
 Existing users who relied on `loop`, `harness-loop`, `harness-audit`, `manager-audit`,
-`persona-review`, `reorg-sync`, `worker-setup`, `code-tour` or `brain-ingest`: run
+`persona-review`, `reorg-sync`, `worker-setup`, `code-tour`, `brain-ingest` or `writing-critique`: run
 `/plugin install agent-harness-extras@agent` once (skills then appear as
 `/agent-harness-extras:<name>`).
 See the
@@ -473,6 +473,7 @@ Model is cost-tiered per work class ([`docs/model-routing.md`](docs/model-routin
 | `code-tour` | Write a human reading path through a codebase or a finished build — stack, file roles, one traced flow, safe experiments, run steps, glossary; every path checked, source untouched |
 | `harness-loop` · `loop` | Bounded-attempt improvement loops — generic (`loop`) and specialised to the harness's own reviewer prompts (`harness-loop`); use `/agent-harness-extras:loop` (the built-in `/loop` is a different command) |
 | `worker-setup` | Install → auth → verify onboarding for the cross-vendor worker lanes, with a cost briefing first |
+| `writing-critique` | Two other-vendor AIs critique a new Korean document against a rubric without knowing the author; accept evidence-backed findings only, then polish, proofread, check for meaning drift, log |
 
 | Hooks — 27 wired via `hooks/hooks.json` → `core/hooks/` (32 scripts incl. shared modules) | Event |
 |---|---|
@@ -502,7 +503,7 @@ Agent/
 │
 ├── agents/             # 3 agent definitions + master-registry.json (plan-checker · code-reviewer · security-reviewer)
 ├── skills/             # 6 core skills (spec · supervise · verify-completion · wrap · harness-help · council-review)
-├── extras/             # optional second plugin `agent-harness-extras`: .claude-plugin/plugin.json, skills/ (9: brain-ingest · harness-audit · manager-audit · persona-review · reorg-sync · code-tour · loop · harness-loop · worker-setup), agents/ (persona-review-orchestrator), scripts/harness-root.sh, core/infra/reorg-sync.sh
+├── extras/             # optional second plugin `agent-harness-extras`: .claude-plugin/plugin.json, skills/ (10: brain-ingest · harness-audit · manager-audit · persona-review · reorg-sync · code-tour · loop · harness-loop · worker-setup · writing-critique), agents/ (persona-review-orchestrator), scripts/harness-root.sh, core/infra/reorg-sync.sh
 ├── commands/           # 1 namespaced project-init command
 ├── hooks/              # plugin hook wiring (hooks.json)
 │

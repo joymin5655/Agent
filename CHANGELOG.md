@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`writing-critique` skill (extras plugin).** Two critics from other companies (codex,
+  gemini) read an anonymised Korean document against a six-category rubric and return JSON
+  findings that must quote the draft verbatim; the author accepts evidence-backed findings only
+  (reject codes R1-R5), then polishes, proofreads and runs `drift_check.py` (signed numbers
+  with units, dates, URLs, English words, quotes, negations, obligation wording, sentence
+  count; directions, names and quotes also in order) against the original draft.
+  Scripts: `anonymize.py`, `critique.sh`, `parse_findings.py`, `drift_check.py`,
+  `log_run.py`, `report.py`; the run log keeps metadata only. The calls use the new read-only
+  call-worker roles `advisor-writing-openai` (codex, TOP) and `advisor-writing-google` (gemini,
+  MID), neither with a fallback, and never set `AGENT_WORKER_YES`. Offline battery:
+  `core/tests/writing-critique-test.sh`.
+
 ## [0.13.6] - 2026-10-30
 
 ### Added

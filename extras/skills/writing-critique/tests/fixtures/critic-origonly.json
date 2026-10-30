@@ -1,0 +1,1 @@
+{"verdict": "revise", "findings": [{"quote": "작성자: Jane Doe", "problem": "작성자 표기가 본문 앞에 놓여 있다.", "suggestion": "머리 정보로 옮긴다.", "category": "format", "severity": "minor", "changes_fact": false}, {"quote": "초고 메모: 3절 수치는 다시 확인할 것", "problem": "초고 메모가 남아 있다.", "suggestion": "지운다.", "category": "format", "severity": "major", "changes_fact": false}]}
