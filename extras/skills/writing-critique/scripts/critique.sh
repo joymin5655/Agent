@@ -102,7 +102,7 @@ for label, company in (("A", la), ("B", lb)):
     elif rc != 0:
         entry["status"] = "failed"
     else:
-        got = [l.strip() for l in open(f"{out}/{label}.path").read().splitlines() if l.strip()]
+        got = [l.strip() for l in open(f"{out}/{label}.path", encoding="utf-8").read().splitlines() if l.strip()]
         path = got[-1] if got else ""
         if path:
             backend, fallback = header(path)
@@ -152,9 +152,9 @@ if result == "one":
     lines.append("only one critic answered: use that critic's findings alone and say so")
     if need:
         lines.append(f"critic {need[0]} needs approval: to add it, ask the user and re-run this command with the approval flag set for that one call (both critics run again)")
-json.dump(findings, open(f"{out}/findings.json", "w"), ensure_ascii=False, indent=2)
-json.dump(labels, open(f"{out}/labels.json", "w"), ensure_ascii=False, indent=2)
-open(f"{out}/status.txt", "w").write("\n".join(lines) + "\n")
+json.dump(findings, open(f"{out}/findings.json", "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+json.dump(labels, open(f"{out}/labels.json", "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+open(f"{out}/status.txt", "w", encoding="utf-8").write("\n".join(lines) + "\n")
 print("\n".join(lines))
 sys.exit(0 if ok else 4)
 PY
