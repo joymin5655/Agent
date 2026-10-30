@@ -310,15 +310,15 @@ echo
 echo "=== lane: review-completeness (--global only; V-6) ==="
 NOW_TS="$(python3 -c 'import datetime; print(datetime.datetime.now(datetime.timezone.utc).isoformat())')"
 RVW="$WORK/rv"
-mkrv() { # mkrv <name> <solo-keys> <external-keys>  -> $RVW/<name>/{workers,logs}
+mkrv() { # mkrv <name> <solo-keys> <external-keys>  -> $RVW/<name>/{workers,logs} (a Claude-written change)
     local d="$RVW/$1" i
     rm -rf "$d"; mkdir -p "$d/workers/p1" "$d/logs"
     : > "$d/workers/p1/reviews.jsonl"
     for ((i = 0; i < $2; i++)); do
-        printf '{"ts":"%s","role":"code-reviewer","vendor":"anthropic","status":"complete","diff_key":"s%s"}\n' "$NOW_TS" "$i" >> "$d/workers/p1/reviews.jsonl"
+        printf '{"ts":"%s","role":"code-reviewer","vendor":"anthropic","status":"complete","diff_key":"s%s","author_vendor":"anthropic"}\n' "$NOW_TS" "$i" >> "$d/workers/p1/reviews.jsonl"
     done
     for ((i = 0; i < $3; i++)); do
-        printf '{"ts":"%s","role":"codex","vendor":"openai","status":"complete","diff_key":"e%s"}\n' "$NOW_TS" "$i" >> "$d/workers/p1/reviews.jsonl"
+        printf '{"ts":"%s","role":"codex","vendor":"openai","status":"complete","diff_key":"e%s","author_vendor":"anthropic"}\n' "$NOW_TS" "$i" >> "$d/workers/p1/reviews.jsonl"
     done
 }
 rrun() { # rrun <name> [extra env KEY=VAL...] -> OUT, RC
@@ -380,6 +380,14 @@ OUT="$(env AGENT_MODEL_ROUTING_SINK="$LOGS/routing.jsonl" AGENT_REGISTRY_PATH="$
 if jq -e '.findings[] | select(.check=="review-unmeasured") | .evidence | contains("digest failed (exit 3")' <<< "$OUT" >/dev/null 2>&1 \
     && ! has_finding review-completeness lane-clean PASS; then
     ok "r13-digest-failure-evidence"; else bad "r13" "$(jq -c '[.findings[]|select(.lane=="review-completeness")]' <<< "$OUT")"; fi
+
+# rows written before author_vendor was recorded are left out of the ratio: unmeasured, said so
+mkdir -p "$RVW/legacy/workers/p1" "$RVW/legacy/logs"
+printf '{"ts":"%s","role":"codex","vendor":"openai","status":"complete","diff_key":"e0"}\n' "$NOW_TS" > "$RVW/legacy/workers/p1/reviews.jsonl"
+rrun legacy
+if jq -e '.findings[] | select(.check=="review-unmeasured") | .evidence | contains("known author")' <<< "$OUT" >/dev/null 2>&1 \
+    && ! has_finding review-completeness lane-clean PASS; then
+    ok "r14-author-unknown-rows-unmeasured"; else bad "r14" "$(jq -c '[.findings[]|select(.lane=="review-completeness")]' <<< "$OUT")"; fi
 
 # slug mode must not run the new lane
 run good --session s1

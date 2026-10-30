@@ -10,6 +10,14 @@
 #   - disabled backends carry a disabled_reason (loud-unavailable contract)
 #   - NO model IDs anywhere (tier policy lives in vendor profiles, never here)
 #   - NO credential-shaped keys or values (api keys, tokens, secrets)
+#   - cross-company review: every backend names its vendor (the author-vendor exclusion
+#     matches on it); `cross-review` is codex with a claude fallback on ANOTHER vendor;
+#     the review/verify roles are `readonly` (a boolean) and carry no sandbox argument of
+#     their own, the codex argv sets none either, and the claude lane is limited to the
+#     Read/Grep/Glob tools with no MCP servers and no permission bypass, and runs with
+#     --safe-mode and --restricted (no project/user settings, no auto-run hooks), never --bare;
+#     the implementer
+#     keeps only flags `codex exec` accepts (no --ask-for-approval); codex gets >= 600 s
 #
 # Usage: bash core/tests/backends-schema-test.sh
 set -u
@@ -152,6 +160,72 @@ echo "=== agy/antigravity lane pins Google-vendor models only (vendor independen
 jq -e '.backends.gemini.comment // "" | test("(?i)google-vendor|gemini-\\*")' \
   "$REGISTRY" >/dev/null 2>&1
 check "gemini-lane-vendor-independence-comment" $?
+
+echo
+echo "=== cross-company review: roles, read-only pins, the claude lane ==="
+# Sandbox-setting arguments of the codex CLI. call-worker.sh refuses a readonly role whose argv
+# carries one (a later flag would win and un-pin `--sandbox read-only`); the registry must not.
+SANDBOX_ARG_JQ='. == "-s" or . == "--sandbox" or startswith("--sandbox=") or . == "--full-auto"
+                or . == "--approve-for-me" or . == "--dangerously-bypass-approvals-and-sandbox"'
+# The author-vendor exclusion matches on "vendor", so every backend must carry one.
+jq -e '.backends | to_entries | all(.value.vendor | type == "string" and length > 0)' \
+  "$REGISTRY" >/dev/null 2>&1
+check "every-backend-names-its-vendor" $?
+# cross-review: codex first, claude as the fallback — on purpose another vendor, unlike the
+# voting lanes; call-worker.sh's author exclusion keeps the author's own company out.
+jq -e '.roles["cross-review"] | .backend == "codex" and .fallback == "claude"
+       and .tier == "TOP" and .readonly == true' "$REGISTRY" >/dev/null 2>&1
+check "cross-review-role-shape" $?
+jq -e '.backends as $b | .roles["cross-review"] | $b[.backend].vendor != $b[.fallback].vendor' \
+  "$REGISTRY" >/dev/null 2>&1
+check "cross-review-fallback-is-another-vendor" $?
+# The claude lane: anthropic, print mode, exactly Read/Grep/Glob, no MCP servers, no bypass.
+jq -e '.backends.claude | .vendor == "anthropic" and (.cmd | index("-p")) != null
+       and ((.cmd | index("--tools")) as $i
+            | $i != null and ((.cmd[$i + 1] // "") | split(",") | sort) == ["Glob", "Grep", "Read"])
+       and (.cmd | index("--strict-mcp-config")) != null
+       and ((.cmd | map(select(startswith("--dangerously") or startswith("--allow-dangerously")
+                               or . == "--allowedTools" or . == "--allowed-tools"
+                               or startswith("--permission-mode"))) | length) == 0)' \
+  "$REGISTRY" >/dev/null 2>&1
+check "claude-lane-read-only-tools" $?
+# The reviewed repository is untrusted and `claude -p` reads its ./.claude/settings.json: a
+# planted SessionStart command ran without these two flags and was stopped by each (measured on
+# 2.1.312). Both stay, ahead of the tool list.
+jq -e '.backends.claude.cmd | (index("--safe-mode")) != null and (index("--restricted")) != null
+       and index("--safe-mode") < index("--tools") and index("--restricted") < index("--tools")' \
+  "$REGISTRY" >/dev/null 2>&1
+check "claude-lane-safe-mode-and-restricted" $?
+# --bare skips the subscription login (OAuth), so the lane would not authenticate.
+jq -e '.backends.claude.cmd | index("--bare") == null' "$REGISTRY" >/dev/null 2>&1
+check "claude-lane-not-bare" $?
+# Review, verify and advisor roles never write; the implementer is the one role that does.
+jq -e '.roles as $r | ["cross-review", "second-opinion-review", "second-opinion-verify",
+                       "third-opinion-review", "advisor"] | all($r[.].readonly == true)' \
+  "$REGISTRY" >/dev/null 2>&1
+check "review-roles-are-readonly" $?
+jq -e '.roles.implementer | (.readonly // false) == false' "$REGISTRY" >/dev/null 2>&1
+check "implementer-is-not-readonly" $?
+jq -e '.roles | to_entries | all(.value | ((has("readonly") | not) or (.readonly | type == "boolean")))' \
+  "$REGISTRY" >/dev/null 2>&1
+check "readonly-is-a-boolean" $?
+jq -e "[.roles | to_entries[] | select(.value.readonly == true) | (.value.args_extra // [])[]]
+       | map(select($SANDBOX_ARG_JQ)) | length == 0" "$REGISTRY" >/dev/null 2>&1
+check "readonly-roles-carry-no-sandbox-arg" $?
+jq -e "[.backends.codex.cmd[], (.backends.codex.tier_args | .[][])]
+       | map(select($SANDBOX_ARG_JQ)) | length == 0" "$REGISTRY" >/dev/null 2>&1
+check "codex-argv-carries-no-sandbox-arg" $?
+# codex 0.161 `exec` has no --ask-for-approval; the implementer used to pass it and failed.
+jq -e '.roles.implementer.args_extra == ["--sandbox", "workspace-write"]' "$REGISTRY" >/dev/null 2>&1
+check "implementer-args-are-ones-codex-exec-accepts" $?
+grep -q -- '--ask-for-approval' "$REGISTRY"
+[[ $? -ne 0 ]]; check "no-ask-for-approval-flag" $?
+# 26 of 163 local codex runs were cut at the old 300 s cap.
+jq -e '.backends.codex.timeout_s >= 600' "$REGISTRY" >/dev/null 2>&1
+check "codex-timeout-at-least-600s" $?
+# docs/model-routing.md names the advisor role, so it stays.
+jq -e '.roles.advisor.backend == "codex"' "$REGISTRY" >/dev/null 2>&1
+check "advisor-role-kept" $?
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="

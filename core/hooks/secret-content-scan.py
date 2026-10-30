@@ -351,6 +351,10 @@ def extract_chunks(tool_name: str, tool_input: dict) -> list[str]:
 
 
 LEDGER_FILES = {"reviews.jsonl", "review-override.jsonl"}
+# call-worker.sh's writing-lane record lives in each checkout's git dir, not in the ledger
+# roots, and its name is specific to this harness: guarded wherever it sits. Emptying it would
+# let review-evidence.py author-vendor forget a company that wrote the branch.
+LEDGER_FILES_ANYWHERE = {"agent-author-vendors"}
 LEDGER_WRITE_TOOLS = {"Write", "Edit", "MultiEdit"}
 
 
@@ -370,13 +374,18 @@ def _ledger_roots() -> list[str]:
 
 
 def is_ledger_path(file_path) -> bool:
-    """A ledger file name INSIDE the workers/logs dirs. A project's own reviews.jsonl
-    (a common dataset name) elsewhere is not a ledger."""
+    """A ledger file name INSIDE the workers/logs dirs, or the writing-lane record anywhere. A
+    project's own reviews.jsonl (a common dataset name) elsewhere is not a ledger."""
     if not isinstance(file_path, str) or not file_path:
         return False
+    if os.path.basename(file_path).lower() in LEDGER_FILES_ANYWHERE:
+        return True
+    real = os.path.realpath(os.path.expanduser(file_path))
+    if os.path.basename(real).lower() in LEDGER_FILES_ANYWHERE:
+        return True
     if os.path.basename(file_path).lower() not in LEDGER_FILES:
         return False
-    real = os.path.realpath(os.path.expanduser(file_path)).lower()
+    real = real.lower()
     return any(real == r or real.startswith(r + os.sep) for r in _ledger_roots())
 
 
@@ -401,9 +410,10 @@ def main() -> None:
         log_violation(reason)
         emit_deny(
             f"{reason}\n"
-            "WHY: evidence-ledger guard — reviews.jsonl / review-override.jsonl are the proof "
-            "the commit gate trusts and are written only by call-worker.sh and "
-            "review-evidence.py; an agent-written row would forge a review.\n"
+            "WHY: evidence-ledger guard — reviews.jsonl / review-override.jsonl / "
+            "agent-author-vendors are the proof the commit gate trusts and are written only by "
+            "call-worker.sh and review-evidence.py; an agent-written or emptied one would forge "
+            "a review.\n"
             "FIX: run /council-review so call-worker.sh appends the row; do not edit the ledger."
         )
         sys.exit(0)

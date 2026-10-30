@@ -161,8 +161,15 @@ rubric design, the deterministic half being the commit hook.
 additional evidence input to this pass. Ask the user for cost approval, then:
 
 ```bash
-AGENT_WORKER_YES=1 bash "${CLAUDE_PLUGIN_ROOT}/core/infra/call-worker.sh" second-opinion-verify \
-    < <claim + diff/artifacts>          # prints ~/.agent/workers/<project-key>/<ts>-…md
+# The authors' companies: call-worker skips a backend of any of them (lane absent). If
+# author-vendor fails they are unknown: skip the lane and say there is no second opinion.
+if AV="$(python3 "${CLAUDE_PLUGIN_ROOT}/core/infra/review-evidence.py" author-vendor)" && [[ -n "$AV" ]]; then
+  export AGENT_AUTHOR_VENDOR="$AV"
+  AGENT_WORKER_YES=1 bash "${CLAUDE_PLUGIN_ROOT}/core/infra/call-worker.sh" second-opinion-verify \
+      < <claim + diff/artifacts>        # prints ~/.agent/workers/<project-key>/<ts>-…md
+else
+  echo "verify-completion: author-vendor failed — authors unknown, no external second opinion" >&2
+fi
 ```
 
 Hand the captured file to the semantic verifier alongside the claim and diff.

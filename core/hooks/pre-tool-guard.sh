@@ -2953,8 +2953,11 @@ fi
 
 # 4a. Gate-config variables. AGENT_REVIEW_OVERRIDE is the USER's escape from the commit
 # review gate; AGENT_WORKERS_DIR / AGENT_LOGS_DIR relocate the evidence ledger the gate
-# reads; GITHEAD_<hex> is git's merged-head variable. An agent that sets any of them can
-# approve its own risk-area commit, so DENY an assignment `NAME=` / `NAME+=` / `NAME:=`
+# reads; GITHEAD_<hex> is git's merged-head variable; AGENT_WORKER_POLICY_CMD names the usage
+# policy call-worker.sh asks before a paid lane and AGENT_BACKENDS_FILE swaps the registry
+# that says which company each lane is (a custom one also drops the anthropic policy
+# exemption). An agent that sets any of them can approve its own risk-area commit or its own
+# spend, so DENY an assignment `NAME=` / `NAME+=` / `NAME:=`
 # ANYWHERE in the quote- and backslash-stripped, message-stripped command ($SCAN_CMD, so a
 # -m message body is not scanned) — a launcher prefix (timeout, nice, env, bash -o … -c)
 # is covered by construction, not by enumeration. Also the builtins that name one
@@ -2963,42 +2966,72 @@ fi
 # unset NAME, [[ "$NAME" == "" ]]) never match. Placed before the ask guards so a compound
 # command still gets deny. Denies the recognised assignment forms and logs the attempt; a
 # speed bump, not a boundary (brace/variable indirection, interpreter one-liners such as
-# python/perl/node -e, and scripts written then run evade it).
+# python/perl/node -e, and scripts written then run evade it). AGENT_WORKER_YES and
+# AGENT_AUTHOR_VENDOR are NOT listed: /council-review sets both in its own commands after
+# the person approves (YES cannot lift a policy cap, and the author list only adds).
 _CMD_RO=$(printf '%s' "$SCAN_CMD" | tr -d "\\\\\"'")
-_RO_NAMES='(AGENT_REVIEW_OVERRIDE|AGENT_WORKERS_DIR|AGENT_LOGS_DIR|GITHEAD_[0-9a-fA-F]+)'
+_RO_NAMES='(AGENT_REVIEW_OVERRIDE|AGENT_WORKERS_DIR|AGENT_LOGS_DIR|AGENT_WORKER_POLICY_CMD|AGENT_BACKENDS_FILE|GITHEAD_[0-9a-fA-F]+)'
 _RO_LEAD='(^|[;&|({`]|(^|[[:space:];&|(])(ba|z|da|k)?sh([[:space:]]+-[A-Za-z]+)*[[:space:]]+-[A-Za-z]*c[A-Za-z]*[[:space:]]+|(^|[[:space:]])eval[[:space:]]+)[[:space:]]*((then|do|else|elif|if|while|until|time|!)[[:space:]]+)*'
 if echo "$_CMD_RO" | grep -qE "(^|[^A-Za-z0-9_])${_RO_NAMES}[:+]?=" \
    || echo "$_CMD_RO" | grep -qE "${_RO_LEAD}(export|declare|typeset|local|readonly|read|mapfile|readarray|printf[[:space:]]+-v)[[:space:]]+[^;&|]*${_RO_NAMES}" \
    || { echo "$_CMD_RO" | grep -qE "${_RO_LEAD}set[[:space:]]+(-[A-Za-z]*a|-o[[:space:]]+allexport)" \
         && echo "$_CMD_RO" | grep -qE "${_RO_NAMES}"; }; then
-  log_violation review-override "agent attempted to set a gate-config variable (AGENT_REVIEW_OVERRIDE/AGENT_WORKERS_DIR/AGENT_LOGS_DIR/GITHEAD_*)"
-  emit_deny "Setting AGENT_REVIEW_OVERRIDE, AGENT_WORKERS_DIR, AGENT_LOGS_DIR or GITHEAD_* from an agent command is blocked.
-WHY: review-override guard — these control the risk-area commit review gate (user-only escape, evidence-ledger location, merged heads); an agent setting one could approve its own commit.
-FIX: run /council-review --staged and commit normally; if every external lane is down, ask the user to run the commit in their own terminal. If you only mention a variable in prose, write the message to a file and use git commit -F."
+  log_violation review-override "agent attempted to set a gate-config variable (AGENT_REVIEW_OVERRIDE/AGENT_WORKERS_DIR/AGENT_LOGS_DIR/AGENT_WORKER_POLICY_CMD/AGENT_BACKENDS_FILE/GITHEAD_*)"
+  emit_deny "Setting AGENT_REVIEW_OVERRIDE, AGENT_WORKERS_DIR, AGENT_LOGS_DIR, AGENT_WORKER_POLICY_CMD, AGENT_BACKENDS_FILE or GITHEAD_* from an agent command is blocked.
+WHY: review-override guard — these control the risk-area commit review gate (user-only escape, evidence-ledger location, merged heads) and the paid worker lanes (usage policy, lane registry); an agent setting one could approve its own commit or its own spend.
+FIX: run /council-review --staged and commit normally; if every external lane is down, ask the user to run the commit in their own terminal. The usage policy and the lane registry are set by the user in their own environment. If you only mention a variable in prose, write the message to a file and use git commit -F."
   exit 0
 fi
 
-# 4b. Evidence ledgers (reviews.jsonl, review-override.jsonl) are written only by
-# call-worker.sh and review-evidence.py — their appends happen inside those scripts,
-# not in an agent command string. DENY (case-insensitive: APFS) a Bash command that
-# writes them: a `>`/`>>`/`>|` redirect onto one; a write verb (tee/cp/mv/ln/dd/rsync/
-# scp/install/truncate/rm/shred/unzip/7z/tar/gpg/openssl/age — the write-capable members
-# of the secrets guard's verb list) with a ledger name or the .agent/workers directory
-# as ANY argument; sed -i naming one; or python open(...,'a'|'w'|'x'|'+') naming one.
+# 4a2. Removing the usage policy or the lane registry from the environment. Unsetting the
+# other 4a names only makes the gate stricter (no override, the default ledger), so `unset`
+# stays allowed for them. Without AGENT_WORKER_POLICY_CMD, though, call-worker.sh treats the
+# call as unpoliced and AGENT_WORKER_YES=1 alone passes a cap the policy would hold, and a
+# cleared AGENT_BACKENDS_FILE swaps the registry back. So, for these two names only, DENY
+# `unset … NAME` (one name among several too, after unset options, as a command), `env -u NAME`
+# / `env -uNAME` / `env --unset=NAME` / `env --unset NAME`, and, in a command that mentions
+# call-worker, `env -i` / `env -` / `env --ignore-environment` (which drops every variable,
+# the policy included). Any other `env -i` stays allowed. Mentions (echo "$NAME",
+# grep NAME f) never match. Same speed bump as 4a: indirection (unset "$v", a name built
+# from pieces) and interpreter one-liners (python -c 'del os.environ[...]') are not caught.
+_UNSET_NAMES='(AGENT_WORKER_POLICY_CMD|AGENT_BACKENDS_FILE)'
+_ENV_WORD='(^|[^A-Za-z0-9_.-])env[[:space:]]+([^;&|]*[[:space:]])?'
+if echo "$_CMD_RO" | grep -qE "${_RO_LEAD}((command|builtin)[[:space:]]+)?unset[[:space:]]+([^;&|]*[^A-Za-z0-9_;&|])?${_UNSET_NAMES}([^A-Za-z0-9_]|$)" \
+   || echo "$_CMD_RO" | grep -qE "${_ENV_WORD}(-[A-Za-z0-9]*u[[:space:]]*|--unset(=|[[:space:]]+))${_UNSET_NAMES}([^A-Za-z0-9_]|$)" \
+   || { echo "$_CMD_RO" | grep -qE "${_ENV_WORD}(-[A-Za-z0-9]*i[A-Za-z0-9]*|-|--ignore-environment)([[:space:]]|$)" \
+        && echo "$_CMD_RO" | grep -qE 'call-worker'; }; then
+  log_violation review-override "agent attempted to remove AGENT_WORKER_POLICY_CMD/AGENT_BACKENDS_FILE from the environment"
+  emit_deny "Removing AGENT_WORKER_POLICY_CMD or AGENT_BACKENDS_FILE from the environment (unset, env -u, or env -i around call-worker) is blocked.
+WHY: review-override guard — without the usage policy call-worker.sh takes AGENT_WORKER_YES=1 alone as approval and would pass a cap the policy holds, and the lane registry decides which company each lane is; an agent clearing either could approve its own spend.
+FIX: call call-worker.sh with the environment as it is. If the policy refuses or caps a lane, report that to the user; raising a cap is the user's change, made in the policy."
+  exit 0
+fi
+
+# 4b. Evidence ledgers (reviews.jsonl, review-override.jsonl) and the writing-lane record
+# (<git dir>/agent-author-vendors) are written only by call-worker.sh and review-evidence.py —
+# their appends happen inside those scripts, not in an agent command string. Emptying the
+# record would let review-evidence.py author-vendor fall back to the branch prefix alone, so a
+# company that wrote the change could pass as its outside reviewer. DENY (case-insensitive:
+# APFS) a Bash command that writes one: a `>`/`>>`/`>|` redirect onto one (`: > f` included); a
+# write verb (tee/cp/mv/ln/dd/rsync/scp/install/truncate/rm/shred/unzip/7z/tar/gpg/openssl/age —
+# the write-capable members of the secrets guard's verb list) with a ledger name or the
+# .agent/workers directory as ANY argument; sed -i naming one; or python
+# open(...,'a'|'w'|'x'|'+') naming one.
 # Reading (cat, grep, jq, open(...,'r')) is allowed. Same speed-bump caveat as 4a.
 # basename boundary: the name must start the word or follow / = or whitespace, so
 # my_reviews.jsonl is not a ledger. _LEDGER_Q is the same boundary for the quote-preserving
 # python check (quote or / before the name).
-_LEDGER='(^|[[:space:]/=])(reviews|review-override)\.jsonl'
-_LEDGER_Q='[/"'"'"'](reviews|review-override)\.jsonl'
+_LEDGER_NAME='((reviews|review-override)\.jsonl|agent-author-vendors)'
+_LEDGER="(^|[[:space:]/=])${_LEDGER_NAME}"
+_LEDGER_Q='[/"'"'"']'"${_LEDGER_NAME}"
 _WRITE_VERBS='tee|cp|mv|ln|dd|rsync|scp|install|truncate|rm|shred|unzip|7z|tar|gpg|openssl|age'
-if echo "$_CMD_RO" | grep -qiE ">[>|]?[[:space:]]*([^[:space:];&|]*/)?(reviews|review-override)\.jsonl" \
-   || echo "$_CMD_RO" | grep -qiE "(^|[^A-Za-z0-9_./-])(${_WRITE_VERBS})[[:space:]]+([^;&|]*[[:space:]/=])?((reviews|review-override)\.jsonl|\.agent/workers)" \
+if echo "$_CMD_RO" | grep -qiE ">[>|]?[[:space:]]*([^[:space:];&|]*/)?${_LEDGER_NAME}" \
+   || echo "$_CMD_RO" | grep -qiE "(^|[^A-Za-z0-9_./-])(${_WRITE_VERBS})[[:space:]]+([^;&|]*[[:space:]/=])?(${_LEDGER_NAME}|\.agent/workers)" \
    || echo "$_CMD_RO" | grep -qiE "(^|[^A-Za-z0-9_./-])sed[[:space:]]+[^;&|]*-[A-Za-z]*i[^;&|]*${_LEDGER}" \
    || echo "$SCAN_CMD" | grep -qiE "open\([^)]*${_LEDGER_Q}[^)]*,[[:space:]]*[\"'][abwx+]"; then
   log_violation evidence-ledger "agent command writes a review evidence ledger"
-  emit_deny "Writing a review evidence ledger (reviews.jsonl / review-override.jsonl) from an agent command is blocked.
-WHY: evidence-ledger guard — these files are the proof the commit gate trusts and are written only by call-worker.sh and review-evidence.py; an agent-written row would forge a review.
+  emit_deny "Writing a review evidence ledger (reviews.jsonl / review-override.jsonl / agent-author-vendors) from an agent command is blocked.
+WHY: evidence-ledger guard — these files are the proof the commit gate trusts (the review rows, the user's overrides, and which companies' lanes wrote this branch) and are written only by call-worker.sh and review-evidence.py; an agent-written or emptied one would forge a review.
 FIX: produce the row by running /council-review (call-worker.sh appends it); reading the ledger (cat, grep, jq) is fine."
   exit 0
 fi

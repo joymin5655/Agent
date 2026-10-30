@@ -1,11 +1,19 @@
 {
   "version": 2,
-  "comment": "Machine-readable SSOT for cross-vendor worker dispatch (docs/model-routing.md § Cross-vendor lanes). Roles map to backends at a tier; backends map to CLI argv. argv = cmd + tier_args[role.tier] + role.args_extra. Model names NEVER appear here — each vendor's adapter/profile owns its tier (codex --profile deep = TOP-tier reasoning; the gemini lane pins its model in adapters/antigravity/antigravity-tiers.json.template). A disabled backend (enabled: false) refuses loudly with its disabled_reason — never a silent fallback. A backend carrying \"gateway\" reaches its vendor THROUGH that gateway's CLI rather than a first-party one: one CLI, several vendor lanes, so \"vendor\" stays the honest independence signal — a second opinion is only independent when its vendor differs from the dispatching session's. No shipped backend carries a gateway since the kiro lanes were retired (2026-10-08, legacy/lanes-2026-10/); call-worker.sh still isolates any that does.",
+  "comment": "Machine-readable SSOT for cross-vendor worker dispatch (docs/model-routing.md § Cross-vendor lanes). Roles map to backends at a tier; backends map to CLI argv. argv = cmd + tier_args[role.tier] + role.args_extra; a role with \"readonly\": true gets `--sandbox read-only` slotted in ahead of args_extra on a codex backend (other CLIs carry their own read-only restriction in cmd), and a sandbox argument of its own in that argv is a registry error. A backend whose vendor is the work's author (AGENT_AUTHOR_VENDOR) is never a candidate: a company does not review its own work. Model names NEVER appear here — each vendor's adapter/profile owns its tier (codex --profile deep = TOP-tier reasoning; the gemini lane pins its model in adapters/antigravity/antigravity-tiers.json.template). A disabled backend (enabled: false) refuses loudly with its disabled_reason — never a silent fallback. A backend carrying \"gateway\" reaches its vendor THROUGH that gateway's CLI rather than a first-party one: one CLI, several vendor lanes, so \"vendor\" stays the honest independence signal — a second opinion is only independent when its vendor differs from the dispatching session's. No shipped backend carries a gateway since the kiro lanes were retired (2026-10-08, legacy/lanes-2026-10/); call-worker.sh still isolates any that does.",
   "roles": {
+    "cross-review": {
+      "backend": "codex",
+      "tier": "TOP",
+      "fallback": "claude",
+      "readonly": true,
+      "comment": "one reviewer from a company other than the author's: call-worker drops a backend whose vendor equals AGENT_AUTHOR_VENDOR. Author openai -> codex is dropped and claude reviews; author anthropic -> codex reviews; codex capped or unavailable -> claude, and when the author is anthropic that one is dropped too, so the dispatch ends unavailable (exit 127) and the caller reports a single-company review. Unlike the voting lanes this fallback sits on another vendor on purpose: the capture row records the vendor that actually answered, which is what the commit gate compares with the author."
+    },
     "second-opinion-review": {
       "backend": "codex",
       "tier": "TOP",
       "fallback": null,
+      "readonly": true,
       "comment": "council's openai voting lane. Lens: implementation correctness (logic, edge cases, error handling, concurrency) — prompt framing lives in skills/council-review/SKILL.md step 1; a lens states emphasis, not permission.",
       "fallback_comment": "no fallback: a fallback on another vendor would silently change the vote's vendor, so an absent lane is reported absent instead (same rule as third-opinion-review)."
     },
@@ -13,6 +21,7 @@
       "backend": "codex",
       "tier": "TOP",
       "fallback": null,
+      "readonly": true,
       "fallback_comment": "no fallback: a fallback on another vendor would silently change the vote's vendor, so an absent lane is reported absent instead (same rule as third-opinion-review)."
     },
     "implementer": {
@@ -21,21 +30,21 @@
       "fallback": null,
       "args_extra": [
         "--sandbox",
-        "workspace-write",
-        "--ask-for-approval",
-        "never"
+        "workspace-write"
       ]
     },
     "advisor": {
       "backend": "codex",
       "tier": "TOP",
       "fallback": null,
+      "readonly": true,
       "fallback_comment": "no fallback: a fallback on another vendor would silently change the vote's vendor, so an absent lane is reported absent instead (same rule as third-opinion-review)."
     },
     "third-opinion-review": {
       "backend": "gemini",
       "tier": "TOP",
       "fallback": null,
+      "readonly": true,
       "comment": "council's google voting lane. Lens: architecture & consistency (design/simplification, contract coherence, doc-code drift) — prompt framing in skills/council-review/SKILL.md step 1. fallback deliberately null: falling back to an openai-vendor lane would duplicate the codex lane's vendor and fake the independence signal — an absent lane is reported absent instead."
     }
   },
@@ -65,8 +74,33 @@
         "status"
       ],
       "preflight_timeout_s": 15,
-      "comment": "preflight = 'codex login status', measured 2026-08-20 on codex 0.147.0: logged-out exits 1 and prints 'Not logged in'; logged-in exits 0. A local check (reads cached auth state, no network inference) and not billable — unlike '--version' it actually distinguishes an authenticated lane from a dead one.",
-      "timeout_s": 300
+      "comment": "preflight = 'codex login status', measured 2026-08-20 on codex 0.147.0: logged-out exits 1 and prints 'Not logged in'; logged-in exits 0. A local check (reads cached auth state, no network inference) and not billable — unlike '--version' it actually distinguishes an authenticated lane from a dead one. timeout_s 600: 26 of 163 local runs were cut at the old 300 s cap.",
+      "timeout_s": 600
+    },
+    "claude": {
+      "vendor": "anthropic",
+      "connection": "cli",
+      "enabled": true,
+      "cmd": [
+        "claude",
+        "-p",
+        "--safe-mode",
+        "--restricted",
+        "--tools",
+        "Read,Grep,Glob",
+        "--strict-mcp-config",
+        "--no-session-persistence"
+      ],
+      "tier_args": {
+        "MID": [],
+        "TOP": []
+      },
+      "preflight": [
+        "claude",
+        "--version"
+      ],
+      "timeout_s": 600,
+      "comment": "read-only reviewer on the host's own CLI (claude 2.1.312). The repository under review is untrusted, and claude reads ./.claude/settings.json from its cwd: a SessionStart command planted there ran under plain `claude -p --setting-sources project`, even before the model name was checked. --safe-mode and --restricted each stopped it (measured); together they keep project and user settings and the commands they would auto-run (hooks) out of the run. --tools names the built-in tools that exist at all (here Read, Grep, Glob; --allowedTools would only pre-approve and leave the rest available), --strict-mcp-config with no --mcp-config drops every MCP server, --no-session-persistence keeps the run out of the session list. The subscription login (OAuth) still works with this set and Read answers; --bare does not read the OAuth login, so it is not used. vendor anthropic: call-worker exempts it from the usage policy only on the shipped registry with no Anthropic API credential variable in the environment (see call-worker.sh header); the same-company case is excluded by AGENT_AUTHOR_VENDOR, not by this entry. tier_args are empty on purpose: the lane runs the account's default model, and model names never live in this file. preflight = 'claude --version', a local check that only proves the CLI starts. The prompt arrives on stdin on purpose: --tools is declared variadic (<tools...>), so a positional prompt placed after it could be read as another tool name."
     },
     "gemini": {
       "vendor": "google",

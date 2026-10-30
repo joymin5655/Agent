@@ -37,10 +37,55 @@
 #   it reads the repo it is reviewing).
 #
 # Design (explicit failure over silence):
-#   - External calls cost money. Without AGENT_WORKER_YES=1 the dispatcher
-#     refuses (exit 3) and says how to approve. The gate is env-only by design:
-#     a dispatched/headless caller cannot answer an interactive confirm — the
-#     session that owns the user relationship asks, then sets the env.
+#   - External calls cost money, so approval is explicit. AGENT_WORKER_POLICY_CMD, when
+#     set, is the absolute path of ONE executable (never run through a shell, no PATH
+#     search, no relative path — that would resolve inside the repository under review)
+#     and is asked per candidate backend right before it would run, WHETHER OR NOT
+#     AGENT_WORKER_YES=1 is set:
+#         "$AGENT_WORKER_POLICY_CMD" check --lane <vendor> --role <role> --hold <pid>
+#     exit 0  = go ahead (approval "policy")
+#     exit 3  = not approved: runs only with AGENT_WORKER_YES=1 (a person approved this
+#               invocation; approval "user"), else this script exits 3
+#     exit 75 = capped: that backend is reported unavailable as "capped: <reason>" and the
+#               next candidate is tried. YES=1 does not lift a cap: raising it is the
+#               user's own decision, made in the policy, not here.
+#     It fails CLOSED, YES=1 or not: a policy that is set but not an absolute path to an
+#     executable file, hangs past AGENT_WORKER_POLICY_TIMEOUT_S (default 30; the policy
+#     runs in its own process group and the whole group is killed) or exits with any other
+#     code ends the run with exit 3. An anthropic-vendor backend is not asked only while it
+#     is plainly the host's own subscription: the registry is the shipped one
+#     (AGENT_BACKENDS_FILE empty or that same file) and none of ANTHROPIC_API_KEY,
+#     ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CLAUDE_CODE_USE_BEDROCK or
+#     CLAUDE_CODE_USE_VERTEX is in the environment (each can route the CLI to per-call
+#     billing; presence counts, whatever the value); their values are never printed or
+#     logged. With no policy set, AGENT_WORKER_YES=1 is required
+#     (exit 3 otherwise, saying how to approve). Both are env-only by design: a
+#     dispatched/headless caller cannot answer an interactive confirm — the session that
+#     owns the user relationship asks, then sets the env.
+#   - AGENT_AUTHOR_VENDOR=<vendor>[,<vendor>...] names every company whose model wrote the
+#     work: a backend of any of them is dropped from the candidates ("unavailable", reason
+#     recorded), so a company never reviews its own work. Each name must be a known vendor
+#     (anthropic, openai, google — review-evidence.py VENDORS), else exit 2. When every
+#     candidate is dropped the run ends as unavailable (exit 127) and the caller reports a
+#     single-company review.
+#   - A role WITHOUT "readonly": true can write the caller's tree (e.g. implementer). Once
+#     its backend has run, a line "<vendor><TAB><branch>" ("<vendor><TAB>@<HEAD commit>" on
+#     a detached HEAD) is appended to "$(git rev-parse --absolute-git-dir)/agent-author-vendors"
+#     of the caller's checkout (nothing outside git; best-effort). review-evidence.py
+#     author-vendor counts every line on every branch, so the same company cannot count as an
+#     outside reviewer of that work, even after a branch switch or rename carried the
+#     uncommitted change along; the branch field only tells the person who clears the file
+#     which run a line came from. Recorded on every status where the CLI started (complete,
+#     failed, timeout, rate-limited), not only on success as first specified: a run that
+#     failed or timed out can still have edited files, and missing such a run would let its
+#     company review its own edits.
+#     An agent command may not rewrite this file (pre-tool-guard.sh 4b,
+#     secret-content-scan.py LEDGER_FILES); the appends here are not agent commands.
+#   - The worker (and its preflight probe) runs with AGENT_LANE=<role> in its environment,
+#     so a vendor CLI's own session start/stop hooks can tell a dispatched lane from a
+#     person's session. A role with "readonly": true gets `--sandbox read-only` on a codex
+#     CLI, ahead of the role's args_extra; any other sandbox argument in that argv is a
+#     registry error (exit 2), because codex lets a later flag win.
 #   - AGENT_WORKER_DISABLE="<name>[,<name>...]" (comma/whitespace/newline
 #     separated) refuses the named backends —
 #     a name is a backend ("gemini") or a vendor ("google" = every backend with
@@ -56,20 +101,36 @@
 # usage: call-worker.sh <role> < prompt.md
 # exit:  0 ok | 1 backend failed (its raw exit code is reported on stderr,
 #        never forwarded — it would collide with the codes below)
-#        2 usage/config | 3 not approved | 124 timeout | 127 no backend CLI
-#        (disabled/preflight-failed backends terminate 127 too — "unavailable")
+#        2 usage/config (including an unknown AGENT_AUTHOR_VENDOR name) | 3 not approved
+#        (no policy and no YES, the policy said no without YES, or the policy failed
+#        closed) | 124 timeout | 127 no backend CLI
+#        (disabled/preflight-failed/capped/author-vendor backends terminate 127 too —
+#        "unavailable")
 # captures: $AGENT_WORKERS_DIR, else ~/.agent/workers/<project-key>/ — the key comes
 #        from the CALLER's project (git toplevel of $PWD; AGENT_PROJECT_DIR /
 #        CLAUDE_PROJECT_DIR only outside a repo — review-evidence.py project-key),
 #        never this script's own location, so a plugin-cache
 #        install does not bury evidence in the cache. Each capture also appends a
-#        row to <workers dir>/reviews.jsonl (diff_key = $AGENT_REVIEW_DIFF_KEY) and
-#        to ${AGENT_LOGS_DIR:-~/.agent/logs}/council-lanes.jsonl; both are
-#        best-effort and never change this script's exit code or stdout.
+#        row to <workers dir>/reviews.jsonl (diff_key = $AGENT_REVIEW_DIFF_KEY, plus
+#        author_vendor = the AGENT_AUTHOR_VENDOR list, sorted and comma-joined, or null,
+#        and approval = "user" when a person's AGENT_WORKER_YES=1 let the backend run,
+#        else "policy") and to ${AGENT_LOGS_DIR:-~/.agent/logs}/council-lanes.jsonl
+#        (which carries author_vendor too); both are best-effort and never change this
+#        script's exit code or stdout. Captures and ledger rows are created under
+#        umask 077, and each run that writes a capture also tries chmod 700 on the workers
+#        dir and chmod 600 on reviews.jsonl (a dir or file made earlier with looser modes is
+#        tightened; a failed chmod is ignored). The worker, its preflight and the policy run
+#        under the caller's umask.
 # env seams (tests): AGENT_BACKENDS_FILE, AGENT_WORKERS_DIR, AGENT_LOGS_DIR,
-#                    AGENT_WORKER_YES, AGENT_WORKER_TIMEOUT_S,
+#                    AGENT_WORKER_YES, AGENT_WORKER_POLICY_CMD, AGENT_WORKER_POLICY_TIMEOUT_S,
+#                    AGENT_AUTHOR_VENDOR, AGENT_WORKER_TIMEOUT_S,
 #                    AGENT_WORKER_KILL_GRACE_S, AGENT_WORKER_PREFLIGHT_TIMEOUT_S
 set -euo pipefail
+
+# Captures and ledger rows can quote reviewed code: owner-only files. The worker, its preflight
+# and the policy get the caller's umask back (an implementer's edits must keep normal modes).
+CALLER_UMASK="$(umask)"
+umask 077
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BACKENDS_FILE="${AGENT_BACKENDS_FILE:-$REPO_ROOT/core/infra/backends.json}"
@@ -97,12 +158,70 @@ if [[ -z "$PRIMARY" ]]; then
 fi
 FALLBACK="$(jq -r --arg r "$ROLE" '.roles[$r].fallback // empty' "$BACKENDS_FILE")"
 ROLE_TIER="$(jq -r --arg r "$ROLE" '.roles[$r].tier // empty' "$BACKENDS_FILE")"
+ROLE_READONLY="$(jq -r --arg r "$ROLE" '.roles[$r].readonly == true' "$BACKENDS_FILE")"
 
-# Cost gate — env-only on purpose: headless callers can't answer prompts.
-if [[ "${AGENT_WORKER_YES:-0}" != "1" ]]; then
+# The companies whose models wrote the work under review (header). Known names only — the
+# list review-evidence.py VENDORS holds: a typo would exclude nothing, which is the failure
+# this switch exists to prevent, so it is a config error. Kept sorted and comma-joined.
+KNOWN_VENDORS="anthropic google openai"
+AUTHOR_VENDORS=""
+IFS=$', \t' read -r -a _author_raw <<< "$(printf '%s' "${AGENT_AUTHOR_VENDOR:-}" | tr '[:upper:]' '[:lower:]' | tr '\n' ',')"
+for _v in ${_author_raw[@]+"${_author_raw[@]}"}; do
+    [[ -n "$_v" ]] || continue
+    case " $KNOWN_VENDORS " in
+        *" $_v "*) ;;
+        *) echo "call-worker: AGENT_AUTHOR_VENDOR names an unknown vendor '$_v' (known: $KNOWN_VENDORS) — refusing" >&2
+           exit 2 ;;
+    esac
+done
+for _k in $KNOWN_VENDORS; do
+    for _v in ${_author_raw[@]+"${_author_raw[@]}"}; do
+        if [[ "$_v" == "$_k" ]]; then AUTHOR_VENDORS="${AUTHOR_VENDORS:+$AUTHOR_VENDORS,}$_k"; break; fi
+    done
+done
+author_has() {  # author_has <vendor> — is <vendor> one of the work's authors?
+    [[ -n "$1" && -n "$AUTHOR_VENDORS" ]] || return 1
+    case ",$AUTHOR_VENDORS," in *",$1,"*) return 0 ;; esac
+    return 1
+}
+
+# Cost gate — env-only on purpose: headless callers can't answer prompts. A usage policy, when
+# set, is asked per candidate backend (policy_gate, below) even with AGENT_WORKER_YES=1, which
+# only overrides its "not approved" (3), never its cap (75). Without a policy, YES=1 is the
+# only approval; with neither, refuse here before any work is done. A policy that is set but
+# not callable refuses whatever YES says (fail closed).
+WORKER_YES=0
+[[ "${AGENT_WORKER_YES:-0}" == "1" ]] && WORKER_YES=1
+POLICY_CMD="${AGENT_WORKER_POLICY_CMD:-}"
+POLICY_TIMEOUT_S="${AGENT_WORKER_POLICY_TIMEOUT_S:-30}"
+if [[ -n "$POLICY_CMD" ]]; then
+    # An absolute path to one executable: no shell, no PATH search, and no relative path
+    # (./x or bin/x would resolve inside the repository under review, i.e. the caller's cwd).
+    if [[ "$POLICY_CMD" != /* || ! -f "$POLICY_CMD" || ! -x "$POLICY_CMD" ]]; then
+        echo "call-worker: AGENT_WORKER_POLICY_CMD is not an absolute path to an executable file ('$POLICY_CMD') — refusing (failing closed)" >&2
+        exit 3
+    fi
+    [[ "$POLICY_TIMEOUT_S" =~ ^[0-9]+$ ]] \
+        || { echo "call-worker: AGENT_WORKER_POLICY_TIMEOUT_S is not numeric ('$POLICY_TIMEOUT_S') — the watchdog would silently never fire" >&2; exit 2; }
+elif [[ $WORKER_YES -ne 1 ]]; then
     echo "call-worker: '$ROLE' dispatches to external backend '$PRIMARY' (paid call)." >&2
     echo "call-worker: approve with AGENT_WORKER_YES=1 (per-invocation; the caller asks the user first)." >&2
     exit 3
+fi
+# What let the backend that ran go ahead; run_backend settles it per candidate.
+APPROVAL="user"
+[[ -n "$POLICY_CMD" && $WORKER_YES -ne 1 ]] && APPROVAL="policy"
+# An anthropic backend skips the policy only while it is plainly the host's own subscription:
+# the shipped registry (a custom one could point "claude" at anything) and no variable in the
+# environment that can switch the CLI to per-call billing: an API credential, another API
+# endpoint, or a cloud provider (Bedrock / Vertex). Presence is tested, whatever the value; the
+# values are never read into a variable, printed or logged.
+POLICY_ANTHROPIC_EXEMPT=0
+if [[ -z "${AGENT_BACKENDS_FILE:-}" || "$BACKENDS_FILE" -ef "$REPO_ROOT/core/infra/backends.json" ]] \
+   && [[ -z "${ANTHROPIC_API_KEY+set}" && -z "${ANTHROPIC_AUTH_TOKEN+set}" \
+         && -z "${ANTHROPIC_BASE_URL+set}" && -z "${CLAUDE_CODE_USE_BEDROCK+set}" \
+         && -z "${CLAUDE_CODE_USE_VERTEX+set}" ]]; then
+    POLICY_ANTHROPIC_EXEMPT=1
 fi
 
 # Env-scoped lane opt-out (header). An unknown name would silently disable
@@ -134,8 +253,79 @@ trap cleanup EXIT INT TERM
 cat > "$PROMPT_TMP"
 START_S=$SECONDS
 
-# run_backend <name> — 0 ok, 124 timeout, 125 unavailable (disabled/preflight,
-# reason in $UNAVAILABLE_REASON), 127 CLI missing, else CLI's exit.
+# policy_gate <name> <lane> — ask AGENT_WORKER_POLICY_CMD whether this candidate may run now.
+# 0 = go ahead (APPROVAL settled: "policy", or "user" when the policy said 3 and a person
+# set AGENT_WORKER_YES=1) | 125 = capped (UNAVAILABLE_REASON set, the caller moves on to the
+# next candidate; YES does not lift a cap). Any other verdict — not approved without YES,
+# hung, an unexpected exit — ends the run with exit 3, exactly like an unapproved call (no
+# capture, no index row). The policy runs as the leader of its own process group (python3
+# setpgrp + execv: no setsid on macOS, and `set -m` is not dependable in a script), so a
+# timeout kills whatever it spawned too; the watchdog is silenced so it cannot keep a
+# caller's stdout pipe open after the policy has answered.
+policy_gate() {
+    local name="$1" lane="$2" out prc=0 pid wpid reason
+    out="$(mktemp)"
+    ( umask "$CALLER_UMASK"
+      exec python3 -c 'import os, sys; os.setpgrp(); os.execv(sys.argv[1], sys.argv[1:])' \
+          "$POLICY_CMD" check --lane "$lane" --role "$ROLE" --hold "$$" ) </dev/null >"$out" 2>&1 &
+    pid=$!
+    ( sleep "$POLICY_TIMEOUT_S" \
+        && { kill -KILL -- "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null; } ) >/dev/null 2>&1 &
+    wpid=$!
+    wait "$pid" || prc=$?
+    kill "$wpid" 2>/dev/null || true
+    wait "$wpid" 2>/dev/null || true
+    # The reason is a JSON "reason" field, else the first line of output. One line with
+    # control characters stripped: it lands in a capture header and on stderr.
+    reason="$(jq -r 'if type == "object" then ((.reason // "") | tostring | split("\n")[0]) else "" end' "$out" 2>/dev/null || true)"
+    [[ -n "$reason" ]] || reason="$(grep -m1 '[^[:space:]]' "$out" 2>/dev/null | sed -E 's/^[Rr]eason:[[:space:]]*//' || true)"
+    reason="$(printf '%s' "${reason:-no reason given}" | LC_ALL=C tr -d '\000-\037\177' | cut -c1-200)"
+    rm -f "$out"
+    case "$prc" in
+        0)  APPROVAL="policy"
+            return 0 ;;
+        75) UNAVAILABLE_REASON="capped: $reason"
+            echo "call-worker: backend '$name' unavailable — $UNAVAILABLE_REASON" >&2
+            return 125 ;;
+        3)  if [[ $WORKER_YES -eq 1 ]]; then
+                echo "call-worker: policy did not approve '$ROLE' on lane '$lane' ($reason) — running on the person's AGENT_WORKER_YES=1" >&2
+                APPROVAL="user"
+                return 0
+            fi
+            echo "call-worker: policy did not approve '$ROLE' on lane '$lane' (exit 3): $reason" >&2 ;;
+        *)  echo "call-worker: policy command exited $prc for lane '$lane' (want 0, 3 or 75; $reason) — failing closed" >&2 ;;
+    esac
+    exit 3
+}
+
+# record_author <vendor> — a role that can write the caller's tree (no "readonly": true) leaves
+# the vendor of a backend whose CLI actually started in the caller's per-worktree git dir, so
+# review-evidence.py author-vendor counts that company among the work's authors (header).
+# The line is "<vendor><TAB><branch>", "<vendor><TAB>@<HEAD commit>" on a detached HEAD, or
+# the bare vendor when neither can be read; review-evidence.py counts every line on every
+# branch, and the second field is provenance for the person who clears the file.
+# Called from run_backend once the CLI has exited, whatever its status: a failed or timed-out
+# run can still have edited files, and a primary that failed before a fallback is recorded
+# too. Outside git nothing is written; a failure warns and changes nothing else.
+record_author() {
+    local v="$1" gd where
+    [[ "$ROLE_READONLY" != "true" ]] || return 0
+    [[ "$v" =~ ^[a-z0-9-]+$ ]] || return 0
+    gd="$(git rev-parse --absolute-git-dir 2>/dev/null)" || return 0
+    [[ -n "$gd" && -d "$gd" ]] || return 0
+    where="$(git symbolic-ref --short -q HEAD 2>/dev/null)" \
+        || where="@$(git rev-parse -q --verify 'HEAD^{commit}' 2>/dev/null)" \
+        || where=""
+    [[ "$where" != *[[:cntrl:]]* ]] || where=""
+    if [[ -n "$where" ]]; then
+        printf '%s\t%s\n' "$v" "$where" >> "$gd/agent-author-vendors" 2>/dev/null
+    else
+        printf '%s\n' "$v" >> "$gd/agent-author-vendors" 2>/dev/null
+    fi || echo "call-worker: author record append failed ($gd/agent-author-vendors)" >&2
+}
+
+# run_backend <name> — 0 ok, 124 timeout, 125 unavailable (disabled/preflight/capped/author's
+# own vendor, reason in $UNAVAILABLE_REASON), 127 CLI missing, else CLI's exit.
 # Reply lands in $OUT_TMP. Portable timeout (macOS ships no GNU timeout):
 # background worker + watchdog; TERM from the watchdog maps to 124.
 UNAVAILABLE_REASON=""
@@ -171,11 +361,33 @@ run_backend() {
             return 125
         fi
     done
+    # A company never reviews its own work: drop a backend whose vendor wrote it.
+    local bvendor
+    bvendor="$(jq -r --arg b "$name" '.backends[$b].vendor // "" | tostring | ascii_downcase' "$BACKENDS_FILE" 2>/dev/null || true)"
+    if author_has "$bvendor"; then
+        UNAVAILABLE_REASON="backend '$name' skipped: its vendor '$bvendor' wrote the work under review (AGENT_AUTHOR_VENDOR)"
+        echo "call-worker: $UNAVAILABLE_REASON" >&2
+        return 125
+    fi
     local cmd=()
     while IFS= read -r line; do cmd+=("$line"); done \
         < <(jq -r --arg b "$name" '.backends[$b].cmd[]' "$BACKENDS_FILE")
     [[ ${#cmd[@]} -gt 0 ]] || { echo "call-worker: backend '$name' has an empty cmd in $BACKENDS_FILE" >&2; return 64; }
-    command -v "${cmd[0]}" >/dev/null 2>&1 || return 127
+    if ! command -v "${cmd[0]}" >/dev/null 2>&1; then
+        UNAVAILABLE_REASON="backend '$name' CLI '${cmd[0]}' not found"
+        return 127
+    fi
+    # Usage policy (AGENT_WORKER_POLICY_CMD): asked last before any spend, so before the
+    # preflight too (a probe can itself be a billable inference call), and asked even with
+    # AGENT_WORKER_YES=1 (header). Only the host's own anthropic subscription is exempt
+    # (POLICY_ANTHROPIC_EXEMPT); a vendor-less (v1) backend is asked about under its own name.
+    if [[ -z "$POLICY_CMD" ]]; then
+        APPROVAL="user"
+    elif [[ "$bvendor" == "anthropic" && $POLICY_ANTHROPIC_EXEMPT -eq 1 ]]; then
+        if [[ $WORKER_YES -eq 1 ]]; then APPROVAL="user"; else APPROVAL="policy"; fi
+    else
+        policy_gate "$name" "${bvendor:-$name}" || return $?
+    fi
     # Gateway isolation (see header). Any non-empty "gateway" value isolates —
     # including a malformed one: an unrecognized shape is treated as "this
     # backend reaches its vendor through someone else's CLI", which is the
@@ -219,9 +431,10 @@ run_backend() {
         fi
         [[ "$pf_timeout" =~ ^[0-9]+$ ]] \
             || { echo "call-worker: AGENT_WORKER_PREFLIGHT_TIMEOUT_S is not numeric ('$pf_timeout') — the watchdog would silently never fire" >&2; return 64; }
-        ( cd "$dispatch_cwd" && exec env \
+        ( cd "$dispatch_cwd" && umask "$CALLER_UMASK" && exec env \
             AGENT_BACKENDS_FILE="$BACKENDS_FILE" \
             AGENT_PREFLIGHT_LANE="$name" \
+            AGENT_LANE="$ROLE" \
             "${pf[@]}" ) </dev/null >/dev/null 2>&1 &
         pid=$!
         ( sleep "$pf_timeout" && kill -KILL "$pid" 2>/dev/null ) &
@@ -235,14 +448,36 @@ run_backend() {
             return 125
         fi
     fi
-    # v2 argv composition: cmd + tier_args[role.tier] + role.args_extra.
+    # v2 argv composition: cmd + tier_args[role.tier] + [read-only sandbox] + role.args_extra.
     # All optional — a v1 registry composes to bare cmd, byte-for-byte.
     if [[ -n "$ROLE_TIER" ]]; then
         while IFS= read -r line; do cmd+=("$line"); done \
             < <(jq -r --arg b "$name" --arg t "$ROLE_TIER" '.backends[$b].tier_args[$t] // [] | .[]' "$BACKENDS_FILE")
     fi
-    while IFS= read -r line; do cmd+=("$line"); done \
+    local role_extra=()
+    while IFS= read -r line; do role_extra+=("$line"); done \
         < <(jq -r --arg r "$ROLE" '.roles[$r].args_extra // [] | .[]' "$BACKENDS_FILE")
+    # A readonly role on a codex CLI runs in codex's read-only sandbox. Nothing else in the
+    # argv may set a sandbox: codex lets a later flag win, so a second one would quietly
+    # un-pin it. That is a registry error (exit 2), never a silent pass.
+    if [[ "${cmd[0]##*/}" == "codex" && "$ROLE_READONLY" == "true" ]]; then
+        local arg prev="" fight=""
+        for arg in "${cmd[@]}" ${role_extra[@]+"${role_extra[@]}"}; do
+            case "$arg" in
+                -s|-s=*|--sandbox|--sandbox=*|--full-auto|--approve-for-me|--dangerously-bypass-approvals-and-sandbox) fight="$arg" ;;
+                # one-argument config overrides: --config=sandbox_mode=…, -csandbox_mode=…, -c=…
+                --config=sandbox*|-csandbox*|-c=sandbox*) fight="$arg" ;;
+                sandbox*) if [[ "$prev" == "-c" || "$prev" == "--config" ]]; then fight="$prev $arg"; fi ;;
+            esac
+            prev="$arg"
+        done
+        if [[ -n "$fight" ]]; then
+            echo "call-worker: role '$ROLE' is readonly but its argv already sets a sandbox ('$fight') — remove it from $BACKENDS_FILE" >&2
+            return 64
+        fi
+        cmd+=(--sandbox read-only)
+    fi
+    cmd+=(${role_extra[@]+"${role_extra[@]}"})
     local extra
     for extra in ${EXTRA_ARGV[@]+"${EXTRA_ARGV[@]}"}; do cmd+=("$extra"); done
     timeout_s="${AGENT_WORKER_TIMEOUT_S:-$(jq -r --arg b "$name" '.backends[$b].timeout_s // 300' "$BACKENDS_FILE")}"
@@ -253,8 +488,10 @@ run_backend() {
     # cd + exec in a subshell: `exec` replaces the subshell with the CLI, so $!
     # is the CLI's own pid and the watchdog's TERM/KILL still lands on it. For a
     # non-gateway backend dispatch_cwd is $PWD, i.e. byte-for-byte the previous
-    # behavior (the caller's cwd is inherited); only gateway backends move.
-    ( cd "$dispatch_cwd" && exec "${cmd[@]}" ) < "$PROMPT_TMP" > "$OUT_TMP" 2>&1 &
+    # behavior (the caller's cwd is inherited); only gateway backends move. The
+    # export lives and dies with this subshell: AGENT_LANE marks the process as a
+    # dispatched lane (see header), whatever the caller's own environment says.
+    ( cd "$dispatch_cwd" && umask "$CALLER_UMASK" && export AGENT_LANE="$ROLE" && exec "${cmd[@]}" ) < "$PROMPT_TMP" > "$OUT_TMP" 2>&1 &
     pid=$!
     # TERM at timeout, KILL after a grace period — a CLI wrapper that traps or
     # fails to forward TERM must not defeat the timeout guarantee.
@@ -264,6 +501,7 @@ run_backend() {
     wait "$pid" || rc=$?
     kill "$wpid" 2>/dev/null || true
     wait "$wpid" 2>/dev/null || true
+    record_author "$bvendor" || true
     # SIGTERM (143) / SIGKILL (137) can only come from the watchdog in this
     # process tree — report the conventional timeout code (race-free: no
     # watchdog liveness check, which the fired-vs-tearing-down window defeats).
@@ -314,6 +552,9 @@ if [[ $rc -ne 0 && -n "$FALLBACK" ]]; then
     esac
     echo "call-worker: $FALLBACK_REASON — falling back to '$FALLBACK'" >&2
     BACKEND_USED="$FALLBACK"
+    # The primary's reason now lives in FALLBACK_REASON; UNAVAILABLE_REASON describes the
+    # backend that ran (or failed to), so a complete fallback capture carries none.
+    UNAVAILABLE_REASON=""
     rc=0
     run_backend "$FALLBACK" || rc=$?
 fi
@@ -328,19 +569,23 @@ log_evidence() {
     jq -cn --arg ts "$ts" --arg role "$ROLE" --arg backend "$BACKEND_USED" \
         --arg vendor "$vendor" --arg status "$status" \
         --arg dk "${AGENT_REVIEW_DIFF_KEY:-}" --arg capture "$capture" \
+        --arg av "$AUTHOR_VENDORS" --arg approval "$APPROVAL" \
         '{ts:$ts, role:$role, backend:$backend, vendor:($vendor|if .=="" then null else . end),
-          status:$status, diff_key:($dk|if .=="" then null else . end), capture:$capture}' \
+          status:$status, diff_key:($dk|if .=="" then null else . end), capture:$capture,
+          author_vendor:($av|if .=="" then null else . end), approval:$approval}' \
         >> "$WORKERS_DIR/reviews.jsonl" 2>/dev/null \
         || echo "call-worker: review index append failed ($WORKERS_DIR/reviews.jsonl)" >&2
+    chmod 600 "$WORKERS_DIR/reviews.jsonl" 2>/dev/null || true
     { mkdir -p "$LOGS_DIR" \
         && jq -cn --arg ts "$ts" --arg pk "$PROJECT_KEY" --arg role "$ROLE" \
             --arg vendor "$vendor" --argjson rc "$rc" \
             --argjson dur "$((SECONDS - START_S))" \
             --argjson pb "$(wc -c < "$PROMPT_TMP" | tr -d ' ')" \
-            --arg status "$status" --arg retry "$RETRY_REASON" \
+            --arg status "$status" --arg retry "$RETRY_REASON" --arg av "$AUTHOR_VENDORS" \
             '{ts:$ts, project_key:$pk, role:$role, vendor:($vendor|if .=="" then null else . end),
               rc:$rc, duration_s:$dur, prompt_bytes:$pb, status:$status,
-              retry_reason:($retry|if .=="" then null else . end)}' \
+              retry_reason:($retry|if .=="" then null else . end),
+              author_vendor:($av|if .=="" then null else . end)}' \
             >> "$LOGS_DIR/council-lanes.jsonl"; } 2>/dev/null \
         || echo "call-worker: lane log append failed ($LOGS_DIR/council-lanes.jsonl)" >&2
 }
@@ -350,6 +595,8 @@ log_evidence() {
 # the mechanical truth layer: a lane's own success claim never overrides it.
 write_capture() {
     mkdir -p "$WORKERS_DIR"
+    # umask 077 only covers what this run creates; tighten a dir made earlier, best-effort.
+    chmod 700 "$WORKERS_DIR" 2>/dev/null || true
     OUT_FILE="$WORKERS_DIR/$(date -u +%Y%m%dT%H%M%SZ)-$ROLE.md"
     {
         echo "---"

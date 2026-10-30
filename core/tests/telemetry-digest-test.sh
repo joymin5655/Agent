@@ -444,31 +444,33 @@ RV_NOW="$NOW_TS"
 RV_OLD="$OLD_TS"
 {
   # K1: no external complete (anthropic complete, openai failed, advisor xai complete)
-  printf '{"ts":"%s","role":"code-reviewer","backend":"claude","vendor":"anthropic","status":"complete","diff_key":"k1"}\n' "$RV_NOW"
-  printf '{"ts":"%s","role":"codex","backend":"codex","vendor":"openai","status":"failed","diff_key":"k1"}\n' "$RV_NOW"
-  printf '{"ts":"%s","role":"advisor-grok","backend":"grok","vendor":"xai","status":"complete","diff_key":"k1"}\n' "$RV_NOW"
+  printf '{"ts":"%s","role":"code-reviewer","backend":"claude","vendor":"anthropic","status":"complete","diff_key":"k1","author_vendor":"anthropic"}\n' "$RV_NOW"
+  printf '{"ts":"%s","role":"codex","backend":"codex","vendor":"openai","status":"failed","diff_key":"k1","author_vendor":"anthropic"}\n' "$RV_NOW"
+  printf '{"ts":"%s","role":"advisor-grok","backend":"grok","vendor":"xai","status":"complete","diff_key":"k1","author_vendor":"anthropic"}\n' "$RV_NOW"
   # K2: exactly one external complete
-  printf '{"ts":"%s","role":"codex","backend":"codex","vendor":"openai","status":"complete","diff_key":"k2"}\n' "$RV_NOW"
+  printf '{"ts":"%s","role":"codex","backend":"codex","vendor":"openai","status":"complete","diff_key":"k2","author_vendor":"anthropic"}\n' "$RV_NOW"
+  # K5: no author_vendor (an older row) -> author unknown: neither solo nor external
+  printf '{"ts":"%s","role":"codex","backend":"codex","vendor":"openai","status":"complete","diff_key":"k5"}\n' "$RV_NOW"
   # null diff_key must be ignored
-  printf '{"ts":"%s","role":"codex","backend":"codex","vendor":"openai","status":"complete","diff_key":null}\n' "$RV_NOW"
+  printf '{"ts":"%s","role":"codex","backend":"codex","vendor":"openai","status":"complete","diff_key":null,"author_vendor":"anthropic"}\n' "$RV_NOW"
   printf 'not json at all\n'
 } > "$RV/workers/projA/reviews.jsonl"
 {
   # K3: two external completes
-  printf '{"ts":"%s","role":"codex","backend":"codex","vendor":"openai","status":"complete","diff_key":"k3"}\n' "$RV_NOW"
-  printf '{"ts":"%s","role":"gemini","backend":"agy","vendor":"google","status":"complete","diff_key":"k3"}\n' "$RV_NOW"
+  printf '{"ts":"%s","role":"codex","backend":"codex","vendor":"openai","status":"complete","diff_key":"k3","author_vendor":"anthropic"}\n' "$RV_NOW"
+  printf '{"ts":"%s","role":"gemini","backend":"agy","vendor":"google","status":"complete","diff_key":"k3","author_vendor":"anthropic"}\n' "$RV_NOW"
   # old solo group: outside the window, must not count
-  printf '{"ts":"%s","role":"code-reviewer","backend":"claude","vendor":"anthropic","status":"complete","diff_key":"k4"}\n' "$RV_OLD"
+  printf '{"ts":"%s","role":"code-reviewer","backend":"claude","vendor":"anthropic","status":"complete","diff_key":"k4","author_vendor":"anthropic"}\n' "$RV_OLD"
 } > "$RV/workers/projB/reviews.jsonl"
 {
-  printf '{"ts":"%s","project_key":"pa","role":"codex","vendor":"openai","rc":0,"duration_s":10,"status":"complete"}\n' "$RV_NOW"
-  printf '{"ts":"%s","project_key":"pa","role":"codex","vendor":"openai","rc":0,"duration_s":20,"status":"complete"}\n' "$RV_NOW"
-  printf '{"ts":"%s","project_key":"pa","role":"codex","vendor":"openai","rc":1,"duration_s":30,"status":"failed"}\n' "$RV_NOW"
-  printf '{"ts":"%s","project_key":"pa","role":"codex","vendor":"openai","rc":1,"duration_s":5,"status":"rate-limited"}\n' "$RV_NOW"
-  printf '{"ts":"%s","project_key":"pb","role":"gemini","vendor":"google","rc":0,"duration_s":4,"status":"complete"}\n' "$RV_NOW"
-  printf '{"ts":"%s","project_key":"pb","role":"gemini","vendor":"google","rc":1,"duration_s":6,"status":"timeout"}\n' "$RV_NOW"
-  printf '{"ts":"%s","project_key":"pb","role":"advisor-grok","vendor":"xai","rc":0,"duration_s":9,"status":"complete"}\n' "$RV_NOW"
-  printf '{"ts":"%s","project_key":"pb","role":"gemini","vendor":"google","rc":0,"duration_s":999,"status":"complete"}\n' "$RV_OLD"
+  printf '{"ts":"%s","project_key":"pa","role":"codex","vendor":"openai","rc":0,"duration_s":10,"status":"complete","author_vendor":"anthropic"}\n' "$RV_NOW"
+  printf '{"ts":"%s","project_key":"pa","role":"codex","vendor":"openai","rc":0,"duration_s":20,"status":"complete","author_vendor":"anthropic"}\n' "$RV_NOW"
+  printf '{"ts":"%s","project_key":"pa","role":"codex","vendor":"openai","rc":1,"duration_s":30,"status":"failed","author_vendor":"anthropic"}\n' "$RV_NOW"
+  printf '{"ts":"%s","project_key":"pa","role":"codex","vendor":"openai","rc":1,"duration_s":5,"status":"rate-limited","author_vendor":"anthropic"}\n' "$RV_NOW"
+  printf '{"ts":"%s","project_key":"pb","role":"gemini","vendor":"google","rc":0,"duration_s":4,"status":"complete","author_vendor":"anthropic"}\n' "$RV_NOW"
+  printf '{"ts":"%s","project_key":"pb","role":"gemini","vendor":"google","rc":1,"duration_s":6,"status":"timeout","author_vendor":"anthropic"}\n' "$RV_NOW"
+  printf '{"ts":"%s","project_key":"pb","role":"advisor-grok","vendor":"xai","rc":0,"duration_s":9,"status":"complete","author_vendor":"anthropic"}\n' "$RV_NOW"
+  printf '{"ts":"%s","project_key":"pb","role":"gemini","vendor":"google","rc":0,"duration_s":999,"status":"complete","author_vendor":"anthropic"}\n' "$RV_OLD"
   printf '{broken\n'
 } > "$RV/logs/council-lanes.jsonl"
 {
@@ -510,6 +512,12 @@ rvj "$RV_JSON" "d['mode']=='review' and d['solo']['groups']==3 and d['solo']['so
 check "review-solo-groups-exact" $?
 rvj "$RV_JSON" "round(d['solo']['solo_ratio'],4)==round(1/3,4) and d['solo']['measured'] is True"
 check "review-solo-ratio-one-third" $?
+# K5 has no author_vendor: counted apart, never assumed to be anthropic-written
+rvj "$RV_JSON" "d['solo']['author_unknown_groups']==1"
+check "review-author-unknown-counted-apart" $?
+RV_UNK_H="$(rv "$RV/workers" "$RV/logs")"
+if [[ "$RV_UNK_H" == *"author unknown: 1 diff_key"* ]]; then rc=0; else rc=1; fi
+check "review-author-unknown-printed-human" $rc
 rvj "$RV_JSON" "d['lanes']['by_role']['codex']['total']==4 and d['lanes']['by_role']['codex']['complete']==2 and d['lanes']['by_role']['codex']['success_rate']==0.5"
 check "review-lane-success-rate-codex" $?
 rvj "$RV_JSON" "d['lanes']['by_role']['codex']['statuses']=={'complete':2,'failed':1,'rate-limited':1}"
@@ -562,9 +570,12 @@ RV_W="$(rv "$RV/workers" "$RV/logs" --window 60 --json)"
 rvj "$RV_W" "d['solo']['groups']==4 and d['solo']['solo_groups']==2"
 check "review-window-widened-includes-old" $?
 
-# parity: the external-complete rule must match review-evidence.py has_external_complete
+# parity: the external-complete rule must match review-evidence.py row_is_external_complete.
+# The digest sees no repo, so it is compared with that rule under NO commit-time authors;
+# nothing in the environment picks an author for a row that carries none — such a row must
+# come out "author unknown" in the digest (neither solo nor external).
 mkdir -p "$RV/parity"
-python3 - "$REPO_ROOT" "$RV/parity" <<'PY'
+env -u AGENT_AUTHOR_VENDOR python3 - "$REPO_ROOT" "$RV/parity" <<'PY'
 import importlib.util, json, os, subprocess, sys
 repo, work = sys.argv[1], sys.argv[2]
 spec = importlib.util.spec_from_file_location("re_mod", os.path.join(repo, "core/infra/review-evidence.py"))
@@ -573,24 +584,32 @@ rows = []
 for status in ("complete", "failed"):
     for vendor in (None, "", "anthropic", "openai", "xai"):
         for role in ("codex", "advisor-grok"):
-            rows.append({"status": status, "vendor": vendor, "role": role})
+            for author in (None, "anthropic"):
+                rows.append({"status": status, "vendor": vendor, "role": role, "author_vendor": author})
+# a row's own author_vendor (a list) is what both sides compare the lane's vendor with
+for vendor in (None, "", "anthropic", "openai", " OpenAI ", "google", "xai"):
+    for author in (None, "", "anthropic", "openai", " OpenAI ", "xai",
+                   "anthropic,openai", "google, openai"):
+        rows.append({"status": "complete", "vendor": vendor, "role": "codex", "author_vendor": author})
 bad = 0
 for i, r in enumerate(rows):
     r = dict(r, diff_key=f"p{i}", ts="2999-01-01T00:00:00+00:00")
-    d = os.path.join(work, f"w{i}"); os.makedirs(d)
-    open(os.path.join(d, "reviews.jsonl"), "w").write(json.dumps(r) + "\n")
-    os.environ["AGENT_WORKERS_DIR"] = d
-    want = mod.has_external_complete(r["diff_key"])
+    known_author = bool(mod.row_authors(r))
+    want = mod.row_is_external_complete(r, set())
     root = os.path.join(work, f"root{i}")
     os.makedirs(os.path.join(root, "proj"))
     open(os.path.join(root, "proj", "reviews.jsonl"), "w").write(json.dumps(r) + "\n")
     env = dict(os.environ, AGENT_WORKERS_ROOT=root, AGENT_LOGS_DIR=work)
     out = subprocess.run(["bash", os.path.join(repo, "core/infra/telemetry-digest.sh"), "--review", "--json"],
                          env=env, capture_output=True, text=True).stdout
-    solo = json.loads(out)["solo"]["solo_groups"]
-    if (solo == 0) != want:
+    s = json.loads(out)["solo"]
+    if known_author:
+        ok = s.get("author_unknown_groups") == 0 and (s["solo_groups"] == 0) == want
+    else:
+        ok = s.get("author_unknown_groups") == 1 and s["solo_groups"] is None
+    if not ok:
         bad += 1
-        print("parity mismatch", r, want, solo)
+        print("parity mismatch", r, want, s)
 sys.exit(1 if bad else 0)
 PY
 check "review-external-complete-parity-with-review-evidence" $?

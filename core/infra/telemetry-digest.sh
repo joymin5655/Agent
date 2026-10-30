@@ -72,9 +72,13 @@
 #       solo ratio  over ~/.agent/workers/<project-key>/reviews.jsonl rows with a
 #                   non-null diff_key, group by (project dir, diff_key); a group is
 #                   "solo" when it has no external-complete row. ratio = solo/groups.
-#                   External complete = status=="complete", vendor not null/""/
-#                   "anthropic", role not starting "advisor" (the rule of
-#                   review-evidence.py has_external_complete; parity-tested).
+#                   External complete = status=="complete", vendor a known vendor and
+#                   none of the row's author_vendor list, role not starting
+#                   "advisor" (the rule of review-evidence.py has_external_complete;
+#                   parity-tested). A row with no known author_vendor (older rows) is
+#                   neither external nor solo: no repo is visible here to guess the
+#                   author from, so a group of only such rows is counted apart as
+#                   "author unknown" and left out of the ratio.
 #       lanes       per role from council-lanes.jsonl: complete/total, status
 #                   breakdown, mean duration_s (complete rows, and all rows).
 #       overrides   review-override.jsonl count + per project_key; reason/user are
@@ -779,7 +783,7 @@ if [[ "$REVIEW_MODE" -eq 1 ]]; then
     review_out=$(python3 - "$WORKERS_ROOT" "${AGENT_LOGS_DIR:-$HOME/.agent/logs}" "$ROUTING_LOG_PATH" \
         "${AGENT_SESSION_TIER_SINK:-$REPO_ROOT/.agent/logs/session-tier.jsonl}" \
         "$WINDOW_DAYS" "$JSON_MODE" 2>/dev/null <<'PY'
-import sys, os, json, datetime, collections
+import sys, os, re, json, datetime, collections
 
 workers_root, logs_dir, routing_log, tier_log = sys.argv[1:5]
 try:
@@ -835,11 +839,33 @@ def real_origin(rec):
     return rec.get("origin") in (None, "session")
 
 
+VENDORS = ("anthropic", "openai", "google")  # review-evidence.py VENDORS
+
+
+def vendor_tokens(value):
+    return [t for t in re.split(r"[\s,]+", str(value or "").strip().lower()) if t]
+
+
+def row_authors(row):
+    # review-evidence.py row_authors: the known vendors of the row's author_vendor list
+    return {t for t in vendor_tokens(row.get("author_vendor")) if t in VENDORS}
+
+
+def author_unknown(row):
+    # an older row (or a lane row) without a known author_vendor: who wrote the work is not
+    # visible here, so the row is neither external nor solo — it is counted on its own
+    return not row_authors(row)
+
+
 def is_external_complete(row):
-    # mirrors core/infra/review-evidence.py has_external_complete (parity-tested)
-    return (row.get("status") == "complete"
+    # mirrors core/infra/review-evidence.py row_is_external_complete with no commit-time
+    # authors (no repo is visible here); only rows with a known author reach it (parity-tested)
+    vendor = str(row.get("vendor") or "").strip().lower()
+    return (not author_unknown(row)
+            and row.get("status") == "complete"
             and not str(row.get("role") or "").startswith("advisor")
-            and row.get("vendor") not in (None, "", "anthropic"))
+            and vendor in VENDORS
+            and vendor not in row_authors(row))
 
 
 def measured_or_none(rs):
@@ -851,12 +877,13 @@ def label(value):
 
 
 # --- primary: solo ratio by (project dir, diff_key) --------------------------
+# group state: None = only rows whose author is unknown (neither solo nor external),
+# False = a known-author row but no external-complete one, True = external-complete.
 groups = collections.OrderedDict()
 try:
     projects = sorted(os.listdir(workers_root))
 except OSError:
     projects = []
-any_rows = False
 for proj in projects:
     pdir = os.path.join(workers_root, proj)
     if not os.path.isdir(pdir):
@@ -866,15 +893,21 @@ for proj in projects:
         key = r.get("diff_key")
         if not isinstance(key, str) or not key:
             continue
-        any_rows = True
-        groups.setdefault((proj, key), False)
+        groups.setdefault((proj, key), None)
+        if author_unknown(r):
+            continue
         if is_external_complete(r):
             groups[(proj, key)] = True
-solo = {"measured": any_rows, "groups": None, "solo_groups": None,
-        "solo_ratio": None, "solo_pct": None}
-if any_rows:
-    n_groups = len(groups)
-    n_solo = sum(1 for v in groups.values() if not v)
+        elif groups[(proj, key)] is None:
+            groups[(proj, key)] = False
+n_unknown = sum(1 for v in groups.values() if v is None)
+known = [v for v in groups.values() if v is not None]
+solo = {"measured": bool(known), "groups": None, "solo_groups": None,
+        "solo_ratio": None, "solo_pct": None,
+        "author_unknown_groups": n_unknown if groups else None}
+if known:
+    n_groups = len(known)
+    n_solo = sum(1 for v in known if not v)
     solo.update(groups=n_groups, solo_groups=n_solo,
                 solo_ratio=round(n_solo / n_groups, 4), solo_pct=round(100 * n_solo / n_groups, 1))
 
@@ -962,7 +995,11 @@ if solo["measured"]:
     print("solo ratio (diff_keys with no external-vendor complete review): {}/{} = {}%".format(
         solo["solo_groups"], solo["groups"], solo["solo_pct"]))
 else:
-    print("solo ratio: no data (no reviews.jsonl rows with a diff_key under {})".format(workers_root))
+    print("solo ratio: no data (no reviews.jsonl rows with a diff_key and a known author "
+          "under {})".format(workers_root))
+if solo["author_unknown_groups"]:
+    print("author unknown: {} diff_key(s) whose rows carry no author_vendor "
+          "(counted neither solo nor external)".format(solo["author_unknown_groups"]))
 if context["measured"]:
     print("context: {} Claude code-reviewer dispatch(es) vs {} external-complete lane row(s) "
           "(no shared session id - not a ratio)".format(rev, external_lanes))

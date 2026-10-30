@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # secret-content-scan-ledger-test.sh — the Write/Edit evidence-ledger deny in
 # core/hooks/secret-content-scan.py is scoped to the workers/logs dirs, not to any
-# file that happens to be named reviews.jsonl.
+# file that happens to be named reviews.jsonl. call-worker.sh's writing-lane record
+# (agent-author-vendors, in a checkout's git dir) is denied wherever it sits.
 #
 # Usage: bash core/tests/secret-content-scan-ledger-test.sh
 # Exit 0: all pass. Exit 1: one or more failures.
@@ -45,6 +46,14 @@ run_case "default-workers-still-denied-when-env-moves-it" deny Write "$W/reviews
 run_case "default-logs-still-denied-when-env-moves-it" deny Write "$WORK/home/.agent/logs/review-override.jsonl" AGENT_LOGS_DIR="$WORK/vlogs"
 ln -s "$W" "$WORK/proj/link"
 run_case "symlink-into-workers-deny"     deny  Write "$WORK/proj/link/reviews.jsonl"
+# call-worker.sh's writing-lane record sits in each checkout's git dir: guarded wherever it is
+mkdir -p "$WORK/proj/.git/worktrees/wt"
+run_case "author-record-write-deny"      deny  Write "$WORK/proj/.git/agent-author-vendors"
+run_case "author-record-edit-deny"       deny  Edit  "$WORK/proj/.git/worktrees/wt/agent-author-vendors"
+run_case "author-record-multiedit-deny"  deny  MultiEdit "$WORK/proj/.git/Agent-Author-Vendors"
+ln -s "$WORK/proj/.git/agent-author-vendors" "$WORK/proj/innocent"
+run_case "author-record-symlink-deny"    deny  Write "$WORK/proj/innocent"
+run_case "author-record-longer-name-allow" allow Write "$WORK/proj/agent-author-vendors-notes.md"
 
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]

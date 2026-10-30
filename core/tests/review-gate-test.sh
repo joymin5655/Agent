@@ -23,6 +23,11 @@ REPO="$WORK/repo"
 export AGENT_WORKERS_DIR="$WORK/workers"
 export AGENT_LOGS_DIR="$WORK/logs"
 unset AGENT_REVIEW_OVERRIDE
+# Every case below assumes the default author: pin it so the branch or folder of the checkout
+# running this test (a codex/ or gemini- working copy) and this machine's runtime profile
+# cannot change which reviewer counts as external. The author-aware cases live in
+# review-evidence-test.sh.
+export AGENT_AUTHOR_VENDOR=anthropic
 mkdir -p "$REPO/billing" "$REPO/src" "$AGENT_WORKERS_DIR"
 git -C "$REPO" init -q
 git -C "$REPO" config user.email "test@example.com"

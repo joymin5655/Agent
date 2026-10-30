@@ -14,16 +14,28 @@
                             covered. `check` applies the same reduction.
   check --staged [--merge-head SHA]...
                             commit gate (pre-merge-commit passes the merged heads
-                            explicitly; the environment is never read): exit 0 when no risk file is staged, or an
-                            external-vendor (not anthropic, not an advisor-* role)
-                            `complete` review row in
+                            explicitly; the environment is never read for heads): exit 0 when no risk file is staged, or an
+                            external-vendor (a known vendor that is none of the authors', see
+                            author-vendor; not an advisor-* role) `complete` review row in
                             reviews.jsonl is bound to this exact key, or the user set
-                            AGENT_REVIEW_OVERRIDE (>=10 chars; logged). Exit 1 otherwise.
+                            AGENT_REVIEW_OVERRIDE (>=10 chars; logged). Exit 1 otherwise,
+                            exit 2 for an unknown AGENT_AUTHOR_VENDOR name.
                             The override is user-only by policy; agents must not set it.
   summary CAPTURE...        lane-status line for the council report; first line warns
                             "single-vendor review" when no external lane completed. Vendor
                             and role come from the reviews.jsonl row whose `capture` is that
                             file, else from backends.json / the capture frontmatter.
+  author-vendor             every company whose model wrote the staged change, sorted and
+                            comma-joined: the union of AGENT_AUTHOR_VENDOR (a comma list; it
+                            only adds, and an unknown name exits 2), the branch prefix
+                            (claude/ codex/ gemini/ agy/), the working-copy folder prefix
+                            (claude- codex- gemini- agy-), every AI Co-Authored-By trailer of
+                            merge-base(default branch)..HEAD (HEAD alone without a merge-base)
+                            and the writing lanes call-worker.sh recorded in
+                            <git dir>/agent-author-vendors. Only when all are empty: the saved
+                            runtime profile's main vendor, else anthropic. A review by any of
+                            them is not external; a reviews.jsonl row's own `author_vendor`
+                            can only add to this set, never replace it.
 """
 from __future__ import annotations
 
@@ -205,6 +217,167 @@ def diff_key_staged(extra_parents: tuple[str, ...] = ()) -> str:
 OVERRIDE_MIN = 10
 OVERRIDE_MAX = 300
 SINGLE_VENDOR = "single-vendor review — not a council (no external lane returned)"
+VENDORS = ("anthropic", "openai", "google")  # runtime-profile.py VENDORS; call-worker.sh KNOWN_VENDORS
+# A branch `claude/fix-x` or a working-copy folder `claude-fix-x` names the tool that works there.
+PREFIX_VENDOR = {"claude": "anthropic", "codex": "openai", "gemini": "google", "agy": "google"}
+TRAILER_RE = re.compile(r"^co-authored-by:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
+TRAILER_VENDOR = (
+    ("anthropic", re.compile(r"\b(claude|anthropic)\b", re.IGNORECASE)),
+    ("openai", re.compile(r"\b(codex|openai|chatgpt|gpt)\b", re.IGNORECASE)),
+    ("google", re.compile(r"\b(gemini|antigravity|google)\b", re.IGNORECASE)),
+)
+# call-worker.sh appends the vendor of every writing lane (a role without "readonly": true)
+# that ran from this worktree to <git dir>/AUTHOR_FILE, one "<vendor>\t<branch>" (or
+# "<vendor>\t@<HEAD commit>") line per run. Every line counts on every branch; the second
+# field only tells the person who clears the file which run a line came from.
+AUTHOR_FILE = "agent-author-vendors"
+
+
+class AuthorVendorError(Exception):
+    pass
+
+
+def _norm(value: object) -> str:
+    return str(value or "").strip().lower()
+
+
+def _vendor_tokens(value: object) -> list[str]:
+    """A vendor list as written by call-worker.sh / AGENT_AUTHOR_VENDOR: comma or space separated."""
+    return [t for t in re.split(r"[\s,]+", _norm(value)) if t]
+
+
+def _known(tokens: list[str]) -> set[str]:
+    return {t for t in tokens if t in VENDORS}
+
+
+def _prefix_vendor(name: str, sep: str) -> str:
+    head, found, _ = name.partition(sep)
+    return PREFIX_VENDOR.get(head.lower(), "") if found else ""
+
+
+def _env_vendors() -> set[str]:
+    """AGENT_AUTHOR_VENDOR as a set. An unknown name is an error, never ignored: a typo would
+    otherwise drop a company from the authors and let it count as its own outside reviewer."""
+    tokens = _vendor_tokens(os.environ.get("AGENT_AUTHOR_VENDOR"))
+    unknown = sorted(set(tokens) - set(VENDORS))
+    if unknown:
+        raise AuthorVendorError(f"AGENT_AUTHOR_VENDOR names unknown vendor(s) {', '.join(unknown)} "
+                                f"(known: {', '.join(VENDORS)})")
+    return set(tokens)
+
+
+def _trailer_vendors(message: str) -> set[str]:
+    """Every AI company named by a Co-Authored-By trailer of one commit message."""
+    found: set[str] = set()
+    for who in TRAILER_RE.findall(message):
+        found |= {vendor for vendor, pattern in TRAILER_VENDOR if pattern.search(who)}
+    return found
+
+
+def _merge_base(top: str) -> str:
+    """merge-base of HEAD with the default branch (remote default first, then a local main /
+    master); "" when none can be found."""
+    try:
+        refs = _default_branch_refs(top)
+    except EvidenceError:
+        refs = []
+    for ref in refs + ["refs/heads/main", "refs/heads/master"]:
+        try:
+            _git(top, "rev-parse", "--verify", "-q", f"{ref}^{{commit}}")
+            return _git(top, "merge-base", ref, "HEAD").decode().strip()
+        except EvidenceError:
+            continue
+    return ""
+
+
+def _change_messages(top: str) -> list[str]:
+    """Messages of the commits this branch adds: merge-base(default branch, HEAD)..HEAD; HEAD
+    alone when no merge-base is found; none before the first commit."""
+    try:
+        _git(top, "rev-parse", "--verify", "-q", "HEAD^{commit}")
+    except EvidenceError:  # no commit yet
+        return []
+    base = _merge_base(top)
+    revs = [f"{base}..HEAD"] if base else ["-1", "HEAD"]
+    try:
+        out = _git(top, "log", "--format=%B%x00", *revs, "--")
+    except EvidenceError:
+        return []
+    return [m for m in out.decode(errors="replace").split("\0") if m.strip()]
+
+
+def _recorded_vendors(top: str) -> set[str]:
+    """Vendors call-worker.sh recorded for writing lanes run from this worktree, on any
+    branch. A line is "<vendor>\\t<branch>", "<vendor>\\t@<commit>" (detached HEAD) or a bare
+    "<vendor>"; only the vendor field is read. Binding a line to its branch would let a
+    `git switch -c` or `git branch -m` carry the uncommitted change away from the record of
+    who wrote it, so every line counts until a person clears the file."""
+    try:
+        git_dir = _git(top, "rev-parse", "--absolute-git-dir").decode().strip()
+        with open(os.path.join(git_dir, AUTHOR_FILE), encoding="utf-8", errors="replace") as f:
+            lines = f.read().splitlines()
+    except (EvidenceError, OSError):
+        return set()
+    found: set[str] = set()
+    for line in lines:
+        found |= _known(_vendor_tokens(line.partition("\t")[0]))
+    return found
+
+
+def _profile_vendor() -> str:
+    """main_vendor of the runtime profile `runtime-profile.py save` wrote; "" when absent."""
+    path = os.environ.get("AGENT_PROFILE_FILE") or os.path.join(
+        os.path.expanduser("~"), ".agent", "profile.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            main = _norm(json.load(f).get("main_vendor"))
+    except (OSError, ValueError, AttributeError):
+        return ""
+    return main if main in VENDORS else ""
+
+
+def author_vendors() -> list[str]:
+    """Every company whose model wrote the staged change, sorted: a review by any of them is
+    not an external one. The union of AGENT_AUTHOR_VENDOR (it only adds, never overrides), the
+    branch prefix, the working-copy folder prefix, every AI Co-Authored-By trailer of the
+    commits this branch adds (_change_messages) and every writing lane call-worker.sh recorded
+    in this worktree (AUTHOR_FILE). Only when all of them are empty: the runtime profile's
+    main vendor, else anthropic, which is what the gate assumed before the author was
+    tracked. Raises AuthorVendorError for an unknown AGENT_AUTHOR_VENDOR name."""
+    found = _env_vendors()
+    top = git_toplevel(os.getcwd())
+    if top:
+        try:
+            branch = _git(top, "symbolic-ref", "--short", "-q", "HEAD").decode().strip()
+        except EvidenceError:  # detached HEAD
+            branch = ""
+        found |= {v for v in (_prefix_vendor(branch, "/"),
+                              _prefix_vendor(os.path.basename(top), "-")) if v}
+        for message in _change_messages(top):
+            found |= _trailer_vendors(message)
+        found |= _recorded_vendors(top)
+    if not found:
+        found.add(_profile_vendor() or "anthropic")
+    return sorted(found)
+
+
+def row_authors(row: dict) -> set[str]:
+    """The known vendors in a reviews.jsonl row's author_vendor (a comma list or null)."""
+    return _known(_vendor_tokens(row.get("author_vendor")))
+
+
+def is_external(vendor: object, authors: set[str]) -> bool:
+    """External = a known vendor that is none of the authors' companies."""
+    v = _norm(vendor)
+    return v in VENDORS and v not in authors
+
+
+def row_is_external_complete(row: dict, authors: set[str]) -> bool:
+    """A complete, non-advisor lane whose vendor wrote none of the work. The row's own
+    author_vendor can only add authors (narrow what counts), never remove the commit-time ones."""
+    return (row.get("status") == "complete"
+            and not str(row.get("role") or "").startswith("advisor")
+            and is_external(row.get("vendor"), authors | row_authors(row)))
 
 
 def workers_dir() -> str:
@@ -230,13 +403,12 @@ def index_rows() -> list[dict]:
     return rows
 
 
-def has_external_complete(key: str) -> bool:
-    return any(
-        row.get("diff_key") == key
-        and row.get("status") == "complete"
-        and not str(row.get("role") or "").startswith("advisor")
-        and row.get("vendor") not in (None, "", "anthropic")
-        for row in index_rows())
+def has_external_complete(key: str, authors: set[str] | None = None) -> bool:
+    """Raises AuthorVendorError (unknown AGENT_AUTHOR_VENDOR name) when authors is None."""
+    if authors is None:
+        authors = set(author_vendors())
+    return any(row.get("diff_key") == key and row_is_external_complete(row, authors)
+               for row in index_rows())
 
 
 def log_override(key: str | None, reason: str) -> None:
@@ -282,7 +454,13 @@ def check_staged(extra_parents: tuple[str, ...] = ()) -> int:
         return 1
     if not key:
         return 0
-    if has_external_complete(key):
+    try:
+        authors = set(author_vendors())
+    except AuthorVendorError as exc:
+        print(f"review-evidence: {exc} — fix or unset it; the gate cannot tell who wrote this "
+              "change", file=sys.stderr)
+        return 2
+    if has_external_complete(key, authors):
         return 0
     if try_override(key):
         return 0
@@ -292,7 +470,8 @@ def check_staged(extra_parents: tuple[str, ...] = ()) -> int:
     except EvidenceError:
         files = []
     print("review-evidence: risk-area files are staged and no external-vendor review "
-          "(status complete) is bound to this staged content:", file=sys.stderr)
+          f"(status complete, by a company other than the authors '{','.join(sorted(authors))}') "
+          "is bound to this staged content:", file=sys.stderr)
     for path in files:
         print(f"  - {path}", file=sys.stderr)
     print("  Run `/council-review --staged` (re-run it after editing any risk file), or, "
@@ -332,6 +511,11 @@ def backend_vendors() -> dict[str, str]:
 
 def summary(captures: list[str]) -> int:
     vendors = backend_vendors()
+    try:
+        authors = set(author_vendors())
+    except AuthorVendorError as exc:
+        print(f"review-evidence: {exc}", file=sys.stderr)
+        return 2
     by_capture = {os.path.realpath(str(r["capture"])): r for r in index_rows()
                   if r.get("capture")}
     parts: list[str] = []
@@ -342,17 +526,18 @@ def summary(captures: list[str]) -> int:
         status = fm.get("status", "unknown")
         vendor = vendors.get(backend) or ("anthropic" if backend == "claude" else "")
         role = fm.get("role", "")
+        lane = {"status": status, "vendor": vendor, "role": role}
         row = by_capture.get(os.path.realpath(cap))
         if row is not None:  # the index row is what the commit gate trusts
-            role = str(row.get("role") or role)
-            status = str(row.get("status") or status)
+            lane["role"] = str(row.get("role") or role)
+            lane["status"] = str(row.get("status") or status)
             if "vendor" in row:
-                vendor = str(row["vendor"] or "")
-        good = status == "complete"
-        advisory = role.startswith("advisor")
-        if good and vendor and vendor != "anthropic" and not advisory:
+                lane["vendor"] = str(row["vendor"] or "")
+            lane["author_vendor"] = row.get("author_vendor")
+        if row_is_external_complete(lane, authors):
             external_complete += 1
-        parts.append(f"{backend} {'✓' if good else '✗'} ({status})")
+        good = lane["status"] == "complete"
+        parts.append(f"{backend} {'✓' if good else '✗'} ({lane['status']})")
     if not external_complete:
         print(SINGLE_VENDOR)
     print("Lane status: " + " | ".join(parts))
@@ -381,6 +566,13 @@ def main(argv: list[str]) -> int:
         return check_staged(heads)
     if argv[:1] == ["summary"]:
         return summary(argv[1:])
+    if argv == ["author-vendor"]:
+        try:
+            print(",".join(author_vendors()))
+        except AuthorVendorError as exc:
+            print(f"review-evidence: {exc}", file=sys.stderr)
+            return 2
+        return 0
     print(__doc__, file=sys.stderr)
     return 2
 
