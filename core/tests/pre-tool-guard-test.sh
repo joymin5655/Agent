@@ -474,6 +474,41 @@ run_case "workers-dir-echo-allow"       'echo "$AGENT_WORKERS_DIR"'             
 run_case "workers-dir-grep-allow"       'grep AGENT_WORKERS_DIR core/infra/review-evidence.py'       allow
 run_case "logs-dir-test-bracket-allow"  '[[ "$AGENT_LOGS_DIR" == "" ]]'                              allow
 run_case "override-export-other-then-grep-allow" 'export FOO=1; grep AGENT_REVIEW_OVERRIDE x'        allow
+# the usage policy and the lane registry: an agent pointing them elsewhere approves its own spend
+run_case "policy-cmd-assign-deny"       'AGENT_WORKER_POLICY_CMD=/tmp/yes bash core/infra/call-worker.sh r' deny
+run_case "policy-cmd-export-deny"       'export AGENT_WORKER_POLICY_CMD=/tmp/yes'                    deny
+run_case "policy-cmd-env-deny"          'env AGENT_WORKER_POLICY_CMD=/tmp/yes bash x.sh'             deny
+run_case "backends-file-assign-deny"    'AGENT_BACKENDS_FILE=/tmp/reg.json bash core/infra/call-worker.sh r' deny
+run_case "backends-file-export-deny"    'cd x && export AGENT_BACKENDS_FILE=/tmp/reg.json'           deny
+run_case "backends-file-declare-deny"   'declare -x AGENT_BACKENDS_FILE=/tmp/reg.json'               deny
+run_case "policy-cmd-echo-allow"        'echo "$AGENT_WORKER_POLICY_CMD"'                            allow
+run_case "policy-cmd-grep-allow"        'grep -n AGENT_WORKER_POLICY_CMD core/infra/call-worker.sh'  allow
+# removing the policy or the registry: call-worker would take YES=1 alone past a policy cap
+run_case "backends-file-unset-deny"     'unset AGENT_BACKENDS_FILE'                                  deny
+run_case "policy-cmd-unset-deny"        'unset AGENT_WORKER_POLICY_CMD; AGENT_WORKER_YES=1 bash core/infra/call-worker.sh r' deny
+run_case "policy-cmd-unset-list-deny"   'unset FOO AGENT_WORKER_POLICY_CMD BAR'                      deny
+run_case "policy-cmd-unset-v-deny"      'unset -v AGENT_WORKER_POLICY_CMD'                           deny
+run_case "policy-cmd-unset-chained-deny" 'cd x && unset AGENT_WORKER_POLICY_CMD'                     deny
+run_case "policy-cmd-env-u-deny"        'env -u AGENT_WORKER_POLICY_CMD AGENT_WORKER_YES=1 bash core/infra/call-worker.sh r' deny
+run_case "policy-cmd-env-u-glued-deny"  'env -uAGENT_WORKER_POLICY_CMD bash x.sh'                    deny
+run_case "policy-cmd-env-unset-eq-deny" 'env --unset=AGENT_WORKER_POLICY_CMD bash x.sh'              deny
+run_case "policy-cmd-env-unset-sp-deny" 'env --unset AGENT_WORKER_POLICY_CMD bash x.sh'              deny
+run_case "backends-file-env-u-deny"     '/usr/bin/env -u FOO -u AGENT_BACKENDS_FILE bash x.sh'       deny
+run_case "env-i-call-worker-deny"       'env -i PATH=/usr/bin:/bin AGENT_WORKER_YES=1 bash core/infra/call-worker.sh r' deny
+run_case "env-dash-call-worker-deny"    'env - AGENT_WORKER_YES=1 bash core/infra/call-worker.sh r'  deny
+run_case "env-ignore-env-call-worker-deny" 'env --ignore-environment HOME=/tmp bash call-worker.sh r' deny
+run_case "env-i-other-allow"            'env -i PATH=/usr/bin:/bin bash x.sh'                        allow
+run_case "env-u-other-allow"            'env -u FOO bash x.sh'                                       allow
+run_case "unset-longer-name-allow"      'unset AGENT_BACKENDS_FILE_X'                                allow
+run_case "backends-file-echo-allow"     'echo "$AGENT_BACKENDS_FILE"'                                allow
+run_case "backends-file-grep-allow"     'grep AGENT_BACKENDS_FILE f'                                 allow
+run_case "grep-unset-mention-allow"     'grep unset AGENT_BACKENDS_FILE f'                           allow
+run_case "workers-dir-unset-allow"      'unset AGENT_WORKERS_DIR AGENT_LOGS_DIR'                     allow
+run_case "backends-file-longer-name-allow" 'AGENT_BACKENDS_FILE_X=1 echo ok'                         allow
+run_case "backends-file-prefixed-name-allow" 'MY_AGENT_BACKENDS_FILE=1 echo ok'                      allow
+# not guarded on purpose: /council-review sets these itself after the person approves
+run_case "worker-yes-assign-allow"      'AGENT_WORKER_YES=1 echo ok'                                 allow
+run_case "author-vendor-export-allow"   'export AGENT_AUTHOR_VENDOR=openai'                          allow
 
 echo
 echo "=== evidence-ledger: agent may not WRITE reviews.jsonl / review-override.jsonl -> deny ==="
@@ -506,6 +541,17 @@ run_case "ledger-python-uppercase-deny" "python3 -c \"open('Reviews.jsonl','a').
 run_case "ledger-ln-deny"              'ln -sf forged.jsonl reviews.jsonl'                           deny
 run_case "ledger-python-read-allow"    "python3 -c \"print(open('reviews.jsonl').read())\""          allow
 run_case "ledger-python-read-r-allow"  "python3 -c \"print(open('reviews.jsonl','r').read())\""      allow
+# the writing-lane record: emptying it would let the branch prefix alone name the authors
+run_case "author-record-rm-deny"       'rm .git/agent-author-vendors'                                deny
+run_case "author-record-rm-gitdir-deny" 'rm -f "$(git rev-parse --absolute-git-dir)/agent-author-vendors"' deny
+run_case "author-record-colon-redirect-deny" ': > .git/agent-author-vendors'                         deny
+run_case "author-record-redirect-deny" 'echo anthropic > .git/worktrees/w/agent-author-vendors'      deny
+run_case "author-record-truncate-deny" 'truncate -s 0 .git/agent-author-vendors'                     deny
+run_case "author-record-cp-null-deny"  'cp /dev/null .git/agent-author-vendors'                      deny
+run_case "author-record-sed-i-deny"    "sed -i '' '/openai/d' .git/agent-author-vendors"             deny
+run_case "author-record-python-write-deny" "python3 -c \"open('.git/agent-author-vendors','w')\""    deny
+run_case "author-record-cat-allow"     'cat .git/agent-author-vendors'                               allow
+run_case "author-record-grep-allow"    'grep openai .git/agent-author-vendors'                       allow
 
 # --- guard 5 (secrets/ read): two-stage match ---------------------------------------------
 # Stage 1 (the broad verb-then-secrets/ regex) only nominates a candidate; stage 2 lexes the

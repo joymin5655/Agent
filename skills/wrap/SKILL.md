@@ -100,7 +100,8 @@ d. **Review-tier check** — run the review-cadence script, resolved from the
      path) AND no council/degrade review happened this session for this diff
      (no row in `<workers dir>/reviews.jsonl` with `diff_key` equal to
      `python3 "${CLAUDE_PLUGIN_ROOT}/core/infra/review-evidence.py" key --staged`,
-     `status == "complete"` and a vendor other than anthropic — that script's
+     `status == "complete"` and a vendor other than the author's (anthropic unless
+     the script's `author-vendor` subcommand names another) — that script's
      `check --staged` automates this, and
      `core/git-hooks/pre-commit` enforces it for risk-area paths; no
      single-vendor degrade note) → recommend `/council-review --staged` and confirm with the user

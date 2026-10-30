@@ -16,6 +16,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   who do not use agy. Tests: `core/tests/sync-instructions-test.py`,
   `core/tests/instruction-setup-test.sh`.
 
+### Changed
+- **Cross-company review: no company that wrote a change reviews it.**
+  `call-worker.sh` drops every backend of the companies in `AGENT_AUTHOR_VENDOR` (a comma list;
+  an unknown name is exit 2), accepts an absolute-path `AGENT_WORKER_POLICY_CMD` usage-policy
+  command and asks it per candidate even with `AGENT_WORKER_YES=1` (0 runs; 3 runs only with
+  YES; 75 = capped, which YES does not lift; anything else, a hang or an uncallable command
+  fails closed with exit 3; a hung policy's whole process group is killed). An `anthropic`
+  backend skips the policy only on the shipped registry with none of `ANTHROPIC_API_KEY`,
+  `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_USE_BEDROCK` or
+  `CLAUDE_CODE_USE_VERTEX` in the environment. It sets `AGENT_LANE=<role>`, gives
+  `"readonly": true` roles (review, verify and now `advisor`) `--sandbox read-only` on codex
+  (any other sandbox spelling in the
+  argv, including `--config=sandbox_mode=…` and `-csandbox_mode=…`, is exit 2), records a
+  writing role's company in `<git dir>/agent-author-vendors` as `<company><TAB><branch>`
+  (`@<HEAD commit>` when detached) on every status, failed and timed-out runs included (not
+  only on success, as first specified: a failed run can still have edited files), writes
+  captures and rows with `umask 077` and tightens an existing workers dir / `reviews.jsonl`
+  to 700 / 600, and names a missing fallback CLI in `unavailable_reason`; index rows gain
+  `author_vendor` and `approval`. New `cross-review` role (codex, falls back to a
+  `claude -p --safe-mode --restricted` backend limited to Read/Grep/Glob with no MCP servers);
+  `implementer` drops `--ask-for-approval` (codex 0.161 `exec` rejects it); codex `timeout_s`
+  300 → 600. `review-evidence.py author-vendor` prints the union of the env list, branch,
+  folder, every AI trailer of merge-base..HEAD and every recorded writing lane, whichever
+  branch it ran on (a branch switch or rename does not drop it; profile, else anthropic,
+  only when all are empty); a review counts as external only when its vendor is in
+  neither that set nor the row's own `author_vendor`. `/council-review` calls each lane once
+  per attempt, and a lane the policy refused with exit 3 is retried at most once, with YES,
+  when the person approves it (policy set: no YES on the first call); with no policy, only
+  the approved lanes run, once each. When `author-vendor` fails it calls no external lane
+  and says the run has no external review (`/verify-completion --second-opinion` skips its
+  lane the same way). Its dispatch block sits between `# council-lanes:begin` /
+  `# council-lanes:end` markers and is run by the new `core/tests/council-lanes-test.sh`
+  against a stand-in dispatcher. It logs one outcome row per run, written under
+  `umask 077`; `/verify-completion --second-opinion`
+  exports the author list too. `pre-tool-guard.sh` also denies an agent command that sets
+  `AGENT_WORKER_POLICY_CMD` or `AGENT_BACKENDS_FILE`, or removes either (`unset`, `env -u`,
+  `env --unset`, and `env -i` / `env -` / `env --ignore-environment` in a command that
+  mentions call-worker), and one that writes or empties `agent-author-vendors`
+  (`secret-content-scan.py` denies a Write/Edit of it); `telemetry-digest.sh --review` counts
+  rows with no known author apart as "author unknown", so `manager-audit.sh --global` reports
+  a window of only such rows as `review-unmeasured`. Not changed: codex's read-only sandbox
+  still lets a planted instruction read files into a capture, so captures are untrusted data.
+
 ### Fixed
 - **`setup.sh --dry-run` no longer installs for real.** It used to be honoured only by
   `--bootstrap` and `--instructions-only` and silently ignored by every other mode

@@ -22,7 +22,8 @@
 #   review-completeness — how often a review was Claude-only (V-6): WARN
 #                         solo-ratio-high when solo diffs exceed AGENT_REVIEW_SOLO_MAX
 #                         percent (default 50), WARN override-used, INFO
-#                         review-unmeasured when there is no data (never PASS).
+#                         review-unmeasured when no row names its author (no data,
+#                         or only rows from before author_vendor; never PASS).
 #                         Data: telemetry-digest.sh --review --window 30 --json
 #
 # Usage: bash core/infra/manager-audit.sh <plan-slug> [--json] [--session <id>] [--since <ISO-ts>]
@@ -313,7 +314,7 @@ if [[ "$GLOBAL" == true ]]; then
         fi
     else
         add review-completeness review-unmeasured INFO \
-            "${DIGEST_FAIL:-no reviews.jsonl rows with a diff_key in 30d — the Claude-only review ratio is unmeasured, not clean}" \
+            "${DIGEST_FAIL:-no reviews.jsonl rows with a diff_key and a known author_vendor in 30d — the Claude-only review ratio is unmeasured, not clean}" \
             "run reviews through call-worker.sh / council-review so evidence is logged"
     fi
     ov_n=$(jq '.overrides.total // 0' <<< "$DIGEST")

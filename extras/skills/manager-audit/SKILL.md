@@ -33,7 +33,8 @@ A fifth lane runs only with `--global` (no slug):
 `solo-ratio-high` when the share of reviewed diffs with no external-vendor
 complete review exceeds `AGENT_REVIEW_SOLO_MAX` percent (default 50), WARN
 `override-used` when any review override was logged (count only, the reason is
-never shown), INFO `review-unmeasured` when no data exists — unmeasured is never
+never shown), INFO `review-unmeasured` when no row names its author (no data, or
+only rows from before `author_vendor` was recorded) — unmeasured is never
 reported as clean.
 
 The machine layer *detects*; this skill *interprets and proposes*. The split

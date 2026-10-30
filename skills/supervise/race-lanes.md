@@ -14,7 +14,13 @@ result. Rules that keep it inside the standing invariants:
   `git diff`, plus a lane report (`<harness root>/skills/supervise/templates/lane-report.md`).
 - **The supervisor is the only tree writer** (one-writer rule preserved): it
   runs the wave's acceptance command against each patch, compares, applies
-  exactly ONE, and records which lane won and why in RECORD.md.
+  exactly ONE, and records which lane won and why in RECORD.md. Lane B's
+  `implementer` run records its company in the race checkout's git dir, not in
+  the supervisor's; when lane B's patch wins, append that company (e.g.
+  `openai`) as one line to `"$(git rev-parse --absolute-git-dir)/agent-author-vendors"`
+  of the supervisor's checkout, so
+  `<harness root>/core/infra/review-evidence.py author-vendor` keeps it
+  out of the later review.
 - **Race = 2 slots against the wave's fan-out cap.** A race wave carries at
   most one other concurrent worker.
 - **Judgment stays home**: the compare-and-pick step is main-loop judgment

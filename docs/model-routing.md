@@ -251,7 +251,9 @@ shared blind spot doesn't survive review.
 
 - **SSOT (machine-readable): `core/infra/backends.json`** — role → backend →
   CLI argv. Roles shipped: `second-opinion-review` and `second-opinion-verify`
-  (codex, no fallback — an absent lane is reported absent, never substituted).
+  (codex, no fallback — an absent lane is reported absent, never substituted),
+  `third-opinion-review` (gemini) and `cross-review` (codex, falls back to the
+  host's `claude` CLI — see "Cross-company review" below).
   Model names deliberately never appear in the registry or the dispatcher: each
   vendor's adapter profile owns its tier (the rows above — `codex --profile
   deep` is the TOP-tier reasoning profile; the antigravity worker pins its
@@ -306,16 +308,91 @@ shared blind spot doesn't survive review.
   `status == "complete"`; `diff_key` is the staged risk-file key from
   `review-evidence.py key --staged` (null when unset). Review and commit must run in
   the same worktree: a linked worktree is its own project, with its own key. External
-  calls cost money: without `AGENT_WORKER_YES=1` it refuses (exit 3). The
-  gate is env-only by design — a headless caller cannot answer an interactive
-  confirm; the session that owns the user relationship asks first, then sets
-  the env per invocation. A missing CLI names the missing tool (exit 127), a
+  calls cost money, so without approval it refuses (exit 3). Approval is
+  `AGENT_WORKER_YES=1` (a person approved the spend) or a usage-policy command
+  (below). The gate is env-only by design — a headless caller cannot answer an
+  interactive confirm; the session that owns the user relationship asks
+  first, then sets the env per invocation. A missing CLI names the missing tool (exit 127), a
   fallback records why the primary was skipped, a hung worker is killed at
   `timeout_s` (exit 124). `AGENT_WORKER_DISABLE=<name>[,<name>...]` in the caller's
   env — a name is a backend (`gemini`) or a vendor (`google`, every backend with that
   vendor, so it survives a lane rename) — refuses those backends like `enabled: false`
   (before the preflight), for a shared machine where one login profile must not bill a
   vendor CLI signed in to someone else's account; an unknown name is warned about.
+- **Usage-policy approval (2026-10-29).** With `AGENT_WORKER_POLICY_CMD` set to the
+  absolute path of one executable (it must start with `/`: no shell evaluation, no PATH
+  search, and no relative path, which would resolve inside the repository under review),
+  the dispatcher runs `<cmd> check --lane <vendor> --role <role> --hold <call-worker pid>`
+  once per candidate backend, after the CLI-presence check and before the preflight (a
+  probe can be billable too), and it does so even when `AGENT_WORKER_YES=1` is set. Exit 0
+  means go (`approval: policy`). Exit 3 means not approved: the backend runs only with
+  `AGENT_WORKER_YES=1` (`approval: user`), otherwise the dispatcher exits 3. Exit 75 means
+  that vendor is capped: the backend is unavailable with reason `capped: <JSON "reason" or
+  the first output line>` and the fallback is tried, whatever YES says, because raising a
+  cap is the user's own decision in the policy. Any other exit, a hang past
+  `AGENT_WORKER_POLICY_TIMEOUT_S` (default 30; the policy runs as its own process group
+  and the whole group is killed) or a command that is set but not callable fails closed
+  (exit 3), YES or not. With no policy set, `AGENT_WORKER_YES=1` is the only approval.
+  An `anthropic` backend is not asked only while it is plainly the host's own
+  subscription: the registry is the shipped one (`AGENT_BACKENDS_FILE` empty or that same
+  file) and none of `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`,
+  `CLAUDE_CODE_USE_BEDROCK` or `CLAUDE_CODE_USE_VERTEX` is in the environment (each can
+  route the CLI to per-call billing; presence counts, whatever the value, and the values
+  are never printed or logged). Every `reviews.jsonl` row records `approval` (`user` or
+  `policy`). An agent command may not remove the policy or the registry from the
+  environment (`unset`, `env -u`, or `env -i` around call-worker: `pre-tool-guard.sh`
+  4a2, a speed bump like 4a). Making the concurrent-call cap atomic is the external
+  policy command's job.
+- **Cross-company review (2026-10-29).** Review is symmetric: no company that wrote a
+  change reviews it. `review-evidence.py author-vendor` prints every such company, sorted
+  and comma-joined: the union of `AGENT_AUTHOR_VENDOR` (a comma list that only adds), the
+  branch prefix (`claude/` `codex/` `gemini/` `agy/`), the working-copy folder prefix,
+  every AI `Co-Authored-By` trailer of `merge-base(default branch)..HEAD` (HEAD alone
+  without a merge-base) and every writing lane recorded in
+  `<git dir>/agent-author-vendors`, whichever branch it ran on. Only when all of these are
+  empty does it fall back to the saved runtime profile, else anthropic. An unknown vendor name in
+  `AGENT_AUTHOR_VENDOR` is exit 2 in both `review-evidence.py` and `call-worker.sh`.
+  `call-worker.sh` skips every backend of every listed company (the unavailable line says
+  why; none left is exit 127, which the caller reports as a single-company review) and
+  records the list as the row's `author_vendor`. A role without `"readonly": true` (e.g.
+  `implementer`; review, verify and `advisor` roles carry it) appends a line
+  `<company><TAB><branch>` (`<company><TAB>@<HEAD commit>` on a detached HEAD) to
+  `<git dir>/agent-author-vendors` of the caller's checkout once its CLI has run, so that
+  company cannot later count as an outside reviewer of the same work. Every line counts on
+  every branch: a branch switch or rename carries the uncommitted change along, so a record
+  bound to its branch would lose the author (the branch field is provenance for the person
+  who clears the file). The line is written whatever the run's
+  status, failed and timed-out runs included, not only on success as first specified: a
+  run that fails can still have edited files. An agent command or a Write/Edit tool call
+  may not rewrite or empty this file (`pre-tool-guard.sh` 4b, `secret-content-scan.py`);
+  emptying it would leave the branch prefix as the only author signal. The file belongs to
+  the checkout's own git dir, so removing a task's worktree after its PR merges clears it;
+  in a checkout kept across tasks, the person deletes it once the recorded work is
+  committed and reviewed. Until then a company that wrote there is never an outside
+  reviewer there (the record errs toward blocking). The commit gate and
+  the council summary count a lane as
+  external only when its vendor is a known one outside both the commit-time set and the
+  row's own `author_vendor` (the row can only narrow). The `cross-review` role is the
+  one-reviewer form: author anthropic means codex reviews, author openai means codex is
+  dropped and the `claude` backend reviews. That backend runs `claude -p --safe-mode
+  --restricted --tools Read,Grep,Glob --strict-mcp-config --no-session-persistence`.
+  `--safe-mode` and `--restricted` keep the reviewed repository's `.claude/settings.json`,
+  the user settings and the commands they would run on their own (hooks such as
+  SessionStart) out of the run; a SessionStart command planted in the reviewed repository
+  ran without them and did not run with them (measured, claude 2.1.312). `--tools` limits
+  the built-in tools to Read, Grep and Glob, and `--strict-mcp-config` with no
+  `--mcp-config` loads no MCP server. The subscription login still works with this set;
+  `--bare` does not read it and is not used. Review roles carry `"readonly": true`, which
+  gives a codex backend `--sandbox read-only` ahead of the role's own args; a sandbox
+  argument of the role's own, in any spelling (`-s`, `--sandbox[=…]`, `-c sandbox_mode=…`,
+  `--config=sandbox_mode=…`, `-csandbox_mode=…`), is a registry error (exit 2). The worker,
+  and its preflight, get `AGENT_LANE=<role>` in their environment. Captures and ledger
+  rows are created owner-only (`umask 077`), and each run that writes a capture also tries
+  `chmod 700` on the workers directory and `chmod 600` on `reviews.jsonl`.
+  - Limit: codex's read-only sandbox blocks writes, not command execution or file reads.
+    A planted instruction in the reviewed repository can get secret file contents into a
+    capture (true of the codex review lanes before this change too). Treat a capture as
+    untrusted data and never copy its contents anywhere else as is.
 - **Consumption**: `/verify-completion --second-opinion` attaches the capture
   as evidence input to the semantic judge; the gate logic itself is unchanged
   (a second opinion informs the verdict, it never replaces the judge).
@@ -334,7 +411,7 @@ shared blind spot doesn't survive review.
   is a LANE decision (Claude-solo vs. multi-vendor council), not the MODEL-tier
   escalation the policy rejects above — the per-call model still is whatever
   the dispatcher chooses; the gate only routes which reviewer(s) run. The
-  per-invocation cost-approval prompt (`AGENT_WORKER_YES=1`) is unchanged —
+  cost approval (`AGENT_WORKER_YES=1` or the usage policy) is unchanged —
   the gate enforces routing, it does not pre-approve spend. Small/routine
   diffs are unaffected (silent allow); a diff below threshold never touches
   this gate.
@@ -359,7 +436,9 @@ shared blind spot doesn't survive review.
   the user's Google account quota (Antigravity free/AI Pro tiers),
   authenticated via the OS keyring; a quota hit fails open (the lane is
   recorded `rate-limited` and skipped, retry later, no upgrade prompt).
-  **codex** — the user's ChatGPT subscription quota.
+  **codex** — the user's ChatGPT subscription quota (a codex call also hits the
+  `AGENT_WORKER_POLICY_CMD` check when one is set). **claude** (the `cross-review`
+  fallback) — the host's own subscription; it is never asked about spend.
 - **Free-lane allocation (designed 2026-08-25,
   `.agent/plans/free-lanes-and-launchers/spec.md`).** The former
   "tier/cost-aware task allocation" follow-up is now designed, and the
@@ -378,7 +457,10 @@ shared blind spot doesn't survive review.
   ~14,400 req/day), unwired pending a role that needs its Llama/GPT-OSS-class
   roster; full survey in the spec doc.
 - **Tests**: `core/tests/call-worker-test.sh` — PATH-stubbed backends, every
-  contract path (including gateway cwd isolation), zero paid calls in CI.
+  contract path (including gateway cwd isolation, the usage-policy exits, author
+  exclusion, the read-only sandbox and the lane marker), zero paid calls in CI;
+  `core/tests/review-evidence-test.sh` — author resolution order and the
+  author-aware commit gate and council summary.
 
 ## What this policy deliberately does not do
 
