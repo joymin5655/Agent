@@ -129,6 +129,44 @@ expect_deny() {
   fi
 }
 
+# Unique wording of ESCAPE_CLOSED_REASON (the "pass could not be recorded" refusal).
+CLOSED_PHRASE="could not be recorded safely"
+
+# run_timed <json> [ENV=val ...] -> OUT, RC (124 = the hook ran past 10s and was killed).
+RUN_LIMIT_PY='
+import subprocess, sys
+try:
+    p = subprocess.run([sys.executable, sys.argv[1]], stdin=sys.stdin, capture_output=True, text=True, timeout=10)
+except subprocess.TimeoutExpired:
+    sys.exit(124)
+sys.stdout.write(p.stdout)
+sys.exit(p.returncode)
+'
+run_timed() {
+  local json="$1"; shift
+  OUT="$(cd "$REPO" && printf '%s' "$json" \
+      | env -u CLAUDE_PROJECT_DIR -u AGENT_PROJECT_DIR AGENT_COUNCIL_STATE_DIR="$STATE_DIR" "$@" \
+        python3 -c "$RUN_LIMIT_PY" "$HOOK" 2>/dev/null)"
+  RC=$?
+}
+
+# Another process holding the ledger lock: writes a ready file once it holds it,
+# and lives until stop_lock_holder (hard cap 60s so it can never outlive the run).
+start_lock_holder() {  # start_lock_holder <ledger-dir>
+  LOCK_READY="$WORK/lock-ready"
+  rm -f "$LOCK_READY"
+  python3 - "$1/escaped.lock" "$LOCK_READY" <<'PY' &
+import fcntl, sys, time
+f = open(sys.argv[1], "a+")
+fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+open(sys.argv[2], "w").close()
+time.sleep(60)
+PY
+  HOLDER=$!
+  for _ in $(seq 1 50); do [[ -e "$LOCK_READY" ]] && break; sleep 0.1; done
+}
+stop_lock_holder() { kill "$HOLDER" 2>/dev/null; wait "$HOLDER" 2>/dev/null; }
+
 echo "=== small diff: code-reviewer dispatch is silent (not council-scale) ==="
 reset_repo
 stage_small_diff
@@ -527,8 +565,8 @@ LEDGER_DIR="$(dirname "$(state_ledger denied.json)")"
 printf '{not json' > "$LEDGER_DIR/escaped.json"
 run "$(evt_p Task code-reviewer "$REASON_PROMPT")"; C1="$OUT"
 run "$(evt_p Task code-reviewer 'council-unavailable: yet another long enough reason')"; C2="$OUT"
-if [[ "$C1" == *"permissionDecision"*"deny"* && "$C1" != *"additionalContext"* \
-      && "$C2" == *"permissionDecision"*"deny"* && "$C2" != *"additionalContext"* ]]; then
+if [[ "$C1" == *"permissionDecision"*"deny"* && "$C1" != *"additionalContext"* && "$C1" == *"$CLOSED_PHRASE"* \
+      && "$C2" == *"permissionDecision"*"deny"* && "$C2" != *"additionalContext"* && "$C2" == *"$CLOSED_PHRASE"* ]]; then
   ok "r1c-corrupt-ledger-refuses-first-request"
 else
   bad "r1c-corrupt-ledger-refuses-first-request" "c1='$C1' c2='$C2'"
@@ -600,9 +638,17 @@ fi
 reset_repo; stage_large_diff
 run "$(evt Task code-reviewer)"
 run "$(evt_p Task code-reviewer "$REASON_PROMPT")"
-OUT="$(cd "$REPO" && printf '%s' "$(evt_p Task code-reviewer "$REASON_PROMPT")" \
-    | env -u CLAUDE_PROJECT_DIR -u AGENT_PROJECT_DIR AGENT_COUNCIL_STATE_DIR="$STATE_DIR" \
-      AGENT_COUNCIL_SPENT_TTL_S=0 python3 "$HOOK" 2>/dev/null)"
+# (a TTL below 1 is invalid and falls back to 24h, so age the entry instead)
+LEDGER_DIR="$(dirname "$(state_ledger escaped.json)")"
+python3 - "$LEDGER_DIR/escaped.json" <<'PY'
+import json, sys, time
+p = sys.argv[1]
+d = json.load(open(p))
+for e in d["entries"]:
+    e["ts"] = time.time() - 90000
+json.dump(d, open(p, "w"))
+PY
+run "$(evt_p Task code-reviewer "$REASON_PROMPT")"
 if [[ "$OUT" == *"additionalContext"* ]]; then ok "r1f-expired-spent-entry-allows-one-more"; else bad "r1f-expired-spent-entry-allows-one-more" "out='$OUT'"; fi
 
 # (g) a decision-id reason on the very first dispatch still counts as the first deny.
@@ -627,23 +673,58 @@ if [[ "$RC" -eq 0 && "$OUT" == *"delegation decision id"* ]]; then ok "r1h-id-pa
 reset_repo; stage_large_diff
 run "$(evt Task code-reviewer)"
 LEDGER_DIR="$(dirname "$(state_ledger denied.json)")"
-python3 - "$LEDGER_DIR/escaped.lock" <<'PY' &
-import fcntl, sys, time
-f = open(sys.argv[1], "a+")
-fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-time.sleep(3)
-PY
-HOLDER=$!
-sleep 0.5
-OUT="$(cd "$REPO" && printf '%s' "$(evt_p Task code-reviewer "$REASON_PROMPT")" \
-    | env -u CLAUDE_PROJECT_DIR -u AGENT_PROJECT_DIR AGENT_COUNCIL_STATE_DIR="$STATE_DIR" \
-      AGENT_COUNCIL_SPENT_LOCK_WAIT_S=0.3 python3 "$HOOK" 2>/dev/null)"; RC=$?
-wait "$HOLDER"
-if [[ "$RC" -eq 0 && "$OUT" == *"permissionDecision"*"deny"* && "$OUT" != *"additionalContext"* ]]; then
-  ok "r2i-lock-held-past-wait-limit-refuses-pass"
+start_lock_holder "$LEDGER_DIR"
+if [[ ! -e "$LOCK_READY" ]]; then
+  stop_lock_holder
+  bad "r2i-lock-held-past-wait-limit-refuses-pass" "lock holder never became ready"
 else
-  bad "r2i-lock-held-past-wait-limit-refuses-pass" "rc=$RC out='$OUT'"
+  run_timed "$(evt_p Task code-reviewer "$REASON_PROMPT")" AGENT_COUNCIL_SPENT_LOCK_WAIT_S=0.3
+  stop_lock_holder
+  if [[ "$RC" -eq 0 && "$OUT" == *"permissionDecision"*"deny"* && "$OUT" != *"additionalContext"* && "$OUT" == *"$CLOSED_PHRASE"* ]]; then
+    ok "r2i-lock-held-past-wait-limit-refuses-pass"
+  else
+    bad "r2i-lock-held-past-wait-limit-refuses-pass" "rc=$RC out='$OUT'"
+  fi
+
+  # (i2) a non-finite wait value must not mean waiting forever (nan) and must stay
+  # bounded (inf): the hook ends inside 10s and refuses the pass.
+  for W in nan inf; do
+    reset_repo; stage_large_diff
+    run "$(evt Task code-reviewer)"
+    LEDGER_DIR="$(dirname "$(state_ledger denied.json)")"
+    start_lock_holder "$LEDGER_DIR"
+    run_timed "$(evt_p Task code-reviewer "$REASON_PROMPT")" AGENT_COUNCIL_SPENT_LOCK_WAIT_S="$W"
+    stop_lock_holder
+    if [[ "$RC" -eq 0 && "$OUT" == *"permissionDecision"*"deny"* && "$OUT" != *"additionalContext"* && "$OUT" == *"$CLOSED_PHRASE"* ]]; then
+      ok "r2i2-lock-wait-$W-ends-within-10s-and-refuses"
+    else
+      bad "r2i2-lock-wait-$W-ends-within-10s-and-refuses" "rc=$RC (124 = timed out) out='$OUT'"
+    fi
+  done
 fi
+
+# (k) a huge or non-finite test delay is bounded: the hook still ends inside 10s and passes once.
+for D in 30 nan; do
+  reset_repo; stage_large_diff
+  run "$(evt Task code-reviewer)"
+  run_timed "$(evt_p Task code-reviewer "$REASON_PROMPT")" AGENT_COUNCIL_TEST_ESCAPE_DELAY_S="$D"
+  if [[ "$RC" -eq 0 && "$OUT" == *"additionalContext"* && "$OUT" != *"permissionDecision"* ]]; then
+    ok "r2k-escape-delay-$D-bounded-and-pass-recorded"
+  else
+    bad "r2k-escape-delay-$D-bounded-and-pass-recorded" "rc=$RC (124 = timed out) out='$OUT'"
+  fi
+done
+
+# (l) a non-numeric AGENT_COUNCIL_SPENT_TTL_S must not crash the hook at import.
+reset_repo; stage_large_diff
+for T in abc nan inf -5; do
+  run_timed "$(evt Task code-reviewer)" AGENT_COUNCIL_SPENT_TTL_S="$T"
+  if [[ "$RC" -eq 0 && "$OUT" == *"permissionDecision"*"deny"* && "$OUT" == *"council-review"* ]]; then
+    ok "r2l-spent-ttl-$T-hook-still-decides"
+  else
+    bad "r2l-spent-ttl-$T-hook-still-decides" "rc=$RC out='$OUT'"
+  fi
+done
 
 # (j) exactly SPENT_CAP (1000) valid entries -> a new pass is refused.
 reset_repo; stage_large_diff
@@ -654,7 +735,7 @@ import json, sys, time
 json.dump({"entries": [{"hash": "cap%04d" % i, "ts": time.time()} for i in range(1000)]}, open(sys.argv[1], "w"))
 PY
 run "$(evt_p Task code-reviewer "$REASON_PROMPT")"
-if [[ "$RC" -eq 0 && "$OUT" == *"permissionDecision"*"deny"* && "$OUT" != *"additionalContext"* ]]; then
+if [[ "$RC" -eq 0 && "$OUT" == *"permissionDecision"*"deny"* && "$OUT" != *"additionalContext"* && "$OUT" == *"$CLOSED_PHRASE"* ]]; then
   ok "r2j-ledger-at-1000-entries-refuses-new-pass"
 else
   bad "r2j-ledger-at-1000-entries-refuses-new-pass" "rc=$RC out='$OUT'"

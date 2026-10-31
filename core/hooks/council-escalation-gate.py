@@ -108,6 +108,7 @@ Registered in docs/gate-registry.md (GATE council-escalation).
 import fcntl
 import hashlib
 import json
+import math
 import os
 import re
 import subprocess
@@ -133,18 +134,34 @@ ESCAPE_REASON_MAX = 300
 # A delegation decision id (D-<8-digit date>-<4 hex>) names a decision the AI
 # recorded for itself; citing it as the reason is not the user's word.
 DECISION_ID_RE = re.compile(r"\bD-\d{8}-[0-9a-f]{4}\b", re.IGNORECASE)
+
+
+def _spent_ttl_s():
+    # A malformed value must not kill the hook at import (the host treats a hook
+    # error as non-blocking): non-numeric, non-finite or < 1 falls back to 24h.
+    try:
+        v = float(os.environ.get("AGENT_COUNCIL_SPENT_TTL_S", "86400") or 86400)
+    except ValueError:
+        return 86400
+    return int(v) if math.isfinite(v) and v >= 1 else 86400
+
+
 # The spent-escape ledger must outlive the deny entry, or the same diff would
 # earn a fresh escape every DENY_TTL_S.
-SPENT_TTL_S = int(os.environ.get("AGENT_COUNCIL_SPENT_TTL_S", "86400") or 86400)
+SPENT_TTL_S = _spent_ttl_s()
 # Valid spent entries are never evicted to make room (eviction would hand a
 # spent diff a fresh pass); at the cap, new passes are refused instead.
 SPENT_CAP = 1000
+
+
 def _lock_wait_s():
     # Test hook; clamped to 0.1-5s so it can never exceed the production wait.
+    # nan would make the deadline comparison never true (wait forever): non-finite -> 5s.
     try:
-        return min(max(float(os.environ.get("AGENT_COUNCIL_SPENT_LOCK_WAIT_S", "5") or 5), 0.1), 5.0)
+        v = float(os.environ.get("AGENT_COUNCIL_SPENT_LOCK_WAIT_S", "5") or 5)
     except ValueError:
         return 5.0
+    return min(max(v, 0.1), 5.0) if math.isfinite(v) else 5.0
 
 
 def escape_reason(tool_input):
@@ -201,7 +218,8 @@ NO_FINGERPRINT_DENY_REASON = (
 ESCAPE_CLOSED_REASON = (
     "council-escalation: the stated-reason pass could not be recorded safely (ledger "
     "unreadable, lock, write, or size limit), so it is not offered. Run `/council-review --staged`, "
-    "or ask the user how to proceed."
+    "or ask the user how to proceed. If the cause is an unreadable ledger, fixing or deleting "
+    "the escaped.json state file reopens the pass."
 )
 
 SPENT_DENY_REASON = (
@@ -467,9 +485,10 @@ def _spend_locked(root, h):
         if len(entries) >= SPENT_CAP:
             return False, "cap"
         try:
-            delay = min(float(os.environ.get("AGENT_COUNCIL_TEST_ESCAPE_DELAY_S", "0") or 0), 1.0)
+            delay = float(os.environ.get("AGENT_COUNCIL_TEST_ESCAPE_DELAY_S", "0") or 0)
         except ValueError:
             delay = 0.0
+        delay = min(delay, 1.0) if math.isfinite(delay) else 0.0
         if delay > 0:
             time.sleep(delay)  # test hook: widens the race window, never changes a verdict
         entries.append({"hash": h, "ts": time.time()})
@@ -646,7 +665,8 @@ def main():
                 log_event(root, "deny", f"stated-reason pass already spent for this diff: {reason[:120]}")
                 emit_deny(SPENT_DENY_REASON)
             else:
-                log_event(root, "error", f"stated-reason pass refused: ledger {why} failure")
+                if why != "read":  # the ledger reader already logged an unreadable ledger
+                    log_event(root, "error", f"stated-reason pass refused: ledger {why} failure")
                 emit_deny(ESCAPE_CLOSED_REASON)
             return
         print(
