@@ -218,8 +218,8 @@ NO_FINGERPRINT_DENY_REASON = (
 ESCAPE_CLOSED_REASON = (
     "council-escalation: the stated-reason pass could not be recorded safely (ledger "
     "unreadable, lock, write, or size limit), so it is not offered. Run `/council-review --staged`, "
-    "or ask the user how to proceed. If the cause is an unreadable ledger, fixing or deleting "
-    "the escaped.json state file reopens the pass."
+    "or ask the user how to proceed. An unreadable ledger is left untouched for the user "
+    "to inspect; do not edit or delete it yourself."
 )
 
 SPENT_DENY_REASON = (
