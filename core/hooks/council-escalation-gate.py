@@ -57,6 +57,12 @@ concurrent projects don't collide. Two escape hatches live there:
      user actually see that this dispatch skipped review, not just a log
      line nobody reads — allow behavior, TTL, and hash binding are all
      unchanged.
+     2026-10-31 tightening: the reason escape is single-use per diff hash (a
+     spent-escape ledger, escaped.json, outlives the deny entry), and a
+     reason that cites a delegation decision id (D-YYYYMMDD-xxxx) is refused —
+     that id is an AI decision record, not the user's answer (a session
+     passed the gate 12 times in an hour quoting one as "the user's standing
+     decision").
 
 CLI (`--council-flag set|clear`): the only supported way to touch the flag —
 the skill never writes the flag file directly, since "set" must write the
@@ -117,6 +123,12 @@ DENY_LOG_CAP = 50
 ESCAPE_REASON_RE = re.compile(r"council-unavailable:[ \t]*(\S[^\n]{9,})", re.IGNORECASE)
 ESCAPE_REASON_MIN = 10
 ESCAPE_REASON_MAX = 300
+# A delegation decision id (D-<8-digit date>-<4 hex>) names a decision the AI
+# recorded for itself; citing it as the reason is not the user's word.
+DECISION_ID_RE = re.compile(r"\bD-\d{8}-[0-9a-f]{4}\b", re.IGNORECASE)
+# The spent-escape ledger must outlive the deny entry, or the same diff would
+# earn a fresh escape every DENY_TTL_S.
+SPENT_TTL_S = int(os.environ.get("AGENT_COUNCIL_SPENT_TTL_S", "86400") or 86400)
 
 
 def escape_reason(tool_input):
@@ -129,7 +141,8 @@ def escape_reason(tool_input):
     reason = " ".join(m.group(1).split())  # collapse padding / control whitespace
     if len(reason) < ESCAPE_REASON_MIN or reason.startswith("<"):
         return None
-    return reason[:ESCAPE_REASON_MAX]
+    # Full text, not truncated: a decision id past the log cap must still be seen.
+    return reason
 
 DENY_REASON = (
     "council-escalation: this diff is council-scale (line/file threshold or a "
@@ -153,6 +166,19 @@ RISK_DENY_REASON = (
     "(core/git-hooks/pre-commit) enforces it. If every external lane is down, "
     "only the user may override at commit time with AGENT_REVIEW_OVERRIDE; an "
     "agent must not set it."
+)
+
+DECISION_ID_DENY_REASON = (
+    "council-escalation: the stated reason cites a delegation decision id. That id is "
+    "a decision the AI recorded for itself, not the user's decision, so it cannot "
+    "stand in for council-review. Run `/council-review --staged`, or ask the user. "
+    "If the user has answered, put the user's answer in the reason, quoted as given."
+)
+
+SPENT_DENY_REASON = (
+    "council-escalation: the stated-reason pass for this exact diff was already used "
+    "once and is not offered again. Run `/council-review --staged` for the "
+    "multi-vendor review, or ask the user how to proceed."
 )
 
 ESCAPE_ADVISORY = (
@@ -339,6 +365,48 @@ def record_denied(root, h):
         pass
 
 
+def spent_state_path(root):
+    return os.path.join(state_dir(root), "escaped.json")
+
+
+def _load_spent_entries(root):
+    try:
+        with open(spent_state_path(root), encoding="utf-8") as f:
+            entries = json.load(f).get("entries")
+        if not isinstance(entries, list):
+            return []
+        now = time.time()
+        return [
+            {"hash": e["hash"], "ts": e["ts"]}
+            for e in entries
+            if isinstance(e, dict) and isinstance(e.get("hash"), str)
+            and isinstance(e.get("ts"), (int, float)) and now - e["ts"] <= SPENT_TTL_S
+        ]
+    except Exception:
+        return []
+
+
+def already_escaped(root, h):
+    return bool(h) and any(e["hash"] == h for e in _load_spent_entries(root))
+
+
+def record_escaped(root, h):
+    if not h:
+        return
+    path = spent_state_path(root)
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        entries = _load_spent_entries(root)
+        entries.append({"hash": h, "ts": time.time()})
+        entries = entries[-DENY_LOG_CAP:]
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"entries": entries}, f)
+        os.replace(tmp, path)
+    except Exception:
+        pass
+
+
 def log_event(root, decision, reason):
     """Append one firing/escape/error record to the shared deny-gate sink
     (see module docstring "Audit sink" for why this stays IN the repo while
@@ -475,15 +543,24 @@ def main():
         log_event(root, "deny", f"risk-area diff ({risk}) — council-unavailable escape refused")
         emit_deny(RISK_DENY_REASON.format(risk=risk))
         return
+    if reason and DECISION_ID_RE.search(reason):
+        log_event(root, "deny", f"stated reason cites a delegation decision id: {reason[:120]}")
+        emit_deny(DECISION_ID_DENY_REASON)
+        return
+    if reason and already_escaped(root, h):
+        log_event(root, "deny", f"stated-reason pass already spent for this diff: {reason[:120]}")
+        emit_deny(SPENT_DENY_REASON)
+        return
     if reason and (denied_before or not h):
+        record_escaped(root, h)  # single use per diff hash (no-op when h is None)
         print(
             "[council-escalation-gate] this council-scale diff was already "
             "denied once — allowing the solo code-reviewer dispatch through "
             "this time (loop-safety escape, stated reason: "
-            f"{reason}; run /council-review --staged when you can).",
+            f"{reason[:ESCAPE_REASON_MAX]}; run /council-review --staged when you can).",
             file=sys.stderr,
         )
-        log_event(root, "allow", f"same-diff-hash escape with stated reason: {reason}")
+        log_event(root, "allow", f"same-diff-hash escape with stated reason: {reason[:ESCAPE_REASON_MAX]}")
         emit_escape_advisory()
         return
 

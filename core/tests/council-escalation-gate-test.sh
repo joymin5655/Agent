@@ -392,5 +392,72 @@ else
 fi
 
 echo
+echo "=== 2026-10-31: decision-id reasons refused; stated-reason pass is single-use per diff ==="
+reset_repo
+stage_large_diff
+run "$(evt Task code-reviewer)"   # first deny records the hash
+run "$(evt_p Task code-reviewer 'council-unavailable: per the user standing decision D-20261025-7d7f skip council')"
+if [[ "$RC" -eq 0 && "$OUT" == *"permissionDecision"*"deny"* && "$OUT" == *"delegation decision id"* \
+      && "$OUT" != *"re-issue"* ]]; then
+  ok "t1-decision-id-reason-denied"
+else
+  bad "t1-decision-id-reason-denied" "rc=$RC out='$OUT'"
+fi
+if grep -q "cites a delegation decision id" "$REPO/.agent/logs/security-violations.jsonl"; then
+  ok "t1b-decision-id-denial-logged"
+else
+  bad "t1b-decision-id-denial-logged" "no log record"
+fi
+# A refused id reason must not have spent the pass: a legitimate reason still passes once.
+run "$(evt_p Task code-reviewer "$REASON_PROMPT")"
+if [[ "$RC" -eq 0 && "$OUT" == *"additionalContext"* && "$OUT" != *"permissionDecision"* ]]; then
+  ok "t2-legit-reason-passes-once"
+else
+  bad "t2-legit-reason-passes-once" "rc=$RC out='$OUT'"
+fi
+if grep -q "same-diff-hash escape with stated reason: no worker CLI" "$REPO/.agent/logs/security-violations.jsonl"; then
+  ok "t2b-pass-logged-with-reason"
+else
+  bad "t2b-pass-logged-with-reason" "no allow record"
+fi
+run "$(evt_p Task code-reviewer 'council-unavailable: a different but still long reason text')"
+if [[ "$RC" -eq 0 && "$OUT" == *"permissionDecision"*"deny"* && "$OUT" == *"/council-review"* \
+      && "$OUT" != *"council-unavailable:"* ]]; then
+  ok "t3-second-reason-same-hash-denied"
+else
+  bad "t3-second-reason-same-hash-denied" "rc=$RC out='$OUT'"
+fi
+# Spent state survives the deny entry: still refused after the deny ledger is gone.
+rm -f "$STATE_DIR"/*/denied.json
+run "$(evt Task code-reviewer)"
+run "$(evt_p Task code-reviewer "$REASON_PROMPT")"
+if [[ "$RC" -eq 0 && "$OUT" == *"permissionDecision"*"deny"* ]]; then
+  ok "t4-spent-pass-outlives-deny-entry"
+else
+  bad "t4-spent-pass-outlives-deny-entry" "rc=$RC out='$OUT'"
+fi
+# A different diff hash gets its own single pass.
+reset_worktree_only
+gen_lines 260 > "$REPO/big2.dat"
+git -C "$REPO" add big2.dat
+run "$(evt Task code-reviewer)"
+run "$(evt_p Task code-reviewer "$REASON_PROMPT")"
+if [[ "$RC" -eq 0 && "$OUT" == *"additionalContext"* && "$OUT" != *"permissionDecision"* ]]; then
+  ok "t5-different-diff-gets-own-pass"
+else
+  bad "t5-different-diff-gets-own-pass" "rc=$RC out='$OUT'"
+fi
+reset_repo
+mkdir -p "$REPO/billing"; gen_lines 5 > "$REPO/billing/pay.py"
+git -C "$REPO" add billing/pay.py
+run "$(evt Task code-reviewer)"
+run "$(evt_p Task code-reviewer "$REASON_PROMPT")"
+if [[ "$RC" -eq 0 && "$OUT" == *"AGENT_REVIEW_OVERRIDE"* ]]; then
+  ok "t6-risk-path-reason-still-refused"
+else
+  bad "t6-risk-path-reason-still-refused" "rc=$RC out='$OUT'"
+fi
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]
