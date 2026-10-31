@@ -38,6 +38,7 @@ PASS=0
 FAIL=0
 ok()  { PASS=$((PASS + 1)); echo "  PASS  $1"; }
 bad() { FAIL=$((FAIL + 1)); echo "  FAIL  $1 — $2"; }
+skip() { echo "  SKIP  $1"; }
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -462,19 +463,24 @@ echo
 echo "=== 2026-10-31 round 1: concurrency, no fingerprint, ledger cap, write failure, first-request id ==="
 state_ledger() { find "$STATE_DIR" -name "$1" -type f 2>/dev/null | head -n 1; }
 
-# (a) two simultaneous reason dispatches for one diff -> exactly one passes.
+# (a) two simultaneous reason dispatches for one diff -> exactly one passes,
+# exactly one is an explicit deny, both exit 0 (the delay makes them contend for the lock).
 reset_repo; stage_large_diff
 run "$(evt Task code-reviewer)"
 EVT_R="$(evt_p Task code-reviewer "$REASON_PROMPT")"
 for n in 1 2; do
   (cd "$REPO" && printf '%s' "$EVT_R" | env -u CLAUDE_PROJECT_DIR -u AGENT_PROJECT_DIR \
       AGENT_COUNCIL_STATE_DIR="$STATE_DIR" AGENT_COUNCIL_TEST_ESCAPE_DELAY_S=1 \
-      python3 "$HOOK" >"$WORK/conc$n.out" 2>/dev/null) &
+      python3 "$HOOK" >"$WORK/conc$n.out" 2>/dev/null; echo $? >"$WORK/conc$n.rc") &
 done
 wait
-PASSES=0
-for n in 1 2; do grep -q additionalContext "$WORK/conc$n.out" && PASSES=$((PASSES + 1)); done
-if [[ "$PASSES" -eq 1 ]]; then ok "r1a-concurrent-same-diff-exactly-one-pass"; else bad "r1a-concurrent-same-diff-exactly-one-pass" "passes=$PASSES"; fi
+PASSES=0; DENIES=0; RCS_OK=1
+for n in 1 2; do
+  grep -q additionalContext "$WORK/conc$n.out" && PASSES=$((PASSES + 1))
+  grep -q '"permissionDecision": *"deny"' "$WORK/conc$n.out" && DENIES=$((DENIES + 1))
+  [[ "$(cat "$WORK/conc$n.rc")" == "0" ]] || RCS_OK=0
+done
+if [[ "$PASSES" -eq 1 && "$DENIES" -eq 1 && "$RCS_OK" -eq 1 ]]; then ok "r1a-concurrent-same-diff-exactly-one-pass-one-deny"; else bad "r1a-concurrent-same-diff-exactly-one-pass-one-deny" "passes=$PASSES denies=$DENIES rcs_ok=$RCS_OK"; fi
 
 # (b) diff fingerprint unavailable -> no reason pass, text promises no resend.
 SHIM="$WORK/shim"; mkdir -p "$SHIM"
@@ -494,13 +500,18 @@ reset_repo; stage_large_diff
 run_nofp "$(evt Task code-reviewer)"
 NOFP1="$OUT"
 run_nofp "$(evt_p Task code-reviewer "$REASON_PROMPT")"
+NOFP2="$OUT"
 run_nofp "$(evt_p Task code-reviewer "$REASON_PROMPT")"
-if [[ "$NOFP1" == *"permissionDecision"*"deny"* && "$OUT" == *"permissionDecision"*"deny"* \
-      && "$OUT" != *"additionalContext"* && "$NOFP1" != *"council-unavailable"* && "$NOFP1" != *"re-issue"* \
-      && "$OUT" != *"re-issue"* && "$NOFP1" == *"/council-review"* ]]; then
+NOFP3="$OUT"
+NOFP_OK=1
+for o in "$NOFP1" "$NOFP2" "$NOFP3"; do
+  [[ "$o" == *"permissionDecision"*"deny"* && "$o" != *"additionalContext"* \
+     && "$o" != *"council-unavailable"* && "$o" != *"re-issue"* && "$o" == *"/council-review"* ]] || NOFP_OK=0
+done
+if [[ "$NOFP_OK" -eq 1 ]]; then
   ok "r1b-no-fingerprint-no-pass-no-resend-promise"
 else
-  bad "r1b-no-fingerprint-no-pass-no-resend-promise" "first='$NOFP1' last='$OUT'"
+  bad "r1b-no-fingerprint-no-pass-no-resend-promise" "1='$NOFP1' 2='$NOFP2' 3='$NOFP3'"
 fi
 if grep -q "fingerprint unavailable" "$REPO/.agent/logs/security-violations.jsonl" 2>/dev/null; then
   ok "r1b2-no-fingerprint-logged"
@@ -508,17 +519,24 @@ else
   bad "r1b2-no-fingerprint-logged" "no log record"
 fi
 
-# (c) corrupted escaped.json -> at most one pass, and the corruption is logged.
+# (c) corrupted escaped.json -> the very first reason request is refused, the
+# corruption is logged, and the corrupt file is left byte-for-byte untouched.
 reset_repo; stage_large_diff
 run "$(evt Task code-reviewer)"
 LEDGER_DIR="$(dirname "$(state_ledger denied.json)")"
 printf '{not json' > "$LEDGER_DIR/escaped.json"
 run "$(evt_p Task code-reviewer "$REASON_PROMPT")"; C1="$OUT"
 run "$(evt_p Task code-reviewer 'council-unavailable: yet another long enough reason')"; C2="$OUT"
-if [[ "$C1" == *"additionalContext"* && "$C2" == *"permissionDecision"*"deny"* ]]; then
-  ok "r1c-corrupt-ledger-at-most-one-pass"
+if [[ "$C1" == *"permissionDecision"*"deny"* && "$C1" != *"additionalContext"* \
+      && "$C2" == *"permissionDecision"*"deny"* && "$C2" != *"additionalContext"* ]]; then
+  ok "r1c-corrupt-ledger-refuses-first-request"
 else
-  bad "r1c-corrupt-ledger-at-most-one-pass" "c1='$C1' c2='$C2'"
+  bad "r1c-corrupt-ledger-refuses-first-request" "c1='$C1' c2='$C2'"
+fi
+if [[ "$(cat "$LEDGER_DIR/escaped.json")" == '{not json' ]]; then
+  ok "r1c3-corrupt-ledger-left-untouched"
+else
+  bad "r1c3-corrupt-ledger-left-untouched" "content='$(cat "$LEDGER_DIR/escaped.json")'"
 fi
 if grep -q "unreadable" "$REPO/.agent/logs/security-violations.jsonl" 2>/dev/null; then
   ok "r1c2-corrupt-ledger-logged"
@@ -540,7 +558,7 @@ if [[ "$(id -u)" -ne 0 ]]; then
     bad "r1d-unwritable-state-refuses-pass" "rc=$RC out='$OUT'"
   fi
 else
-  ok "r1d-unwritable-state-refuses-pass (skipped: running as root)"
+  skip "r1d-unwritable-state-refuses-pass (running as root; modes are ignored)"
 fi
 # (d2) ledger write fails (escaped.json is a directory) -> no pass.
 reset_repo; stage_large_diff
@@ -604,6 +622,43 @@ run "$(evt Task code-reviewer)"
 LONG="$(printf 'a%.0s' $(seq 1 320))"
 run "$(evt_p Task code-reviewer "council-unavailable: $LONG D-20261025-7d7f")"
 if [[ "$RC" -eq 0 && "$OUT" == *"delegation decision id"* ]]; then ok "r1h-id-past-300-chars-refused"; else bad "r1h-id-past-300-chars-refused" "out='$OUT'"; fi
+
+# (i) another process holds the ledger lock past the wait limit -> pass refused.
+reset_repo; stage_large_diff
+run "$(evt Task code-reviewer)"
+LEDGER_DIR="$(dirname "$(state_ledger denied.json)")"
+python3 - "$LEDGER_DIR/escaped.lock" <<'PY' &
+import fcntl, sys, time
+f = open(sys.argv[1], "a+")
+fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+time.sleep(3)
+PY
+HOLDER=$!
+sleep 0.5
+OUT="$(cd "$REPO" && printf '%s' "$(evt_p Task code-reviewer "$REASON_PROMPT")" \
+    | env -u CLAUDE_PROJECT_DIR -u AGENT_PROJECT_DIR AGENT_COUNCIL_STATE_DIR="$STATE_DIR" \
+      AGENT_COUNCIL_SPENT_LOCK_WAIT_S=0.3 python3 "$HOOK" 2>/dev/null)"; RC=$?
+wait "$HOLDER"
+if [[ "$RC" -eq 0 && "$OUT" == *"permissionDecision"*"deny"* && "$OUT" != *"additionalContext"* ]]; then
+  ok "r2i-lock-held-past-wait-limit-refuses-pass"
+else
+  bad "r2i-lock-held-past-wait-limit-refuses-pass" "rc=$RC out='$OUT'"
+fi
+
+# (j) exactly SPENT_CAP (1000) valid entries -> a new pass is refused.
+reset_repo; stage_large_diff
+run "$(evt Task code-reviewer)"
+LEDGER_DIR="$(dirname "$(state_ledger denied.json)")"
+python3 - "$LEDGER_DIR/escaped.json" <<'PY'
+import json, sys, time
+json.dump({"entries": [{"hash": "cap%04d" % i, "ts": time.time()} for i in range(1000)]}, open(sys.argv[1], "w"))
+PY
+run "$(evt_p Task code-reviewer "$REASON_PROMPT")"
+if [[ "$RC" -eq 0 && "$OUT" == *"permissionDecision"*"deny"* && "$OUT" != *"additionalContext"* ]]; then
+  ok "r2j-ledger-at-1000-entries-refuses-new-pass"
+else
+  bad "r2j-ledger-at-1000-entries-refuses-new-pass" "rc=$RC out='$OUT'"
+fi
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="

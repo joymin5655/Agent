@@ -139,7 +139,12 @@ SPENT_TTL_S = int(os.environ.get("AGENT_COUNCIL_SPENT_TTL_S", "86400") or 86400)
 # Valid spent entries are never evicted to make room (eviction would hand a
 # spent diff a fresh pass); at the cap, new passes are refused instead.
 SPENT_CAP = 1000
-SPENT_LOCK_WAIT_S = 5.0
+def _lock_wait_s():
+    # Test hook; clamped to 0.1-5s so it can never exceed the production wait.
+    try:
+        return min(max(float(os.environ.get("AGENT_COUNCIL_SPENT_LOCK_WAIT_S", "5") or 5), 0.1), 5.0)
+    except ValueError:
+        return 5.0
 
 
 def escape_reason(tool_input):
@@ -195,7 +200,7 @@ NO_FINGERPRINT_DENY_REASON = (
 
 ESCAPE_CLOSED_REASON = (
     "council-escalation: the stated-reason pass could not be recorded safely (ledger "
-    "lock, write, or size limit), so it is not offered. Run `/council-review --staged`, "
+    "unreadable, lock, write, or size limit), so it is not offered. Run `/council-review --staged`, "
     "or ask the user how to proceed."
 )
 
@@ -422,7 +427,7 @@ def already_escaped(root, h):
 def spend_escape(root, h):
     """Atomically check-and-spend the one stated-reason pass for diff hash h.
     Returns (True, "") only when THIS call recorded the spend; otherwise
-    (False, why) with why in spent|lock|cap|write. TTL prune, unused check and
+    (False, why) with why in spent|read|lock|cap|write. TTL prune, unused check and
     the write all happen under one exclusive lock, so two simultaneous
     dispatches for one diff cannot both pass. Every failure refuses the pass
     (only this exception closes, never the gate as a whole)."""
@@ -432,7 +437,7 @@ def spend_escape(root, h):
     try:
         os.makedirs(state_dir(root), exist_ok=True)
         lock = open(os.path.join(state_dir(root), "escaped.lock"), "a+")  # noqa: SIM115 (held across the check-and-spend, closed in finally)
-        deadline = time.monotonic() + SPENT_LOCK_WAIT_S
+        deadline = time.monotonic() + _lock_wait_s()
         while True:
             try:
                 fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -441,20 +446,30 @@ def spend_escape(root, h):
                 if time.monotonic() >= deadline:
                     return False, "lock"
                 time.sleep(0.05)
+        return _spend_locked(root, h)
     except Exception:
-        if lock:
-            lock.close()
         return False, "lock"
+    finally:
+        if lock:
+            lock.close()  # releases the flock
+
+
+def _spend_locked(root, h):
     tmp = None
     try:
         entries, readable = _read_spent(root)
         if not readable:
-            log_event(root, "error", "escaped ledger unreadable - treated as empty (rewritten on spend)")
+            # Never replace or rename a corrupt ledger: valid entries in it would be lost.
+            log_event(root, "error", "escaped ledger unreadable - no stated-reason pass until it is repaired or removed")
+            return False, "read"
         if any(e["hash"] == h for e in entries):
             return False, "spent"
         if len(entries) >= SPENT_CAP:
             return False, "cap"
-        delay = float(os.environ.get("AGENT_COUNCIL_TEST_ESCAPE_DELAY_S", "0") or 0)
+        try:
+            delay = min(float(os.environ.get("AGENT_COUNCIL_TEST_ESCAPE_DELAY_S", "0") or 0), 1.0)
+        except ValueError:
+            delay = 0.0
         if delay > 0:
             time.sleep(delay)  # test hook: widens the race window, never changes a verdict
         entries.append({"hash": h, "ts": time.time()})
@@ -472,7 +487,6 @@ def spend_escape(root, h):
                 os.remove(tmp)
             except Exception:
                 pass
-        lock.close()  # releases the flock
 
 
 def log_event(root, decision, reason):

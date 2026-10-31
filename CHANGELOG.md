@@ -17,8 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   installed `pre-tool-guard.sh`).
 - **council-escalation reason pass hardened after review.** The one-pass ledger is now checked
   and spent under a file lock (two simultaneous dispatches for one diff: exactly one passes),
-  and a missing diff fingerprint, an unreadable/unwritable ledger, or a full ledger refuse the
-  pass instead of opening it. Valid entries are no longer evicted at 50 (TTL only, cap 1000).
+  and a missing diff fingerprint, an unreadable/unwritable ledger (a corrupt ledger is refused and left untouched), or a full
+  ledger refuse the pass instead of opening it. Valid entries are no longer evicted at 50 (TTL only, cap 1000).
   A refused decision-id reason on the first dispatch now counts as that diff's first deny.
 
 ### Changed
