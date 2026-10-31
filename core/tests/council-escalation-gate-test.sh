@@ -32,7 +32,7 @@ set -u
 unset AGENT_GATE_SINK_DIR
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-HOOK="$REPO_ROOT/core/hooks/council-escalation-gate.py"
+HOOK="${COUNCIL_GATE_HOOK_UNDER_TEST:-$REPO_ROOT/core/hooks/council-escalation-gate.py}"
 
 PASS=0
 FAIL=0
@@ -457,6 +457,153 @@ if [[ "$RC" -eq 0 && "$OUT" == *"AGENT_REVIEW_OVERRIDE"* ]]; then
 else
   bad "t6-risk-path-reason-still-refused" "rc=$RC out='$OUT'"
 fi
+
+echo
+echo "=== 2026-10-31 round 1: concurrency, no fingerprint, ledger cap, write failure, first-request id ==="
+state_ledger() { find "$STATE_DIR" -name "$1" -type f 2>/dev/null | head -n 1; }
+
+# (a) two simultaneous reason dispatches for one diff -> exactly one passes.
+reset_repo; stage_large_diff
+run "$(evt Task code-reviewer)"
+EVT_R="$(evt_p Task code-reviewer "$REASON_PROMPT")"
+for n in 1 2; do
+  (cd "$REPO" && printf '%s' "$EVT_R" | env -u CLAUDE_PROJECT_DIR -u AGENT_PROJECT_DIR \
+      AGENT_COUNCIL_STATE_DIR="$STATE_DIR" AGENT_COUNCIL_TEST_ESCAPE_DELAY_S=1 \
+      python3 "$HOOK" >"$WORK/conc$n.out" 2>/dev/null) &
+done
+wait
+PASSES=0
+for n in 1 2; do grep -q additionalContext "$WORK/conc$n.out" && PASSES=$((PASSES + 1)); done
+if [[ "$PASSES" -eq 1 ]]; then ok "r1a-concurrent-same-diff-exactly-one-pass"; else bad "r1a-concurrent-same-diff-exactly-one-pass" "passes=$PASSES"; fi
+
+# (b) diff fingerprint unavailable -> no reason pass, text promises no resend.
+SHIM="$WORK/shim"; mkdir -p "$SHIM"
+REAL_GIT="$(command -v git)"
+cat > "$SHIM/git" <<SH
+#!/usr/bin/env bash
+# fail only the gate's fingerprint diff (has --no-ext-diff, no --numstat)
+case " \$* " in *" --numstat "*) ;; *" --no-ext-diff "*) exit 1 ;; esac
+exec "$REAL_GIT" "\$@"
+SH
+chmod +x "$SHIM/git"
+run_nofp() {
+  OUT="$(cd "$REPO" && printf '%s' "$1" | env -u CLAUDE_PROJECT_DIR -u AGENT_PROJECT_DIR PATH="$SHIM:$PATH" \
+      AGENT_COUNCIL_STATE_DIR="$STATE_DIR" python3 "$HOOK" 2>/dev/null)"; RC=$?
+}
+reset_repo; stage_large_diff
+run_nofp "$(evt Task code-reviewer)"
+NOFP1="$OUT"
+run_nofp "$(evt_p Task code-reviewer "$REASON_PROMPT")"
+run_nofp "$(evt_p Task code-reviewer "$REASON_PROMPT")"
+if [[ "$NOFP1" == *"permissionDecision"*"deny"* && "$OUT" == *"permissionDecision"*"deny"* \
+      && "$OUT" != *"additionalContext"* && "$NOFP1" != *"council-unavailable"* && "$NOFP1" != *"re-issue"* \
+      && "$OUT" != *"re-issue"* && "$NOFP1" == *"/council-review"* ]]; then
+  ok "r1b-no-fingerprint-no-pass-no-resend-promise"
+else
+  bad "r1b-no-fingerprint-no-pass-no-resend-promise" "first='$NOFP1' last='$OUT'"
+fi
+if grep -q "fingerprint unavailable" "$REPO/.agent/logs/security-violations.jsonl" 2>/dev/null; then
+  ok "r1b2-no-fingerprint-logged"
+else
+  bad "r1b2-no-fingerprint-logged" "no log record"
+fi
+
+# (c) corrupted escaped.json -> at most one pass, and the corruption is logged.
+reset_repo; stage_large_diff
+run "$(evt Task code-reviewer)"
+LEDGER_DIR="$(dirname "$(state_ledger denied.json)")"
+printf '{not json' > "$LEDGER_DIR/escaped.json"
+run "$(evt_p Task code-reviewer "$REASON_PROMPT")"; C1="$OUT"
+run "$(evt_p Task code-reviewer 'council-unavailable: yet another long enough reason')"; C2="$OUT"
+if [[ "$C1" == *"additionalContext"* && "$C2" == *"permissionDecision"*"deny"* ]]; then
+  ok "r1c-corrupt-ledger-at-most-one-pass"
+else
+  bad "r1c-corrupt-ledger-at-most-one-pass" "c1='$C1' c2='$C2'"
+fi
+if grep -q "unreadable" "$REPO/.agent/logs/security-violations.jsonl" 2>/dev/null; then
+  ok "r1c2-corrupt-ledger-logged"
+else
+  bad "r1c2-corrupt-ledger-logged" "no log record"
+fi
+
+# (d) state dir not writable -> no pass (skipped when root ignores modes).
+reset_repo; stage_large_diff
+run "$(evt Task code-reviewer)"
+LEDGER_DIR="$(dirname "$(state_ledger denied.json)")"
+if [[ "$(id -u)" -ne 0 ]]; then
+  chmod a-w "$LEDGER_DIR"
+  run "$(evt_p Task code-reviewer "$REASON_PROMPT")"
+  chmod u+w "$LEDGER_DIR"
+  if [[ "$RC" -eq 0 && "$OUT" == *"permissionDecision"*"deny"* && "$OUT" != *"additionalContext"* ]]; then
+    ok "r1d-unwritable-state-refuses-pass"
+  else
+    bad "r1d-unwritable-state-refuses-pass" "rc=$RC out='$OUT'"
+  fi
+else
+  ok "r1d-unwritable-state-refuses-pass (skipped: running as root)"
+fi
+# (d2) ledger write fails (escaped.json is a directory) -> no pass.
+reset_repo; stage_large_diff
+run "$(evt Task code-reviewer)"
+LEDGER_DIR="$(dirname "$(state_ledger denied.json)")"
+mkdir -p "$LEDGER_DIR/escaped.json"
+run "$(evt_p Task code-reviewer "$REASON_PROMPT")"
+if [[ "$RC" -eq 0 && "$OUT" == *"permissionDecision"*"deny"* && "$OUT" != *"additionalContext"* ]]; then
+  ok "r1d2-ledger-write-failure-refuses-pass"
+else
+  bad "r1d2-ledger-write-failure-refuses-pass" "rc=$RC out='$OUT'"
+fi
+
+# (e) 51+ distinct valid entries never evict the first spent hash.
+reset_repo; stage_large_diff
+run "$(evt Task code-reviewer)"
+run "$(evt_p Task code-reviewer "$REASON_PROMPT")"
+LEDGER_DIR="$(dirname "$(state_ledger escaped.json)")"
+python3 - "$LEDGER_DIR/escaped.json" <<'PY'
+import json, sys, time
+p = sys.argv[1]
+d = json.load(open(p))
+d["entries"] += [{"hash": "fake%02d" % i, "ts": time.time()} for i in range(49)]
+json.dump(d, open(p, "w"))
+PY
+reset_worktree_only
+gen_lines 260 > "$REPO/big2.dat"; git -C "$REPO" add big2.dat
+run "$(evt Task code-reviewer)"
+run "$(evt_p Task code-reviewer "$REASON_PROMPT")"   # 51st valid entry
+reset_worktree_only; stage_large_diff               # back to the first diff
+run "$(evt_p Task code-reviewer "$REASON_PROMPT")"
+if [[ "$RC" -eq 0 && "$OUT" == *"permissionDecision"*"deny"* && "$OUT" != *"additionalContext"* ]]; then
+  ok "r1e-first-hash-stays-spent-after-51-entries"
+else
+  bad "r1e-first-hash-stays-spent-after-51-entries" "rc=$RC out='$OUT'"
+fi
+
+# (f) an entry past AGENT_COUNCIL_SPENT_TTL_S earns one more pass.
+reset_repo; stage_large_diff
+run "$(evt Task code-reviewer)"
+run "$(evt_p Task code-reviewer "$REASON_PROMPT")"
+OUT="$(cd "$REPO" && printf '%s' "$(evt_p Task code-reviewer "$REASON_PROMPT")" \
+    | env -u CLAUDE_PROJECT_DIR -u AGENT_PROJECT_DIR AGENT_COUNCIL_STATE_DIR="$STATE_DIR" \
+      AGENT_COUNCIL_SPENT_TTL_S=0 python3 "$HOOK" 2>/dev/null)"
+if [[ "$OUT" == *"additionalContext"* ]]; then ok "r1f-expired-spent-entry-allows-one-more"; else bad "r1f-expired-spent-entry-allows-one-more" "out='$OUT'"; fi
+
+# (g) a decision-id reason on the very first dispatch still counts as the first deny.
+reset_repo; stage_large_diff
+run "$(evt_p Task code-reviewer 'council-unavailable: per the user standing decision D-20261025-7d7f skip council')"
+G1="$OUT"
+run "$(evt_p Task code-reviewer "$REASON_PROMPT")"
+if [[ "$G1" == *"delegation decision id"* && "$OUT" == *"additionalContext"* && "$OUT" != *"permissionDecision"* ]]; then
+  ok "r1g-first-request-id-reason-then-legit-reason-passes"
+else
+  bad "r1g-first-request-id-reason-then-legit-reason-passes" "g1='$G1' out='$OUT'"
+fi
+
+# (h) a decision id after the 300-character log cap is still refused.
+reset_repo; stage_large_diff
+run "$(evt Task code-reviewer)"
+LONG="$(printf 'a%.0s' $(seq 1 320))"
+run "$(evt_p Task code-reviewer "council-unavailable: $LONG D-20261025-7d7f")"
+if [[ "$RC" -eq 0 && "$OUT" == *"delegation decision id"* ]]; then ok "r1h-id-past-300-chars-refused"; else bad "r1h-id-past-300-chars-refused" "out='$OUT'"; fi
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="

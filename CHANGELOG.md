@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a literal-path `cd` resolves against that directory. This release publishes it: #236 merged
   without a version bump, so installs kept the 0.13.7 cache (`known_cwd` absent from the
   installed `pre-tool-guard.sh`).
+- **council-escalation reason pass hardened after review.** The one-pass ledger is now checked
+  and spent under a file lock (two simultaneous dispatches for one diff: exactly one passes),
+  and a missing diff fingerprint, an unreadable/unwritable ledger, or a full ledger refuse the
+  pass instead of opening it. Valid entries are no longer evicted at 50 (TTL only, cap 1000).
+  A refused decision-id reason on the first dispatch now counts as that diff's first deny.
 
 ### Changed
 - **`council-escalation-gate` tightens the `council-unavailable:` reason escape.** A reason that

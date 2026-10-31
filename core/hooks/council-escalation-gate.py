@@ -63,6 +63,11 @@ concurrent projects don't collide. Two escape hatches live there:
      that id is an AI decision record, not the user's answer (a session
      passed the gate 12 times in an hour quoting one as "the user's standing
      decision").
+     Round-1 review hardening: check-and-spend runs under an flock on
+     escaped.lock (only the call that records the spend passes); no diff
+     fingerprint, a corrupt/unwritable/full ledger, or a lock timeout all
+     REFUSE the pass (never eviction, never fail-open for this exception); and
+     a refused decision-id reason still records the diff's first deny.
 
 CLI (`--council-flag set|clear`): the only supported way to touch the flag —
 the skill never writes the flag file directly, since "set" must write the
@@ -100,12 +105,14 @@ council-threshold.sh, not this file), AGENT_COUNCIL_ACTIVE_TTL_S (default
 Registered in docs/gate-registry.md (GATE council-escalation).
 """
 
+import fcntl
 import hashlib
 import json
 import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime, timezone
 
@@ -129,6 +136,10 @@ DECISION_ID_RE = re.compile(r"\bD-\d{8}-[0-9a-f]{4}\b", re.IGNORECASE)
 # The spent-escape ledger must outlive the deny entry, or the same diff would
 # earn a fresh escape every DENY_TTL_S.
 SPENT_TTL_S = int(os.environ.get("AGENT_COUNCIL_SPENT_TTL_S", "86400") or 86400)
+# Valid spent entries are never evicted to make room (eviction would hand a
+# spent diff a fresh pass); at the cap, new passes are refused instead.
+SPENT_CAP = 1000
+SPENT_LOCK_WAIT_S = 5.0
 
 
 def escape_reason(tool_input):
@@ -173,6 +184,19 @@ DECISION_ID_DENY_REASON = (
     "a decision the AI recorded for itself, not the user's decision, so it cannot "
     "stand in for council-review. Run `/council-review --staged`, or ask the user. "
     "If the user has answered, put the user's answer in the reason, quoted as given."
+)
+
+NO_FINGERPRINT_DENY_REASON = (
+    "council-escalation: this diff is council-scale and its fingerprint could not be "
+    "computed (git diff failed or timed out), so a one-time stated-reason pass cannot "
+    "be counted and none is offered. Run `/council-review --staged`, or ask the user "
+    "how to proceed."
+)
+
+ESCAPE_CLOSED_REASON = (
+    "council-escalation: the stated-reason pass could not be recorded safely (ledger "
+    "lock, write, or size limit), so it is not offered. Run `/council-review --staged`, "
+    "or ask the user how to proceed."
 )
 
 SPENT_DENY_REASON = (
@@ -369,42 +393,86 @@ def spent_state_path(root):
     return os.path.join(state_dir(root), "escaped.json")
 
 
-def _load_spent_entries(root):
+def _read_spent(root):
+    """(entries, readable). Only TTL prunes; nothing valid is dropped.
+    readable is False when the file exists but cannot be parsed."""
     try:
         with open(spent_state_path(root), encoding="utf-8") as f:
             entries = json.load(f).get("entries")
         if not isinstance(entries, list):
-            return []
-        now = time.time()
-        return [
-            {"hash": e["hash"], "ts": e["ts"]}
-            for e in entries
-            if isinstance(e, dict) and isinstance(e.get("hash"), str)
-            and isinstance(e.get("ts"), (int, float)) and now - e["ts"] <= SPENT_TTL_S
-        ]
+            return [], False
+    except FileNotFoundError:
+        return [], True
     except Exception:
-        return []
+        return [], False
+    now = time.time()
+    return [
+        {"hash": e["hash"], "ts": e["ts"]}
+        for e in entries
+        if isinstance(e, dict) and isinstance(e.get("hash"), str)
+        and isinstance(e.get("ts"), (int, float)) and now - e["ts"] <= SPENT_TTL_S
+    ], True
 
 
 def already_escaped(root, h):
-    return bool(h) and any(e["hash"] == h for e in _load_spent_entries(root))
+    """Non-authoritative read, used only to pick the refusal text."""
+    return bool(h) and any(e["hash"] == h for e in _read_spent(root)[0])
 
 
-def record_escaped(root, h):
+def spend_escape(root, h):
+    """Atomically check-and-spend the one stated-reason pass for diff hash h.
+    Returns (True, "") only when THIS call recorded the spend; otherwise
+    (False, why) with why in spent|lock|cap|write. TTL prune, unused check and
+    the write all happen under one exclusive lock, so two simultaneous
+    dispatches for one diff cannot both pass. Every failure refuses the pass
+    (only this exception closes, never the gate as a whole)."""
     if not h:
-        return
-    path = spent_state_path(root)
+        return False, "write"
+    lock = None
     try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        entries = _load_spent_entries(root)
-        entries.append({"hash": h, "ts": time.time()})
-        entries = entries[-DENY_LOG_CAP:]
-        tmp = path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump({"entries": entries}, f)
-        os.replace(tmp, path)
+        os.makedirs(state_dir(root), exist_ok=True)
+        lock = open(os.path.join(state_dir(root), "escaped.lock"), "a+")  # noqa: SIM115 (held across the check-and-spend, closed in finally)
+        deadline = time.monotonic() + SPENT_LOCK_WAIT_S
+        while True:
+            try:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    return False, "lock"
+                time.sleep(0.05)
     except Exception:
-        pass
+        if lock:
+            lock.close()
+        return False, "lock"
+    tmp = None
+    try:
+        entries, readable = _read_spent(root)
+        if not readable:
+            log_event(root, "error", "escaped ledger unreadable - treated as empty (rewritten on spend)")
+        if any(e["hash"] == h for e in entries):
+            return False, "spent"
+        if len(entries) >= SPENT_CAP:
+            return False, "cap"
+        delay = float(os.environ.get("AGENT_COUNCIL_TEST_ESCAPE_DELAY_S", "0") or 0)
+        if delay > 0:
+            time.sleep(delay)  # test hook: widens the race window, never changes a verdict
+        entries.append({"hash": h, "ts": time.time()})
+        fd, tmp = tempfile.mkstemp(dir=state_dir(root), prefix="escaped.", suffix=".tmp")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump({"entries": entries}, f)
+        os.replace(tmp, spent_state_path(root))
+        tmp = None
+        return True, ""
+    except Exception:
+        return False, "write"
+    finally:
+        if tmp:
+            try:
+                os.remove(tmp)
+            except Exception:
+                pass
+        lock.close()  # releases the flock
 
 
 def log_event(root, decision, reason):
@@ -537,22 +605,36 @@ def main():
     # bare identical retry falls through to deny again.
     reason = escape_reason(tool_input)
     denied_before = bool(h) and already_denied(root, h)
-    # h falsy = diff hash unavailable; no ledger can exist, so a stated reason
-    # alone opens the escape (otherwise the deny text's promise is a dead end).
     if reason and risk != "none":
         log_event(root, "deny", f"risk-area diff ({risk}) — council-unavailable escape refused")
         emit_deny(RISK_DENY_REASON.format(risk=risk))
         return
     if reason and DECISION_ID_RE.search(reason):
+        if not denied_before:
+            record_denied(root, h)  # a refused id reason is still this diff's first deny
         log_event(root, "deny", f"stated reason cites a delegation decision id: {reason[:120]}")
         emit_deny(DECISION_ID_DENY_REASON)
+        return
+    if not h:
+        # No fingerprint: the one-pass rule cannot be counted, so no pass and no
+        # promise of one (the generic text would send the caller into a dead end).
+        log_event(root, "deny", "diff fingerprint unavailable — stated-reason pass not offered")
+        emit_deny(NO_FINGERPRINT_DENY_REASON)
         return
     if reason and already_escaped(root, h):
         log_event(root, "deny", f"stated-reason pass already spent for this diff: {reason[:120]}")
         emit_deny(SPENT_DENY_REASON)
         return
-    if reason and (denied_before or not h):
-        record_escaped(root, h)  # single use per diff hash (no-op when h is None)
+    if reason and denied_before:
+        spent, why = spend_escape(root, h)  # only the call that records the spend passes
+        if not spent:
+            if why == "spent":
+                log_event(root, "deny", f"stated-reason pass already spent for this diff: {reason[:120]}")
+                emit_deny(SPENT_DENY_REASON)
+            else:
+                log_event(root, "error", f"stated-reason pass refused: ledger {why} failure")
+                emit_deny(ESCAPE_CLOSED_REASON)
+            return
         print(
             "[council-escalation-gate] this council-scale diff was already "
             "denied once — allowing the solo code-reviewer dispatch through "
