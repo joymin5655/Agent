@@ -73,9 +73,11 @@ For any new hook in `core/hooks/`, write a reproduce test in `core/tests/<name>-
 - Open a PR with full description: what, why, how tested, before/after
 - Merge: the repository owner's supervisor agent may squash-merge planned work (an
   owner-approved plan or a direct owner request) once CI passes and the review ladder
-  (`core/infra/review-tier.sh`) is satisfied. PRs that change hooks, guards, permission
-  policy, or release/deploy configuration wait for human review + merge.
-  Other contributors' agents never merge.
+  (`core/infra/review-tier.sh`) is satisfied, and only after an independent reviewer and a
+  second reviewer from a different AI vendor than the change's author both approve the same
+  head commit. PRs that change hooks, guards, or permission policy additionally need the
+  strongest available model as the independent reviewer. PRs that change release/deploy
+  configuration wait for human review + merge. Other contributors' agents never merge.
 
 ---
 
