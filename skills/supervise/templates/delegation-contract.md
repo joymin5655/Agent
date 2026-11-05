@@ -30,10 +30,12 @@ quality lever in multi-agent work — fill every section or state why it is empt
 ## Skills
 
 - **skills**: <exact skill names the worker loads with the Skill tool before
-  starting (`plugin:skill` for plugin skills), or `none` with a one-line reason.
+  starting (`plugin:skill` for plugin skills), each written as
+  `<name> — reason: <what it does for this wave> — evidence: <its description
+  line, a file:line, or a prior result>`; or `none` with a one-line reason.
   Name only skills the wave's work directly uses (0–3) and that appear in the
-  session's available-skills list. Names only — never paste a skill's body;
-  the worker loads it, as with constraints re-injection below>
+  session's available-skills list. Names and reasons only — never paste a
+  skill's body; the worker loads it, as with constraints re-injection below>
 
 ## Self-contained (no history assumed)
 
