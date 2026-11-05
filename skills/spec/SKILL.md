@@ -136,6 +136,15 @@ never renumber; append new ones. `settled:` in the interview log cites the D-ID.
 `/verify-completion` checks that the completion claim covers each D-ID (advisory,
 dryrun) through the claim's optional `decisions: [{id, evidence}]` field.
 
+**A user-visible change needs a user-action criterion.** When the change alters something
+a person sees or operates (a page, a control, a command's output), at least one success
+criterion states the action the person takes and what they then see — e.g. "clicking
+`Mode` switches the board to game mode, at 390px and 1440px wide" — and names the command
+that checks it by performing that action (a browser-driving check for a page, the real
+invocation for a CLI). Put that command in the completion claim's `tests:` so
+`/supervise --verify-blocking` refuses completion until it passes. A source grep or a
+static screenshot does not satisfy this criterion.
+
 `## Must not` and `## Edge cases` are mandatory too, with the same `- none — <reason>`
 escape. Decide them here, with the human, before the model fills the gap silently: each
 line becomes a negative test. `plan-lint.sh` checks their backticked terms like success
