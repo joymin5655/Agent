@@ -174,8 +174,9 @@ valid_effort() { [[ "$1" =~ ^(low|medium|high|max)$ ]]; }
 # jq stops reading at a raw NUL byte and still succeeds (jq 1.7.1), so a NUL could hide a
 # second document; the bytes go through tr first, turning a NUL into a control byte that is
 # invalid JSON (jq exits 5 -> malformed). An escaped \u0000 inside a string is unaffected.
-# Without tr the pipe is empty and the check refuses too.
-if ! /usr/bin/tr '\000' '\001' < "$TIERS_FILE" | jq -es 'length == 1 and (.[0] | type) == "object"
+# tr runs byte-wise (LC_ALL=C), the same in every locale; a failed or missing tr fails the
+# pipe (pipefail) and the check refuses too.
+if ! LC_ALL=C /usr/bin/tr '\000' '\001' < "$TIERS_FILE" | jq -es 'length == 1 and (.[0] | type) == "object"
              and ((.[0] | has("model") | not) or (.[0].model | type) == "string")
              and ((.[0] | has("tiers") | not)
                   or ((.[0].tiers | type) == "object"
@@ -277,9 +278,11 @@ write_deny_plugin() {
 # Only .toolCall.name counts (an args payload naming a tool changes nothing); any failure denies.
 if [ "${1:-}" = Stop ]; then cat >/dev/null; printf '%s\n' '{"decision":"stop"}'; exit 0; fi
 # Input goes through tr first: jq stops at a raw NUL byte and succeeds, so a NUL could hide a
-# second document; a NUL becomes a control byte (invalid JSON, jq exits 5 -> deny). If tr is
-# missing jq reads nothing, the verdict is empty -> deny, and the self-test refuses to start.
-verdict=$(/usr/bin/tr '\000' '\001' | @JQ@ -r 'if (.toolCall | type) == "object" and (.toolCall.name | type) == "string" and (.toolCall.name | IN("search_web")) then "ask" else "deny" end' 2>/dev/null) || verdict=deny
+# second document; a NUL becomes a control byte (invalid JSON, jq exits 5 -> deny). tr runs
+# byte-wise (LC_ALL=C): in a UTF-8 locale macOS tr stops at an invalid byte and passes on only
+# the part before it. sh has no pipefail, so a failed or missing tr sends a \001 byte to jq
+# instead (-> deny); the self-test then refuses to start.
+verdict=$( { LC_ALL=C /usr/bin/tr '\000' '\001' || printf '\001'; } | @JQ@ -r 'if (.toolCall | type) == "object" and (.toolCall.name | type) == "string" and (.toolCall.name | IN("search_web")) then "ask" else "deny" end' 2>/dev/null) || verdict=deny
 if [ "$verdict" = ask ]; then
     printf '%s\n' '{"decision":"ask"}'
 else

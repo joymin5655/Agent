@@ -658,6 +658,10 @@ nul_hook() { "$@" | "$TMP/plug-web/deny.sh" PreToolUse 2>/dev/null | tr -d '\n';
 check "web-hook-denies[nul-then-second-document]" "$DENY_WEB" "$(nul_hook printf '{"toolCall":{"name":"search_web"}}\000{"toolCall":{"name":"run_command"}}')"
 check "web-hook-denies[nul-after-document]" "$DENY_WEB" "$(nul_hook printf '{"toolCall":{"name":"search_web"}}\000')"
 check "web-hook-asks[clean-search_web-control]" '{"decision":"ask"}' "$(nul_hook printf '{"toolCall":{"name":"search_web"}}')"
+# an invalid byte under a UTF-8 locale: macOS tr would stop there and pass on only the first
+# document, so the hook runs tr byte-wise (LC_ALL=C) and a failed tr still denies
+check "web-hook-denies[utf8-locale-invalid-byte-then-second-document]" "$DENY_WEB" "$(export LC_ALL=en_US.UTF-8; nul_hook printf '{"toolCall":{"name":"search_web"}}\377{"toolCall":{"name":"run_command"}}')"
+check "web-hook-asks[utf8-locale-clean-search_web-control]" '{"decision":"ask"}' "$(export LC_ALL=en_US.UTF-8; nul_hook printf '{"toolCall":{"name":"search_web"}}')"
 # the hook calls jq by an absolute path baked in at write time, and never answers "allow"
 jqline="$(grep -o "'/[^']*jq'" "$TMP/plug-web/deny.sh" | head -n 1)"
 [[ "$jqline" == "'$(command -v jq)'" ]]; check "web-hook-jq-absolute-path-baked-in" 0 $?
