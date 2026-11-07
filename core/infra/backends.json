@@ -60,6 +60,16 @@
       "fallback": null,
       "readonly": true,
       "comment": "writing-critique's google critic, MID tier (the google lane's quota is the tighter one). fallback deliberately null for the same reason as advisor-writing-openai."
+    },
+    "research-google": {
+      "backend": "gemini",
+      "tier": "MID",
+      "fallback": null,
+      "readonly": true,
+      "args_extra": [
+        "--web"
+      ],
+      "comment": "open-web research and fact-checking with cited URLs through the worker's --web allowlist (web search and public pages only, no local files). fallback null so an absent google lane is reported absent, not answered by another vendor. Never put credentials, customer data or private code in its prompt: the prompt and every search it triggers leave the machine. Not a council voting lane."
     }
   },
   "backends": {

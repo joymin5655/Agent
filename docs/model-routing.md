@@ -253,7 +253,14 @@ shared blind spot doesn't survive review.
   CLI argv. Roles shipped: `second-opinion-review` and `second-opinion-verify`
   (codex, no fallback — an absent lane is reported absent, never substituted),
   `third-opinion-review` (gemini) and `cross-review` (codex, falls back to the
-  host's `claude` CLI — see "Cross-company review" below).
+  host's `claude` CLI — see "Cross-company review" below). `research-google`
+  (gemini, MID, `args_extra: ["--web"]`, no fallback, not a council voting lane)
+  is open-web research and fact-checking with cited URLs: the antigravity worker's
+  `--web` mode lets web search and public page reads through to agy's own
+  permission rules and denies every other tool (no local files); the default
+  review mode denies all tools. Its prompt leaves the machine, so it carries no
+  credentials, customer data or private code. The worker also refuses Argon model
+  ids (separately metered) anywhere in its tiers file.
   Model names deliberately never appear in the registry or the dispatcher: each
   vendor's adapter profile owns its tier (the rows above — `codex --profile
   deep` is the TOP-tier reasoning profile; the antigravity worker pins its

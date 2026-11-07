@@ -21,6 +21,9 @@
 # ANTIGRAVITY_AUTH value keeps the keyring path and never calls `security`.
 # The worker also exports AGENT_ANTIGRAVITY_WORKER=1 so the harness hook adapter
 # can tell it is running under a review worker (deny-all tools).
+# ARGON: model ids containing "argon" (any case) are separately metered and are refused
+# (exit 2, agy never invoked) if they appear ANYWHERE in the tiers file — .model or any
+# tier's --model — even in a tier this call does not use. Pin a flash id instead.
 #
 # THREAT MODEL: the prompt carries an untrusted diff (an outside-contributor PR
 # is the lane's normal input), so a prompt can try to drive local action.
@@ -31,9 +34,19 @@
 # sandbox-exec profile below (deny-write outside WORK_DIR and the agy state dir, with
 # the hook/plugin config paths carved back out; deny-read of credential stores;
 # network stays open), (b) a workspace deny plugin written into WORK_DIR before agy
-# starts — a static hook that denies every exec/write tool with no env or adapter
-# dependence — and (c) the ban on --dangerously-skip-permissions. A code review needs
-# neither write nor exec (it reads the diff from the prompt and emits findings text).
+# starts — a static tool-allowlist hook (PreToolUse matcher ".*", no env or adapter
+# dependence) — and (c) the ban on --dangerously-skip-permissions. A code review needs
+# neither write nor exec nor any other tool (it reads the diff from the prompt and emits
+# findings text), so in the default review mode the hook denies EVERY tool call, local
+# reads and web search included (measured on agy 1.5.2, 2026-11-07: a hook deny does not
+# end the run and leaves no trace in denied_actions or the soft-deny notice, so the
+# success checks below are unaffected). With --web the hook answers "ask" — agy's own
+# permission rules decide; the hook never says "allow" — for exactly search_web,
+# read_url_content and read_url, read from .toolCall.name with jq called by the absolute
+# path resolved at write time, and denies everything else (any other name, no name, no
+# toolCall, unparseable input, jq failure). --web therefore opens web search and public
+# page reads only, never local files. If agy cannot approve a URL read headless, the
+# soft-deny path below (exit 9) applies — fail closed; read_url_content is unmeasured.
 # sandbox-exec is fail-closed: no sandbox-exec => refuse (unless the opt-out is set).
 #
 # Tier policy: model IDs are forbidden in core/infra/backends.json
@@ -59,7 +72,8 @@
 # denial — so that is the primary signal. The stderr notice (wording differs
 # between 1.1.14 and 1.2.12) is the fallback, matched by SOFT_DENY_RE.
 #
-# usage: antigravity-worker [--tier mid|top] < prompt.md
+# usage: antigravity-worker [--tier mid|top] [--web] < prompt.md
+#        flags in any order, each at most once; anything else exits 2 before stdin is read
 # env:   ANTIGRAVITY_TIERS_FILE, ANTIGRAVITY_WORKER_ALLOW_UNSANDBOXED=1,
 #        ANTIGRAVITY_WORKER_PRINT_TIMEOUT (agy --print-timeout, default 14m: under the
 #        gemini lane's 900s timeout_s, so agy ends the run before the hard kill),

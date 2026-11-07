@@ -206,6 +206,10 @@ jq -e '.roles as $r | ["cross-review", "second-opinion-review", "second-opinion-
 check "review-roles-are-readonly" $?
 jq -e '.roles.implementer | (.readonly // false) == false' "$REGISTRY" >/dev/null 2>&1
 check "implementer-is-not-readonly" $?
+# research-google: open-web research through the worker's --web allowlist, no fallback.
+jq -e '.roles["research-google"] | .backend == "gemini" and .tier == "MID" and .readonly == true
+       and .args_extra == ["--web"] and .fallback == null' "$REGISTRY" >/dev/null 2>&1
+check "research-google-role-shape" $?
 jq -e '.roles | to_entries | all(.value | ((has("readonly") | not) or (.readonly | type == "boolean")))' \
   "$REGISTRY" >/dev/null 2>&1
 check "readonly-is-a-boolean" $?

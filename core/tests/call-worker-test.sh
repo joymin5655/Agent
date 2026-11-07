@@ -289,7 +289,9 @@ cat > "$REG2" <<'JSON'
     "review":  { "backend": "codex", "tier": "TOP", "fallback": "gemini" },
     "build":   { "backend": "codex", "tier": "MID", "fallback": null,
                  "args_extra": ["--sandbox", "workspace-write"] },
-    "lowfan":  { "backend": "codex", "tier": "LOW", "fallback": null }
+    "lowfan":  { "backend": "codex", "tier": "LOW", "fallback": null },
+    "websearch": { "backend": "gem", "tier": "MID", "fallback": null, "readonly": true,
+                   "args_extra": ["--web"] }
   },
   "backends": {
     "codex":  { "vendor": "openai", "connection": "cli", "enabled": true,
@@ -298,7 +300,11 @@ cat > "$REG2" <<'JSON'
                                "TOP": ["--profile", "deep"] },
                 "timeout_s": 30 },
     "gemini": { "vendor": "google", "connection": "cli", "enabled": true,
-                "cmd": ["gemini", "-p", ""], "tier_args": {}, "timeout_s": 30 }
+                "cmd": ["gemini", "-p", ""], "tier_args": {}, "timeout_s": 30 },
+    "gem":    { "vendor": "google", "connection": "cli", "enabled": true,
+                "cmd": ["antigravity-worker"],
+                "tier_args": { "MID": ["--tier", "mid"], "TOP": ["--tier", "top"] },
+                "timeout_s": 30 }
   }
 }
 JSON
@@ -312,6 +318,13 @@ cat >/dev/null
 echo "CODEX-STUB-REPLY"
 EOF
 chmod +x "$ARGV_DIR/codex"
+cat > "$ARGV_DIR/antigravity-worker" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$@" > "$MARKERS/gem.argv"
+cat >/dev/null
+echo "GEM-STUB-REPLY"
+EOF
+chmod +x "$ARGV_DIR/antigravity-worker"
 
 run_v2() {  # run_v2 <stub-dir> <role> [extra-env...]
     local stub_dir="$1" role="$2"; shift 2
@@ -338,6 +351,14 @@ if [[ $rc -eq 0 ]] \
     ok "v2 args_extra — MID (empty tier_args) + role args_extra appended"
 else
     bad "v2 args_extra" "rc=$rc argv=[$(tr '\n' ' ' < "$MARKERS/codex.argv" 2>/dev/null)]"
+fi
+
+out="$(run_v2 "$ARGV_DIR" websearch 2>"$WORK/err7w")"; rc=$?
+if [[ $rc -eq 0 ]] \
+   && [[ "$(tr '\n' ' ' < "$MARKERS/gem.argv")" == "--tier mid --web " ]]; then
+    ok "v2 args_extra — a gemini role composes antigravity-worker --tier mid --web"
+else
+    bad "v2 gemini --web argv" "rc=$rc argv=[$(tr '\n' ' ' < "$MARKERS/gem.argv" 2>/dev/null)]"
 fi
 
 out="$(run_v2 "$ARGV_DIR" lowfan 2>"$WORK/err7c")"; rc=$?
