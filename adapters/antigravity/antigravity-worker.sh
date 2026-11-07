@@ -86,13 +86,35 @@ while [[ -L "$self" ]]; do
 done
 SELF_DIR="$(cd "$(dirname "$self")" && pwd)"
 
-TIER="mid"
-if [[ "${1:-}" == "--tier" ]]; then
-    TIER="${2:-}"
-    case "$TIER" in mid|top) ;; *) echo "antigravity-worker: --tier must be mid or top (got '$TIER')" >&2; exit 2 ;; esac
-fi
+# Strict arguments: [--tier mid|top] [--web], any order, each at most once. Anything else
+# (unknown flag, positional word, repeated flag, missing value) exits 2 before stdin is
+# read or agy is touched.
+usage() { echo "usage: antigravity-worker [--tier mid|top] [--web] < prompt.md${1:+ ($1)}" >&2; exit 2; }
+TIER=""
+WEB=0
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --tier)
+            [[ -z "$TIER" ]] || usage "--tier given twice"
+            [[ $# -ge 2 ]] || usage "--tier needs mid or top"
+            case "$2" in mid|top) TIER="$2" ;; *) usage "--tier must be mid or top, got '$2'" ;; esac
+            shift 2 ;;
+        --web)
+            [[ $WEB -eq 0 ]] || usage "--web given twice"
+            WEB=1; shift ;;
+        *) usage "unexpected argument '$1'" ;;
+    esac
+done
+TIER="${TIER:-mid}"
 
 command -v jq >/dev/null 2>&1 || { echo "antigravity-worker: jq is required to read the tiers file" >&2; exit 2; }
+# Web mode bakes jq's ABSOLUTE path into the hook (the hook never trusts PATH or env). The
+# path lands inside a single-quoted shell word: allowlist, never escape.
+JQ_BIN="$(command -v jq)"
+if [[ $WEB -eq 1 && ! "$JQ_BIN" =~ ^/[A-Za-z0-9._/+=@%-]+$ ]]; then
+    echo "antigravity-worker: jq resolves to '$JQ_BIN', which is not an absolute path of safe characters — refusing --web (the web hook needs it)" >&2
+    exit 2
+fi
 command -v agy >/dev/null 2>&1 || { echo "antigravity-worker: agy CLI not found on PATH (install: https://antigravity.google/cli/install.sh — auth lives in the OS keyring)" >&2; exit 127; }
 
 NEW_TIERS_FILE="$HOME/.agent/antigravity-tiers.json"
@@ -196,29 +218,54 @@ WORK_DIR="$(mktemp -d)" || { echo "antigravity-worker: mktemp -d failed" >&2; ex
 PROMPT_FILE="$WORK_DIR/prompt.md"   # inside WORK_DIR so cleanup takes it too
 cat > "$PROMPT_FILE"
 
-# Workspace deny plugin (agy loads .agents/plugins/<name>/ from its cwd — measured on
-# 1.2.12, w5-design M1). The hook is a static script: it denies every exec/write tool and
-# stops, needing neither AGENT_ANTIGRAVITY_WORKER to reach the hook nor the global plugin.
+# Workspace tool-allowlist plugin (agy loads .agents/plugins/<name>/ from its cwd — measured on
+# 1.2.12, w5-design M1; still loads on 1.5.2, 2026-11-07). The PreToolUse matcher ".*" catches
+# every tool call and the hook is a static script that decides only from what was baked into
+# it at write time — never from environment variables, never needing the adapter or the
+# global plugin. Review mode (default): every tool call is denied. Web mode (--web): only
+# search_web / read_url_content / read_url answer "ask" (agy's own permission rules decide —
+# the hook never answers "allow"); everything else, including unparseable input, is denied.
 # Fail closed: a worker that cannot write it refuses to start, and never gets the API key.
 DENY_DIR="$WORK_DIR/.agents/plugins/agent-worker-deny"
 write_deny_plugin() {
     # The path lands inside a double-quoted shell word in hooks.json: allowlist, never escape.
     [[ "$WORK_DIR" =~ ^[A-Za-z0-9._/+=@%-]+$ ]] || return 1
     mkdir -p "$DENY_DIR" || return 1
-    cat > "$DENY_DIR/deny.sh" <<'DENYSH' || return 1
+    if [[ $WEB -eq 1 ]]; then
+        cat > "$DENY_DIR/deny.sh" <<'WEBSH' || return 1
 #!/bin/sh
-# review worker: every exec/write tool call is denied; nothing may keep the run going.
+# web worker: only web search and URL reads may reach agy's own permission rules ("ask").
+# Only .toolCall.name counts (an args payload naming a tool changes nothing); any failure denies.
+if [ "${1:-}" = Stop ]; then cat >/dev/null; printf '%s\n' '{"decision":"stop"}'; exit 0; fi
+verdict=$(@JQ@ -r 'if (.toolCall | type) == "object" and (.toolCall.name | type) == "string" and (.toolCall.name | IN("search_web", "read_url_content", "read_url")) then "ask" else "deny" end' 2>/dev/null) || verdict=deny
+if [ "$verdict" = ask ]; then
+    printf '%s\n' '{"decision":"ask"}'
+else
+    printf '%s\n' '{"decision":"deny","reason":"web worker: only web search and URL reads are allowed"}'
+fi
+WEBSH
+        # Bake in jq's absolute path (allowlisted above) as a single-quoted word.
+        local body q="'"
+        body="$(<"$DENY_DIR/deny.sh")" || return 1
+        printf '%s\n' "${body//@JQ@/$q$JQ_BIN$q}" > "$DENY_DIR/deny.sh" || return 1
+    else
+        cat > "$DENY_DIR/deny.sh" <<'REVSH' || return 1
+#!/bin/sh
+# review worker: every tool call is denied; nothing may keep the run going.
 cat >/dev/null
 case "${1:-}" in
     Stop) printf '%s\n' '{"decision":"stop"}' ;;
     *)    printf '%s\n' '{"decision":"deny","reason":"review worker: tools are disabled"}' ;;
 esac
-DENYSH
+REVSH
+    fi
     chmod +x "$DENY_DIR/deny.sh" || return 1
-    cat > "$DENY_DIR/plugin.json" <<'PLUGINJSON' || return 1
+    local desc="Antigravity review worker: denies every tool call."
+    [[ $WEB -eq 1 ]] && desc="Antigravity web worker: only web search and URL reads reach agy's permission rules; every other tool call is denied."
+    cat > "$DENY_DIR/plugin.json" <<PLUGINJSON || return 1
 {
   "name": "agent-worker-deny",
-  "description": "Antigravity review worker: denies every exec and write tool call."
+  "description": "$desc"
 }
 PLUGINJSON
     cat > "$DENY_DIR/hooks.json" <<HOOKSJSON || return 1
@@ -226,7 +273,7 @@ PLUGINJSON
   "agent-worker-deny": {
     "PreToolUse": [
       {
-        "matcher": "run_command|send_command_input|write_to_file|replace_file_content|multi_replace_file_content",
+        "matcher": ".*",
         "hooks": [{"type": "command", "command": "\"$DENY_DIR/deny.sh\" PreToolUse", "timeout": 10}]
       }
     ],
