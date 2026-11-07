@@ -5,6 +5,10 @@ gemini CLI's individual OAuth was retired upstream (2026-06-18). Decided
 2026-08-19: migrate to Antigravity (`agy`), Google's official successor, instead
 of chasing an AI Studio API key.
 
+Roles served through the worker: `third-opinion-review` and `advisor-writing-google` (review
+mode: every tool denied) and `research-google` (`--web`: web search only, URL reads off,
+see "Worker threat model").
+
 Two independent pieces live here:
 
 - the **review worker lane** (`antigravity-worker.sh`, `antigravity-preflight.sh`) that
@@ -40,6 +44,15 @@ no paid worker dispatch). Sections labeled "1.1.14" keep the earlier 2026-08-19 
   #78) disagreed about it and the keyring already works; `setup.sh --antigravity` only prints
   this guidance and applies none of it. Security note: with the API-key path the key sits in
   the environment of agy and its sandbox (see "Worker threat model").
+
+## Worker arguments
+
+`antigravity-worker [--tier mid|top] [--web] < prompt.md` — flags in any order, each at most once
+(`--web` alone means mid). Anything else (unknown flag, positional word, repeated flag, a
+missing or invalid `--tier` value) prints a usage line and exits 2 before stdin is read or agy
+is invoked. `call-worker.sh` composes `cmd + tier_args[role.tier] + role.args_extra`, so the
+`research-google` role (tier MID, `args_extra: ["--web"]`) runs
+`antigravity-worker --tier mid --web`.
 
 ## argv contract (measured)
 
@@ -108,16 +121,28 @@ An empty `"denied_actions":[]` is not a soft-deny.
 
 Any agy nonzero exit code (including 3) passes through the worker unchanged, except a quota
 signal, which becomes 75; the preflight
-reports every such probe exit as 5 (state unknown). A hook-level deny
+reports every such probe exit as 5 (state unknown). The probe's own time limit is 120 s (`ANTIGRAVITY_PREFLIGHT_TIMEOUT_S`; call-worker's registry limit `preflight_timeout_s` is 150 s for this backend, kept above it so the probe's own time-out and clean exit win over call-worker's SIGKILL; one account's single-token
+replies took 35-101 s on 2026-11-07, which a 60 s limit reported as an unavailable lane). A hook-level deny
 is invisible to the caller: it is exit 0, status `SUCCESS`, no stderr, no `denied_actions` (a
 denied step just shows up in the transcript as `tool call denied by pre-tool hook`), so it
-does not trip exit 9. A worker dispatch is exactly that case: the workspace deny plugin (and,
+does not trip exit 9. A worker dispatch is exactly that case: the workspace hook (and,
 if the environment variable reaches the hook, the adapter's worker mode) denies every attempted
-`run_command` or write tool call, so it is silent. A worker exit 0 therefore does not prove the
-model made no tool calls, and exit 9 no longer fires for tool-use attempts (it still fires for
-permission soft-denies from tools outside the deny matcher).
+tool call in review mode (and every call outside the web allowlist with `--web`), so it is
+silent. A worker exit 0 therefore does not prove the model made no tool calls, and exit 9 no
+longer fires for tool-use attempts (it still fires for permission soft-denies that agy itself
+raises, for example an `ask` it cannot approve headless).
 
 ## Tiers file
+
+Argon model ids are separately metered, so the worker refuses them: if any model id in the
+tiers file (`.model` or the value after any `--model` in any tier, compared case-insensitively)
+contains `argon`, it prints `Argon ids are not accepted` and exits 2 before resolving a model —
+even when the Argon id sits in a tier this call does not use. agy is never invoked and the
+preflight reports it as `probe exited 2` (exit 5). Pin a flash id instead.
+
+The tiers file must be exactly one JSON object of the expected shape; extra JSON documents, a wrong
+shape, or a raw NUL byte anywhere in the file (jq would silently stop reading there) make the
+worker refuse as malformed (exit 2) before any Argon scan.
 
 The model pin lives in `~/.agent/antigravity-tiers.json` (canonical; override with
 `ANTIGRAVITY_TIERS_FILE`). The pre-2026-09 path `~/.gemini/antigravity-cli/agent-tiers.json` is a
@@ -198,9 +223,10 @@ write), PostToolUse prints `{}`, and Stop stops. Whether an arbitrary parent env
 variable reaches the hook process is not measured; if it does not, the core hooks run under
 the worker's sandbox and any failure is a deny. Independently of that, the worker writes a
 workspace plugin into its own scratch directory (`.agents/plugins/agent-worker-deny/`, the
-layout measured in M1) whose static hook denies `run_command`, `send_command_input` and the
-three write tools and stops the run. It needs neither the variable nor the global plugin, and
-a worker that cannot write it exits 2 before agy starts (and before any API key is exported).
+layout measured in M1) whose static hook is described under "Worker threat model" (matcher
+`".*"`: every tool denied in review mode, a web allowlist with `--web`). It needs neither the
+variable nor the global plugin, and a worker that cannot write it exits 2 before agy starts
+(and before any API key is exported).
 
 **Stop loop guard.** A core Stop hook that returns `block` becomes
 `{"decision":"continue","reason":...}` once. The adapter keeps a marker under
@@ -250,10 +276,63 @@ for other commands. So "fail-closed by default" is not assumed. The controls tha
    cannot plant or replace a hook that would later run unsandboxed in your interactive agy
    (`antigravity-cli/settings.json` stays writable because agy rewrites it itself). It does **not**
    stop reads of environment variables or network egress;
-2. a workspace deny plugin written into the scratch directory before agy starts (static hook,
-   no environment or adapter dependence), plus the adapter's worker-mode deny
+2. a workspace tool-allowlist plugin written into the scratch directory before agy starts
+   (static hook, no environment or adapter dependence; the hook decides only from what was
+   baked into it when the file was written), plus the adapter's worker-mode deny
    (`AGENT_ANTIGRAVITY_WORKER=1`), which depends on the variable reaching the hook (unmeasured);
 3. `--dangerously-skip-permissions` stays forbidden.
+
+### Tool allowlist hook (review vs `--web`)
+
+The plugin's `PreToolUse` matcher is `".*"` in both modes, so every tool call reaches the hook;
+the `Stop` hook always answers `{"decision":"stop"}`.
+
+| mode | tool call | hook answer |
+|---|---|---|
+| review (default) | any | `{"decision":"deny","reason":"review worker: tools are disabled"}` |
+| `--web` | `.toolCall.name` is exactly `search_web` | `{"decision":"ask"}` — agy's own permission rules decide; the worker never answers `allow` |
+| `--web` | any other name (including `read_url_content` and `read_url`), empty or missing name, missing `toolCall`, unparseable input, more than one JSON document, a NUL byte, jq failure | `{"decision":"deny","reason":"web worker: only web search is allowed"}` |
+
+Only `.toolCall.name` counts: an args payload containing `"name":"search_web"` does not turn a
+`run_command` into `ask`. The web hook reads the name with `jq` called by the absolute path
+resolved when the file is written; a path that fails the same character allowlist as the scratch
+directory refuses `--web` (exit 2). The plugin is still fail-closed: not written means no start
+and no API key. In `--web` mode the worker also runs the generated hook once with a `search_web`
+call (must print exactly the `ask` line) and once with `run_command` (must print a deny line)
+before agy starts; any other result (a jq too old for the expression, say) exits 2 with "web hook
+self-test failed".
+
+Measured on agy 1.5.2, 2026-11-07 (5 headless runs under this worker's sandbox profile, workspace
+plugin hook):
+
+- the workspace plugin at `<cwd>/.agents/plugins/<name>/` still loads on 1.5.2;
+- the `PreToolUse` hook's stdin is one JSON object with the keys `artifactDirectoryPath`,
+  `conversationId`, `lastUserInput`, `modelName`, `stepIdx`, `toolCall`, `transcriptPath`,
+  `workspacePaths`; the tool name is `.toolCall.name`, its arguments `.toolCall.args`;
+- the matcher `".*"` catches every tool call;
+- tool names seen: `search_web` (args `query`, optional `domain`), `read_file` (arg `Path`, local
+  paths only — a URL fails inside agy) and `run_command`;
+- a hook `{"decision":"deny"}` does not end the run and leaves no trace in the envelope's
+  `denied_actions` or in the soft-deny notice: with every tool denied, a review prompt finished
+  with status SUCCESS and a normal answer (the model tried `run_command` once), so denying every
+  tool is safe for the worker's success checks;
+- `{"decision":"ask"}` hands the call to agy's own permission rules, and `search_web` then ran
+  headless with no approval on two different accounts.
+
+Unmeasured: `read_url_content` was never called by the model, so **URL reading is off** in `--web`
+(both `read_url_content` and `read_url` are denied). The hook cannot restrict a URL tool's argument,
+and a prompt-injected page could point it at `localhost` or a private-network address while the
+sandbox keeps the network open. Before turning it on, measure: where the fetch runs (in agy's
+process, under this sandbox profile, or on the vendor side), whether agy approves it headless, what
+a redirect to a loopback address does, whether `file://` works, and the argument key. The hook would
+then also need an argument check: `https` only, DNS names only — no IP literals, `localhost`,
+`*.local`, `*.internal` or single-label names.
+Also unmeasured: whether MCP tools, subagents or internal control tools pass through `PreToolUse`
+at all; whether agy expands `@<path>` inside a `-p` prompt.
+Before this hook the deny matcher listed only the exec and write tools, so `read_file`
+and `search_web` went through; review mode now denies them, and `--web` is the only way to a
+search. A `--web` prompt and every search it triggers leave the machine: keep credentials,
+customer data and private code out of it.
 
 With `ANTIGRAVITY_AUTH=apikey` the key is in the environment of agy and its sandbox, so a
 prompt-injected `env` call could read it if the deny plugin does not stop that call: the worker

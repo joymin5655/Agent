@@ -60,6 +60,16 @@
       "fallback": null,
       "readonly": true,
       "comment": "writing-critique's google critic, MID tier (the google lane's quota is the tighter one). fallback deliberately null for the same reason as advisor-writing-openai."
+    },
+    "research-google": {
+      "backend": "gemini",
+      "tier": "MID",
+      "fallback": null,
+      "readonly": true,
+      "args_extra": [
+        "--web"
+      ],
+      "comment": "open-web research and fact-checking with cited URLs through the worker's --web allowlist (web search only: URL reads are off until measured, and no local files). fallback null so an absent google lane is reported absent, not answered by another vendor. Never put credentials, customer data or private code in its prompt: the prompt and every search it triggers leave the machine. Not a council voting lane."
     }
   },
   "backends": {
@@ -137,7 +147,7 @@
       "preflight": [
         "antigravity-preflight"
       ],
-      "preflight_timeout_s": 90,
+      "preflight_timeout_s": 150,
       "comment": "agy (Antigravity CLI) also serves Claude models alongside its own — for vendor independence this lane's model pin (adapters/antigravity/antigravity-tiers.json.template, owned by that adapter — model IDs are forbidden here) must stay Google-vendor models only (gemini-* pattern), never a Claude/GPT id, or the council's third-opinion-review vote duplicates another lane's vendor instead of giving a genuine second vendor's read."
     }
   }

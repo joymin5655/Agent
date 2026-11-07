@@ -57,6 +57,8 @@ cat > "$STUB_DIR/agy" <<STUB
   printf 'DENY_CMD=%s\n' "\$(jq -r '.["agent-worker-deny"].PreToolUse[0].hooks[0].command' \$d/hooks.json 2>&1)"
   printf 'DENY_MATCHER=%s\n' "\$(jq -r '.["agent-worker-deny"].PreToolUse[0].matcher' \$d/hooks.json 2>&1)"
   printf 'DENY_PWD=%s\n' "\$PWD"
+  # The worker deletes its scratch dir on exit; keep a copy of the plugin for the hook cases.
+  if [[ -n "\${PLUG_SAVE:-}" ]]; then rm -rf "\$PLUG_SAVE"; cp -R \$d "\$PLUG_SAVE"; fi
 } >> "$ENVREC"
 case "\${AGY_STUB_MODE:-success}" in
   success)  printf '{"conversation_id":"c1","status":"SUCCESS","response":"ok"}\n' ;;
@@ -386,7 +388,7 @@ printf '%s' "$err" | grep -q 'modelProvider'; check "absent-settings-file-warns"
 
 echo
 echo "=== (j) workspace deny plugin + apikey fail-closed ==="
-# Written before agy starts, in agy's cwd; static hook denies every exec/write tool.
+# Written before agy starts, in agy's cwd; the static hook denies every tool call in review mode.
 : > "$ENVREC"; : > "$RECORD"
 printf 'x' | HOME="$AH" USER=testuser ANTIGRAVITY_TIERS_FILE="$TIERS" bash "$WORKER" --tier mid >/dev/null 2>&1
 check "deny-plugin-dispatch-exits-0" 0 $?
@@ -395,9 +397,7 @@ grep -q '^DENY_PRE={"decision":"deny","reason":"review worker: tools are disable
 grep -q '^DENY_STOP={"decision":"stop"}$' "$ENVREC"; check "deny-plugin-stop-stops" 0 $?
 dpwd="$(grep '^DENY_PWD=' "$ENVREC" | head -1 | cut -d= -f2-)"
 grep -qF "DENY_CMD=\"$dpwd/.agents/plugins/agent-worker-deny/deny.sh\" PreToolUse" "$ENVREC"; check "deny-plugin-hook-command-absolute" 0 $?
-for t in run_command send_command_input write_to_file replace_file_content multi_replace_file_content; do
-  grep -q "^DENY_MATCHER=.*\b$t\b" "$ENVREC"; check "deny-plugin-matcher-covers[$t]" 0 $?
-done
+check "deny-plugin-matcher-catches-every-tool" 'DENY_MATCHER=.*' "$(grep '^DENY_MATCHER=' "$ENVREC" | head -n 1)"
 # apikey: the key is exported only after the plugin exists (it is present when agy starts with the key).
 : > "$ENVREC"
 printf 'x' | HOME="$AH" USER=testuser ANTIGRAVITY_AUTH=apikey ANTIGRAVITY_TIERS_FILE="$TIERS" bash "$WORKER" --tier mid >/dev/null 2>&1
@@ -520,6 +520,186 @@ else
   echo "  ok   [no-grok-worker-reference]"
   PASS=$((PASS + 1))
 fi
+
+echo
+echo "=== (l) Argon model ids are refused before any model resolution ==="
+# Separately metered: refuse an Argon id anywhere in the tiers file, even in a tier this
+# call does not use. agy is never invoked (the stub record stays empty).
+argon_case() {  # argon_case <name> <tiers-json> <worker-args...>
+  local name="$1" json="$2"; shift 2
+  printf '%s\n' "$json" > "$TMP/argon.json"
+  : > "$RECORD"
+  local err rc
+  err="$(printf 'x' | ANTIGRAVITY_TIERS_FILE="$TMP/argon.json" bash "$WORKER" "$@" 2>&1 >/dev/null)"
+  rc=$?
+  check "$name-exits-2" 2 "$rc"
+  printf '%s' "$err" | grep -q 'Argon ids are not accepted'; check "$name-names-reason" 0 $?
+  check_true "$name-agy-not-invoked" test ! -s "$RECORD"
+}
+argon_case argon-in-model '{ "model": "gemini-4-argon-high", "tiers": { "MID": [], "TOP": [] } }' --tier mid
+argon_case argon-only-in-top '{ "model": "gemini-3.1-pro-low", "tiers": { "MID": [], "TOP": ["--model", "gemini-4-argon-high"] } }' --tier mid
+argon_case argon-mixed-case '{ "model": "Gemini-4-ARGON-high", "tiers": { "MID": [] } }' --tier mid
+argon_case argon-in-mid-tier-called-top '{ "model": "gemini-3.1-pro-low", "tiers": { "MID": ["--model", "gemini-4-argon-low"], "TOP": [] } }' --tier top
+# a tiers file of the wrong shape or with extra JSON refuses (fail closed) before any scan
+malformed_case() {  # malformed_case <name> <tiers-file-content> <worker-args...>
+  local name="$1" content="$2"; shift 2
+  printf '%s\n' "$content" > "$TMP/argon.json"
+  : > "$RECORD"
+  local err rc
+  err="$(printf 'x' | ANTIGRAVITY_TIERS_FILE="$TMP/argon.json" bash "$WORKER" "$@" 2>&1 >/dev/null)"
+  rc=$?
+  check "$name-exits-2" 2 "$rc"
+  printf '%s' "$err" | grep -q 'is malformed'; check "$name-names-tiers-file-problem" 0 $?
+  check_true "$name-agy-not-invoked" test ! -s "$RECORD"
+}
+malformed_case tiers-unused-non-array '{ "model": "gemini-3.1-pro-low", "tiers": { "BROKEN": 42, "MID": [], "TOP": ["--model", "gemini-4-argon-high"] } }' --tier mid
+malformed_case tiers-second-json-value '{ "model": "gemini-3.1-pro-low", "tiers": { "MID": [] } }
+{}' --tier mid
+malformed_case tiers-top-is-string-argon-model '{ "model": "gemini-4-argon-high", "tiers": { "TOP": "x" } }' --tier mid
+malformed_case tiers-model-is-number '{ "model": 7, "tiers": { "MID": [] } }' --tier mid
+malformed_case tiers-top-level-array '[{ "model": "gemini-3.1-pro-low" }]' --tier mid
+malformed_case tiers-array-with-non-string '{ "model": "gemini-3.1-pro-low", "tiers": { "MID": ["--effort", 5] } }' --tier mid
+malformed_case tiers-not-json 'not json' --tier mid
+# a raw NUL byte in the tiers file refuses as malformed (jq alone would stop reading at it)
+printf '{ "model": "gemini-3.1-pro-low", "tiers": { "MID": [] } }\000{"model":"gemini-4-argon-high"}' > "$TMP/argon.json"
+: > "$RECORD"
+err="$(printf 'x' | ANTIGRAVITY_TIERS_FILE="$TMP/argon.json" bash "$WORKER" --tier mid 2>&1 >/dev/null)"; rc=$?
+check "tiers-nul-byte-exits-2" 2 "$rc"
+printf '%s' "$err" | grep -q 'is malformed'; check "tiers-nul-byte-names-tiers-file-problem" 0 $?
+check_true "tiers-nul-byte-agy-not-invoked" test ! -s "$RECORD"
+# a --model=<id> form that parses is still an Argon refusal (the scan covers every string)
+argon_case argon-equals-form-in-unused-tier '{ "model": "gemini-3.1-pro-low", "tiers": { "MID": [], "TOP": ["--model=gemini-4-argon-high"] } }' --tier mid
+# control: a clean tiers file still dispatches
+: > "$RECORD"
+printf 'x' | ANTIGRAVITY_TIERS_FILE="$TIERS" bash "$WORKER" --tier mid >/dev/null 2>&1
+check "no-argon-still-dispatches" 0 $?
+check_true "no-argon-agy-invoked" test -s "$RECORD"
+# control: a "comment" key may mention argon; only .model and .tiers are scanned
+printf '%s\n' '{ "comment": "never pin an argon id", "model": "gemini-3.1-pro-low", "tiers": { "MID": [], "TOP": ["--model", "gemini-3.1-pro-high"] } }' > "$TMP/argon.json"
+: > "$RECORD"
+printf 'x' | ANTIGRAVITY_TIERS_FILE="$TMP/argon.json" bash "$WORKER" --tier mid >/dev/null 2>&1
+check "comment-mentioning-argon-still-dispatches" 0 $?
+check_true "comment-mentioning-argon-agy-invoked" test -s "$RECORD"
+
+echo
+echo "=== (m) strict worker arguments ==="
+run_ok() {  # run_ok <name> <worker-args...>: the worker dispatches (agy invoked)
+  local name="$1"; shift
+  : > "$RECORD"
+  printf 'x' | ANTIGRAVITY_TIERS_FILE="$TIERS" bash "$WORKER" "$@" >/dev/null 2>&1
+  check "$name-exits-0" 0 $?
+  check_true "$name-agy-invoked" test -s "$RECORD"
+}
+run_refused() {  # run_refused <name> <worker-args...>: exit 2, agy never invoked
+  local name="$1"; shift
+  : > "$RECORD"
+  printf 'x' | ANTIGRAVITY_TIERS_FILE="$TIERS" bash "$WORKER" "$@" >/dev/null 2>&1
+  check "$name-exits-2" 2 $?
+  check_true "$name-agy-not-invoked" test ! -s "$RECORD"
+}
+run_ok args-tier-mid-web --tier mid --web
+run_ok args-web-tier-mid --web --tier mid
+run_ok args-web-alone --web
+grep -q -- '--model gemini-3.1-pro-low' "$RECORD"; check "args-web-alone-is-mid" 0 $?
+run_refused args-unknown-flag --foo
+run_refused args-tier-without-value --tier
+run_refused args-tier-twice --tier mid --tier top
+run_refused args-web-twice --web --web
+run_refused args-positional x
+run_refused args-positional-after-tier --tier mid x
+run_refused args-tier-bad-value --tier huge --web
+run_refused args-tier-then-flag-as-value --tier --web
+
+echo
+echo "=== (n) tool allowlist hook: review denies every tool, --web allows web search only ==="
+DENY_REV='{"decision":"deny","reason":"review worker: tools are disabled"}'
+DENY_WEB='{"decision":"deny","reason":"web worker: only web search is allowed"}'
+hook() {  # hook <plugin-dir> <event> <stdin-json>
+  printf '%s' "$3" | "$1/deny.sh" "$2" 2>/dev/null | tr -d '\n'
+}
+# review mode (default)
+rm -rf "$TMP/plug-rev"; : > "$ENVREC"
+printf 'x' | PLUG_SAVE="$TMP/plug-rev" ANTIGRAVITY_TIERS_FILE="$TIERS" bash "$WORKER" --tier mid >/dev/null 2>&1
+check "review-hook-matcher-all" '.*' "$(jq -r '.["agent-worker-deny"].PreToolUse[0].matcher' "$TMP/plug-rev/hooks.json")"
+for body in '{"toolCall":{"name":"search_web","args":{"query":"x"}}}' '{"toolCall":{"name":"read_file","args":{"Path":"/etc/hosts"}}}' \
+            '{"toolCall":{"name":"run_command"}}' '{}'; do
+  check "review-hook-denies[$body]" "$DENY_REV" "$(hook "$TMP/plug-rev" PreToolUse "$body")"
+done
+check "review-hook-stop" '{"decision":"stop"}' "$(hook "$TMP/plug-rev" Stop '{}')"
+jq -e . "$TMP/plug-rev/plugin.json" >/dev/null 2>&1; check "review-plugin-json-valid" 0 $?
+# web mode
+rm -rf "$TMP/plug-web"; : > "$ENVREC"
+printf 'x' | PLUG_SAVE="$TMP/plug-web" ANTIGRAVITY_TIERS_FILE="$TIERS" bash "$WORKER" --tier mid --web >/dev/null 2>&1
+check "web-hook-matcher-all" '.*' "$(jq -r '.["agent-worker-deny"].PreToolUse[0].matcher' "$TMP/plug-web/hooks.json")"
+check "web-hook-asks[search_web]" '{"decision":"ask"}' "$(hook "$TMP/plug-web" PreToolUse '{"toolCall":{"name":"search_web","args":{}}}')"
+# URL tools are off until measured: the hook cannot restrict their URL argument
+for n in read_url_content read_url read_file run_command write_to_file browser_subagent '' view_file search_web_extra 'search_web
+x'; do
+  body="$(jq -nc --arg n "$n" '{toolCall:{name:$n,args:{}}}')"
+  check "web-hook-denies[$n]" "$DENY_WEB" "$(hook "$TMP/plug-web" PreToolUse "$body")"
+done
+check "web-hook-denies[no-toolCall]" "$DENY_WEB" "$(hook "$TMP/plug-web" PreToolUse '{"conversationId":"c"}')"
+check "web-hook-denies[toolCall-not-object]" "$DENY_WEB" "$(hook "$TMP/plug-web" PreToolUse '{"toolCall":"search_web"}')"
+check "web-hook-denies[name-not-string]" "$DENY_WEB" "$(hook "$TMP/plug-web" PreToolUse '{"toolCall":{"name":["search_web"]}}')"
+check "web-hook-denies[invalid-json]" "$DENY_WEB" "$(hook "$TMP/plug-web" PreToolUse 'not json')"
+check "web-hook-denies[empty-stdin]" "$DENY_WEB" "$(hook "$TMP/plug-web" PreToolUse '')"
+check "web-hook-denies[args-name-spoof]" "$DENY_WEB" "$(hook "$TMP/plug-web" PreToolUse '{"toolCall":{"name":"run_command","args":{"name":"search_web"}}}')"
+check "web-hook-stop" '{"decision":"stop"}' "$(hook "$TMP/plug-web" Stop '{}')"
+jq -e . "$TMP/plug-web/plugin.json" >/dev/null 2>&1; check "web-plugin-json-valid" 0 $?
+# stdin that is not exactly one object naming search_web denies (never a leading ask)
+check "web-hook-denies[two-documents]" "$DENY_WEB" "$(hook "$TMP/plug-web" PreToolUse '{"toolCall":{"name":"search_web"}}{"toolCall":{"name":"run_command"}}')"
+check "web-hook-denies[object-then-garbage]" "$DENY_WEB" "$(hook "$TMP/plug-web" PreToolUse '{"toolCall":{"name":"search_web"}} garbage')"
+check "web-hook-denies[top-level-array]" "$DENY_WEB" "$(hook "$TMP/plug-web" PreToolUse '[{"toolCall":{"name":"search_web"}}]')"
+check "web-hook-denies[top-level-string]" "$DENY_WEB" "$(hook "$TMP/plug-web" PreToolUse '"search_web"')"
+check "web-hook-denies[top-level-null]" "$DENY_WEB" "$(hook "$TMP/plug-web" PreToolUse 'null')"
+# a raw NUL byte: jq alone would stop reading there and answer for the first document, so the
+# hook reads through tr (the hook() helper cannot carry a NUL in a shell variable)
+nul_hook() { "$@" | "$TMP/plug-web/deny.sh" PreToolUse 2>/dev/null | tr -d '\n'; }
+check "web-hook-denies[nul-then-second-document]" "$DENY_WEB" "$(nul_hook printf '{"toolCall":{"name":"search_web"}}\000{"toolCall":{"name":"run_command"}}')"
+check "web-hook-denies[nul-after-document]" "$DENY_WEB" "$(nul_hook printf '{"toolCall":{"name":"search_web"}}\000')"
+check "web-hook-asks[clean-search_web-control]" '{"decision":"ask"}' "$(nul_hook printf '{"toolCall":{"name":"search_web"}}')"
+# an invalid byte under a UTF-8 locale: macOS tr would stop there and pass on only the first
+# document, so the hook runs tr byte-wise (LC_ALL=C) and a failed tr still denies
+check "web-hook-denies[utf8-locale-invalid-byte-then-second-document]" "$DENY_WEB" "$(export LC_ALL=en_US.UTF-8; nul_hook printf '{"toolCall":{"name":"search_web"}}\377{"toolCall":{"name":"run_command"}}')"
+check "web-hook-asks[utf8-locale-clean-search_web-control]" '{"decision":"ask"}' "$(export LC_ALL=en_US.UTF-8; nul_hook printf '{"toolCall":{"name":"search_web"}}')"
+# the hook calls jq by an absolute path baked in at write time, and never answers "allow"
+jqline="$(grep -o "'/[^']*jq'" "$TMP/plug-web/deny.sh" | head -n 1)"
+[[ "$jqline" == "'$(command -v jq)'" ]]; check "web-hook-jq-absolute-path-baked-in" 0 $?
+grep -q '"allow"' "$TMP/plug-web/deny.sh"; check "web-hook-never-allows" 1 $?
+# jq failure -> deny: a hook copy whose baked jq path is dead denies even a search_web call
+sed "s#'$(command -v jq)'#'/nonexistent/jq'#" "$TMP/plug-web/deny.sh" > "$TMP/plug-web/deny-nojq.sh"; chmod +x "$TMP/plug-web/deny-nojq.sh"
+check "web-hook-denies[jq-failure]" "$DENY_WEB" "$(printf '%s' '{"toolCall":{"name":"search_web"}}' | "$TMP/plug-web/deny-nojq.sh" PreToolUse | tr -d '\n')"
+# web hook self-test: a jq that cannot run the hook expression (fake exits 3 on IN( ) refuses
+# --web before agy starts; review mode with the same jq is unaffected. Other calls use real jq.
+FAKEJQ="$TMP/fakejq"; mkdir -p "$FAKEJQ"
+cat > "$FAKEJQ/jq" <<FAKE
+#!/usr/bin/env bash
+for a in "\$@"; do case "\$a" in *'IN('*) exit 3 ;; esac; done
+exec "$(command -v jq)" "\$@"
+FAKE
+chmod +x "$FAKEJQ/jq"
+: > "$RECORD"
+err="$(printf 'x' | PATH="$FAKEJQ:$PATH" ANTIGRAVITY_TIERS_FILE="$TIERS" bash "$WORKER" --web 2>&1 >/dev/null)"; rc=$?
+check "web-self-test-failure-exits-2" 2 "$rc"
+printf '%s' "$err" | grep -q 'web hook self-test failed'; check "web-self-test-failure-names-reason" 0 $?
+check_true "web-self-test-failure-agy-not-invoked" test ! -s "$RECORD"
+: > "$RECORD"
+printf 'x' | PATH="$FAKEJQ:$PATH" ANTIGRAVITY_TIERS_FILE="$TIERS" bash "$WORKER" --tier mid >/dev/null 2>&1
+check "review-mode-unaffected-by-hook-jq-failure" 0 $?
+check_true "review-mode-unaffected-agy-invoked" test -s "$RECORD"
+# an unusable jq path (not an absolute path of safe characters) refuses --web before agy starts
+ODDBIN="$TMP/odd dir"; mkdir -p "$ODDBIN"; ln -sf "$(command -v jq)" "$ODDBIN/jq"
+: > "$RECORD"
+printf 'x' | PATH="$ODDBIN:$PATH" ANTIGRAVITY_TIERS_FILE="$TIERS" bash "$WORKER" --web >/dev/null 2>&1
+check "web-unusable-jq-path-exits-2" 2 $?
+check_true "web-unusable-jq-path-agy-not-invoked" test ! -s "$RECORD"
+printf 'x' | PATH="$ODDBIN:$PATH" ANTIGRAVITY_TIERS_FILE="$TIERS" bash "$WORKER" --tier mid >/dev/null 2>&1
+check "review-mode-ignores-jq-path-shape" 0 $?
+# web mode keeps the fail-closed plugin rule: plugin cannot be written -> exit 2, no agy
+: > "$RECORD"
+printf 'x' | PATH="$FAILBIN:$PATH" HOME="$AH" ANTIGRAVITY_TIERS_FILE="$TIERS" bash "$WORKER" --web >/dev/null 2>&1
+check "web-plugin-write-failure-exits-2" 2 $?
+check_true "web-plugin-write-failure-no-agy-dispatch" test ! -s "$RECORD"
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
