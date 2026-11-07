@@ -121,6 +121,35 @@ check "argon-tiers-file-preflight-refuses-5" 5 $?
 printf '%s' "$int_out" | grep -q 'probe exited 2'; check "argon-tiers-file-preflight-says-probe-exited-2" 0 $?
 [[ ! -s "$AGY_REC" ]]; check "argon-tiers-file-agy-never-invoked" 0 $?
 
+echo
+echo "=== AGENT_WORKER_ACCOUNT rides from the probe's environment into the worker ==="
+# call-worker sets it only on the candidate the usage policy gave an account; the probe runs the
+# worker with the inherited environment, so it reaches the worker with no change to the probe.
+mk_stub "cat > /dev/null
+printf '%s\n' \"\${AGENT_WORKER_ACCOUNT-<unset>}\" >> '$TMP/acct-seen'
+printf '{\"status\":\"SUCCESS\",\"response\":\"$TOKEN\"}\n'"
+: > "$TMP/acct-seen"
+env AGENT_WORKER_ACCOUNT=second AGENT_BACKENDS_FILE="$REG" bash "$PROBE" gemini >/dev/null 2>&1
+check "account-probe-passes-0" 0 $?
+seen_ok=1; [[ "$(cat "$TMP/acct-seen")" == "second" ]] && seen_ok=0
+check "account-reaches-the-worker" 0 "$seen_ok"
+: > "$TMP/acct-seen"
+env -u AGENT_WORKER_ACCOUNT AGENT_BACKENDS_FILE="$REG" bash "$PROBE" gemini >/dev/null 2>&1
+seen_ok=1; [[ "$(cat "$TMP/acct-seen")" == "<unset>" ]] && seen_ok=0
+check "no-account-set-none-seen" 0 "$seen_ok"
+# The real worker behind the real probe: an account its accounts file does not list is refused
+# (exit 2 -> probe exit 5) before agy starts. Temp HOME, so no real account file is read.
+rm -f "$STUB_DIR/antigravity-worker"
+PFHOME="$TMP/pfhome"; mkdir -p "$PFHOME/.agent"
+printf '{"accounts":[{"name":"main"}]}' > "$PFHOME/.agent/antigravity-accounts.json"
+chmod 600 "$PFHOME/.agent/antigravity-accounts.json"
+: > "$AGY_REC"
+acct_out="$(PATH="$INT_BIN:$PATH" HOME="$PFHOME" AGENT_WORKER_ACCOUNT=third AGENT_BACKENDS_FILE="$REG" bash "$PROBE" gemini 2>&1)"
+check "account-unlisted-real-worker-refuses-5" 5 $?
+printf '%s' "$acct_out" | grep -q "account 'third' is not listed"; check "account-unlisted-reason-reaches-the-probe-output" 0 $?
+seen_ok=1; [[ ! -s "$AGY_REC" ]] && seen_ok=0
+check "account-unlisted-agy-never-invoked" 0 "$seen_ok"
+
 # call-worker SIGKILLs the preflight after the registry's preflight_timeout_s; it must sit above
 # the probe's own default limit so the probe's own time-out (clean exit 4) wins
 probe_default="$(grep -o 'ANTIGRAVITY_PREFLIGHT_TIMEOUT_S:-[0-9]*' "$PROBE" | head -n 1 | grep -o '[0-9]*$')"

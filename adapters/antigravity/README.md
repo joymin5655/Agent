@@ -132,6 +132,93 @@ silent. A worker exit 0 therefore does not prove the model made no tool calls, a
 longer fires for tool-use attempts (it still fires for permission soft-denies that agy itself
 raises, for example an `ask` it cannot approve headless).
 
+## Accounts
+
+One host can hold several local agy accounts; the usage policy picks which one a run uses.
+Two kinds of account "slot" exist:
+
+- **Default slot** — agy as it runs today: its login lives in the OS keyring. At most one
+  account can use it.
+- **File slot** — agy runs with `HOME=~/.agy-<name>`. The sandbox forbids the keyring tool
+  (`/usr/bin/security`), so agy falls back to storing its login under that HOME (measured on
+  agy 1.5.2: it logs "falling back to file" and the keyring entry is unchanged).
+
+The owner writes the list, with no secrets in it, to `~/.agent/antigravity-accounts.json`:
+
+```json
+{"accounts": [{"name": "main"}, {"name": "second", "slot": "file"}]}
+```
+
+The file is valid only if all of these hold, otherwise the worker refuses (exit 2):
+
+- it is a regular file (not a symlink), owned by the current user, and not group- or
+  other-writable;
+- it is one JSON object whose `accounts` is an array of 1 to 4 objects;
+- every `name` matches `^[a-z][a-z0-9]{0,15}$` and is unique;
+- `slot` is absent (default slot) or exactly `"file"`;
+- at most one entry has no `slot`.
+
+**Who picks the account.** Neither a caller nor the worker's own flags do. The usage policy
+(`AGENT_WORKER_POLICY_CMD`) is asked `check --lane <vendor> --role <role> --hold <pid> --accounts`
+for a registry backend with `"account_slots": true` (the `gemini` lane) and may answer exit 0
+with `"account": "<name>"` in its JSON. `call-worker.sh` validates the name, then passes
+`AGENT_WORKER_ACCOUNT=<name>` to that candidate's preflight and worker only. An inherited
+`AGENT_WORKER_ACCOUNT` is removed at start, and a name never carries over from one candidate
+to the next. No `account` in the answer means the default slot, exactly as before. The
+preflight runs the worker with its inherited environment, so it probes the same account the
+dispatch will use.
+
+The policy's answer is read from its stdout only. Two or more JSON documents fail closed
+(exit 3). stdout that is not wholly JSON (trailing garbage, a NUL byte, a partial document)
+fails closed only when it mentions `"account"`; otherwise it names no account, like any
+plain-text answer. stderr is never parsed for an account.
+
+The choice is guaranteed only through `call-worker.sh`. A worker started directly trusts
+`AGENT_WORKER_ACCOUNT` (still limited to the accounts the owner listed).
+
+`python3` is required when an account is set (the accounts file is read with it) and, where
+`sandbox-exec` builds the profile, whenever any `~/.agy-*` exists (the read-deny rule below
+resolves real paths with it). Without it the worker exits 2 before agy starts.
+
+**What the worker checks** before agy starts (every failure exits 2, nothing is created):
+
+- the name has the shape above and is listed in a valid accounts file;
+- for a file slot, `~/.agy-<name>` is a real directory (not a symlink) owned by the current user,
+  and `.gemini` and `.antigravity` inside it, if present, are real directories;
+- `ANTIGRAVITY_AUTH=apikey` is not combined with a file slot (refused, exit 2).
+
+A file slot needs `sandbox-exec`: without it the worker exits 7, even with
+`ANTIGRAVITY_WORKER_ALLOW_UNSANDBOXED=1`. Only the agy child gets `HOME=~/.agy-<name>`; the
+tiers file, the work dir and the captures stay under the real `$HOME`.
+
+**What the sandbox adds.**
+
+- Every run, with or without an account: read access to every existing `~/.agy-*` directory
+  is denied, except the current file slot. A directory's real path is denied too, so a
+  symlinked directory cannot dodge the rule. A run never sees the login of another slot
+  directory that exists when the run starts; dangling links, non-directory entries and slots
+  created during a run are not covered.
+- A file slot additionally: writes are allowed only under the work dir, `~/.agy-<name>/.gemini`,
+  `~/.agy-<name>/.antigravity` and `/dev` (the real `~/.gemini` is not writable), with the usual
+  hook, plugin and settings carve-outs applied to the slot's paths; `process-exec` of
+  `/usr/bin/security` is denied; and reading the default slot's token file
+  (`~/.gemini/antigravity-cli/antigravity-oauth-token`, and its real path) is denied. The
+  credential-directory read denies stay based on the real `$HOME`.
+
+Limitation: denying `/usr/bin/security` redirects agy's own login storage into the slot. It
+does not stop a run that has already broken the tool block from copying a binary into a
+writable state dir and executing it. Exec cannot be denied there, because agy itself runs
+helpers from its state dir (for example `.gemini/antigravity-cli/bin/`).
+
+Every path interpolated into the sandbox profile is checked for scheme metacharacters (`"`,
+`(`, `)`, `\` and control characters); a path that fails exits 8.
+
+Exit codes for this feature: 2 = accounts file, name or slot directory unusable (or
+`apikey` with a file slot); 7 = a file slot without `sandbox-exec`; 8 = an unsafe path in the
+sandbox profile. `call-worker.sh` records the account the policy picked for a candidate as an
+`account:` line in the capture header, also on an unavailable capture (preflight failed), so it
+names the pick, not proof that agy ran on it.
+
 ## Tiers file
 
 Argon model ids are separately metered, so the worker refuses them: if any model id in the
