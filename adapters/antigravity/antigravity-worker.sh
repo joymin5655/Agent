@@ -27,6 +27,18 @@
 # of the expected shape, or a jq failure during the scan, also refuses (fail closed).
 # Pin a flash id instead.
 #
+# ACCOUNTS: AGENT_WORKER_ACCOUNT=<name> (set by call-worker.sh from the usage policy, never by a
+# caller) runs agy on one of the local accounts listed in ~/.agent/antigravity-accounts.json
+# (README "Accounts"). A default-slot account is agy as it runs today. A file slot runs agy with
+# HOME=~/.agy-<name> inside a sandbox that also forbids /usr/bin/security, so agy keeps that
+# login in the slot, not in the keyring; it needs sandbox-exec (exit 7 without, whatever
+# ANTIGRAVITY_WORKER_ALLOW_UNSANDBOXED says) and refuses ANTIGRAVITY_AUTH=apikey. Every run
+# also loses read access to the other ~/.agy-* dirs (python3 is required when an account is
+# set, and for the sandbox profile whenever any ~/.agy-* exists). The choice is guaranteed only
+# through call-worker.sh: a worker started directly trusts AGENT_WORKER_ACCOUNT, still limited
+# to the listed accounts.
+# An unusable accounts file, a bad or unlisted name or a bad slot dir exits 2 before agy starts.
+#
 # THREAT MODEL: the prompt carries an untrusted diff (an outside-contributor PR
 # is the lane's normal input), so a prompt can try to drive local action.
 # 1.1.14 posture (historical, measured 2026-08-19): shell exec was denied by default
@@ -80,12 +92,14 @@
 # usage: antigravity-worker [--tier mid|top] [--web] < prompt.md
 #        flags in any order, each at most once; anything else exits 2 before stdin is read
 # env:   ANTIGRAVITY_TIERS_FILE, ANTIGRAVITY_WORKER_ALLOW_UNSANDBOXED=1,
+#        AGENT_WORKER_ACCOUNT (account name, see ACCOUNTS),
 #        ANTIGRAVITY_WORKER_PRINT_TIMEOUT (agy --print-timeout, default 14m: under the
 #        gemini lane's 900s timeout_s, so agy ends the run before the hard kill),
 #        ANTIGRAVITY_AUTH=apikey (opt-in Keychain API key, see AUTH)
 # exit:  agy's own nonzero exit code (incl. the undocumented 3 = envelope status
-#        ERROR); 2 usage/config (incl. a missing Keychain item); 6 mktemp failure;
-#        7 sandbox unavailable (fail closed); 8 unsafe $HOME for a scheme string;
+#        ERROR); 2 usage/config (incl. a missing Keychain item and any account failure);
+#        6 mktemp failure; 7 sandbox unavailable (fail closed; always for a file slot);
+#        8 unsafe $HOME or other path for a scheme string;
 #        9 agy exited 0 but soft-denied a tool call; 10 agy exited 0 but the
 #        envelope is unparseable, its status is not SUCCESS, or its response is
 #        not a non-blank string; 75 quota / rate limit
@@ -135,6 +149,101 @@ if [[ $WEB -eq 1 && ! "$JQ_BIN" =~ ^/[A-Za-z0-9._/+=@%-]+$ ]]; then
     exit 2
 fi
 command -v agy >/dev/null 2>&1 || { echo "antigravity-worker: agy CLI not found on PATH (install: https://antigravity.google/cli/install.sh — auth lives in the OS keyring)" >&2; exit 127; }
+
+# Account slot. call-worker.sh passes AGENT_WORKER_ACCOUNT=<name> only when the usage policy
+# picked an account for this run; the name must be listed in the owner-written accounts file.
+# Resolved before the tiers file is touched (its one-time migration copies a file): every
+# failure exits 2 here, with agy never started and nothing created. ACCOUNT_SLOT is "" (no
+# account), "default" (agy as it runs today, login in the OS keyring) or "file" (agy runs with
+# HOME=$SLOT inside the sandbox, which forbids the keyring tool so agy stores its login there).
+# python3 -I reads the file: O_NOFOLLOW + fstat on the open descriptor, so a symlink or a
+# swapped file cannot slip between the check and the read.
+ACCOUNT="${AGENT_WORKER_ACCOUNT:-}"
+ACCOUNT_SLOT=""
+SLOT=""
+if [[ -n "$ACCOUNT" ]]; then
+    command -v python3 >/dev/null 2>&1 || { echo "antigravity-worker: python3 is required to read the accounts file — refusing" >&2; exit 2; }
+    ACCOUNT_SLOT="$(python3 -I - "$HOME/.agent/antigravity-accounts.json" "$ACCOUNT" <<'ACCOUNTPY'
+import json, os, re, stat, sys
+
+path, name = sys.argv[1], sys.argv[2]
+NAME = re.compile(r"[a-z][a-z0-9]{0,15}")
+
+
+def fail(msg):
+    sys.stderr.write("antigravity-worker: " + msg + " - refusing\n")
+    sys.exit(2)
+
+
+if not NAME.fullmatch(name):
+    fail("AGENT_WORKER_ACCOUNT is not a valid account name (a lowercase letter, then up to 15 "
+         "lowercase letters or digits)")
+try:
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+except OSError:
+    fail("the accounts file ~/.agent/antigravity-accounts.json is missing, unreadable or a symlink")
+with os.fdopen(fd, "rb") as f:
+    st = os.fstat(f.fileno())
+    if not stat.S_ISREG(st.st_mode):
+        fail("the accounts file is not a regular file")
+    if st.st_uid != os.getuid():
+        fail("the accounts file is not owned by the current user")
+    if st.st_mode & 0o022:
+        fail("the accounts file is group- or other-writable")
+    raw = f.read(65537)
+if len(raw) > 65536:
+    fail("the accounts file is larger than 64 KiB")
+try:
+    doc = json.loads(raw.decode("utf-8"))
+except (ValueError, RecursionError):
+    fail("the accounts file is not valid JSON")
+accounts = doc.get("accounts") if isinstance(doc, dict) else None
+if not isinstance(accounts, list) or not 1 <= len(accounts) <= 4:
+    fail("the accounts file must be one object whose accounts is an array of 1-4 entries")
+slots = {}
+default_slots = 0
+for entry in accounts:
+    n = entry.get("name") if isinstance(entry, dict) else None
+    if not isinstance(n, str) or not NAME.fullmatch(n):
+        fail("an accounts entry has no valid name")
+    if n in slots:
+        fail("the accounts file lists a name twice")
+    if "slot" not in entry:
+        slots[n] = "default"
+        default_slots += 1
+    elif entry["slot"] == "file":
+        slots[n] = "file"
+    else:
+        fail("an accounts entry has a slot other than file")
+if default_slots > 1:
+    fail("the accounts file has more than one default-slot entry")
+if name not in slots:
+    fail("account '" + name + "' is not listed in the accounts file")
+print(slots[name])
+ACCOUNTPY
+)" || exit 2
+    case "$ACCOUNT_SLOT" in
+        default|file) ;;
+        *) echo "antigravity-worker: the accounts check gave no slot kind — refusing" >&2; exit 2 ;;
+    esac
+    if [[ "$ACCOUNT_SLOT" == file ]]; then
+        if [[ "${ANTIGRAVITY_AUTH:-}" == "apikey" ]]; then
+            echo "antigravity-worker: ANTIGRAVITY_AUTH=apikey cannot be combined with a file slot account — refusing" >&2
+            exit 2
+        fi
+        SLOT="$HOME/.agy-$ACCOUNT"
+        if [[ ! -d "$SLOT" || -L "$SLOT" || ! -O "$SLOT" ]]; then
+            echo "antigravity-worker: the file slot for account '$ACCOUNT' must be a real directory (not a symlink) owned by the current user at ~/.agy-$ACCOUNT — refusing" >&2
+            exit 2
+        fi
+        for sub in .gemini .antigravity; do
+            if [[ ( -e "$SLOT/$sub" || -L "$SLOT/$sub" ) && ( ! -d "$SLOT/$sub" || -L "$SLOT/$sub" ) ]]; then
+                echo "antigravity-worker: ~/.agy-$ACCOUNT/$sub must be a real directory, not a symlink or a file — refusing" >&2
+                exit 2
+            fi
+        done
+    fi
+fi
 
 NEW_TIERS_FILE="$HOME/.agent/antigravity-tiers.json"
 OLD_TIERS_FILE="$HOME/.gemini/antigravity-cli/agent-tiers.json"
@@ -250,9 +359,17 @@ export AGENT_ANTIGRAVITY_WORKER=1
 # $HOME is interpolated into the SBPL scheme string; a value containing scheme
 # metacharacters could widen the profile. Refuse rather than emit a profile
 # whose meaning we can't vouch for.
-case "$HOME" in
-    *'"'*|*'('*|*')'*|*'\'*) echo "antigravity-worker: \$HOME contains a scheme metacharacter — refusing to build a sandbox profile" >&2; exit 8 ;;
-esac
+# Every other path interpolated below (WORK_DIR, the file slot, the other ~/.agy-* dirs and
+# their real paths) is held to the same rule; a control character counts as one too.
+scheme_unsafe() {
+    # shellcheck disable=SC1003  # '\' is one literal backslash, not an escaped quote
+    case "$1" in *'"'*|*'('*|*')'*|*'\'*) return 0 ;; esac
+    [[ "$1" == *[[:cntrl:]]* ]]
+}
+if scheme_unsafe "$HOME"; then
+    echo "antigravity-worker: \$HOME contains a scheme metacharacter — refusing to build a sandbox profile" >&2
+    exit 8
+fi
 
 WORK_DIR="$(mktemp -d)" || { echo "antigravity-worker: mktemp -d failed" >&2; exit 6; }
 PROMPT_FILE="$WORK_DIR/prompt.md"   # inside WORK_DIR so cleanup takes it too
@@ -365,18 +482,83 @@ if command -v sandbox-exec >/dev/null 2>&1; then
     # be widened by an injected write; unmeasured whether agy runs without it).
     # Network + process-exec stay open: agy needs the vendor API, and denying
     # process-exec blocks the CLI's own launch. Later matching SBPL rule wins.
+    # With a file slot the writable state dir and its carve-outs sit under $SLOT instead of
+    # the real $HOME, so the real ~/.gemini is not writable, and two more rules apply (below).
+    sb_fail() { rm -rf "$WORK_DIR"; echo "antigravity-worker: $1" >&2; exit "$2"; }
+    sb_check() {  # sb_check <path>: one path headed for the profile must carry no metacharacter
+        if scheme_unsafe "$1"; then sb_fail "a path for the sandbox profile contains a scheme metacharacter — refusing to build it" 8; fi
+    }
+    # rpath <var> <path>: <var> = the exact real path. python adds a "/" so command substitution
+    # cannot strip a trailing newline that belongs to the name; exactly that one "/" is removed.
+    rpath() {
+        local o
+        o="$(python3 -I -c 'import os, sys; sys.stdout.write(os.path.realpath(sys.argv[1]) + "/")' "$2")" || return 1
+        printf -v "$1" '%s' "${o%/}"
+    }
+    sb_check "$WORK_DIR"
+    STATE_BASE="$HOME"
+    if [[ "$ACCOUNT_SLOT" == file ]]; then
+        sb_check "$SLOT"
+        STATE_BASE="$SLOT"
+    fi
+    # Every existing ~/.agy-* dir except the current file slot is unreadable: one account's run
+    # must not see another account's stored login. Each real path is denied too, so a symlinked
+    # dir cannot dodge a subpath rule. An unmatched glob stays a literal pattern: -d skips it.
+    SB_OTHER_AGY=""
+    SLOT_RP=""
+    d_rp=""
+    if [[ -n "$SLOT" ]]; then rpath SLOT_RP "$SLOT" || sb_fail "python3 failed resolving the file slot — refusing" 2; fi
+    for d in "$HOME"/.agy-*; do
+        [[ -d "$d" && "$d" != "$SLOT" ]] || continue
+        rpath d_rp "$d" || sb_fail "python3 failed resolving an ~/.agy-* dir — refusing" 2
+        [[ -z "$SLOT_RP" || "$d_rp" != "$SLOT_RP" ]] || continue
+        sb_check "$d"
+        SB_OTHER_AGY+=" (subpath \"$d\")"
+        if [[ "$d_rp" != "$d" ]]; then
+            sb_check "$d_rp"
+            SB_OTHER_AGY+=" (subpath \"$d_rp\")"
+        fi
+    done
     SBPROF='(version 1)(allow default)
 (deny file-write*)
-(allow file-write* (subpath "'"$WORK_DIR"'") (subpath "'"$HOME"'/.gemini") (subpath "'"$HOME"'/.antigravity") (subpath "/dev"))
-(deny file-write* (literal "'"$HOME"'/.gemini/config/hooks.json") (subpath "'"$HOME"'/.gemini/config/plugins") (literal "'"$HOME"'/.gemini/settings.json"))
+(allow file-write* (subpath "'"$WORK_DIR"'") (subpath "'"$STATE_BASE"'/.gemini") (subpath "'"$STATE_BASE"'/.antigravity") (subpath "/dev"))
+(deny file-write* (literal "'"$STATE_BASE"'/.gemini/config/hooks.json") (subpath "'"$STATE_BASE"'/.gemini/config/plugins") (literal "'"$STATE_BASE"'/.gemini/settings.json"))
 (deny file-read* (subpath "'"$HOME"'/.ssh") (subpath "'"$HOME"'/.aws") (subpath "'"$HOME"'/.config") (subpath "'"$HOME"'/.codex") (subpath "'"$HOME"'/.grok"))'
-    RUN=(sandbox-exec -p "$SBPROF" "${CMD[@]}")
-elif [[ "${ANTIGRAVITY_WORKER_ALLOW_UNSANDBOXED:-0}" == "1" ]]; then
+    if [[ -n "$SB_OTHER_AGY" ]]; then
+        SBPROF+="
+(deny file-read*$SB_OTHER_AGY)"
+    fi
+    if [[ "$ACCOUNT_SLOT" == file ]]; then
+        # The keyring tool is forbidden (agy then falls back to storing its login under
+        # $SLOT — measured on agy 1.5.2: "falling back to file", keyring entry unchanged), and the
+        # default slot's stored token file is unreadable so this account never borrows it.
+        TOKEN="$HOME/.gemini/antigravity-cli/antigravity-oauth-token"
+        rpath TOKEN_RP "$TOKEN" || sb_fail "python3 failed resolving the default token path — refusing" 2
+        sb_check "$TOKEN"
+        SBPROF+='
+(deny process-exec (literal "/usr/bin/security"))
+(deny file-read* (literal "'"$TOKEN"'")'
+        if [[ "$TOKEN_RP" != "$TOKEN" ]]; then
+            sb_check "$TOKEN_RP"
+            SBPROF+=' (literal "'"$TOKEN_RP"'")'
+        fi
+        SBPROF+=')'
+        # env sets HOME for the agy child only: the worker's own tiers file, work dir and
+        # captures keep the real $HOME.
+        RUN=(sandbox-exec -p "$SBPROF" /usr/bin/env HOME="$SLOT" "${CMD[@]}")
+    else
+        RUN=(sandbox-exec -p "$SBPROF" "${CMD[@]}")
+    fi
+elif [[ "$ACCOUNT_SLOT" != file && "${ANTIGRAVITY_WORKER_ALLOW_UNSANDBOXED:-0}" == "1" ]]; then
     echo "antigravity-worker: WARNING dispatching UNSANDBOXED (ANTIGRAVITY_WORKER_ALLOW_UNSANDBOXED=1) — only review trusted content this way" >&2
     RUN=("${CMD[@]}")
 else
     rm -rf "$WORK_DIR"
-    echo "antigravity-worker: sandbox-exec not available. Refusing; set ANTIGRAVITY_WORKER_ALLOW_UNSANDBOXED=1 to accept an unsandboxed dispatch." >&2
+    if [[ "$ACCOUNT_SLOT" == file ]]; then
+        echo "antigravity-worker: a file slot account needs sandbox-exec (it keeps the keyring tool out of agy); ANTIGRAVITY_WORKER_ALLOW_UNSANDBOXED does not apply — refusing" >&2
+    else
+        echo "antigravity-worker: sandbox-exec not available. Refusing; set ANTIGRAVITY_WORKER_ALLOW_UNSANDBOXED=1 to accept an unsandboxed dispatch." >&2
+    fi
     exit 7
 fi
 

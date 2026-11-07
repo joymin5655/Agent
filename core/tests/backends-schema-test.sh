@@ -231,6 +231,14 @@ check "codex-timeout-at-least-600s" $?
 jq -e '.roles.advisor.backend == "codex"' "$REGISTRY" >/dev/null 2>&1
 check "advisor-role-kept" $?
 
+# account_slots opts a backend into the policy's --accounts handshake (call-worker.sh); the
+# antigravity lane is the one that runs on several local accounts.
+jq -e '[.backends[] | select(has("account_slots")) | .account_slots | type == "boolean"] | all' \
+    "$REGISTRY" >/dev/null 2>&1
+check "account-slots-is-a-boolean" $?
+jq -e '.backends.gemini.account_slots == true' "$REGISTRY" >/dev/null 2>&1
+check "gemini-lane-has-account-slots" $?
+
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]
