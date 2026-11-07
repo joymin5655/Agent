@@ -540,10 +540,38 @@ argon_case argon-in-model '{ "model": "gemini-4-argon-high", "tiers": { "MID": [
 argon_case argon-only-in-top '{ "model": "gemini-3.1-pro-low", "tiers": { "MID": [], "TOP": ["--model", "gemini-4-argon-high"] } }' --tier mid
 argon_case argon-mixed-case '{ "model": "Gemini-4-ARGON-high", "tiers": { "MID": [] } }' --tier mid
 argon_case argon-in-mid-tier-called-top '{ "model": "gemini-3.1-pro-low", "tiers": { "MID": ["--model", "gemini-4-argon-low"], "TOP": [] } }' --tier top
+# a tiers file of the wrong shape or with extra JSON refuses (fail closed) before any scan
+malformed_case() {  # malformed_case <name> <tiers-file-content> <worker-args...>
+  local name="$1" content="$2"; shift 2
+  printf '%s\n' "$content" > "$TMP/argon.json"
+  : > "$RECORD"
+  local err rc
+  err="$(printf 'x' | ANTIGRAVITY_TIERS_FILE="$TMP/argon.json" bash "$WORKER" "$@" 2>&1 >/dev/null)"
+  rc=$?
+  check "$name-exits-2" 2 "$rc"
+  printf '%s' "$err" | grep -q 'is malformed'; check "$name-names-tiers-file-problem" 0 $?
+  check_true "$name-agy-not-invoked" test ! -s "$RECORD"
+}
+malformed_case tiers-unused-non-array '{ "model": "gemini-3.1-pro-low", "tiers": { "BROKEN": 42, "MID": [], "TOP": ["--model", "gemini-4-argon-high"] } }' --tier mid
+malformed_case tiers-second-json-value '{ "model": "gemini-3.1-pro-low", "tiers": { "MID": [] } }
+{}' --tier mid
+malformed_case tiers-top-is-string-argon-model '{ "model": "gemini-4-argon-high", "tiers": { "TOP": "x" } }' --tier mid
+malformed_case tiers-model-is-number '{ "model": 7, "tiers": { "MID": [] } }' --tier mid
+malformed_case tiers-top-level-array '[{ "model": "gemini-3.1-pro-low" }]' --tier mid
+malformed_case tiers-array-with-non-string '{ "model": "gemini-3.1-pro-low", "tiers": { "MID": ["--effort", 5] } }' --tier mid
+malformed_case tiers-not-json 'not json' --tier mid
+# a --model=<id> form that parses is still an Argon refusal (the scan covers every string)
+argon_case argon-equals-form-in-unused-tier '{ "model": "gemini-3.1-pro-low", "tiers": { "MID": [], "TOP": ["--model=gemini-4-argon-high"] } }' --tier mid
 # control: a clean tiers file still dispatches
 : > "$RECORD"
 printf 'x' | ANTIGRAVITY_TIERS_FILE="$TIERS" bash "$WORKER" --tier mid >/dev/null 2>&1
 check "no-argon-still-dispatches" 0 $?
+check_true "no-argon-agy-invoked" test -s "$RECORD"
+# control: a "comment" key may mention argon; only .model and .tiers are scanned
+printf '%s\n' '{ "comment": "never pin an argon id", "model": "gemini-3.1-pro-low", "tiers": { "MID": [], "TOP": ["--model", "gemini-3.1-pro-high"] } }' > "$TMP/argon.json"
+: > "$RECORD"
+printf 'x' | ANTIGRAVITY_TIERS_FILE="$TMP/argon.json" bash "$WORKER" --tier mid >/dev/null 2>&1
+check "comment-mentioning-argon-still-dispatches" 0 $?
 check_true "no-argon-agy-invoked" test -s "$RECORD"
 
 echo

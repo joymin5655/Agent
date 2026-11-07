@@ -22,8 +22,10 @@
 # The worker also exports AGENT_ANTIGRAVITY_WORKER=1 so the harness hook adapter
 # can tell it is running under a review worker (deny-all tools).
 # ARGON: model ids containing "argon" (any case) are separately metered and are refused
-# (exit 2, agy never invoked) if they appear ANYWHERE in the tiers file — .model or any
-# tier's --model — even in a tier this call does not use. Pin a flash id instead.
+# (exit 2, agy never invoked) if any string in .model or anywhere under .tiers contains it,
+# even in a tier this call does not use. A tiers file that is not exactly one JSON object
+# of the expected shape, or a jq failure during the scan, also refuses (fail closed).
+# Pin a flash id instead.
 #
 # THREAT MODEL: the prompt carries an untrusted diff (an outside-contributor PR
 # is the lane's normal input), so a prompt can try to drive local action.
@@ -161,14 +163,30 @@ valid_model() { [[ "$1" =~ ^gemini-[0-9]+\.[0-9]+-(pro|flash)-(low|medium|high)$
 valid_effort() { [[ "$1" =~ ^(low|medium|high|max)$ ]]; }
 
 # Argon ids are separately metered: refuse ANY of them anywhere in the tiers file (the
-# base .model and every "--model" value in every tier), even in a tier this call does
-# not use, so a later --tier top cannot reach one. Runs before any model resolution;
-# agy is never invoked.
-if jq -e '[.model // empty, (.tiers // {} | .[]? | . as $a | range(0; length) | select($a[.] == "--model") | $a[. + 1] // empty)]
-          | map(tostring | ascii_downcase | contains("argon")) | any' "$TIERS_FILE" >/dev/null 2>&1; then
-    echo "antigravity-worker: Argon ids are not accepted — separately metered; pin a flash id ($TIERS_FILE)" >&2
+# base .model and every string under .tiers), even in a tier this call does not use, so a
+# later --tier top cannot reach one. Fail closed twice: the file must first be exactly one
+# JSON object of the expected shape (so no unused slot can hide a value the scan skips),
+# and any jq status other than the two expected results refuses. Other keys (a "comment")
+# are allowed and never scanned. Runs before any model resolution; agy is never invoked.
+if ! jq -es 'length == 1 and (.[0] | type) == "object"
+             and ((.[0] | has("model") | not) or (.[0].model | type) == "string")
+             and ((.[0] | has("tiers") | not)
+                  or ((.[0].tiers | type) == "object"
+                      and (.[0].tiers | all(.[]; type == "array" and all(.[]; type == "string")))))' \
+        "$TIERS_FILE" >/dev/null 2>&1; then
+    echo "antigravity-worker: tiers file $TIERS_FILE is malformed — it must be exactly one JSON object, .model a string, .tiers an object of arrays of strings" >&2
     exit 2
 fi
+argon_rc=0
+jq -e '[.model // empty, (.tiers // {} | .[] | .[])] | map(ascii_downcase | contains("argon")) | any' \
+    "$TIERS_FILE" >/dev/null 2>&1 || argon_rc=$?
+case $argon_rc in
+    0) echo "antigravity-worker: Argon ids are not accepted — separately metered; pin a flash id ($TIERS_FILE)" >&2
+       exit 2 ;;
+    1) ;;
+    *) echo "antigravity-worker: could not check the tiers file for Argon ids ($TIERS_FILE) — refusing" >&2
+       exit 2 ;;
+esac
 
 BASE_MODEL="$(jq -r '.model // empty' "$TIERS_FILE")"
 [[ -n "$BASE_MODEL" ]] || { echo "antigravity-worker: tiers file $TIERS_FILE pins no .model" >&2; exit 2; }
