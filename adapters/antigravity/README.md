@@ -121,7 +121,8 @@ An empty `"denied_actions":[]` is not a soft-deny.
 
 Any agy nonzero exit code (including 3) passes through the worker unchanged, except a quota
 signal, which becomes 75; the preflight
-reports every such probe exit as 5 (state unknown). A hook-level deny
+reports every such probe exit as 5 (state unknown). The probe's time limit is 120 s (`ANTIGRAVITY_PREFLIGHT_TIMEOUT_S`; one account's single-token
+replies took 35-101 s on 2026-11-07, which a 60 s limit reported as an unavailable lane). A hook-level deny
 is invisible to the caller: it is exit 0, status `SUCCESS`, no stderr, no `denied_actions` (a
 denied step just shows up in the transcript as `tool call denied by pre-tool hook`), so it
 does not trip exit 9. A worker dispatch is exactly that case: the workspace hook (and,

@@ -21,7 +21,7 @@
 # usage: antigravity-preflight.sh [lane]           # lane = a backends.json backend name
 # env:   AGENT_PREFLIGHT_LANE (lane when no argv — call-worker.sh sets it)
 #        AGENT_BACKENDS_FILE  (registry path — call-worker.sh sets it)
-#        ANTIGRAVITY_PREFLIGHT_TIMEOUT_S (default 60)
+#        ANTIGRAVITY_PREFLIGHT_TIMEOUT_S (default 120)
 # exit:  0 reachable+authenticated | 1 worker/CLI missing | 3 auth rejected
 #        4 probe timed out | 5 probe failed / no success token | 6 mktemp
 #        failure | 7 registry/lane unusable | 8 tool call soft-denied (absent)
@@ -39,7 +39,9 @@ SELF_DIR="$(cd "$(dirname "$self")" && pwd)"
 
 LANE="${1:-${AGENT_PREFLIGHT_LANE:-gemini}}"
 REGISTRY="${AGENT_BACKENDS_FILE:-$SELF_DIR/../../core/infra/backends.json}"
-PROBE_TIMEOUT_S="${ANTIGRAVITY_PREFLIGHT_TIMEOUT_S:-60}"
+# 120 s, not 60: measured 2026-11-07, one account's single-token replies took 35-101 s for most
+# of the day (0.2-2.4 s the day before), so a 60 s probe marked a working lane unavailable.
+PROBE_TIMEOUT_S="${ANTIGRAVITY_PREFLIGHT_TIMEOUT_S:-120}"
 PROBE_TOKEN="ANTIGRAVITY-PREFLIGHT-OK-7d3f1a"
 PROBE_PROMPT="Reply with exactly this token and nothing else: $PROBE_TOKEN"
 
