@@ -124,6 +124,16 @@ fi
 valid_model() { [[ "$1" =~ ^gemini-[0-9]+\.[0-9]+-(pro|flash)-(low|medium|high)$ ]]; }
 valid_effort() { [[ "$1" =~ ^(low|medium|high|max)$ ]]; }
 
+# Argon ids are separately metered: refuse ANY of them anywhere in the tiers file (the
+# base .model and every "--model" value in every tier), even in a tier this call does
+# not use, so a later --tier top cannot reach one. Runs before any model resolution;
+# agy is never invoked.
+if jq -e '[.model // empty, (.tiers // {} | .[]? | . as $a | range(0; length) | select($a[.] == "--model") | $a[. + 1] // empty)]
+          | map(tostring | ascii_downcase | contains("argon")) | any' "$TIERS_FILE" >/dev/null 2>&1; then
+    echo "antigravity-worker: Argon ids are not accepted — separately metered; pin a flash id ($TIERS_FILE)" >&2
+    exit 2
+fi
+
 BASE_MODEL="$(jq -r '.model // empty' "$TIERS_FILE")"
 [[ -n "$BASE_MODEL" ]] || { echo "antigravity-worker: tiers file $TIERS_FILE pins no .model" >&2; exit 2; }
 TIER_KEY="$(printf '%s' "$TIER" | tr '[:lower:]' '[:upper:]')"
