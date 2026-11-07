@@ -340,7 +340,11 @@ shared blind spot doesn't survive review.
   cap is the user's own decision in the policy. Any other exit, a hang past
   `AGENT_WORKER_POLICY_TIMEOUT_S` (default 30; the policy runs as its own process group
   and the whole group is killed) or a command that is set but not callable fails closed
-  (exit 3), YES or not. With no policy set, `AGENT_WORKER_YES=1` is the only approval.
+  (exit 3), YES or not. A backend with `"account_slots": true` (the `gemini` lane) is asked
+  with `--accounts` appended; the policy may then add `"account": "<name>"` to its exit-0
+  JSON, which reaches only that candidate's preflight and worker as `AGENT_WORKER_ACCOUNT`
+  (see `adapters/antigravity/README.md` "Accounts"); a malformed name fails closed (exit 3).
+  With no policy set, `AGENT_WORKER_YES=1` is the only approval.
   An `anthropic` backend is not asked only while it is plainly the host's own
   subscription: the registry is the shipped one (`AGENT_BACKENDS_FILE` empty or that same
   file) and none of `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`,

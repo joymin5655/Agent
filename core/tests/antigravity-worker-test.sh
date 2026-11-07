@@ -49,6 +49,7 @@ cat > "$STUB_DIR/agy" <<STUB
 {
   printf 'GEMINI_API_KEY=%s\n' "\${GEMINI_API_KEY-<unset>}"
   printf 'AGENT_ANTIGRAVITY_WORKER=%s\n' "\${AGENT_ANTIGRAVITY_WORKER-<unset>}"
+  printf 'HOME=%s\n' "\$HOME"
   # The workspace deny plugin the worker must have written BEFORE agy starts.
   d=.agents/plugins/agent-worker-deny
   printf 'DENY_PLUGIN=%s\n' "\$([[ -f \$d/hooks.json && -f \$d/plugin.json && -x \$d/deny.sh ]] && echo present || echo absent)"
@@ -700,6 +701,226 @@ check "review-mode-ignores-jq-path-shape" 0 $?
 printf 'x' | PATH="$FAILBIN:$PATH" HOME="$AH" ANTIGRAVITY_TIERS_FILE="$TIERS" bash "$WORKER" --web >/dev/null 2>&1
 check "web-plugin-write-failure-exits-2" 2 $?
 check_true "web-plugin-write-failure-no-agy-dispatch" test ! -s "$RECORD"
+
+echo
+echo "=== (r) account slots: AGENT_WORKER_ACCOUNT + the owner-written accounts file ==="
+# Every case here runs on a temp HOME (physical path: the sandbox matches real paths): nothing
+# reads or writes the real ~/.agent, ~/.gemini, ~/.agy-* or the keyring. The tiers file lives
+# under that HOME too, so a model that reaches agy proves the worker still reads it from the
+# real (here: temp) HOME while only the agy child gets HOME=<slot>.
+ACH="$(cd "$TMP" && pwd -P)/achome"
+ACC_FILE="$ACH/.agent/antigravity-accounts.json"
+acct_home() {  # acct_home — a fresh temp HOME with a tiers file and the two usual slot dirs
+  rm -rf "$ACH"; mkdir -p "$ACH/.agent" "$ACH/.agy-second"
+  cat > "$ACH/.agent/antigravity-tiers.json" <<'JSON'
+{ "model": "gemini-3.8-flash-medium", "tiers": { "MID": [], "TOP": [] } }
+JSON
+}
+acct_file() { printf '%s' "$1" > "$ACC_FILE"; chmod 600 "$ACC_FILE"; }
+ACC_OK='{"accounts":[{"name":"main"},{"name":"second","slot":"file"}]}'
+acct_run() {  # acct_run <name> [VAR=value...] -> worker exit code, with the agy records cleared
+  local n="$1"; shift
+  : > "$RECORD"; : > "$ENVREC"; : > "$SECREC"; rm -f "$PROFILE_REC"
+  printf 'x' | env HOME="$ACH" AGENT_WORKER_ACCOUNT="$n" PROFILE_REC="$PROFILE_REC" "$@" \
+    bash "$WORKER" --tier mid >/dev/null 2>"$TMP/acct.err"
+}
+acct_refused() {  # acct_refused <case> <want-rc> — agy never started, nothing recorded
+  check "$1-exits-$2" "$2" "$3"
+  check_true "$1-agy-not-invoked" test ! -s "$RECORD"
+}
+
+acct_home; acct_file "$ACC_OK"
+for bad in 'Bad-Name' '1abc' 'toolongname1234567' 'a b' '../x' 'UPPER' 'a.b'; do
+  acct_run "$bad"; rc=$?; acct_refused "bad-name[$bad]" 2 "$rc"
+done
+acct_run third; rc=$?; acct_refused "name-not-listed" 2 "$rc"
+grep -q "account 'third' is not listed" "$TMP/acct.err"; check "not-listed-reason-one-line" 0 $?
+
+acct_home; rm -f "$ACC_FILE"
+acct_run main; rc=$?; acct_refused "accounts-file-missing" 2 "$rc"
+acct_home; printf '%s' "$ACC_OK" > "$TMP/real-accounts.json"; chmod 600 "$TMP/real-accounts.json"
+ln -s "$TMP/real-accounts.json" "$ACC_FILE"
+acct_run main; rc=$?; acct_refused "accounts-file-symlink" 2 "$rc"
+acct_home; acct_file "$ACC_OK"; chmod 660 "$ACC_FILE"
+acct_run main; rc=$?; acct_refused "accounts-file-group-writable" 2 "$rc"
+acct_home; acct_file "$ACC_OK"; chmod 602 "$ACC_FILE"
+acct_run main; rc=$?; acct_refused "accounts-file-other-writable" 2 "$rc"
+acct_home; acct_file 'not json {'
+acct_run main; rc=$?; acct_refused "accounts-file-not-json" 2 "$rc"
+acct_home; acct_file '[{"name":"main"}]'
+acct_run main; rc=$?; acct_refused "accounts-file-not-an-object" 2 "$rc"
+acct_home; acct_file '{"accounts":[]}'
+acct_run main; rc=$?; acct_refused "accounts-empty" 2 "$rc"
+acct_home; acct_file '{"accounts":[{"name":"main"},{"name":"main","slot":"file"}]}'
+acct_run main; rc=$?; acct_refused "accounts-duplicate-names" 2 "$rc"
+acct_home; acct_file '{"accounts":[{"name":"a","slot":"file"},{"name":"b","slot":"file"},{"name":"c","slot":"file"},{"name":"d","slot":"file"},{"name":"e","slot":"file"}]}'
+acct_run a; rc=$?; acct_refused "accounts-five-entries" 2 "$rc"
+acct_home; acct_file '{"accounts":[{"name":"main"},{"name":"other"}]}'
+acct_run main; rc=$?; acct_refused "accounts-two-default-slots" 2 "$rc"
+acct_home; acct_file '{"accounts":[{"name":"main","slot":"x"}]}'
+acct_run main; rc=$?; acct_refused "accounts-slot-x" 2 "$rc"
+acct_home; acct_file '{"accounts":[{"name":"main","slot":null}]}'
+acct_run main; rc=$?; acct_refused "accounts-slot-null" 2 "$rc"
+acct_home; acct_file '{"accounts":[{"name":"Main"}]}'
+acct_run main; rc=$?; acct_refused "accounts-entry-bad-name" 2 "$rc"
+# a FIFO in place of the file must be refused, not block the worker
+acct_home; mkfifo "$ACC_FILE"
+acct_run main; rc=$?; acct_refused "accounts-file-fifo" 2 "$rc"
+
+echo
+echo "--- default slot: exactly as with no account (real HOME for agy) ---"
+acct_home; acct_file "$ACC_OK"; mkdir "$ACH/.agy-other"
+acct_run main; rc=$?
+check "default-slot-exits-0" 0 "$rc"
+check_true "default-slot-agy-home-is-real-home" grep -qx "HOME=$ACH" "$ENVREC"
+check_true "default-slot-model-from-real-home-tiers" grep -q -- '--model gemini-3.8-flash-medium' "$RECORD"
+grep -qF '(deny process-exec' "$PROFILE_REC"; check "default-slot-profile-no-exec-deny" 1 $?
+grep -qF "(subpath \"$ACH/.gemini\")" "$PROFILE_REC"; check "default-slot-profile-writes-real-gemini" 0 $?
+grep -qF "(deny file-read* (subpath \"$ACH/.agy-other\") (subpath \"$ACH/.agy-second\"))" "$PROFILE_REC"; check "default-slot-profile-denies-every-agy-dir" 0 $?
+
+echo
+echo "--- no account: only the new read deny is added ---"
+acct_run "" ; rc=$?
+check "no-account-exits-0" 0 "$rc"
+check_true "no-account-agy-home-is-real-home" grep -qx "HOME=$ACH" "$ENVREC"
+grep -qF "(deny file-read* (subpath \"$ACH/.agy-other\") (subpath \"$ACH/.agy-second\"))" "$PROFILE_REC"; check "no-account-profile-denies-every-agy-dir" 0 $?
+grep -qF '(deny process-exec' "$PROFILE_REC"; check "no-account-profile-no-exec-deny" 1 $?
+# no ~/.agy-* dir at all: no literal glob pattern and no empty rule is left behind
+acct_home; rmdir "$ACH/.agy-second"
+acct_run ""; rc=$?
+check "no-agy-dirs-exits-0" 0 "$rc"
+grep -qF '.agy-' "$PROFILE_REC"; check "no-agy-dirs-profile-has-no-agy-rule" 1 $?
+grep -qF '(deny file-read*)' "$PROFILE_REC"; check "no-agy-dirs-profile-has-no-empty-rule" 1 $?
+
+echo
+echo "--- file slot: HOME for agy only, keyring tool and the default token are off limits ---"
+acct_home; acct_file "$ACC_OK"; mkdir "$ACH/.agy-other"
+mkdir -p "$ACH/.agy-second/.gemini" "$ACH/.agy-second/.antigravity"
+acct_run second; rc=$?
+check "file-slot-exits-0" 0 "$rc"
+check_true "file-slot-agy-home-is-the-slot" grep -qx "HOME=$ACH/.agy-second" "$ENVREC"
+check_true "file-slot-model-from-real-home-tiers" grep -q -- '--model gemini-3.8-flash-medium' "$RECORD"
+check_true "file-slot-profile-denies-security-exec" grep -qF '(deny process-exec (literal "/usr/bin/security"))' "$PROFILE_REC"
+check_true "file-slot-profile-writes-slot-gemini" grep -qF "(subpath \"$ACH/.agy-second/.gemini\")" "$PROFILE_REC"
+check_true "file-slot-profile-writes-slot-antigravity" grep -qF "(subpath \"$ACH/.agy-second/.antigravity\")" "$PROFILE_REC"
+grep -qF "(subpath \"$ACH/.gemini\")" "$PROFILE_REC"; check "file-slot-profile-real-gemini-not-writable" 1 $?
+check_true "file-slot-profile-carves-out-slot-hooks" grep -qF "(literal \"$ACH/.agy-second/.gemini/config/hooks.json\")" "$PROFILE_REC"
+check_true "file-slot-profile-carves-out-slot-plugins" grep -qF "(subpath \"$ACH/.agy-second/.gemini/config/plugins\")" "$PROFILE_REC"
+check_true "file-slot-profile-carves-out-slot-settings" grep -qF "(literal \"$ACH/.agy-second/.gemini/settings.json\")" "$PROFILE_REC"
+check_true "file-slot-profile-denies-default-token" grep -qF "(deny file-read* (literal \"$ACH/.gemini/antigravity-cli/antigravity-oauth-token\"))" "$PROFILE_REC"
+check_true "file-slot-profile-denies-other-agy-dir" grep -qF "(deny file-read* (subpath \"$ACH/.agy-other\"))" "$PROFILE_REC"
+grep -qF "(subpath \"$ACH/.agy-second\")" "$PROFILE_REC"; check "file-slot-profile-does-not-deny-own-slot" 1 $?
+check_true "file-slot-profile-keeps-secret-dir-denies-on-real-home" grep -qF "(subpath \"$ACH/.ssh\")" "$PROFILE_REC"
+check_true "file-slot-no-keychain-call" test ! -s "$SECREC"
+# the slot dir may start without .gemini / .antigravity
+acct_home; acct_file "$ACC_OK"
+acct_run second; rc=$?
+check "file-slot-bare-dir-exits-0" 0 "$rc"
+# a symlinked other dir is denied under both names
+acct_home; acct_file "$ACC_OK"; mkdir "$TMP/elsewhere"; ln -s "$TMP/elsewhere" "$ACH/.agy-link"
+acct_run second; rc=$?
+check "file-slot-symlinked-other-dir-exits-0" 0 "$rc"
+check_true "file-slot-symlinked-other-dir-link-denied" grep -qF "(subpath \"$ACH/.agy-link\")" "$PROFILE_REC"
+check_true "file-slot-symlinked-other-dir-target-denied" grep -qF "(subpath \"$(cd "$TMP/elsewhere" && pwd -P)\")" "$PROFILE_REC"
+# a link that resolves to the file slot itself is not denied (it would lock the run out)
+acct_home; acct_file "$ACC_OK"; ln -s "$ACH/.agy-second" "$ACH/.agy-alias"
+acct_run second; rc=$?
+check "file-slot-alias-of-own-slot-exits-0" 0 "$rc"
+grep -qF '.agy-alias' "$PROFILE_REC"; check "file-slot-alias-of-own-slot-not-denied" 1 $?
+
+echo
+echo "--- file slot: refusals (agy never started) ---"
+acct_home; acct_file "$ACC_OK"; rmdir "$ACH/.agy-second"
+acct_run second; rc=$?; acct_refused "file-slot-dir-missing" 2 "$rc"
+acct_home; acct_file "$ACC_OK"; rmdir "$ACH/.agy-second"; mkdir "$TMP/slot-target"; ln -s "$TMP/slot-target" "$ACH/.agy-second"
+acct_run second; rc=$?; acct_refused "file-slot-dir-symlink" 2 "$rc"
+acct_home; acct_file "$ACC_OK"; mkdir "$TMP/gem-target"; ln -s "$TMP/gem-target" "$ACH/.agy-second/.gemini"
+acct_run second; rc=$?; acct_refused "file-slot-gemini-symlink" 2 "$rc"
+acct_home; acct_file "$ACC_OK"; : > "$ACH/.agy-second/.antigravity"
+acct_run second; rc=$?; acct_refused "file-slot-antigravity-not-a-dir" 2 "$rc"
+acct_home; acct_file "$ACC_OK"
+acct_run second ANTIGRAVITY_AUTH=apikey USER=testuser; rc=$?; acct_refused "file-slot-with-apikey" 2 "$rc"
+check_true "file-slot-with-apikey-no-keychain-call" test ! -s "$SECREC"
+# apikey with the DEFAULT slot keeps working: the refusal is for file slots only
+acct_home; acct_file "$ACC_OK"
+acct_run main ANTIGRAVITY_AUTH=apikey USER=testuser; rc=$?
+check "default-slot-with-apikey-exits-0" 0 "$rc"
+
+echo
+echo "--- file slot needs sandbox-exec ---"
+NOSB2="$TMP/nosb2"; mkdir -p "$NOSB2"; cp "$STUB_DIR/agy" "$NOSB2/agy"
+for tool in jq mktemp cat tr rm dirname env bash mkdir chmod; do
+  src="$(command -v "$tool")" && ln -sf "$src" "$NOSB2/$tool"
+done
+printf '#!/bin/sh\nexec %s "$@"\n' "$(command -v python3)" > "$NOSB2/python3"; chmod +x "$NOSB2/python3"
+acct_home; acct_file "$ACC_OK"
+acct_run second PATH="$NOSB2" ANTIGRAVITY_WORKER_ALLOW_UNSANDBOXED=1; rc=$?
+acct_refused "file-slot-without-sandbox-exec-opt-out" 7 "$rc"
+acct_run second PATH="$NOSB2"; rc=$?
+acct_refused "file-slot-without-sandbox-exec" 7 "$rc"
+# the default slot keeps the opt-out
+acct_run main PATH="$NOSB2" ANTIGRAVITY_WORKER_ALLOW_UNSANDBOXED=1; rc=$?
+check "default-slot-opt-out-still-allowed" 0 "$rc"
+
+echo
+echo "--- every path in the profile is checked for scheme metacharacters (exit 8) ---"
+acct_home; acct_file "$ACC_OK"; mkdir "$ACH/.agy-q\"x"
+acct_run second; rc=$?; acct_refused "other-agy-dir-with-quote" 8 "$rc"
+acct_run ""; rc=$?; acct_refused "other-agy-dir-with-quote-no-account" 8 "$rc"
+acct_home; acct_file "$ACC_OK"; mkdir "$ACH/.agy-a(b"
+acct_run ""; rc=$?; acct_refused "other-agy-dir-with-paren" 8 "$rc"
+acct_home; acct_file "$ACC_OK"; mkdir "$ACH/.agy-a"$'\n'"b"
+acct_run ""; rc=$?; acct_refused "other-agy-dir-with-newline" 8 "$rc"
+acct_home; acct_file "$ACC_OK"; mkdir "$TMP/we\\ird"; ln -s "$TMP/we\\ird" "$ACH/.agy-link"
+acct_run ""; rc=$?; acct_refused "other-agy-dir-realpath-with-backslash" 8 "$rc"
+# a real path that ends in a newline must reach the control-character check unstripped
+mkdir "$TMP/nl-dir"$'\n'
+acct_home; acct_file "$ACC_OK"; ln -s "$TMP/nl-dir"$'\n' "$ACH/.agy-x"
+acct_run ""; rc=$?; acct_refused "other-agy-dir-realpath-ends-in-newline" 8 "$rc"
+acct_home; acct_file "$ACC_OK"; : > "$TMP/nl-token"$'\n'
+mkdir -p "$ACH/.gemini/antigravity-cli"
+ln -s "$TMP/nl-token"$'\n' "$ACH/.gemini/antigravity-cli/antigravity-oauth-token"
+acct_run second; rc=$?; acct_refused "default-token-realpath-ends-in-newline" 8 "$rc"
+printf 'x' | HOME=$'/tmp/x\ny' ANTIGRAVITY_TIERS_FILE="$TIERS" bash "$WORKER" --tier mid >/dev/null 2>&1
+check "control-char-home-refuses-8" 8 $?
+
+echo
+echo "--- real sandbox: the file slot's rules hold (skipped where sandbox-exec cannot run) ---"
+acct_home; acct_file "$ACC_OK"; mkdir "$ACH/.agy-other"
+mkdir -p "$ACH/.agy-second/.gemini" "$ACH/.gemini/antigravity-cli"
+printf 'OTHER-LOGIN\n' > "$ACH/.agy-other/login"
+printf 'DEFAULT-TOKEN\n' > "$ACH/.gemini/antigravity-cli/antigravity-oauth-token"
+printf 'SLOT-LOGIN\n' > "$ACH/.agy-second/.gemini/login"
+acct_run second; rc=$?
+if [[ $rc -ne 0 || ! -s "$PROFILE_REC" ]]; then
+  echo "  FAIL [file-slot-profile-captured] rc=$rc"; FAIL=$((FAIL+1))
+elif ! /usr/bin/sandbox-exec -p '(version 1)(allow default)' /usr/bin/true >/dev/null 2>&1; then
+  echo "  ok   [file-slot-enforcement-skipped] sandbox-exec cannot run in this environment"; PASS=$((PASS+1))
+else
+  sbx() { /usr/bin/sandbox-exec -p "$(cat "$PROFILE_REC")" "$@" >/dev/null 2>&1; }
+  # shellcheck disable=SC2016  # the $1 is expanded by the inner sh, not here
+  sbw() { sbx /bin/sh -c 'printf PLANTED > "$1"' sh "$1"; }
+  sbx /bin/cat "$ACH/.agy-second/.gemini/login";                       check "sandbox-file-slot-reads-own-login" 0 $?
+  sbx /bin/cat "$ACH/.agy-other/login";                                check "sandbox-file-slot-cannot-read-other-agy-dir" 1 $?
+  sbx /bin/cat "$ACH/.gemini/antigravity-cli/antigravity-oauth-token"; check "sandbox-file-slot-cannot-read-default-token" 1 $?
+  sbw "$ACH/.agy-second/.gemini/new-login";                            check "sandbox-file-slot-writes-own-login" 0 $?
+  sbw "$ACH/.gemini/planted";                                          check "sandbox-file-slot-cannot-write-real-gemini" 1 $?
+  sbw "$ACH/.agy-second/.gemini/settings.json";                        check "sandbox-file-slot-cannot-write-slot-settings" 1 $?
+  if [[ -x /usr/bin/security ]]; then
+    sbx /usr/bin/security help;                                        check "sandbox-file-slot-cannot-run-security" 71 $?
+  fi
+  # the default slot's own run may read the default token and runs /usr/bin/security (no exec deny)
+  acct_run main; rc=$?
+  sbx /bin/cat "$ACH/.gemini/antigravity-cli/antigravity-oauth-token"; check "sandbox-default-slot-reads-default-token" 0 $?
+  # an empty slot (no .gemini yet): the run may create its state dir there, never the real one
+  acct_home; acct_file "$ACC_OK"; rm -rf "$ACH/.gemini"
+  acct_run second; rc=$?
+  # shellcheck disable=SC2016  # the $1 is expanded by the inner sh, not here
+  sbx /bin/sh -c 'mkdir -p "$1/.gemini" && printf x > "$1/.gemini/new"' sh "$ACH/.agy-second"
+  check "sandbox-empty-slot-creates-own-state-dir" 0 $?
+  mkdir -p "$ACH/.gemini"
+  sbw "$ACH/.gemini/x";                                                check "sandbox-empty-slot-cannot-write-real-gemini" 1 $?
+fi
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="

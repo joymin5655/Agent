@@ -43,7 +43,18 @@
 #     and is asked per candidate backend right before it would run, WHETHER OR NOT
 #     AGENT_WORKER_YES=1 is set:
 #         "$AGENT_WORKER_POLICY_CMD" check --lane <vendor> --role <role> --hold <pid>
-#     exit 0  = go ahead (approval "policy")
+#     A backend with "account_slots": true in the registry is asked with --accounts appended.
+#     exit 0  = go ahead (approval "policy"); for such a backend its JSON stdout may carry
+#               "account": "<name>" (^[a-z][a-z0-9]{0,15}$) = run on that local account: the
+#               name reaches ONLY that candidate's preflight and worker as AGENT_WORKER_ACCOUNT
+#               (adapters/antigravity/README.md "Accounts"). No "account" (or null) = the
+#               default slot, as without --accounts. Any other value is a bad answer: exit 3.
+#               Only stdout is read, and only as a whole JSON stream: two or more documents
+#               are a bad answer; stdout that is not JSON names no account unless it mentions
+#               "account" (then a bad answer). stderr only supplies a fallback reason.
+#               An inherited AGENT_WORKER_ACCOUNT is removed at start, so a caller never picks
+#               the account, and it is reset for every candidate. A policy that does not
+#               accept --accounts (any exit but 0/3/75) fails closed like any other bad answer.
 #     exit 3  = not approved: runs only with AGENT_WORKER_YES=1 (a person approved this
 #               invocation; approval "user"), else this script exits 3
 #     exit 75 = capped: that backend is reported unavailable as "capped: <reason>" and the
@@ -126,6 +137,9 @@
 #                    AGENT_AUTHOR_VENDOR, AGENT_WORKER_TIMEOUT_S,
 #                    AGENT_WORKER_KILL_GRACE_S, AGENT_WORKER_PREFLIGHT_TIMEOUT_S
 set -euo pipefail
+
+# Only the usage policy picks an account (header): never one the caller's environment carries.
+unset AGENT_WORKER_ACCOUNT
 
 # Captures and ledger rows can quote reviewed code: owner-only files. The worker, its preflight
 # and the policy get the caller's umask back (an implementer's edits must keep normal modes).
@@ -253,6 +267,10 @@ trap cleanup EXIT INT TERM
 cat > "$PROMPT_TMP"
 START_S=$SECONDS
 
+# CANDIDATE_ACCOUNT — the account the policy picked for the candidate being run ("" = none);
+# reset for every candidate so one candidate's account never reaches the next.
+CANDIDATE_ACCOUNT=""
+
 # policy_gate <name> <lane> — ask AGENT_WORKER_POLICY_CMD whether this candidate may run now.
 # 0 = go ahead (APPROVAL settled: "policy", or "user" when the policy said 3 and a person
 # set AGENT_WORKER_YES=1) | 125 = capped (UNAVAILABLE_REASON set, the caller moves on to the
@@ -263,11 +281,17 @@ START_S=$SECONDS
 # timeout kills whatever it spawned too; the watchdog is silenced so it cannot keep a
 # caller's stdout pipe open after the policy has answered.
 policy_gate() {
-    local name="$1" lane="$2" out prc=0 pid wpid reason
-    out="$(mktemp)"
+    local name="$1" lane="$2" out err prc=0 pid wpid reason acct_v acct_bad="" jstream=0
+    local pargs=(check --lane "$lane" --role "$ROLE" --hold "$$") want_accounts=0
+    CANDIDATE_ACCOUNT=""
+    if [[ "$(jq -r --arg b "$name" '.backends[$b].account_slots == true' "$BACKENDS_FILE" 2>/dev/null || true)" == "true" ]]; then
+        want_accounts=1
+        pargs+=(--accounts)
+    fi
+    out="$(mktemp)"; err="$(mktemp)"
     ( umask "$CALLER_UMASK"
       exec python3 -c 'import os, sys; os.setpgrp(); os.execv(sys.argv[1], sys.argv[1:])' \
-          "$POLICY_CMD" check --lane "$lane" --role "$ROLE" --hold "$$" ) </dev/null >"$out" 2>&1 &
+          "$POLICY_CMD" "${pargs[@]}" ) </dev/null >"$out" 2>"$err" &
     pid=$!
     ( sleep "$POLICY_TIMEOUT_S" \
         && { kill -KILL -- "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null; } ) >/dev/null 2>&1 &
@@ -275,14 +299,54 @@ policy_gate() {
     wait "$pid" || prc=$?
     kill "$wpid" 2>/dev/null || true
     wait "$wpid" 2>/dev/null || true
-    # The reason is a JSON "reason" field, else the first line of output. One line with
-    # control characters stripped: it lands in a capture header and on stderr.
-    reason="$(jq -r 'if type == "object" then ((.reason // "") | tostring | split("\n")[0]) else "" end' "$out" 2>/dev/null || true)"
-    [[ -n "$reason" ]] || reason="$(grep -m1 '[^[:space:]]' "$out" 2>/dev/null | sed -E 's/^[Rr]eason:[[:space:]]*//' || true)"
+    # The policy's answer is its stdout alone; stderr only ever supplies a fallback reason. stdout
+    # "is JSON" only when jq -s reads all of it (a stream of documents): garbage after a document,
+    # a NUL byte or a partial document is not JSON, whatever jq could salvage from the front.
+    acct_v=none
+    # jq stops reading at a NUL byte without an error, so a NUL anywhere means "not JSON".
+    # shellcheck disable=SC2094  # both ends of the pipe only read $out
+    if LC_ALL=C tr -d '\000' <"$out" | cmp -s - "$out" && jq -s . "$out" >/dev/null 2>&1; then jstream=1; fi
+    # The reason is a JSON "reason" field of stdout, else the first non-blank line of stdout, else
+    # of stderr. One line with control characters stripped: it lands in a capture header and on stderr.
+    reason=""
+    if [[ $jstream -eq 1 ]]; then
+        reason="$(jq -s -r 'map(select(type == "object") | (.reason // "") | tostring | split("\n")[0]) | map(select(. != "")) | first // ""' "$out" 2>/dev/null || true)"
+    fi
+    [[ -n "$reason" ]] || reason="$(LC_ALL=C grep -a -m1 '[^[:space:]]' "$out" 2>/dev/null | sed -E 's/^[Rr]eason:[[:space:]]*//' || true)"
+    [[ -n "$reason" ]] || reason="$(LC_ALL=C grep -a -m1 '[^[:space:]]' "$err" 2>/dev/null | sed -E 's/^[Rr]eason:[[:space:]]*//' || true)"
     reason="$(printf '%s' "${reason:-no reason given}" | LC_ALL=C tr -d '\000-\037\177' | cut -c1-200)"
+    # The account (only when --accounts was passed and the policy said go): 0 documents, a
+    # non-object, no "account" or null = none; exactly one object whose account is a string of the
+    # account-name shape = that account; anything else is a bad answer. jq does the shape check
+    # (\A..\z, not ^..$: a trailing newline must not pass). stdout that is not JSON at all names
+    # no account (a plain-text policy) unless it mentions "account", then it is a bad answer.
+    if [[ $want_accounts -eq 1 && $prc -eq 0 ]]; then
+        if [[ $jstream -eq 1 ]]; then
+            acct_v="$(jq -s -r 'if length == 0 then "none"
+                                elif length > 1 then "bad"
+                                else .[0] as $d
+                                  | if ($d | type) != "object" or ($d | has("account") | not) or $d.account == null then "none"
+                                    elif ($d.account | type) == "string" and ($d.account | test("\\A[a-z][a-z0-9]{0,15}\\z")) then "ok:" + $d.account
+                                    else "bad" end end' "$out" 2>/dev/null)" || acct_v=bad
+            acct_bad="$(jq -s -r '.[0] | if type == "object" and has("account") then (.account | tostring | split("\n")[0]) else "" end' "$out" 2>/dev/null | LC_ALL=C tr -d '\000-\037\177' | cut -c1-200 || true)"
+        elif LC_ALL=C grep -a -q '"account"' "$out"; then
+            acct_v=bad
+        fi
+    fi
+    rm -f "$err"
     rm -f "$out"
     case "$prc" in
-        0)  APPROVAL="policy"
+        0)  case "$acct_v" in
+                ""|none) ;;
+                ok:*) if [[ "$acct_v" == *$'\n'* ]]; then acct_v=bad; else CANDIDATE_ACCOUNT="${acct_v#ok:}"; fi ;;
+                *) acct_v=bad ;;
+            esac
+            if [[ "$acct_v" == bad ]]; then
+                CANDIDATE_ACCOUNT=""
+                echo "call-worker: policy answered an account that is not a valid account name ('${acct_bad:-?}') for lane '$lane' — failing closed" >&2
+                exit 3
+            fi
+            APPROVAL="policy"
             return 0 ;;
         75) UNAVAILABLE_REASON="capped: $reason"
             echo "call-worker: backend '$name' unavailable — $UNAVAILABLE_REASON" >&2
@@ -293,7 +357,10 @@ policy_gate() {
                 return 0
             fi
             echo "call-worker: policy did not approve '$ROLE' on lane '$lane' (exit 3): $reason" >&2 ;;
-        *)  echo "call-worker: policy command exited $prc for lane '$lane' (want 0, 3 or 75; $reason) — failing closed" >&2 ;;
+        *)  echo "call-worker: policy command exited $prc for lane '$lane' (want 0, 3 or 75; $reason) — failing closed" >&2
+            if [[ $want_accounts -eq 1 ]]; then
+                echo "call-worker: backend '$name' sets account_slots, so its policy must accept --accounts (check --lane ... --hold ... --accounts)" >&2
+            fi ;;
     esac
     exit 3
 }
@@ -333,6 +400,7 @@ UNAVAILABLE_REASON=""
 EXTRA_ARGV=()
 run_backend() {
     local name="$1" timeout_s grace_s rc=0 pid wpid
+    CANDIDATE_ACCOUNT=""
     jq -e --arg b "$name" '.backends[$b]' "$BACKENDS_FILE" >/dev/null 2>&1 \
         || { echo "call-worker: backend '$name' not defined in $BACKENDS_FILE" >&2; return 64; }
     # v2: a declared backend can be switched off — refuse loudly, never silently.
@@ -431,10 +499,13 @@ run_backend() {
         fi
         [[ "$pf_timeout" =~ ^[0-9]+$ ]] \
             || { echo "call-worker: AGENT_WORKER_PREFLIGHT_TIMEOUT_S is not numeric ('$pf_timeout') — the watchdog would silently never fire" >&2; return 64; }
+        local acct_env=()
+        if [[ -n "$CANDIDATE_ACCOUNT" ]]; then acct_env=(AGENT_WORKER_ACCOUNT="$CANDIDATE_ACCOUNT"); fi
         ( cd "$dispatch_cwd" && umask "$CALLER_UMASK" && exec env \
             AGENT_BACKENDS_FILE="$BACKENDS_FILE" \
             AGENT_PREFLIGHT_LANE="$name" \
             AGENT_LANE="$ROLE" \
+            ${acct_env[@]+"${acct_env[@]}"} \
             "${pf[@]}" ) </dev/null >/dev/null 2>&1 &
         pid=$!
         ( sleep "$pf_timeout" && kill -KILL "$pid" 2>/dev/null ) &
@@ -490,8 +561,11 @@ run_backend() {
     # non-gateway backend dispatch_cwd is $PWD, i.e. byte-for-byte the previous
     # behavior (the caller's cwd is inherited); only gateway backends move. The
     # export lives and dies with this subshell: AGENT_LANE marks the process as a
-    # dispatched lane (see header), whatever the caller's own environment says.
-    ( cd "$dispatch_cwd" && umask "$CALLER_UMASK" && export AGENT_LANE="$ROLE" && exec "${cmd[@]}" ) < "$PROMPT_TMP" > "$OUT_TMP" 2>&1 &
+    # dispatched lane (see header), whatever the caller's own environment says. The account the
+    # policy picked for THIS candidate rides the same way (the inherited one was removed at start).
+    ( cd "$dispatch_cwd" && umask "$CALLER_UMASK" && export AGENT_LANE="$ROLE" \
+        && { if [[ -n "$CANDIDATE_ACCOUNT" ]]; then export AGENT_WORKER_ACCOUNT="$CANDIDATE_ACCOUNT"; fi; } \
+        && exec "${cmd[@]}" ) < "$PROMPT_TMP" > "$OUT_TMP" 2>&1 &
     pid=$!
     # TERM at timeout, KILL after a grace period — a CLI wrapper that traps or
     # fails to forward TERM must not defeat the timeout guarantee.
@@ -603,6 +677,7 @@ write_capture() {
         echo "role: $ROLE"
         echo "backend: $BACKEND_USED"
         echo "status: $1"
+        [[ -z "$CANDIDATE_ACCOUNT" ]] || echo "account: $CANDIDATE_ACCOUNT"
         echo "captured: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
         [[ -n "$FALLBACK_REASON" ]] && echo "fallback_reason: $FALLBACK_REASON"
         [[ -n "$RETRY_REASON" ]] && echo "retry_reason: $RETRY_REASON"
