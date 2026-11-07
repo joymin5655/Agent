@@ -522,5 +522,30 @@ else
 fi
 
 echo
+echo "=== (l) Argon model ids are refused before any model resolution ==="
+# Separately metered: refuse an Argon id anywhere in the tiers file, even in a tier this
+# call does not use. agy is never invoked (the stub record stays empty).
+argon_case() {  # argon_case <name> <tiers-json> <worker-args...>
+  local name="$1" json="$2"; shift 2
+  printf '%s\n' "$json" > "$TMP/argon.json"
+  : > "$RECORD"
+  local err rc
+  err="$(printf 'x' | ANTIGRAVITY_TIERS_FILE="$TMP/argon.json" bash "$WORKER" "$@" 2>&1 >/dev/null)"
+  rc=$?
+  check "$name-exits-2" 2 "$rc"
+  printf '%s' "$err" | grep -q 'Argon ids are not accepted'; check "$name-names-reason" 0 $?
+  check_true "$name-agy-not-invoked" test ! -s "$RECORD"
+}
+argon_case argon-in-model '{ "model": "gemini-4-argon-high", "tiers": { "MID": [], "TOP": [] } }' --tier mid
+argon_case argon-only-in-top '{ "model": "gemini-3.1-pro-low", "tiers": { "MID": [], "TOP": ["--model", "gemini-4-argon-high"] } }' --tier mid
+argon_case argon-mixed-case '{ "model": "Gemini-4-ARGON-high", "tiers": { "MID": [] } }' --tier mid
+argon_case argon-in-mid-tier-called-top '{ "model": "gemini-3.1-pro-low", "tiers": { "MID": ["--model", "gemini-4-argon-low"], "TOP": [] } }' --tier top
+# control: a clean tiers file still dispatches
+: > "$RECORD"
+printf 'x' | ANTIGRAVITY_TIERS_FILE="$TIERS" bash "$WORKER" --tier mid >/dev/null 2>&1
+check "no-argon-still-dispatches" 0 $?
+check_true "no-argon-agy-invoked" test -s "$RECORD"
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]
