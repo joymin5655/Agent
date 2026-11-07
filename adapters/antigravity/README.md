@@ -121,7 +121,7 @@ An empty `"denied_actions":[]` is not a soft-deny.
 
 Any agy nonzero exit code (including 3) passes through the worker unchanged, except a quota
 signal, which becomes 75; the preflight
-reports every such probe exit as 5 (state unknown). The probe's time limit is 120 s (`ANTIGRAVITY_PREFLIGHT_TIMEOUT_S`; one account's single-token
+reports every such probe exit as 5 (state unknown). The probe's own time limit is 120 s (`ANTIGRAVITY_PREFLIGHT_TIMEOUT_S`; call-worker's registry limit `preflight_timeout_s` is 150 s for this backend, kept above it so the probe's own time-out and clean exit win over call-worker's SIGKILL; one account's single-token
 replies took 35-101 s on 2026-11-07, which a 60 s limit reported as an unavailable lane). A hook-level deny
 is invisible to the caller: it is exit 0, status `SUCCESS`, no stderr, no `denied_actions` (a
 denied step just shows up in the transcript as `tool call denied by pre-tool hook`), so it
@@ -139,6 +139,10 @@ tiers file (`.model` or the value after any `--model` in any tier, compared case
 contains `argon`, it prints `Argon ids are not accepted` and exits 2 before resolving a model —
 even when the Argon id sits in a tier this call does not use. agy is never invoked and the
 preflight reports it as `probe exited 2` (exit 5). Pin a flash id instead.
+
+The tiers file must be exactly one JSON object of the expected shape; extra JSON documents, a wrong
+shape, or a raw NUL byte anywhere in the file (jq would silently stop reading there) make the
+worker refuse as malformed (exit 2) before any Argon scan.
 
 The model pin lives in `~/.agent/antigravity-tiers.json` (canonical; override with
 `ANTIGRAVITY_TIERS_FILE`). The pre-2026-09 path `~/.gemini/antigravity-cli/agent-tiers.json` is a
@@ -287,7 +291,7 @@ the `Stop` hook always answers `{"decision":"stop"}`.
 |---|---|---|
 | review (default) | any | `{"decision":"deny","reason":"review worker: tools are disabled"}` |
 | `--web` | `.toolCall.name` is exactly `search_web` | `{"decision":"ask"}` — agy's own permission rules decide; the worker never answers `allow` |
-| `--web` | any other name (including `read_url_content` and `read_url`), empty or missing name, missing `toolCall`, unparseable input, more than one JSON document, jq failure | `{"decision":"deny","reason":"web worker: only web search is allowed"}` |
+| `--web` | any other name (including `read_url_content` and `read_url`), empty or missing name, missing `toolCall`, unparseable input, more than one JSON document, a NUL byte, jq failure | `{"decision":"deny","reason":"web worker: only web search is allowed"}` |
 
 Only `.toolCall.name` counts: an args payload containing `"name":"search_web"` does not turn a
 `run_command` into `ask`. The web hook reads the name with `jq` called by the absolute path

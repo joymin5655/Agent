@@ -560,6 +560,13 @@ malformed_case tiers-model-is-number '{ "model": 7, "tiers": { "MID": [] } }' --
 malformed_case tiers-top-level-array '[{ "model": "gemini-3.1-pro-low" }]' --tier mid
 malformed_case tiers-array-with-non-string '{ "model": "gemini-3.1-pro-low", "tiers": { "MID": ["--effort", 5] } }' --tier mid
 malformed_case tiers-not-json 'not json' --tier mid
+# a raw NUL byte in the tiers file refuses as malformed (jq alone would stop reading at it)
+printf '{ "model": "gemini-3.1-pro-low", "tiers": { "MID": [] } }\000{"model":"gemini-4-argon-high"}' > "$TMP/argon.json"
+: > "$RECORD"
+err="$(printf 'x' | ANTIGRAVITY_TIERS_FILE="$TMP/argon.json" bash "$WORKER" --tier mid 2>&1 >/dev/null)"; rc=$?
+check "tiers-nul-byte-exits-2" 2 "$rc"
+printf '%s' "$err" | grep -q 'is malformed'; check "tiers-nul-byte-names-tiers-file-problem" 0 $?
+check_true "tiers-nul-byte-agy-not-invoked" test ! -s "$RECORD"
 # a --model=<id> form that parses is still an Argon refusal (the scan covers every string)
 argon_case argon-equals-form-in-unused-tier '{ "model": "gemini-3.1-pro-low", "tiers": { "MID": [], "TOP": ["--model=gemini-4-argon-high"] } }' --tier mid
 # control: a clean tiers file still dispatches
@@ -572,7 +579,7 @@ printf '%s\n' '{ "comment": "never pin an argon id", "model": "gemini-3.1-pro-lo
 : > "$RECORD"
 printf 'x' | ANTIGRAVITY_TIERS_FILE="$TMP/argon.json" bash "$WORKER" --tier mid >/dev/null 2>&1
 check "comment-mentioning-argon-still-dispatches" 0 $?
-check_true "no-argon-agy-invoked" test -s "$RECORD"
+check_true "comment-mentioning-argon-agy-invoked" test -s "$RECORD"
 
 echo
 echo "=== (m) strict worker arguments ==="
@@ -645,6 +652,12 @@ check "web-hook-denies[object-then-garbage]" "$DENY_WEB" "$(hook "$TMP/plug-web"
 check "web-hook-denies[top-level-array]" "$DENY_WEB" "$(hook "$TMP/plug-web" PreToolUse '[{"toolCall":{"name":"search_web"}}]')"
 check "web-hook-denies[top-level-string]" "$DENY_WEB" "$(hook "$TMP/plug-web" PreToolUse '"search_web"')"
 check "web-hook-denies[top-level-null]" "$DENY_WEB" "$(hook "$TMP/plug-web" PreToolUse 'null')"
+# a raw NUL byte: jq alone would stop reading there and answer for the first document, so the
+# hook reads through tr (the hook() helper cannot carry a NUL in a shell variable)
+nul_hook() { "$@" | "$TMP/plug-web/deny.sh" PreToolUse 2>/dev/null | tr -d '\n'; }
+check "web-hook-denies[nul-then-second-document]" "$DENY_WEB" "$(nul_hook printf '{"toolCall":{"name":"search_web"}}\000{"toolCall":{"name":"run_command"}}')"
+check "web-hook-denies[nul-after-document]" "$DENY_WEB" "$(nul_hook printf '{"toolCall":{"name":"search_web"}}\000')"
+check "web-hook-asks[clean-search_web-control]" '{"decision":"ask"}' "$(nul_hook printf '{"toolCall":{"name":"search_web"}}')"
 # the hook calls jq by an absolute path baked in at write time, and never answers "allow"
 jqline="$(grep -o "'/[^']*jq'" "$TMP/plug-web/deny.sh" | head -n 1)"
 [[ "$jqline" == "'$(command -v jq)'" ]]; check "web-hook-jq-absolute-path-baked-in" 0 $?

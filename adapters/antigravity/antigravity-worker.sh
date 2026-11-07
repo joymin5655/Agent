@@ -45,7 +45,7 @@
 # success checks below are unaffected). With --web the hook answers "ask" — agy's own
 # permission rules decide; the hook never says "allow" — for exactly search_web, read from
 # .toolCall.name with jq called by the absolute path resolved at write time, and denies
-# everything else (any other name, no name, no toolCall, unparseable input, jq failure).
+# everything else (any other name, no name, no toolCall, unparseable input, more than one JSON document, a NUL byte, jq failure).
 # URL reads (read_url_content, read_url) are OFF: they are unmeasured and the hook cannot
 # restrict their URL argument, so a prompt-injected page could aim them at localhost or a
 # private-network address while the sandbox keeps the network open (README "Unmeasured").
@@ -171,12 +171,16 @@ valid_effort() { [[ "$1" =~ ^(low|medium|high|max)$ ]]; }
 # JSON object of the expected shape (so no unused slot can hide a value the scan skips),
 # and any jq status other than the two expected results refuses. Other keys (a "comment")
 # are allowed and never scanned. Runs before any model resolution; agy is never invoked.
-if ! jq -es 'length == 1 and (.[0] | type) == "object"
+# jq stops reading at a raw NUL byte and still succeeds (jq 1.7.1), so a NUL could hide a
+# second document; the bytes go through tr first, turning a NUL into a control byte that is
+# invalid JSON (jq exits 5 -> malformed). An escaped \u0000 inside a string is unaffected.
+# Without tr the pipe is empty and the check refuses too.
+if ! /usr/bin/tr '\000' '\001' < "$TIERS_FILE" | jq -es 'length == 1 and (.[0] | type) == "object"
              and ((.[0] | has("model") | not) or (.[0].model | type) == "string")
              and ((.[0] | has("tiers") | not)
                   or ((.[0].tiers | type) == "object"
                       and (.[0].tiers | all(.[]; type == "array" and all(.[]; type == "string")))))' \
-        "$TIERS_FILE" >/dev/null 2>&1; then
+        >/dev/null 2>&1; then
     echo "antigravity-worker: tiers file $TIERS_FILE is malformed — it must be exactly one JSON object, .model a string, .tiers an object of arrays of strings" >&2
     exit 2
 fi
@@ -272,7 +276,10 @@ write_deny_plugin() {
 # web worker: only web search may reach agy's own permission rules ("ask"); URL reads are off.
 # Only .toolCall.name counts (an args payload naming a tool changes nothing); any failure denies.
 if [ "${1:-}" = Stop ]; then cat >/dev/null; printf '%s\n' '{"decision":"stop"}'; exit 0; fi
-verdict=$(@JQ@ -r 'if (.toolCall | type) == "object" and (.toolCall.name | type) == "string" and (.toolCall.name | IN("search_web")) then "ask" else "deny" end' 2>/dev/null) || verdict=deny
+# Input goes through tr first: jq stops at a raw NUL byte and succeeds, so a NUL could hide a
+# second document; a NUL becomes a control byte (invalid JSON, jq exits 5 -> deny). If tr is
+# missing jq reads nothing, the verdict is empty -> deny, and the self-test refuses to start.
+verdict=$(/usr/bin/tr '\000' '\001' | @JQ@ -r 'if (.toolCall | type) == "object" and (.toolCall.name | type) == "string" and (.toolCall.name | IN("search_web")) then "ask" else "deny" end' 2>/dev/null) || verdict=deny
 if [ "$verdict" = ask ]; then
     printf '%s\n' '{"decision":"ask"}'
 else
