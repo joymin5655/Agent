@@ -101,5 +101,34 @@ AGENT_BACKENDS_FILE="$REG" ANTIGRAVITY_PREFLIGHT_TIMEOUT_S=2 bash "$PROBE" gemin
 check "hung-probe-times-out-4" 4 $?
 
 echo
+echo "=== integration: REAL worker behind the REAL probe, Argon tiers file ==="
+# The worker refuses an Argon id in the tiers file (exit 2) before agy is ever invoked; the
+# probe reports that as "state unknown" (exit 5, "probe exited 2"). The agy stub's record
+# must stay empty — no Google call, no metered call.
+INT_BIN="$TMP/intbin"; mkdir -p "$INT_BIN"
+ln -sf "$REPO_ROOT/adapters/antigravity/antigravity-worker.sh" "$INT_BIN/antigravity-worker"
+AGY_REC="$TMP/agy-record"; : > "$AGY_REC"
+cat > "$INT_BIN/agy" <<AGYSTUB
+#!/usr/bin/env bash
+printf 'agy invoked\n' >> "$AGY_REC"
+printf '{"status":"SUCCESS","response":"$TOKEN"}\n'
+AGYSTUB
+chmod +x "$INT_BIN/agy"
+ARGON_TIERS="$TMP/argon-tiers.json"
+echo '{ "model": "gemini-3.8-flash-medium", "tiers": { "MID": [], "TOP": ["--model", "gemini-4-argon-high"] } }' > "$ARGON_TIERS"
+int_out="$(PATH="$INT_BIN:$PATH" ANTIGRAVITY_TIERS_FILE="$ARGON_TIERS" AGENT_BACKENDS_FILE="$REG" bash "$PROBE" gemini 2>&1)"
+check "argon-tiers-file-preflight-refuses-5" 5 $?
+printf '%s' "$int_out" | grep -q 'probe exited 2'; check "argon-tiers-file-preflight-says-probe-exited-2" 0 $?
+[[ ! -s "$AGY_REC" ]]; check "argon-tiers-file-agy-never-invoked" 0 $?
+
+# call-worker SIGKILLs the preflight after the registry's preflight_timeout_s; it must sit above
+# the probe's own default limit so the probe's own time-out (clean exit 4) wins
+probe_default="$(grep -o 'ANTIGRAVITY_PREFLIGHT_TIMEOUT_S:-[0-9]*' "$PROBE" | head -n 1 | grep -o '[0-9]*$')"
+reg_limit="$(jq -r '.backends.gemini.preflight_timeout_s // empty' "$REPO_ROOT/core/infra/backends.json")"
+limit_ok=1
+[[ -n "$probe_default" && -n "$reg_limit" && "$reg_limit" -ge $((probe_default + 20)) ]] && limit_ok=0
+check "registry-preflight-limit-at-least-probe-default-plus-20" 0 "$limit_ok"
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]

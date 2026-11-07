@@ -21,6 +21,11 @@
 # ANTIGRAVITY_AUTH value keeps the keyring path and never calls `security`.
 # The worker also exports AGENT_ANTIGRAVITY_WORKER=1 so the harness hook adapter
 # can tell it is running under a review worker (deny-all tools).
+# ARGON: model ids containing "argon" (any case) are separately metered and are refused
+# (exit 2, agy never invoked) if any string in .model or anywhere under .tiers contains it,
+# even in a tier this call does not use. A tiers file that is not exactly one JSON object
+# of the expected shape, or a jq failure during the scan, also refuses (fail closed).
+# Pin a flash id instead.
 #
 # THREAT MODEL: the prompt carries an untrusted diff (an outside-contributor PR
 # is the lane's normal input), so a prompt can try to drive local action.
@@ -31,9 +36,22 @@
 # sandbox-exec profile below (deny-write outside WORK_DIR and the agy state dir, with
 # the hook/plugin config paths carved back out; deny-read of credential stores;
 # network stays open), (b) a workspace deny plugin written into WORK_DIR before agy
-# starts — a static hook that denies every exec/write tool with no env or adapter
-# dependence — and (c) the ban on --dangerously-skip-permissions. A code review needs
-# neither write nor exec (it reads the diff from the prompt and emits findings text).
+# starts — a static tool-allowlist hook (PreToolUse matcher ".*", no env or adapter
+# dependence) — and (c) the ban on --dangerously-skip-permissions. A code review needs
+# neither write nor exec nor any other tool (it reads the diff from the prompt and emits
+# findings text), so in the default review mode the hook denies EVERY tool call, local
+# reads and web search included (measured on agy 1.5.2, 2026-11-07: a hook deny does not
+# end the run and leaves no trace in denied_actions or the soft-deny notice, so the
+# success checks below are unaffected). With --web the hook answers "ask" — agy's own
+# permission rules decide; the hook never says "allow" — for exactly search_web, read from
+# .toolCall.name with jq called by the absolute path resolved at write time, and denies
+# everything else (any other name, no name, no toolCall, unparseable input, more than one JSON document, a NUL byte, jq failure).
+# URL reads (read_url_content, read_url) are OFF: they are unmeasured and the hook cannot
+# restrict their URL argument, so a prompt-injected page could aim them at localhost or a
+# private-network address while the sandbox keeps the network open (README "Unmeasured").
+# --web therefore opens web search only, never page reads and never local files. Right after
+# the plugin is written the worker runs the hook once with search_web (must answer "ask")
+# and once with run_command (must deny); anything else refuses to start (exit 2).
 # sandbox-exec is fail-closed: no sandbox-exec => refuse (unless the opt-out is set).
 #
 # Tier policy: model IDs are forbidden in core/infra/backends.json
@@ -59,7 +77,8 @@
 # denial — so that is the primary signal. The stderr notice (wording differs
 # between 1.1.14 and 1.2.12) is the fallback, matched by SOFT_DENY_RE.
 #
-# usage: antigravity-worker [--tier mid|top] < prompt.md
+# usage: antigravity-worker [--tier mid|top] [--web] < prompt.md
+#        flags in any order, each at most once; anything else exits 2 before stdin is read
 # env:   ANTIGRAVITY_TIERS_FILE, ANTIGRAVITY_WORKER_ALLOW_UNSANDBOXED=1,
 #        ANTIGRAVITY_WORKER_PRINT_TIMEOUT (agy --print-timeout, default 14m: under the
 #        gemini lane's 900s timeout_s, so agy ends the run before the hard kill),
@@ -86,13 +105,35 @@ while [[ -L "$self" ]]; do
 done
 SELF_DIR="$(cd "$(dirname "$self")" && pwd)"
 
-TIER="mid"
-if [[ "${1:-}" == "--tier" ]]; then
-    TIER="${2:-}"
-    case "$TIER" in mid|top) ;; *) echo "antigravity-worker: --tier must be mid or top (got '$TIER')" >&2; exit 2 ;; esac
-fi
+# Strict arguments: [--tier mid|top] [--web], any order, each at most once. Anything else
+# (unknown flag, positional word, repeated flag, missing value) exits 2 before stdin is
+# read or agy is touched.
+usage() { echo "usage: antigravity-worker [--tier mid|top] [--web] < prompt.md${1:+ ($1)}" >&2; exit 2; }
+TIER=""
+WEB=0
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --tier)
+            [[ -z "$TIER" ]] || usage "--tier given twice"
+            [[ $# -ge 2 ]] || usage "--tier needs mid or top"
+            case "$2" in mid|top) TIER="$2" ;; *) usage "--tier must be mid or top, got '$2'" ;; esac
+            shift 2 ;;
+        --web)
+            [[ $WEB -eq 0 ]] || usage "--web given twice"
+            WEB=1; shift ;;
+        *) usage "unexpected argument '$1'" ;;
+    esac
+done
+TIER="${TIER:-mid}"
 
 command -v jq >/dev/null 2>&1 || { echo "antigravity-worker: jq is required to read the tiers file" >&2; exit 2; }
+# Web mode bakes jq's ABSOLUTE path into the hook (the hook never trusts PATH or env). The
+# path lands inside a single-quoted shell word: allowlist, never escape.
+JQ_BIN="$(command -v jq)"
+if [[ $WEB -eq 1 && ! "$JQ_BIN" =~ ^/[A-Za-z0-9._/+=@%-]+$ ]]; then
+    echo "antigravity-worker: jq resolves to '$JQ_BIN', which is not an absolute path of safe characters — refusing --web (the web hook needs it)" >&2
+    exit 2
+fi
 command -v agy >/dev/null 2>&1 || { echo "antigravity-worker: agy CLI not found on PATH (install: https://antigravity.google/cli/install.sh — auth lives in the OS keyring)" >&2; exit 127; }
 
 NEW_TIERS_FILE="$HOME/.agent/antigravity-tiers.json"
@@ -123,6 +164,37 @@ fi
 # through either slot.
 valid_model() { [[ "$1" =~ ^gemini-[0-9]+\.[0-9]+-(pro|flash)-(low|medium|high)$ ]]; }
 valid_effort() { [[ "$1" =~ ^(low|medium|high|max)$ ]]; }
+
+# Argon ids are separately metered: refuse ANY of them anywhere in the tiers file (the
+# base .model and every string under .tiers), even in a tier this call does not use, so a
+# later --tier top cannot reach one. Fail closed twice: the file must first be exactly one
+# JSON object of the expected shape (so no unused slot can hide a value the scan skips),
+# and any jq status other than the two expected results refuses. Other keys (a "comment")
+# are allowed and never scanned. Runs before any model resolution; agy is never invoked.
+# jq stops reading at a raw NUL byte and still succeeds (jq 1.7.1), so a NUL could hide a
+# second document; the bytes go through tr first, turning a NUL into a control byte that is
+# invalid JSON (jq exits 5 -> malformed). An escaped \u0000 inside a string is unaffected.
+# tr runs byte-wise (LC_ALL=C), the same in every locale; a failed or missing tr fails the
+# pipe (pipefail) and the check refuses too.
+if ! LC_ALL=C /usr/bin/tr '\000' '\001' < "$TIERS_FILE" | jq -es 'length == 1 and (.[0] | type) == "object"
+             and ((.[0] | has("model") | not) or (.[0].model | type) == "string")
+             and ((.[0] | has("tiers") | not)
+                  or ((.[0].tiers | type) == "object"
+                      and (.[0].tiers | all(.[]; type == "array" and all(.[]; type == "string")))))' \
+        >/dev/null 2>&1; then
+    echo "antigravity-worker: tiers file $TIERS_FILE is malformed — it must be exactly one JSON object, .model a string, .tiers an object of arrays of strings" >&2
+    exit 2
+fi
+argon_rc=0
+jq -e '[.model // empty, (.tiers // {} | .[] | .[])] | map(ascii_downcase | contains("argon")) | any' \
+    "$TIERS_FILE" >/dev/null 2>&1 || argon_rc=$?
+case $argon_rc in
+    0) echo "antigravity-worker: Argon ids are not accepted — separately metered; pin a flash id ($TIERS_FILE)" >&2
+       exit 2 ;;
+    1) ;;
+    *) echo "antigravity-worker: could not check the tiers file for Argon ids ($TIERS_FILE) — refusing" >&2
+       exit 2 ;;
+esac
 
 BASE_MODEL="$(jq -r '.model // empty' "$TIERS_FILE")"
 [[ -n "$BASE_MODEL" ]] || { echo "antigravity-worker: tiers file $TIERS_FILE pins no .model" >&2; exit 2; }
@@ -186,29 +258,59 @@ WORK_DIR="$(mktemp -d)" || { echo "antigravity-worker: mktemp -d failed" >&2; ex
 PROMPT_FILE="$WORK_DIR/prompt.md"   # inside WORK_DIR so cleanup takes it too
 cat > "$PROMPT_FILE"
 
-# Workspace deny plugin (agy loads .agents/plugins/<name>/ from its cwd — measured on
-# 1.2.12, w5-design M1). The hook is a static script: it denies every exec/write tool and
-# stops, needing neither AGENT_ANTIGRAVITY_WORKER to reach the hook nor the global plugin.
+# Workspace tool-allowlist plugin (agy loads .agents/plugins/<name>/ from its cwd — measured on
+# 1.2.12, w5-design M1; still loads on 1.5.2, 2026-11-07). The PreToolUse matcher ".*" catches
+# every tool call and the hook is a static script that decides only from what was baked into
+# it at write time — never from environment variables, never needing the adapter or the
+# global plugin. Review mode (default): every tool call is denied. Web mode (--web): only
+# search_web answers "ask" (agy's own permission rules decide — the hook never answers
+# "allow"); everything else, including both URL tools and unparseable input, is denied.
 # Fail closed: a worker that cannot write it refuses to start, and never gets the API key.
 DENY_DIR="$WORK_DIR/.agents/plugins/agent-worker-deny"
 write_deny_plugin() {
     # The path lands inside a double-quoted shell word in hooks.json: allowlist, never escape.
     [[ "$WORK_DIR" =~ ^[A-Za-z0-9._/+=@%-]+$ ]] || return 1
     mkdir -p "$DENY_DIR" || return 1
-    cat > "$DENY_DIR/deny.sh" <<'DENYSH' || return 1
+    if [[ $WEB -eq 1 ]]; then
+        cat > "$DENY_DIR/deny.sh" <<'WEBSH' || return 1
 #!/bin/sh
-# review worker: every exec/write tool call is denied; nothing may keep the run going.
+# web worker: only web search may reach agy's own permission rules ("ask"); URL reads are off.
+# Only .toolCall.name counts (an args payload naming a tool changes nothing); any failure denies.
+if [ "${1:-}" = Stop ]; then cat >/dev/null; printf '%s\n' '{"decision":"stop"}'; exit 0; fi
+# Input goes through tr first: jq stops at a raw NUL byte and succeeds, so a NUL could hide a
+# second document; a NUL becomes a control byte (invalid JSON, jq exits 5 -> deny). tr runs
+# byte-wise (LC_ALL=C): in a UTF-8 locale macOS tr stops at an invalid byte and passes on only
+# the part before it. sh has no pipefail, so a failed or missing tr sends a \001 byte to jq
+# instead (-> deny); the self-test then refuses to start.
+verdict=$( { LC_ALL=C /usr/bin/tr '\000' '\001' || printf '\001'; } | @JQ@ -r 'if (.toolCall | type) == "object" and (.toolCall.name | type) == "string" and (.toolCall.name | IN("search_web")) then "ask" else "deny" end' 2>/dev/null) || verdict=deny
+if [ "$verdict" = ask ]; then
+    printf '%s\n' '{"decision":"ask"}'
+else
+    printf '%s\n' '{"decision":"deny","reason":"web worker: only web search is allowed"}'
+fi
+WEBSH
+        # Bake in jq's absolute path (allowlisted above) as a single-quoted word.
+        local body q="'"
+        body="$(<"$DENY_DIR/deny.sh")" || return 1
+        printf '%s\n' "${body//@JQ@/$q$JQ_BIN$q}" > "$DENY_DIR/deny.sh" || return 1
+    else
+        cat > "$DENY_DIR/deny.sh" <<'REVSH' || return 1
+#!/bin/sh
+# review worker: every tool call is denied; nothing may keep the run going.
 cat >/dev/null
 case "${1:-}" in
     Stop) printf '%s\n' '{"decision":"stop"}' ;;
     *)    printf '%s\n' '{"decision":"deny","reason":"review worker: tools are disabled"}' ;;
 esac
-DENYSH
+REVSH
+    fi
     chmod +x "$DENY_DIR/deny.sh" || return 1
-    cat > "$DENY_DIR/plugin.json" <<'PLUGINJSON' || return 1
+    local desc="Antigravity review worker: denies every tool call."
+    [[ $WEB -eq 1 ]] && desc="Antigravity web worker: only web search reaches agy's permission rules; every other tool call is denied."
+    cat > "$DENY_DIR/plugin.json" <<PLUGINJSON || return 1
 {
   "name": "agent-worker-deny",
-  "description": "Antigravity review worker: denies every exec and write tool call."
+  "description": "$desc"
 }
 PLUGINJSON
     cat > "$DENY_DIR/hooks.json" <<HOOKSJSON || return 1
@@ -216,7 +318,7 @@ PLUGINJSON
   "agent-worker-deny": {
     "PreToolUse": [
       {
-        "matcher": "run_command|send_command_input|write_to_file|replace_file_content|multi_replace_file_content",
+        "matcher": ".*",
         "hooks": [{"type": "command", "command": "\"$DENY_DIR/deny.sh\" PreToolUse", "timeout": 10}]
       }
     ],
@@ -229,6 +331,16 @@ if ! write_deny_plugin; then
     rm -rf "$WORK_DIR"
     echo "antigravity-worker: could not write the workspace deny plugin — refusing to start (the worker relies on it to deny tool calls); no API key was exported" >&2
     exit 2
+fi
+if [[ $WEB -eq 1 ]]; then
+    # Self-test the generated web hook: a jq too old for the expression (or broken) would
+    # make it deny everything, or worse answer something unintended. Fail closed.
+    if [[ "$(printf '%s' '{"toolCall":{"name":"search_web"}}' | "$DENY_DIR/deny.sh" PreToolUse 2>/dev/null)" != '{"decision":"ask"}' ]] \
+       || [[ "$(printf '%s' '{"toolCall":{"name":"run_command"}}' | "$DENY_DIR/deny.sh" PreToolUse 2>/dev/null)" != '{"decision":"deny",'* ]]; then
+        rm -rf "$WORK_DIR"
+        echo "antigravity-worker: web hook self-test failed — jq too old or broken?" >&2
+        exit 2
+    fi
 fi
 if [[ -n "${GEMINI_KEY:-}" ]]; then
     export GEMINI_API_KEY="$GEMINI_KEY"
