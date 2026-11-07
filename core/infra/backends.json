@@ -69,7 +69,7 @@
       "args_extra": [
         "--web"
       ],
-      "comment": "open-web research and fact-checking with cited URLs through the worker's --web allowlist (web search and public pages only, no local files). fallback null so an absent google lane is reported absent, not answered by another vendor. Never put credentials, customer data or private code in its prompt: the prompt and every search it triggers leave the machine. Not a council voting lane."
+      "comment": "open-web research and fact-checking with cited URLs through the worker's --web allowlist (web search only: URL reads are off until measured, and no local files). fallback null so an absent google lane is reported absent, not answered by another vendor. Never put credentials, customer data or private code in its prompt: the prompt and every search it triggers leave the machine. Not a council voting lane."
     }
   },
   "backends": {

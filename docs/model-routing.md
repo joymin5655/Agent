@@ -256,8 +256,9 @@ shared blind spot doesn't survive review.
   host's `claude` CLI — see "Cross-company review" below). `research-google`
   (gemini, MID, `args_extra: ["--web"]`, no fallback, not a council voting lane)
   is open-web research and fact-checking with cited URLs: the antigravity worker's
-  `--web` mode lets web search and public page reads through to agy's own
-  permission rules and denies every other tool (no local files); the default
+  `--web` mode lets web search through to agy's own
+  permission rules and denies every other tool (URL reads are off until measured; no
+  local files); the default
   review mode denies all tools. Its prompt leaves the machine, so it carries no
   credentials, customer data or private code. The worker also refuses Argon model
   ids (separately metered) anywhere in its tiers file.

@@ -6,7 +6,7 @@ gemini CLI's individual OAuth was retired upstream (2026-06-18). Decided
 of chasing an AI Studio API key.
 
 Roles served through the worker: `third-opinion-review` and `advisor-writing-google` (review
-mode: every tool denied) and `research-google` (`--web`: web search and public page reads only,
+mode: every tool denied) and `research-google` (`--web`: web search only, URL reads off,
 see "Worker threat model").
 
 Two independent pieces live here:
@@ -285,14 +285,17 @@ the `Stop` hook always answers `{"decision":"stop"}`.
 | mode | tool call | hook answer |
 |---|---|---|
 | review (default) | any | `{"decision":"deny","reason":"review worker: tools are disabled"}` |
-| `--web` | `.toolCall.name` is exactly `search_web`, `read_url_content` or `read_url` | `{"decision":"ask"}` — agy's own permission rules decide; the worker never answers `allow` |
-| `--web` | any other name, empty or missing name, missing `toolCall`, unparseable input, jq failure | `{"decision":"deny","reason":"web worker: only web search and URL reads are allowed"}` |
+| `--web` | `.toolCall.name` is exactly `search_web` | `{"decision":"ask"}` — agy's own permission rules decide; the worker never answers `allow` |
+| `--web` | any other name (including `read_url_content` and `read_url`), empty or missing name, missing `toolCall`, unparseable input, more than one JSON document, jq failure | `{"decision":"deny","reason":"web worker: only web search is allowed"}` |
 
 Only `.toolCall.name` counts: an args payload containing `"name":"search_web"` does not turn a
 `run_command` into `ask`. The web hook reads the name with `jq` called by the absolute path
 resolved when the file is written; a path that fails the same character allowlist as the scratch
 directory refuses `--web` (exit 2). The plugin is still fail-closed: not written means no start
-and no API key.
+and no API key. In `--web` mode the worker also runs the generated hook once with a `search_web`
+call (must print exactly the `ask` line) and once with `run_command` (must print a deny line)
+before agy starts; any other result (a jq too old for the expression, say) exits 2 with "web hook
+self-test failed".
 
 Measured on agy 1.5.2, 2026-11-07 (5 headless runs under this worker's sandbox profile, workspace
 plugin hook):
@@ -311,9 +314,17 @@ plugin hook):
 - `{"decision":"ask"}` hands the call to agy's own permission rules, and `search_web` then ran
   headless with no approval on two different accounts.
 
-Unmeasured: `read_url_content` was never called by the model, so whether agy can approve a URL
-read headless is unknown; if it cannot, the existing soft-deny path (exit 9) applies, which fails
-closed. Before this hook the deny matcher listed only the exec and write tools, so `read_file`
+Unmeasured: `read_url_content` was never called by the model, so **URL reading is off** in `--web`
+(both `read_url_content` and `read_url` are denied). The hook cannot restrict a URL tool's argument,
+and a prompt-injected page could point it at `localhost` or a private-network address while the
+sandbox keeps the network open. Before turning it on, measure: where the fetch runs (in agy's
+process, under this sandbox profile, or on the vendor side), whether agy approves it headless, what
+a redirect to a loopback address does, whether `file://` works, and the argument key. The hook would
+then also need an argument check: `https` only, DNS names only — no IP literals, `localhost`,
+`*.local`, `*.internal` or single-label names.
+Also unmeasured: whether MCP tools, subagents or internal control tools pass through `PreToolUse`
+at all; whether agy expands `@<path>` inside a `-p` prompt.
+Before this hook the deny matcher listed only the exec and write tools, so `read_file`
 and `search_web` went through; review mode now denies them, and `--web` is the only way to a
 search. A `--web` prompt and every search it triggers leave the machine: keep credentials,
 customer data and private code out of it.

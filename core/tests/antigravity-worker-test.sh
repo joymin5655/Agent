@@ -604,9 +604,9 @@ run_refused args-tier-bad-value --tier huge --web
 run_refused args-tier-then-flag-as-value --tier --web
 
 echo
-echo "=== (n) tool allowlist hook: review denies every tool, --web allows web search / URL reads ==="
+echo "=== (n) tool allowlist hook: review denies every tool, --web allows web search only ==="
 DENY_REV='{"decision":"deny","reason":"review worker: tools are disabled"}'
-DENY_WEB='{"decision":"deny","reason":"web worker: only web search and URL reads are allowed"}'
+DENY_WEB='{"decision":"deny","reason":"web worker: only web search is allowed"}'
 hook() {  # hook <plugin-dir> <event> <stdin-json>
   printf '%s' "$3" | "$1/deny.sh" "$2" 2>/dev/null | tr -d '\n'
 }
@@ -623,11 +623,9 @@ check "review-hook-stop" '{"decision":"stop"}' "$(hook "$TMP/plug-rev" Stop '{}'
 rm -rf "$TMP/plug-web"; : > "$ENVREC"
 printf 'x' | PLUG_SAVE="$TMP/plug-web" ANTIGRAVITY_TIERS_FILE="$TIERS" bash "$WORKER" --tier mid --web >/dev/null 2>&1
 check "web-hook-matcher-all" '.*' "$(jq -r '.["agent-worker-deny"].PreToolUse[0].matcher' "$TMP/plug-web/hooks.json")"
-for n in search_web read_url_content read_url; do
-  body="$(jq -nc --arg n "$n" '{toolCall:{name:$n,args:{}}}')"
-  check "web-hook-asks[$n]" '{"decision":"ask"}' "$(hook "$TMP/plug-web" PreToolUse "$body")"
-done
-for n in read_file run_command write_to_file browser_subagent '' view_file search_web_extra 'search_web
+check "web-hook-asks[search_web]" '{"decision":"ask"}' "$(hook "$TMP/plug-web" PreToolUse '{"toolCall":{"name":"search_web","args":{}}}')"
+# URL tools are off until measured: the hook cannot restrict their URL argument
+for n in read_url_content read_url read_file run_command write_to_file browser_subagent '' view_file search_web_extra 'search_web
 x'; do
   body="$(jq -nc --arg n "$n" '{toolCall:{name:$n,args:{}}}')"
   check "web-hook-denies[$n]" "$DENY_WEB" "$(hook "$TMP/plug-web" PreToolUse "$body")"
@@ -646,6 +644,24 @@ grep -q '"allow"' "$TMP/plug-web/deny.sh"; check "web-hook-never-allows" 1 $?
 # jq failure -> deny: a hook copy whose baked jq path is dead denies even a search_web call
 sed "s#'$(command -v jq)'#'/nonexistent/jq'#" "$TMP/plug-web/deny.sh" > "$TMP/plug-web/deny-nojq.sh"; chmod +x "$TMP/plug-web/deny-nojq.sh"
 check "web-hook-denies[jq-failure]" "$DENY_WEB" "$(printf '%s' '{"toolCall":{"name":"search_web"}}' | "$TMP/plug-web/deny-nojq.sh" PreToolUse | tr -d '\n')"
+# web hook self-test: a jq that cannot run the hook expression (fake exits 3 on IN( ) refuses
+# --web before agy starts; review mode with the same jq is unaffected. Other calls use real jq.
+FAKEJQ="$TMP/fakejq"; mkdir -p "$FAKEJQ"
+cat > "$FAKEJQ/jq" <<FAKE
+#!/usr/bin/env bash
+for a in "\$@"; do case "\$a" in *'IN('*) exit 3 ;; esac; done
+exec "$(command -v jq)" "\$@"
+FAKE
+chmod +x "$FAKEJQ/jq"
+: > "$RECORD"
+err="$(printf 'x' | PATH="$FAKEJQ:$PATH" ANTIGRAVITY_TIERS_FILE="$TIERS" bash "$WORKER" --web 2>&1 >/dev/null)"; rc=$?
+check "web-self-test-failure-exits-2" 2 "$rc"
+printf '%s' "$err" | grep -q 'web hook self-test failed'; check "web-self-test-failure-names-reason" 0 $?
+check_true "web-self-test-failure-agy-not-invoked" test ! -s "$RECORD"
+: > "$RECORD"
+printf 'x' | PATH="$FAKEJQ:$PATH" ANTIGRAVITY_TIERS_FILE="$TIERS" bash "$WORKER" --tier mid >/dev/null 2>&1
+check "review-mode-unaffected-by-hook-jq-failure" 0 $?
+check_true "review-mode-unaffected-agy-invoked" test -s "$RECORD"
 # an unusable jq path (not an absolute path of safe characters) refuses --web before agy starts
 ODDBIN="$TMP/odd dir"; mkdir -p "$ODDBIN"; ln -sf "$(command -v jq)" "$ODDBIN/jq"
 : > "$RECORD"

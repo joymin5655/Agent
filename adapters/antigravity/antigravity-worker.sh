@@ -43,12 +43,15 @@
 # reads and web search included (measured on agy 1.5.2, 2026-11-07: a hook deny does not
 # end the run and leaves no trace in denied_actions or the soft-deny notice, so the
 # success checks below are unaffected). With --web the hook answers "ask" — agy's own
-# permission rules decide; the hook never says "allow" — for exactly search_web,
-# read_url_content and read_url, read from .toolCall.name with jq called by the absolute
-# path resolved at write time, and denies everything else (any other name, no name, no
-# toolCall, unparseable input, jq failure). --web therefore opens web search and public
-# page reads only, never local files. If agy cannot approve a URL read headless, the
-# soft-deny path below (exit 9) applies — fail closed; read_url_content is unmeasured.
+# permission rules decide; the hook never says "allow" — for exactly search_web, read from
+# .toolCall.name with jq called by the absolute path resolved at write time, and denies
+# everything else (any other name, no name, no toolCall, unparseable input, jq failure).
+# URL reads (read_url_content, read_url) are OFF: they are unmeasured and the hook cannot
+# restrict their URL argument, so a prompt-injected page could aim them at localhost or a
+# private-network address while the sandbox keeps the network open (README "Unmeasured").
+# --web therefore opens web search only, never page reads and never local files. Right after
+# the plugin is written the worker runs the hook once with search_web (must answer "ask")
+# and once with run_command (must deny); anything else refuses to start (exit 2).
 # sandbox-exec is fail-closed: no sandbox-exec => refuse (unless the opt-out is set).
 #
 # Tier policy: model IDs are forbidden in core/infra/backends.json
@@ -255,8 +258,8 @@ cat > "$PROMPT_FILE"
 # every tool call and the hook is a static script that decides only from what was baked into
 # it at write time — never from environment variables, never needing the adapter or the
 # global plugin. Review mode (default): every tool call is denied. Web mode (--web): only
-# search_web / read_url_content / read_url answer "ask" (agy's own permission rules decide —
-# the hook never answers "allow"); everything else, including unparseable input, is denied.
+# search_web answers "ask" (agy's own permission rules decide — the hook never answers
+# "allow"); everything else, including both URL tools and unparseable input, is denied.
 # Fail closed: a worker that cannot write it refuses to start, and never gets the API key.
 DENY_DIR="$WORK_DIR/.agents/plugins/agent-worker-deny"
 write_deny_plugin() {
@@ -266,14 +269,14 @@ write_deny_plugin() {
     if [[ $WEB -eq 1 ]]; then
         cat > "$DENY_DIR/deny.sh" <<'WEBSH' || return 1
 #!/bin/sh
-# web worker: only web search and URL reads may reach agy's own permission rules ("ask").
+# web worker: only web search may reach agy's own permission rules ("ask"); URL reads are off.
 # Only .toolCall.name counts (an args payload naming a tool changes nothing); any failure denies.
 if [ "${1:-}" = Stop ]; then cat >/dev/null; printf '%s\n' '{"decision":"stop"}'; exit 0; fi
-verdict=$(@JQ@ -r 'if (.toolCall | type) == "object" and (.toolCall.name | type) == "string" and (.toolCall.name | IN("search_web", "read_url_content", "read_url")) then "ask" else "deny" end' 2>/dev/null) || verdict=deny
+verdict=$(@JQ@ -r 'if (.toolCall | type) == "object" and (.toolCall.name | type) == "string" and (.toolCall.name | IN("search_web")) then "ask" else "deny" end' 2>/dev/null) || verdict=deny
 if [ "$verdict" = ask ]; then
     printf '%s\n' '{"decision":"ask"}'
 else
-    printf '%s\n' '{"decision":"deny","reason":"web worker: only web search and URL reads are allowed"}'
+    printf '%s\n' '{"decision":"deny","reason":"web worker: only web search is allowed"}'
 fi
 WEBSH
         # Bake in jq's absolute path (allowlisted above) as a single-quoted word.
@@ -293,7 +296,7 @@ REVSH
     fi
     chmod +x "$DENY_DIR/deny.sh" || return 1
     local desc="Antigravity review worker: denies every tool call."
-    [[ $WEB -eq 1 ]] && desc="Antigravity web worker: only web search and URL reads reach agy's permission rules; every other tool call is denied."
+    [[ $WEB -eq 1 ]] && desc="Antigravity web worker: only web search reaches agy's permission rules; every other tool call is denied."
     cat > "$DENY_DIR/plugin.json" <<PLUGINJSON || return 1
 {
   "name": "agent-worker-deny",
@@ -318,6 +321,16 @@ if ! write_deny_plugin; then
     rm -rf "$WORK_DIR"
     echo "antigravity-worker: could not write the workspace deny plugin — refusing to start (the worker relies on it to deny tool calls); no API key was exported" >&2
     exit 2
+fi
+if [[ $WEB -eq 1 ]]; then
+    # Self-test the generated web hook: a jq too old for the expression (or broken) would
+    # make it deny everything, or worse answer something unintended. Fail closed.
+    if [[ "$(printf '%s' '{"toolCall":{"name":"search_web"}}' | "$DENY_DIR/deny.sh" PreToolUse 2>/dev/null)" != '{"decision":"ask"}' ]] \
+       || [[ "$(printf '%s' '{"toolCall":{"name":"run_command"}}' | "$DENY_DIR/deny.sh" PreToolUse 2>/dev/null)" != '{"decision":"deny",'* ]]; then
+        rm -rf "$WORK_DIR"
+        echo "antigravity-worker: web hook self-test failed — jq too old or broken?" >&2
+        exit 2
+    fi
 fi
 if [[ -n "${GEMINI_KEY:-}" ]]; then
     export GEMINI_API_KEY="$GEMINI_KEY"
