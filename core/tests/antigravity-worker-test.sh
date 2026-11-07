@@ -388,7 +388,7 @@ printf '%s' "$err" | grep -q 'modelProvider'; check "absent-settings-file-warns"
 
 echo
 echo "=== (j) workspace deny plugin + apikey fail-closed ==="
-# Written before agy starts, in agy's cwd; static hook denies every exec/write tool.
+# Written before agy starts, in agy's cwd; the static hook denies every tool call in review mode.
 : > "$ENVREC"; : > "$RECORD"
 printf 'x' | HOME="$AH" USER=testuser ANTIGRAVITY_TIERS_FILE="$TIERS" bash "$WORKER" --tier mid >/dev/null 2>&1
 check "deny-plugin-dispatch-exits-0" 0 $?
@@ -397,7 +397,7 @@ grep -q '^DENY_PRE={"decision":"deny","reason":"review worker: tools are disable
 grep -q '^DENY_STOP={"decision":"stop"}$' "$ENVREC"; check "deny-plugin-stop-stops" 0 $?
 dpwd="$(grep '^DENY_PWD=' "$ENVREC" | head -1 | cut -d= -f2-)"
 grep -qF "DENY_CMD=\"$dpwd/.agents/plugins/agent-worker-deny/deny.sh\" PreToolUse" "$ENVREC"; check "deny-plugin-hook-command-absolute" 0 $?
-grep -qF 'DENY_MATCHER=.*' "$ENVREC"; check "deny-plugin-matcher-catches-every-tool" 0 $?
+check "deny-plugin-matcher-catches-every-tool" 'DENY_MATCHER=.*' "$(grep '^DENY_MATCHER=' "$ENVREC" | head -n 1)"
 # apikey: the key is exported only after the plugin exists (it is present when agy starts with the key).
 : > "$ENVREC"
 printf 'x' | HOME="$AH" USER=testuser ANTIGRAVITY_AUTH=apikey ANTIGRAVITY_TIERS_FILE="$TIERS" bash "$WORKER" --tier mid >/dev/null 2>&1
@@ -619,6 +619,7 @@ for body in '{"toolCall":{"name":"search_web","args":{"query":"x"}}}' '{"toolCal
   check "review-hook-denies[$body]" "$DENY_REV" "$(hook "$TMP/plug-rev" PreToolUse "$body")"
 done
 check "review-hook-stop" '{"decision":"stop"}' "$(hook "$TMP/plug-rev" Stop '{}')"
+jq -e . "$TMP/plug-rev/plugin.json" >/dev/null 2>&1; check "review-plugin-json-valid" 0 $?
 # web mode
 rm -rf "$TMP/plug-web"; : > "$ENVREC"
 printf 'x' | PLUG_SAVE="$TMP/plug-web" ANTIGRAVITY_TIERS_FILE="$TIERS" bash "$WORKER" --tier mid --web >/dev/null 2>&1
@@ -637,6 +638,13 @@ check "web-hook-denies[invalid-json]" "$DENY_WEB" "$(hook "$TMP/plug-web" PreToo
 check "web-hook-denies[empty-stdin]" "$DENY_WEB" "$(hook "$TMP/plug-web" PreToolUse '')"
 check "web-hook-denies[args-name-spoof]" "$DENY_WEB" "$(hook "$TMP/plug-web" PreToolUse '{"toolCall":{"name":"run_command","args":{"name":"search_web"}}}')"
 check "web-hook-stop" '{"decision":"stop"}' "$(hook "$TMP/plug-web" Stop '{}')"
+jq -e . "$TMP/plug-web/plugin.json" >/dev/null 2>&1; check "web-plugin-json-valid" 0 $?
+# stdin that is not exactly one object naming search_web denies (never a leading ask)
+check "web-hook-denies[two-documents]" "$DENY_WEB" "$(hook "$TMP/plug-web" PreToolUse '{"toolCall":{"name":"search_web"}}{"toolCall":{"name":"run_command"}}')"
+check "web-hook-denies[object-then-garbage]" "$DENY_WEB" "$(hook "$TMP/plug-web" PreToolUse '{"toolCall":{"name":"search_web"}} garbage')"
+check "web-hook-denies[top-level-array]" "$DENY_WEB" "$(hook "$TMP/plug-web" PreToolUse '[{"toolCall":{"name":"search_web"}}]')"
+check "web-hook-denies[top-level-string]" "$DENY_WEB" "$(hook "$TMP/plug-web" PreToolUse '"search_web"')"
+check "web-hook-denies[top-level-null]" "$DENY_WEB" "$(hook "$TMP/plug-web" PreToolUse 'null')"
 # the hook calls jq by an absolute path baked in at write time, and never answers "allow"
 jqline="$(grep -o "'/[^']*jq'" "$TMP/plug-web/deny.sh" | head -n 1)"
 [[ "$jqline" == "'$(command -v jq)'" ]]; check "web-hook-jq-absolute-path-baked-in" 0 $?
