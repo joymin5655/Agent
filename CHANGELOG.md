@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-11-08
+
+### Added
+- **Account slots for the antigravity lane (#241).** The usage policy can pick which local agy
+  account a gemini candidate runs on. call-worker asks a backend with `"account_slots": true`
+  with `--accounts`, reads `"account"` from the policy's stdout only (one whole JSON stream;
+  anything else that mentions `"account"` fails closed, exit 3) and passes it only into that
+  candidate's preflight and worker as `AGENT_WORKER_ACCOUNT`. The worker validates the
+  owner-written `~/.agent/antigravity-accounts.json` and the slot directory before agy starts.
+  A file slot runs agy with `HOME=~/.agy-<name>` inside a sandbox that denies the keyring tool
+  and the default token file, so that account's login stays in the slot; every sandboxed run
+  also denies reading the other existing `~/.agy-*` directories. Without an accounts file the
+  lane runs the default slot, as before.
+- **Tool allowlist hook in the antigravity worker (#240).** The worker writes a workspace plugin
+  whose PreToolUse hook denies every tool in review mode; `--web` asks only for web search (URL
+  reads stay denied until measured). The generated hook is self-tested before agy starts, and
+  the worker accepts only `--tier` and `--web`.
+- **`research-google` role (#240):** gemini MID tier, read-only, run with `--web`.
+
+### Changed
+- **The antigravity worker refuses Argon model ids (#240)** in every slot of the tiers file, and
+  a malformed tiers file (including one holding a NUL byte) fails closed (exit 2).
+- **Policy handshake (#241):** a policy command that does not understand `--accounts` makes the
+  gemini lane fail closed (exit 3). Update the policy command before upgrading.
+- **antigravity preflight probe limit 60 s → 120 s (#240).** Single-token replies took 35-101 s
+  on one account, so the 60 s probe marked a working lane unavailable.
+- **Merge rule in `AGENTS.md` (#240).** A supervisor squash-merge needs an independent reviewer
+  and a second reviewer from a different AI vendor than the author, both approving the same head
+  commit. Hook, guard and permission-policy changes also need the strongest available model as
+  the independent reviewer; release/deploy configuration still waits for a human.
+- **`/spec` (#240):** a user-visible change needs a success criterion that performs the user's
+  action, and that command goes into the completion claim's tests.
+- **`/supervise` (#238, #239):** every skill a delegation contract names carries a one-line
+  reason and its evidence; the intake restatement gains a skill check with vetted external
+  discovery; a host skill-adoption policy decides installs, counted only from the user's own
+  instructions.
+
 ## [0.13.8] - 2026-10-31
 
 ### Fixed
