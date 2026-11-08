@@ -56,6 +56,11 @@
 #                    and rows are owner-only (umask 077), the worker keeps the caller's umask;
 #                    an existing workers dir / reviews.jsonl is chmod-ed to 700 / 600
 #   fallback-why  <- a capture names the reason of the backend it describes, not the primary's
+#   account       <- (section 14) a backend with "account_slots": true is asked `check ... --accounts`;
+#                    the policy's JSON "account" (absent/null = none; anything but a name of the
+#                    ^[a-z][a-z0-9]{0,15}$ shape = exit 3) reaches only that candidate's preflight
+#                    and worker as AGENT_WORKER_ACCOUNT; an inherited one never does; a policy that
+#                    rejects --accounts fails closed with a hint
 #   shipped       <- the same, end to end, against the SHIPPED core/infra/backends.json
 #
 # Registry is pinned via AGENT_BACKENDS_FILE and output via AGENT_WORKERS_DIR
@@ -1534,6 +1539,285 @@ if [[ $rc -eq 127 && "$(ncalls codex)" == 0 && "$(ncalls claude)" == 0 && "$(nca
     ok "shipped cross-review, author anthropic, codex capped — claude is the author's own: exit 127, single-company review"
 else
     bad "shipped cross-review/anthropic/capped" "rc=$rc policy=[$(cat "$MARKERS/policy.calls" 2>/dev/null)] cap=$(head -n 9 "$cap" 2>/dev/null | tr '\n' '|')"
+fi
+
+# --- 14. account slots: the policy picks an account, call-worker hands it to one candidate --
+#
+# A backend with "account_slots": true is asked `check ... --accounts`; the policy's JSON stdout
+# may name an account, which reaches ONLY that candidate's preflight and worker as
+# AGENT_WORKER_ACCOUNT. A caller's own AGENT_WORKER_ACCOUNT never reaches either. Stubs only: the
+# worker stubs record the variable in $MARKERS/<name>.acct, the preflight stub in pf.acct.
+
+ACC_BIN="$WORK/bin-acc"
+mkdir -p "$ACC_BIN"
+for b in agy-a agy-b plain-cli; do
+    cat > "$ACC_BIN/$b" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$MARKERS/$b.calls"
+printf '%s\n' "\${AGENT_WORKER_ACCOUNT-<unset>}" >> "$MARKERS/$b.acct"
+cat >/dev/null
+echo "$b-reply"
+case "$b" in agy-a) exit "\${ACC_A_EXIT:-0}" ;; esac
+EOF
+    chmod +x "$ACC_BIN/$b"
+done
+cat > "$ACC_BIN/pf-acc" <<EOF
+#!/usr/bin/env bash
+printf '%s %s\n' "\${AGENT_PREFLIGHT_LANE:-<none>}" "\${AGENT_WORKER_ACCOUNT-<unset>}" >> "$MARKERS/pf.acct"
+exit 0
+EOF
+chmod +x "$ACC_BIN/pf-acc"
+
+REG8="$WORK/backends-acc.json"
+cat > "$REG8" <<'JSON'
+{
+  "version": 2,
+  "roles": {
+    "acc":   { "backend": "agya",   "tier": "TOP", "fallback": null },
+    "plain": { "backend": "plainb", "tier": "TOP", "fallback": null },
+    "two":   { "backend": "agya",   "tier": "TOP", "fallback": "agyb" }
+  },
+  "backends": {
+    "agya":   { "vendor": "google", "connection": "cli", "enabled": true, "cmd": ["agy-a"],
+                "tier_args": { "TOP": [] }, "preflight": ["pf-acc"], "account_slots": true, "timeout_s": 30 },
+    "agyb":   { "vendor": "openai", "connection": "cli", "enabled": true, "cmd": ["agy-b"],
+                "tier_args": { "TOP": [] }, "preflight": ["pf-acc"], "account_slots": true, "timeout_s": 30 },
+    "plainb": { "vendor": "google", "connection": "cli", "enabled": true, "cmd": ["plain-cli"],
+                "tier_args": { "TOP": [] }, "preflight": ["pf-acc"], "timeout_s": 30 }
+  }
+}
+JSON
+
+POLICY_ACC="$WORK/policy-acc"
+cat > "$POLICY_ACC" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$MARKERS/policy.calls"
+if [[ -n "\${POLICY_REJECT_ACCOUNTS:-}" ]]; then
+    case " \$* " in *" --accounts "*) echo "unknown option --accounts"; exit 2 ;; esac
+fi
+# \$3 is the lane (check --lane <lane> ...): a per-lane canned answer
+[[ -f "$WORK/acct-pre.\$3" ]] && cat "$WORK/acct-pre.\$3" >&2
+[[ -f "$WORK/acct-answer.\$3" ]] && cat "$WORK/acct-answer.\$3"
+[[ -f "$WORK/acct-post.\$3" ]] && cat "$WORK/acct-post.\$3" >&2
+exit "\${POLICY_EXIT:-0}"
+EOF
+chmod +x "$POLICY_ACC"
+
+acc_reset() { xai_reset; rm -f "$MARKERS"/*.acct "$WORK"/acct-answer.* "$WORK"/acct-pre.* "$WORK"/acct-post.*; }
+acc_answer() { printf '%s' "$2" > "$WORK/acct-answer.$1"; }   # acc_answer <lane> <stdout-text>
+acct_of() { tr '\n' ',' < "$MARKERS/$1.acct" 2>/dev/null; }      # acct_of <stub> -> "second," / "<unset>,"
+acc_cwx() { XAI_PATH="$ACC_BIN" cwx "$REG8" "$@"; }
+
+# 14a. an account_slots backend is asked with --accounts; the named account reaches its preflight
+# and its worker, and the capture header names it
+acc_reset; acc_answer google '{"account":"second"}'
+acc_cwx acc AGENT_WORKER_POLICY_CMD="$POLICY_ACC"; rc=$?
+cap="$(newest_cap)"
+if [[ $rc -eq 0 && "$(acct_of agy-a)" == "second," ]] \
+   && grep -q '^check --lane google --role acc --hold [0-9]* --accounts$' "$MARKERS/policy.calls" \
+   && [[ "$(cat "$MARKERS/pf.acct")" == "agya second" ]] \
+   && grep -q "^account: second$" "$cap"; then
+    ok "account — policy asked with --accounts; worker and preflight both see AGENT_WORKER_ACCOUNT=second; header names it"
+else
+    bad "account passed" "rc=$rc worker=[$(acct_of agy-a)] pf=[$(cat "$MARKERS/pf.acct" 2>/dev/null)] policy=[$(cat "$MARKERS/policy.calls" 2>/dev/null)]"
+fi
+
+# 14b. the same answer for a backend WITHOUT account_slots: argv unchanged, no account
+acc_reset; acc_answer google '{"account":"second"}'
+acc_cwx plain AGENT_WORKER_POLICY_CMD="$POLICY_ACC"; rc=$?
+cap="$(newest_cap)"
+if [[ $rc -eq 0 && "$(acct_of plain-cli)" == "<unset>," ]] \
+   && grep -q '^check --lane google --role plain --hold [0-9]*$' "$MARKERS/policy.calls" \
+   && [[ "$(cat "$MARKERS/pf.acct")" == "plainb <unset>" ]] \
+   && ! grep -q '^account:' "$cap"; then
+    ok "account — a backend without account_slots: no --accounts, the answer is ignored, worker and preflight see no account"
+else
+    bad "no account_slots" "rc=$rc worker=[$(acct_of plain-cli)] policy=[$(cat "$MARKERS/policy.calls" 2>/dev/null)]"
+fi
+
+# 14c. a policy answer that is not an account name fails closed (exit 3), the worker never runs
+for ans in '{"account":"Bad-Name"}' '{"account":5}' '{"account":false}' '{"account":""}' \
+           '{"account":"second\n"}' '{"account":"toolongname1234567"}' '{"account":["second"]}' \
+           '{"account":"0abc"}' '{"account":"second"}{"account":"third"}'; do
+    acc_reset; acc_answer google "$ans"
+    acc_cwx acc AGENT_WORKER_POLICY_CMD="$POLICY_ACC"; rc=$?
+    if [[ $rc -eq 3 && "$(ncalls agy-a)" == 0 && ! -s "$MARKERS/pf.acct" && -z "$(ls "$WORK/wx" 2>/dev/null)" ]] \
+       && grep -q "not a valid account name" "$WORK/wx.err" && [[ "$(wc -l < "$WORK/wx.err" | tr -d ' ')" == 1 ]]; then
+        ok "account — bad policy answer $ans: exit 3, one-line message, nothing ran"
+    else
+        bad "bad account answer $ans" "rc=$rc agy-a=$(ncalls agy-a) err=$(head -n 3 "$WORK/wx.err")"
+    fi
+done
+acc_reset; acc_answer google '{"account":"x\u0007y"}'
+acc_cwx acc AGENT_WORKER_POLICY_CMD="$POLICY_ACC"; rc=$?
+if [[ $rc -eq 3 && "$(ncalls agy-a)" == 0 ]] && ! grep -q "$(printf '\007')" "$WORK/wx.err"; then
+    ok "account — a control character in a bad answer is stripped from the message"
+else
+    bad "bad account control char" "rc=$rc"
+fi
+
+# 14c2. stdout must parse as ONE whole JSON stream; a partial parse never picks an account
+for ans in '{"account":"second"} garbage' '{"account":"second"' '{"account":"second"} {"account":"third"}'; do
+    acc_reset; acc_answer google "$ans"
+    acc_cwx acc AGENT_WORKER_POLICY_CMD="$POLICY_ACC"; rc=$?
+    if [[ $rc -eq 3 && "$(ncalls agy-a)" == 0 ]]; then
+        ok "account — partial or multiple stdout documents [$ans]: exit 3, worker not run"
+    else
+        bad "partial parse [$ans]" "rc=$rc agy-a=$(ncalls agy-a)"
+    fi
+done
+acc_reset; printf '{"account":"second"}\000{"account":"third"}' > "$WORK/acct-answer.google"
+acc_cwx acc AGENT_WORKER_POLICY_CMD="$POLICY_ACC"; rc=$?
+if [[ $rc -eq 3 && "$(ncalls agy-a)" == 0 ]]; then
+    ok "account — a NUL byte between two documents: exit 3, worker not run"
+else
+    bad "nul between documents" "rc=$rc agy-a=$(ncalls agy-a)"
+fi
+# a stderr warning, before or after the JSON, neither hides nor changes the account
+for where in pre post; do
+    acc_reset; acc_answer google '{"account":"second"}'
+    printf 'warning: something odd\n' > "$WORK/acct-$where.google"
+    acc_cwx acc AGENT_WORKER_POLICY_CMD="$POLICY_ACC"; rc=$?
+    if [[ $rc -eq 0 && "$(acct_of agy-a)" == "second," && "$(cat "$MARKERS/pf.acct")" == "agya second" ]]; then
+        ok "account — a stderr warning ($where) leaves the account on stdout intact"
+    else
+        bad "stderr warning $where" "rc=$rc worker=[$(acct_of agy-a)]"
+    fi
+done
+# stderr never names an account: JSON on stderr alone is ignored
+acc_reset; printf '{"account":"second"}\n' > "$WORK/acct-post.google"
+acc_cwx acc AGENT_WORKER_POLICY_CMD="$POLICY_ACC"; rc=$?
+if [[ $rc -eq 0 && "$(acct_of agy-a)" == "<unset>," ]]; then
+    ok "account — an account printed on stderr only is ignored"
+else
+    bad "stderr account ignored" "rc=$rc worker=[$(acct_of agy-a)]"
+fi
+# the reason: a JSON "reason" on stdout, else stdout's first line, else stderr's first line
+acc_reset; printf 'reason: quota window used up\n' > "$WORK/acct-post.google"
+acc_cwx acc AGENT_WORKER_POLICY_CMD="$POLICY_ACC" POLICY_EXIT=75; rc=$?
+cap="$(newest_cap)"
+if [[ $rc -eq 127 ]] && grep -qxF 'unavailable_reason: capped: quota window used up' "$cap"; then
+    ok "reason — an empty stdout falls back to the first stderr line"
+else
+    bad "reason from stderr" "rc=$rc cap=$(head -n 9 "$cap" 2>/dev/null | tr '\n' '|')"
+fi
+acc_reset; acc_answer google '{"reason":"weekly cap reached"}'
+printf 'warning: something odd\n' > "$WORK/acct-pre.google"
+acc_cwx acc AGENT_WORKER_POLICY_CMD="$POLICY_ACC" POLICY_EXIT=75; rc=$?
+cap="$(newest_cap)"
+if [[ $rc -eq 127 ]] && grep -qxF 'unavailable_reason: capped: weekly cap reached' "$cap"; then
+    ok "reason — a JSON reason on stdout wins over a stderr line"
+else
+    bad "reason stdout over stderr" "rc=$rc cap=$(head -n 9 "$cap" 2>/dev/null | tr '\n' '|')"
+fi
+
+# 14d. no account in the answer (absent, null, other JSON, not JSON, empty) = the default slot
+for ans in '' '{"account":null}' '{"reason":"fine"}' 'all good' '["x"]'; do
+    acc_reset; acc_answer google "$ans"
+    acc_cwx acc AGENT_WORKER_POLICY_CMD="$POLICY_ACC"; rc=$?
+    if [[ $rc -eq 0 && "$(acct_of agy-a)" == "<unset>," && "$(cat "$MARKERS/pf.acct")" == "agya <unset>" ]]; then
+        ok "account — policy answer [$ans] names no account: worker and preflight see none"
+    else
+        bad "no account in answer [$ans]" "rc=$rc worker=[$(acct_of agy-a)]"
+    fi
+done
+
+# 14e. an inherited AGENT_WORKER_ACCOUNT never reaches the worker or the preflight, with or
+# without account_slots and with or without a policy
+for case_ in "acc:agy-a:policy" "plain:plain-cli:policy" "acc:agy-a:yes" "plain:plain-cli:yes"; do
+    role="${case_%%:*}"; rest="${case_#*:}"; stub="${rest%%:*}"; mode="${rest#*:}"
+    acc_reset
+    if [[ "$mode" == policy ]]; then
+        acc_cwx "$role" AGENT_WORKER_POLICY_CMD="$POLICY_ACC" AGENT_WORKER_ACCOUNT=leak; rc=$?
+    else
+        acc_cwx "$role" AGENT_WORKER_YES=1 AGENT_WORKER_ACCOUNT=leak; rc=$?
+    fi
+    if [[ $rc -eq 0 && "$(acct_of "$stub")" == "<unset>," ]] && ! grep -q 'leak' "$MARKERS/pf.acct"; then
+        ok "account — inherited AGENT_WORKER_ACCOUNT removed ($role, $mode)"
+    else
+        bad "inherited account $role/$mode" "rc=$rc worker=[$(acct_of "$stub")] pf=[$(cat "$MARKERS/pf.acct" 2>/dev/null)]"
+    fi
+done
+# ... and a policy answer replaces it rather than adding to it
+acc_reset; acc_answer google '{"account":"second"}'
+acc_cwx acc AGENT_WORKER_POLICY_CMD="$POLICY_ACC" AGENT_WORKER_ACCOUNT=leak; rc=$?
+if [[ $rc -eq 0 && "$(acct_of agy-a)" == "second," && "$(cat "$MARKERS/pf.acct")" == "agya second" ]]; then
+    ok "account — the policy's account wins over an inherited one"
+else
+    bad "policy account over inherited" "rc=$rc worker=[$(acct_of agy-a)]"
+fi
+
+# 14f. per candidate: the first candidate's account does not leak to the fallback ...
+acc_reset; acc_answer google '{"account":"second"}'
+acc_cwx two AGENT_WORKER_POLICY_CMD="$POLICY_ACC" ACC_A_EXIT=7; rc=$?
+cap="$(newest_cap)"
+if [[ $rc -eq 0 && "$(acct_of agy-a)" == "second," && "$(acct_of agy-b)" == "<unset>," ]] \
+   && [[ "$(cat "$MARKERS/pf.acct")" == "$(printf 'agya second\nagyb <unset>')" ]] \
+   && grep -q "^backend: agyb$" "$cap" && ! grep -q '^account:' "$cap" \
+   && [[ "$(grep -c -- '--accounts$' "$MARKERS/policy.calls")" == 2 ]]; then
+    ok "account — two candidates: the first's account does not leak to the fallback (both asked with --accounts)"
+else
+    bad "account leak to fallback" "rc=$rc a=[$(acct_of agy-a)] b=[$(acct_of agy-b)] pf=[$(tr '\n' '|' < "$MARKERS/pf.acct")]"
+fi
+# ... and the fallback's own account is its own
+acc_reset; acc_answer openai '{"account":"third"}'
+acc_cwx two AGENT_WORKER_POLICY_CMD="$POLICY_ACC" ACC_A_EXIT=7; rc=$?
+cap="$(newest_cap)"
+if [[ $rc -eq 0 && "$(acct_of agy-a)" == "<unset>," && "$(acct_of agy-b)" == "third," ]] \
+   && grep -q "^account: third$" "$cap"; then
+    ok "account — the fallback gets the account the policy picked for it, the first candidate none"
+else
+    bad "fallback own account" "rc=$rc a=[$(acct_of agy-a)] b=[$(acct_of agy-b)]"
+fi
+# ... and a capped first candidate leaves nothing behind for the fallback
+acc_reset; acc_answer google '{"account":"second"}'
+cat > "$WORK/policy-cap" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$MARKERS/policy.calls"
+if [[ "\$3" == google ]]; then echo '{"account":"second","reason":"capped here"}'; exit 75; fi
+exit 0
+EOF
+chmod +x "$WORK/policy-cap"
+acc_cwx two AGENT_WORKER_POLICY_CMD="$WORK/policy-cap"; rc=$?
+if [[ $rc -eq 0 && "$(ncalls agy-a)" == 0 && "$(acct_of agy-b)" == "<unset>," ]]; then
+    ok "account — a capped first candidate (exit 75) names no account for the fallback"
+else
+    bad "capped first candidate" "rc=$rc a=$(ncalls agy-a) b=[$(acct_of agy-b)]"
+fi
+
+# 14g. a policy that rejects --accounts fails closed and the message says why
+acc_reset; acc_answer google '{"account":"second"}'
+acc_cwx acc AGENT_WORKER_POLICY_CMD="$POLICY_ACC" POLICY_REJECT_ACCOUNTS=1; rc=$?
+if [[ $rc -eq 3 && "$(ncalls agy-a)" == 0 ]] \
+   && grep -q "policy command exited 2" "$WORK/wx.err" && grep -q "must accept --accounts" "$WORK/wx.err"; then
+    ok "account — a policy rejecting --accounts fails closed (exit 3) with a hint that it must accept it"
+else
+    bad "policy rejects --accounts" "rc=$rc err=$(head -n 3 "$WORK/wx.err")"
+fi
+acc_reset
+acc_cwx plain AGENT_WORKER_POLICY_CMD="$POLICY_ACC" POLICY_REJECT_ACCOUNTS=1; rc=$?
+if [[ $rc -eq 0 && "$(ncalls plain-cli)" == 1 ]]; then
+    ok "account — the same policy is fine for a backend that never asks for accounts"
+else
+    bad "policy rejecting --accounts, plain backend" "rc=$rc err=$(head -n 3 "$WORK/wx.err")"
+fi
+acc_reset
+acc_cwx acc AGENT_WORKER_POLICY_CMD="$POLICY_ACC" AGENT_WORKER_YES=1 POLICY_REJECT_ACCOUNTS=1; rc=$?
+if [[ $rc -eq 3 && "$(ncalls agy-a)" == 0 ]]; then
+    ok "account — AGENT_WORKER_YES=1 does not lift a policy that rejects --accounts"
+else
+    bad "YES with rejecting policy" "rc=$rc"
+fi
+
+# 14h. policy said 3 and a person approved with YES=1: no account, even if the answer names one
+acc_reset; acc_answer google '{"account":"second"}'
+acc_cwx acc AGENT_WORKER_POLICY_CMD="$POLICY_ACC" AGENT_WORKER_YES=1 POLICY_EXIT=3; rc=$?
+cap="$(newest_cap)"
+if [[ $rc -eq 0 && "$(acct_of agy-a)" == "<unset>," ]] && ! grep -q '^account:' "$cap" \
+   && row_is '.approval == "user"'; then
+    ok "account — policy exit 3 approved by YES=1 runs on the default slot (no account)"
+else
+    bad "policy 3 + YES" "rc=$rc worker=[$(acct_of agy-a)]"
 fi
 
 # --- tally ---------------------------------------------------------------
