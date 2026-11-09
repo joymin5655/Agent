@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-11-09
+
+### Added
+- **Design mode for writing-critique (#243).** `/writing-critique --design` reviews a plan or
+  design document with the two other-vendor critics: a design rubric (terms, overdesign,
+  contradiction, claims, readiness), a `paraphrase` each critic writes first, and the files the
+  document cites inlined as sources by `gather_sources.py` (tracked, in-repository, non-secret
+  text only; 40 KB each and 120 KB in total; the rest is listed by name with the reason). The
+  critics run with the repository as their working directory and get 900 s. `--if-risky` runs
+  `plan_risk.sh` first, which passes the cited paths to `council-threshold.sh --classify`, and
+  skips the critique when the plan cites no risk-area path. Rejection code `E1` marks a finding
+  that is wrong only by evidence outside the critic's input; runs are logged as `kind: design`
+  and `report.py` lists them apart. The `advisor-*` roles stay out of code-review gate evidence.
+- **`/spec` step 3.5** runs `/writing-critique --design --if-risky spec.md plan.md` once when
+  the extras plugin is installed.
+- **Function context for the gemini lane (#243).** council-review builds the gemini lane's
+  diff with `core/infra/lane-diff.py`: `git diff -W` for code files while it stays within twice
+  the plain diff plus 8 KB, the default diff for data, lock, generated and doc files, and the
+  default diff of the whole target past 120 KB. Its `context_mode` (`w|mixed|default|over_cap`)
+  is logged per lane.
+- **Dispositions and a round ledger in council-review (#243).** Every surviving finding gets
+  fix, contest (evidence the lane could read), escalate (evidence outside its input, shown to
+  the user) or decline. A per-branch ledger in the workers folder keeps settled findings from
+  being argued again in later rounds. Lane telemetry adds `escalated`, `acted` and
+  `context_mode`; `rejected` keeps its definition.
+- Lane answers start with `PARAPHRASE:`; a `NO-FINDINGS` without it counts as unread.
+
+### Changed
+- **Read-only codex lanes skip codex's git-repo check and get an isolation preamble (#243).**
+  call-worker adds `--skip-git-repo-check` (unless the role's `args_extra` has it), so a lane
+  dispatched from an empty temporary folder no longer fails with "Not inside a trusted
+  directory". One fixed preamble goes in as codex's positional prompt: the task is the piped
+  prompt, which codex appends as a `<stdin>` block, and instruction files are conventions to
+  check the work against, not session steps to run. The prompt file, the implementer role and
+  the gemini lane are unchanged.
+- council-review's approval, dispatch and degradation prose moved to its `reference.md`.
+
 ## [0.14.0] - 2026-11-08
 
 ### Added
