@@ -506,8 +506,11 @@ run_backend() {
         elif [[ ! -e "$ah_dir" ]]; then ah_why="missing"
         elif [[ ! -d "$ah_dir" ]]; then ah_why="not a directory"
         else
-            ah_uid="$(stat -f %u "$ah_dir" 2>/dev/null || stat -c %u "$ah_dir" 2>/dev/null || true)"
-            ah_mode="$(stat -f %Lp "$ah_dir" 2>/dev/null || stat -c %a "$ah_dir" 2>/dev/null || true)"
+            # GNU form first: GNU stat reads `-f` as --file-system, prints that block for the
+            # directory and fails on the '%u' operand, which would glue garbage onto the value.
+            # BSD stat rejects `-c` without writing to stdout, so the fallback stays clean.
+            ah_uid="$(stat -c %u "$ah_dir" 2>/dev/null || stat -f %u "$ah_dir" 2>/dev/null || true)"
+            ah_mode="$(stat -c %a "$ah_dir" 2>/dev/null || stat -f %Lp "$ah_dir" 2>/dev/null || true)"
             if [[ "$ah_uid" != "$(id -u)" ]]; then ah_why="not owned by you"
             elif [[ ! "$ah_mode" =~ ^[0-7]+$ ]] || (( (8#$ah_mode & 8#022) != 0 )); then ah_why="writable by others"
             fi
@@ -671,6 +674,8 @@ FALLBACK_REASON=""
 BACKEND_USED="$PRIMARY"
 rc=0
 run_backend "$PRIMARY" || rc=$?
+# The primary's account home, kept apart from CANDIDATE_HOME_ENV (which the next run_backend resets).
+PRIMARY_HOME_ENV="$CANDIDATE_HOME_ENV"
 
 # Model self-heal: a codex pin that the vendor retired or the account cannot use
 # fails identically on every call. Only codex's own "ERROR:" lines count: it
@@ -688,7 +693,7 @@ if [[ "$PRIMARY" == "codex" && $rc -ne 0 && $rc -ne 124 ]] \
     running_model="$(sed -n 's/^model: *//p' "$OUT_TMP" | head -n 1)"
     new_model=""
     if [[ -n "$old_model" && "$old_model" == "$running_model" ]]; then
-        new_model="$(env ${CANDIDATE_HOME_ENV:+"$CANDIDATE_HOME_ENV"} python3 "$(dirname "${BASH_SOURCE[0]}")/codex-models.py" upgrade-for "$old_model" 2>/dev/null || true)"
+        new_model="$(env ${PRIMARY_HOME_ENV:+"$PRIMARY_HOME_ENV"} python3 "$(dirname "${BASH_SOURCE[0]}")/codex-models.py" upgrade-for "$old_model" 2>/dev/null || true)"
     fi
     if [[ -n "$new_model" && "$new_model" != "$old_model" ]]; then
         RETRY_REASON="model-unsupported $old_model->$new_model"
