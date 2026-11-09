@@ -74,7 +74,7 @@ else
     : > "$SOURCES_FILE"
 fi
 if [[ "$RUBRIC" == design ]]; then PROMPT_TPL=design-prompt RUBRIC_FILE=design-rubric; else PROMPT_TPL=critic-prompt RUBRIC_FILE=rubric; fi
-python3 - "$SKILL_DIR" "$DRAFT" "$PURPOSE" "$OUT/prompt.md" "$PROMPT_TPL" "$RUBRIC_FILE" "$SOURCES_FILE" <<'PY'
+python3 -I - "$SKILL_DIR" "$DRAFT" "$PURPOSE" "$OUT/prompt.md" "$PROMPT_TPL" "$RUBRIC_FILE" "$SOURCES_FILE" <<'PY'
 import sys
 sys.path[:] = [p for p in sys.path if p not in ("", ".")]  # the cwd may be the reviewed repo
 skill, draft, purpose, out, tpl_name, rub_name, src = sys.argv[1:8]
@@ -95,21 +95,21 @@ role_of() { echo "advisor-writing-$1"; }
 
 run_critic() { # <label> <company>
     local label="$1" company="$2" t0 t1 rc=0
-    t0=$(python3 -c 'import time;print(time.time())')
+    t0=$(python3 -I -c 'import time;print(time.time())')
     (   # design mode: cwd = the repository (a subshell, so the caller's cwd is untouched)
         [[ -z "$REPO" ]] || cd "$REPO"
         AGENT_WORKER_TIMEOUT_S="${WRITING_CRITIQUE_TIMEOUT_S:-$DEFAULT_TIMEOUT}" \
             bash "$CW" "$(role_of "$company")" < "$OUT/prompt.md" > "$OUT/$label.path" 2> "$OUT/$label.err"
     ) || rc=$?
-    t1=$(python3 -c 'import time;print(time.time())')
+    t1=$(python3 -I -c 'import time;print(time.time())')
     echo "$rc" > "$OUT/$label.rc"
-    python3 -c "print(round($t1-$t0,1))" > "$OUT/$label.sec"
+    python3 -I -c "print(round($t1-$t0,1))" > "$OUT/$label.sec"
 }
 run_critic A "$LA" &
 run_critic B "$LB" &
 wait
 
-python3 - "$SKILL_DIR" "$DRAFT" "$OUT" "$LA" "$LB" "$RUBRIC" <<'PY'
+python3 -I - "$SKILL_DIR" "$DRAFT" "$OUT" "$LA" "$LB" "$RUBRIC" <<'PY'
 import sys
 sys.path[:] = [p for p in sys.path if p not in ("", ".")]  # the cwd may be the reviewed repo
 import json, re, subprocess

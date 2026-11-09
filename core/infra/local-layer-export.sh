@@ -76,7 +76,7 @@ RENDERED="$WORK/local-layer-manifest.yml"
 #     flat enough that a small hand-rolled emitter is simpler and more portable
 #     than requiring a non-stdlib import on every machine this ever runs on) ---
 SETTINGS="$SETTINGS" CACHE_ROOT="$CACHE_ROOT" SKILLS_DIR="$SKILLS_DIR" \
-    python3 - > "$RENDERED" <<'PY'
+    python3 -I - > "$RENDERED" <<'PY'
 import json, os, re, sys
 from datetime import datetime, timezone
 

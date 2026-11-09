@@ -19,7 +19,7 @@ AGENT_NAME="${AGENT_NAME:-unknown-agent}"
 PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 
 # 1. Construct the mock JSON payload
-JSON_PAYLOAD=$(python3 -c '
+JSON_PAYLOAD=$(python3 -I -c '
 import sys, json
 command = sys.argv[1]
 payload = {"hookEventName": "PreToolUse", "tool_input": {"command": command}}
@@ -45,7 +45,7 @@ for hook in "${HOOKS_TO_RUN[@]}"; do
     HOOK_OUTPUT=$(echo "$JSON_PAYLOAD" | "$hook" 2>/dev/null || true)
     
     # Parse failure or non-deny output => pass (unchanged fail-open behaviour).
-    if REASON=$(printf '%s' "$HOOK_OUTPUT" | python3 -c '
+    if REASON=$(printf '%s' "$HOOK_OUTPUT" | python3 -I -c '
 import sys, json
 try:
     data = json.load(sys.stdin)

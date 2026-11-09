@@ -298,7 +298,7 @@ policy_gate() {
     fi
     out="$(mktemp)"; err="$(mktemp)"
     ( umask "$CALLER_UMASK"
-      exec python3 -c 'import os, sys; os.setpgrp(); os.execv(sys.argv[1], sys.argv[1:])' \
+      exec python3 -I -c 'import os, sys; os.setpgrp(); os.execv(sys.argv[1], sys.argv[1:])' \
           "$POLICY_CMD" "${pargs[@]}" ) </dev/null >"$out" 2>"$err" &
     pid=$!
     ( sleep "$POLICY_TIMEOUT_S" \

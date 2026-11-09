@@ -123,7 +123,7 @@ apply_template() {
     # which is acceptable.
     sed "s|{{FRAMEWORK_ROOT}}|$FRAMEWORK_ROOT|g" "$src" > "$rendered"
     if [[ "$src" == "$FRAMEWORK_ROOT/adapters/codex/AGENTS.global.md.template" ]]; then
-        python3 - "$FRAMEWORK_ROOT" "$rendered" <<'PY_SYNC'
+        python3 -I - "$FRAMEWORK_ROOT" "$rendered" <<'PY_SYNC'
 from pathlib import Path
 import runpy
 import sys
@@ -442,7 +442,7 @@ install_git_hooks() {
 # malformed byte sequence costs only the malformed bytes.
 sanitize_display() {
     local raw="${1-}" out
-    if out="$(printf '%s' "$raw" | python3 -c '
+    if out="$(printf '%s' "$raw" | python3 -I -c '
 import re, sys
 s = sys.stdin.buffer.read().decode("utf-8", "surrogateescape")
 s = re.sub("[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069\ud800-\udfff]", "", s)
@@ -485,7 +485,7 @@ doctor() {
         local py_path py_ver
         py_path="$(command -v python3)"
         py_ver="$(python3 --version 2>&1)"
-        if python3 -c 'import sys; sys.exit(0 if sys.version_info[:2] >= (3, 9) else 1)' 2>/dev/null; then
+        if python3 -I -c 'import sys; sys.exit(0 if sys.version_info[:2] >= (3, 9) else 1)' 2>/dev/null; then
             add_row PASS "python3 — $py_ver at $py_path (>= 3.9 required)"
         else
             add_row FAIL "python3 — $py_ver at $py_path (< 3.9 required by README)"
@@ -563,7 +563,7 @@ doctor() {
     # 7. agents/master-registry.json parses; every id has a sibling agents/<id>.md;
     #    each md's `model:` frontmatter matches the registry (same drift guard as CI).
     local reg_out reg_rc
-    if reg_out="$(FRAMEWORK_ROOT="$FRAMEWORK_ROOT" python3 - <<'PY' 2>&1
+    if reg_out="$(FRAMEWORK_ROOT="$FRAMEWORK_ROOT" python3 -I - <<'PY' 2>&1
 import json, os, pathlib, re, sys
 root = pathlib.Path(os.environ["FRAMEWORK_ROOT"])
 try:
@@ -602,7 +602,7 @@ PY
 
     # 8. hooks/hooks.json parses; every referenced hook exists and is executable.
     local hj_out hj_rc
-    if hj_out="$(FRAMEWORK_ROOT="$FRAMEWORK_ROOT" python3 - <<'PY' 2>&1
+    if hj_out="$(FRAMEWORK_ROOT="$FRAMEWORK_ROOT" python3 -I - <<'PY' 2>&1
 import json, os, pathlib, sys
 root = pathlib.Path(os.environ["FRAMEWORK_ROOT"])
 try:
@@ -689,7 +689,7 @@ PY
         add_row WARN "hook manifest — declared at ${manifest/#$HOME/~} but no settings file at ${settings/#$HOME/~}"
     else
         local mf_out mf_rc
-        if mf_out="$(MANIFEST="$manifest" SETTINGS="$settings" python3 - <<'PY' 2>&1
+        if mf_out="$(MANIFEST="$manifest" SETTINGS="$settings" python3 -I - <<'PY' 2>&1
 import json, os, sys
 manifest = [l.strip() for l in open(os.environ["MANIFEST"], encoding="utf-8-sig")
             if l.strip() and not l.strip().startswith("#")]
@@ -746,7 +746,7 @@ PY
         add_row PASS "commands scan — no commands dir at ${cmd_dir/#$HOME/~} (check skipped)"
     else
         local pc_out pc_rc
-        if pc_out="$(CMD_DIR="$cmd_dir" python3 - <<'PY' 2>&1
+        if pc_out="$(CMD_DIR="$cmd_dir" python3 -I - <<'PY' 2>&1
 import glob, os, re, sys
 cmd_dir = os.path.abspath(os.environ["CMD_DIR"])
 runtime_root = os.path.dirname(cmd_dir)
@@ -898,7 +898,7 @@ PY
     else
         local cx_hooks cx_state
         cx_hooks="$(dirname "$codex_cfg")/hooks.json"
-        cx_state="$(python3 - "$cx_hooks" <<'PY' 2>/dev/null || echo "UNREADABLE"
+        cx_state="$(python3 -I - "$cx_hooks" <<'PY' 2>/dev/null || echo "UNREADABLE"
 import json, os, re, sys
 path = sys.argv[1]
 if not os.path.exists(path):
@@ -1080,7 +1080,7 @@ PY
         add_row WARN "brain MCP (plugin path) — no user config at $claude_user_cfg_shown; opt in with: $brain_reg_cmd (never auto-registered)"
     else
         local bm_out bm_rc
-        if bm_out="$(CLAUDE_USER_CFG="$claude_user_cfg" AGENT_FRAMEWORK_ROOT="$FRAMEWORK_ROOT" python3 - <<'PY' 2>&1
+        if bm_out="$(CLAUDE_USER_CFG="$claude_user_cfg" AGENT_FRAMEWORK_ROOT="$FRAMEWORK_ROOT" python3 -I - <<'PY' 2>&1
 import json, os, sys
 
 def resolved(p):
@@ -1193,7 +1193,7 @@ PY
     # Only allow-listed vendor names are rendered, so a crafted file cannot forge rows.
     local profile_file="${AGENT_PROFILE_FILE:-$HOME/.agent/profile.json}" profile_msg=""
     if [[ -f "$profile_file" ]] && command -v python3 >/dev/null 2>&1; then
-        profile_msg="$(python3 -c '
+        profile_msg="$(python3 -I -c '
 import json, sys
 ok = {"anthropic", "openai", "google"}
 d = json.load(open(sys.argv[1]))
@@ -1240,7 +1240,7 @@ print("main=%s reviewers=%s" % (m, ",".join(r) or "-"))' "$profile_file" 2>/dev/
     for gs_f in "${gs_claude[@]}"; do
         [[ -f "$gs_f" ]] || continue
         gs_checked=$((gs_checked + 1))
-        if gs_out="$(GS_FILE="$gs_f" python3 - <<'PY' 2>/dev/null
+        if gs_out="$(GS_FILE="$gs_f" python3 -I - <<'PY' 2>/dev/null
 import json, os, sys
 names = ("AGENT_GATE_SINK_DIR", "AGENT_GATE_SINK_TEST_RUN", "AGENT_REPRODUCE_TEST")
 try:
@@ -1307,11 +1307,11 @@ offer_runtime_profile() {
     fi
     local rec main answer
     rec="$(python3 "$rp" recommend --json 2>/dev/null)" || return 0
-    main="$(printf '%s' "$rec" | python3 -c 'import json,sys; print(json.load(sys.stdin)["main_vendor"])' 2>/dev/null)" || return 0
+    main="$(printf '%s' "$rec" | python3 -I -c 'import json,sys; print(json.load(sys.stdin)["main_vendor"])' 2>/dev/null)" || return 0
     local pf="${AGENT_PROFILE_FILE:-$HOME/.agent/profile.json}" saved=""
     # a previously saved choice wins over the fresh recommendation
     if [[ -f "$pf" ]]; then
-        saved="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["main_vendor"])' "$pf" 2>/dev/null)" || saved=""
+        saved="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["main_vendor"])' "$pf" 2>/dev/null)" || saved=""
         case "$saved" in anthropic|openai|google) main="$saved" ;; esac
     fi
     echo
@@ -1479,7 +1479,7 @@ bootstrap() {
             echo "  [dry-run] would run: $pip_cmd"
         elif confirm_bootstrap "  Install PyYAML via pip? ($pip_cmd)"; then
             echo "  Installing PyYAML ..."
-            if eval "$pip_cmd"; then
+            if (cd "$FRAMEWORK_ROOT" && eval "$pip_cmd"); then
                 installed+=("pyyaml")
             else
                 echo "  ERROR: install failed for PyYAML (command: $pip_cmd)" >&2

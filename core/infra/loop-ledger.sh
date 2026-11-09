@@ -56,13 +56,13 @@ cmd_path() { printf '%s\n' "$DEFAULT_LEDGER"; }
 file_sha() {
   if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | awk '{print $1}'
   elif command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'
-  else python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$1"
+  else python3 -I -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$1"
   fi
 }
 prefix_stream_sha() {
   if command -v shasum >/dev/null 2>&1; then shasum -a 256 | awk '{print $1}'
   elif command -v sha256sum >/dev/null 2>&1; then sha256sum | awk '{print $1}'
-  else python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'
+  else python3 -I -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'
   fi
 }
 

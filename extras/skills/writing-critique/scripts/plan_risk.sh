@@ -44,7 +44,12 @@ trap 'rm -rf "$NEUTRAL"' EXIT
 
 # the project's declared secret paths must be readable, else the classifier would silently drop them
 (cd "$NEUTRAL" && python3 - "$SKILL_DIR/scripts" "$ROOT" "$REPO" <<'PY'
-import sys
+import os, sys
+try:
+    _cwd = os.getcwd()
+except OSError:  # deleted working directory
+    _cwd = ""
+sys.path[:] = [p for p in sys.path if p not in ("", ".", _cwd)]
 sys.path.insert(0, sys.argv[1])
 import gather_sources
 sys.exit(0 if gather_sources.project_secret_tokens(sys.argv[2], sys.argv[3]) is not None else 2)

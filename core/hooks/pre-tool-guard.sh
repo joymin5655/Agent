@@ -3510,12 +3510,13 @@ if [[ "${_RISK_DECLARED:-0}" == 1 && -n "${_HOOK_DIR:-}" && -n "${_PROJ_ROOT:-}"
   _RISK_TMO=()
   if command -v timeout >/dev/null 2>&1; then _RISK_TMO=(timeout 5); fi
   read -r -d '' _RISK_PY <<'PY' || true
-import json, os, sys
+import os, sys
 try:
     _cwd = os.getcwd()
 except OSError:
     _cwd = ""
 sys.path[:] = [p for p in sys.path if p not in ("", ".", _cwd)]
+import json
 sys.path.insert(0, os.environ.get("_HD", ""))
 try:
     import hook_config

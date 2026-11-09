@@ -223,7 +223,7 @@ log_violation() {
   local repro="false"
   case "${AGENT_REPRODUCE_TEST:-}" in 1|true|TRUE|True) repro="true" ;; esac
   printf '{"ts":"%s","guard":"%s","hook":"r4-mutex-check.sh","resource":"%s","reason":%s,"session_id":"%s","decision":"ask","reproduce_test":%s,"origin":"%s","schema_version":"2.0.0"}\n' \
-    "$ts" "$guard" "$resource" "$(printf '%s' "$reason" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))' 2>/dev/null || echo "\"$reason\"")" "$sid" "$repro" "$origin" \
+    "$ts" "$guard" "$resource" "$(printf '%s' "$reason" | python3 -I -c 'import sys,json; print(json.dumps(sys.stdin.read()))' 2>/dev/null || echo "\"$reason\"")" "$sid" "$repro" "$origin" \
     >> "$log_file" 2>/dev/null || true
   [[ -x "$ROOT/core/infra/agent-session.sh" ]] && \
     "$ROOT/core/infra/agent-session.sh" broadcast blocked \
@@ -238,7 +238,7 @@ case "$RESOURCE" in
 esac
 log_violation "$GUARD" "R4 BLOCK $RESOURCE owned by $OWNER" "$RESOURCE"
 
-python3 - "$RESOURCE" "$OWNER" "$OWNER_AGENT" "$OWNER_BRANCH" "$CLAIMED" "$SESSION_ID" <<'PY'
+python3 -I - "$RESOURCE" "$OWNER" "$OWNER_AGENT" "$OWNER_BRANCH" "$CLAIMED" "$SESSION_ID" <<'PY'
 import json, sys
 resource, owner, owner_agent, owner_branch, claimed, current = sys.argv[1:7]
 reason = (

@@ -95,7 +95,7 @@ log_violation() {
   local repro="false"
   case "${AGENT_REPRODUCE_TEST:-}" in 1|true|TRUE|True) repro="true" ;; esac
   printf '{"ts":"%s","guard":"%s","hook":"context-mode-guard.sh","tool":"%s","reason":%s,"session_id":"%s","decision":"%s","reproduce_test":%s,"origin":"%s","schema_version":"2.0.0"}\n' \
-    "$ts" "$guard" "$TOOL_NAME" "$(printf '%s' "$reason" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))' 2>/dev/null || echo "\"$reason\"")" "$sid" "$decision" "$repro" "$origin" \
+    "$ts" "$guard" "$TOOL_NAME" "$(printf '%s' "$reason" | python3 -I -c 'import sys,json; print(json.dumps(sys.stdin.read()))' 2>/dev/null || echo "\"$reason\"")" "$sid" "$decision" "$repro" "$origin" \
     >> "$log_file" 2>/dev/null || true
 }
 
@@ -118,7 +118,7 @@ Use the dedicated path:
 
 See rules/policy/security-guards.md and docs/hook-protocol.md."
 
-python3 - "$DENY_MSG" "$DECISION" <<'PY'
+python3 -I - "$DENY_MSG" "$DECISION" <<'PY'
 import json, sys
 reason, decision = sys.argv[1], sys.argv[2]
 print(json.dumps({

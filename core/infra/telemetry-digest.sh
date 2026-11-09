@@ -229,7 +229,7 @@ fi
 if [[ "$GATES_MODE" -eq 1 ]]; then
     [[ -z "$REGISTRY_PATH" ]] && REGISTRY_PATH="${AGENT_GATE_REGISTRY:-$REPO_ROOT/docs/gate-registry.md}"
     [[ -z "$LOGS_DIR" ]] && LOGS_DIR="${AGENT_GATE_LOGS_DIR:-$REPO_ROOT/.agent/logs}"
-    python3 - "$REGISTRY_PATH" "$LOGS_DIR" "$WINDOW_DAYS" "$FATIGUE_THRESHOLD" "$STALE_DAYS" "$JSON_MODE" "$PROJECTS_ARG" "$SINK_OVERRIDE" <<'PY'
+    python3 -I - "$REGISTRY_PATH" "$LOGS_DIR" "$WINDOW_DAYS" "$FATIGUE_THRESHOLD" "$STALE_DAYS" "$JSON_MODE" "$PROJECTS_ARG" "$SINK_OVERRIDE" <<'PY'
 import sys, os, json, datetime, collections
 
 registry_path, logs_dir = sys.argv[1], sys.argv[2]
@@ -544,14 +544,14 @@ if [[ "$MODEL_MODE" -eq 1 ]]; then
     if [[ ! -f "$ROUTING_LOG_PATH" ]]; then
         echo "SKIP — no model-routing log at $ROUTING_LOG_PATH (model-routing-observer hook not firing?) — loud skip, not a silent pass" >&2
         if [[ "$JSON_MODE" -eq 1 ]]; then
-            src_json=$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$ROUTING_LOG_PATH")
+            src_json=$(python3 -I -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$ROUTING_LOG_PATH")
             printf '{"source": %s, "skip": true, "records": 0}\n' "$src_json"
         else
             echo "model-digest: SKIP (0 records — log absent)"
         fi
         exit 0
     fi
-    python3 - "$ROUTING_LOG_PATH" "$MODEL_REGISTRY_PATH" "$JSON_MODE" <<'PY'
+    python3 -I - "$ROUTING_LOG_PATH" "$MODEL_REGISTRY_PATH" "$JSON_MODE" <<'PY'
 import sys, os, re, json, collections
 
 routing_log, registry_path, json_mode_flag = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -780,7 +780,7 @@ fi
 
 if [[ "$REVIEW_MODE" -eq 1 ]]; then
     [[ -z "$ROUTING_LOG_PATH" ]] && ROUTING_LOG_PATH="${AGENT_MODEL_ROUTING_SINK:-$REPO_ROOT/.agent/logs/model-routing.jsonl}"
-    review_out=$(python3 - "$WORKERS_ROOT" "${AGENT_LOGS_DIR:-$HOME/.agent/logs}" "$ROUTING_LOG_PATH" \
+    review_out=$(python3 -I - "$WORKERS_ROOT" "${AGENT_LOGS_DIR:-$HOME/.agent/logs}" "$ROUTING_LOG_PATH" \
         "${AGENT_SESSION_TIER_SINK:-$REPO_ROOT/.agent/logs/session-tier.jsonl}" \
         "$WINDOW_DAYS" "$JSON_MODE" 2>/dev/null <<'PY'
 import sys, os, re, json, datetime, collections
@@ -1046,7 +1046,7 @@ if [[ -z "$LOG_PATH" ]]; then
     LOG_PATH="${AGENT_TELEMETRY_LOG:-$REPO_ROOT/.agent/logs/supervisor.jsonl}"
 fi
 
-python3 - "$LOG_PATH" "$WINDOW_DAYS" "$JSON_MODE" <<'PY'
+python3 -I - "$LOG_PATH" "$WINDOW_DAYS" "$JSON_MODE" <<'PY'
 import sys
 import json
 import datetime

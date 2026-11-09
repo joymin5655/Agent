@@ -176,7 +176,7 @@ if [[ "$MODE" == "audit" && -f "$GOAL_DB" ]] && command -v jq >/dev/null 2>&1 &&
             if [[ ! -f "$SPEC_FILE" ]]; then
                 SPEC_FAILS+=("goal.json is missing from the plan dir (stored sha256 ${STORED_SHA:0:12})")
             else
-                FILE_SHA=$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$SPEC_FILE" 2>/dev/null || true)
+                FILE_SHA=$(python3 -I -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$SPEC_FILE" 2>/dev/null || true)
                 [[ "$FILE_SHA" == "$STORED_SHA" ]] || SPEC_FAILS+=("goal.json changed since init (sha256 ${FILE_SHA:0:12} != stored ${STORED_SHA:0:12})")
             fi
             collect_verify "$(sqlite3 "$GOAL_DB" "SELECT spec_json FROM supervisor_goal_specs WHERE plan_slug = '$SQL_SLUG';" 2>/dev/null || true)" 1
