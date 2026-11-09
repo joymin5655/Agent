@@ -215,10 +215,12 @@ table (reference.md) keys off them. Each lane's `timeout_s` in backends.json is 
 1. **Mechanical truth first**: read each capture file's frontmatter; only
    `status: complete` lanes are seated. Anything else → the lane status table
    (step 5), with `unavailable_reason`/`fallback_reason` quoted.
-2. **Paraphrase check**: compare each lane's PARAPHRASE with the stated intent. A mismatch
-   is a `spec`-category finding (the reader misread the change or the intent is unclear),
-   never dismissed as a lane error. `NO-FINDINGS` with no PARAPHRASE → lane status "no
-   evidence of reading" (kept, not a clean pass).
+2. **Paraphrase check** (external lanes only; the Claude lane has no output contract): compare
+   each lane's PARAPHRASE, read from its own answer and never from the echoed prompt
+   (reference.md, "Where captures live"), with the stated intent. A mismatch is a
+   `spec`-category finding (the reader misread the change or the intent is unclear), never
+   dismissed as a lane error. `NO-FINDINGS` with no PARAPHRASE → lane status "no evidence of
+   reading" (kept, not a clean pass).
 3. **Dedup** across lanes: same file + overlapping lines + same essential
    issue = one finding, all sources credited.
 4. **Citation check** — the hallucination filter: `Read` the actual file at
@@ -322,10 +324,10 @@ as is.
 "vendor":"google","status":"complete","raised":4,"accepted":2,"rejected":2,"escalated":1,
 "acted":1,"context_mode":"w"}`: `raised` = findings the lane returned, `accepted` = kept
 (Act on / Consider / Noted), `rejected` = dropped by the citation check or Dismissed,
-`escalated` = Dismissed findings whose disproof needed evidence outside what that lane
-received (a subset of `rejected`), `acted` = Act on + Consider, `context_mode` = the
-lane-diff value for the gemini lane (null for other lanes). An absent lane keeps its
-status, with zeros.
+`escalated` = findings given the `escalate` disposition (only Dismissed ones, so a subset
+of `rejected`), `acted` = findings bucketed Act on or Consider, whatever their disposition,
+`context_mode` = the lane-diff value for the gemini lane (null for other lanes). An absent
+lane keeps its status, with zeros.
 
 ### 6. Clear the council-active flag
 

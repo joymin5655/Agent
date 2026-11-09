@@ -56,10 +56,11 @@ else
 fi
 
 CW="${WRITING_CRITIQUE_CALL_WORKER:-}"
-if [[ -z "$CW" ]]; then
+ROOT=""
+if [[ -z "$CW" || "$RUBRIC" == design ]]; then  # design mode needs the root for the source filter
     ROOT="$(bash "$SKILL_DIR/../../scripts/harness-root.sh")" || exit 2
-    CW="$ROOT/core/infra/call-worker.sh"
 fi
+[[ -n "$CW" ]] || CW="$ROOT/core/infra/call-worker.sh"
 [[ -f "$CW" ]] || { echo "critique: call-worker not found at $CW" >&2; exit 2; }
 
 mkdir -p "$OUT"
@@ -68,13 +69,14 @@ OUT="$(cd "$OUT" && pwd)"
 DRAFT="$(cd "$(dirname "$DRAFT")" && pwd)/$(basename "$DRAFT")"
 SOURCES_FILE="$OUT/sources.md"
 if [[ "$RUBRIC" == design ]]; then
-    python3 "$SKILL_DIR/scripts/gather_sources.py" "$DRAFT" --repo "$REPO" > "$SOURCES_FILE" || exit 2
+    python3 "$SKILL_DIR/scripts/gather_sources.py" "$DRAFT" --repo "$REPO" --harness-root "$ROOT" > "$SOURCES_FILE" || exit 2
 else
     : > "$SOURCES_FILE"
 fi
 if [[ "$RUBRIC" == design ]]; then PROMPT_TPL=design-prompt RUBRIC_FILE=design-rubric; else PROMPT_TPL=critic-prompt RUBRIC_FILE=rubric; fi
 python3 - "$SKILL_DIR" "$DRAFT" "$PURPOSE" "$OUT/prompt.md" "$PROMPT_TPL" "$RUBRIC_FILE" "$SOURCES_FILE" <<'PY'
 import sys
+sys.path[:] = [p for p in sys.path if p not in ("", ".")]  # the cwd may be the reviewed repo
 skill, draft, purpose, out, tpl_name, rub_name, src = sys.argv[1:8]
 tpl = open(f"{skill}/references/{tpl_name}.md", encoding="utf-8").read()
 rub = open(f"{skill}/references/{rub_name}.md", encoding="utf-8").read()
@@ -108,7 +110,9 @@ run_critic B "$LB" &
 wait
 
 python3 - "$SKILL_DIR" "$DRAFT" "$OUT" "$LA" "$LB" "$RUBRIC" <<'PY'
-import json, re, subprocess, sys
+import sys
+sys.path[:] = [p for p in sys.path if p not in ("", ".")]  # the cwd may be the reviewed repo
+import json, re, subprocess
 skill, draft, out, la, lb, rubric = sys.argv[1:7]
 findings, labels, lines, ok = {}, {}, [], 0
 

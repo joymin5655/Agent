@@ -512,7 +512,7 @@ check "candidates: first-mention order, :line and #anchor stripped, deduplicated
 python3 "$GS" --candidates -z "$T/design-plan.md" | tr '\0' '\n' > "$T/cand-z.txt"
 check "candidates -z: NUL-separated, same list" cmp -s "$T/cand.txt" "$T/cand-z.txt"
 
-python3 "$GS" "$T/design-plan.md" --repo "$R" > "$T/src.md"; rc=$?
+python3 "$GS" "$T/design-plan.md" --repo "$R" --harness-root "$REPO_ROOT" > "$T/src.md"; rc=$?
 if [[ $rc -eq 0 ]]; then ok "gather_sources: exit 0"; else bad "gather_sources: exit $rc"; fi
 check "sources: tracked in-repo text files are included under a path heading" \
   bash -c "grep -qx '### src/app.py' '$T/src.md' && grep -qx '### billing/charge.py' '$T/src.md' && grep -qx '### AGENTS.md' '$T/src.md'"
@@ -523,22 +523,43 @@ check "sources: secret-like paths skipped, content never printed" \
   bash -c "grep -q '.env — secret-like' '$T/src.md' && grep -q 'secrets/prod.txt — secret-like' '$T/src.md' && grep -q 'config/server.pem — secret-like' '$T/src.md' && ! grep -q 'TOPSECRET' '$T/src.md'"
 check "sources: binary skipped; URL listed as URL" bash -c "grep -q 'src/blob.bin — binary' '$T/src.md' && grep -q 'https://example.com/x — URL' '$T/src.md'"
 check "sources: has a '### Not included' section" grep -qx '### Not included' "$T/src.md"
-python3 "$GS" "$T/design-plan.md" --repo "$R" --per-file 100 > "$T/src-pf.md"
+python3 "$GS" "$T/design-plan.md" --repo "$R" --harness-root "$REPO_ROOT" --per-file 100 > "$T/src-pf.md"
 check "sources: --per-file caps a big file (too large)" bash -c "grep -q 'src/big.txt — too large' '$T/src-pf.md' && ! grep -qx '### src/big.txt' '$T/src-pf.md'"
-python3 "$GS" "$T/design-plan.md" --repo "$R" --max-bytes 100 > "$T/src-mb.md"
+python3 "$GS" "$T/design-plan.md" --repo "$R" --harness-root "$REPO_ROOT" --max-bytes 100 > "$T/src-mb.md"
 check "sources: --max-bytes caps the total (first file in, next ones over budget)" \
   bash -c "grep -qx '### src/app.py' '$T/src-mb.md' && ! grep -qx '### billing/charge.py' '$T/src-mb.md' && grep -q 'billing/charge.py — over budget' '$T/src-mb.md'"
 check "gather_sources: missing --repo exits 2" bash -c "python3 '$GS' '$T/design-plan.md' >/dev/null 2>&1; [ \$? -eq 2 ]"
 printf 'see `~/gs-test-not-here.md`\n' > "$T/tilde.md"
-python3 "$GS" "$T/tilde.md" --repo "$R" > "$T/src-tilde.md"
+python3 "$GS" "$T/tilde.md" --repo "$R" --harness-root "$REPO_ROOT" > "$T/src-tilde.md"
 check "sources: a ~/ path is outside the repository, not an untracked repo file" \
   grep -q '~/gs-test-not-here.md — outside repository' "$T/src-tilde.md"
 printf 'run `python3\nbilling/charge.py --x` and `src/nothere.py`.\n\n`a\n\nsrc/app.py` end\n' > "$T/wrap.md"
-python3 "$GS" "$T/wrap.md" --repo "$R" > "$T/src-wrap.md"
+python3 "$GS" "$T/wrap.md" --repo "$R" --harness-root "$REPO_ROOT" > "$T/src-wrap.md"
 check "sources: a code span wrapped onto the next line is still read; a blank line ends it" \
   bash -c "grep -qx '### billing/charge.py' '$T/src-wrap.md' && ! grep -qx '### src/app.py' '$T/src-wrap.md'"
 check "sources: a path that does not exist is 'no such path', not 'untracked'" \
   grep -q 'src/nothere.py — no such path' "$T/src-wrap.md"
+
+# staged (index) version only; glob characters in a cited name are literal
+R4="$T/repo4"
+mkdir -p "$R4"
+printf 'staged placeholder text\n' > "$R4/edited.md"
+printf 'staged skip text\n' > "$R4/skipped.md"
+printf 'plain tracked note\n' > "$R4/notes1.md"
+git -C "$R4" init -q 2>/dev/null
+git -C "$R4" add -f . >/dev/null 2>&1
+printf 'staged placeholder text\nWORKTREE-ONLY-MARKER-A\n' > "$R4/edited.md"
+printf 'staged skip text\nWORKTREE-ONLY-MARKER-B\n' > "$R4/skipped.md"
+git -C "$R4" update-index --skip-worktree skipped.md >/dev/null 2>&1
+printf 'untracked glob twin\n' > "$R4/notes[1].md"
+printf 'cite `edited.md` `skipped.md` `notes[1].md` `notes1.md`\n' > "$T/staged.md"
+python3 "$GS" "$T/staged.md" --repo "$R4" --harness-root "$REPO_ROOT" > "$T/staged.out" 2>&1
+check "sources: the staged text is inlined, not the edited working-tree copy" \
+  bash -c "grep -q 'staged placeholder text' '$T/staged.out' && ! grep -q 'WORKTREE-ONLY-MARKER-A' '$T/staged.out'"
+check "sources: skip-worktree edits are not inlined either" \
+  bash -c "grep -q 'staged skip text' '$T/staged.out' && ! grep -q 'WORKTREE-ONLY-MARKER-B' '$T/staged.out'"
+check "sources: an untracked notes[1].md is not matched by the tracked notes1.md" \
+  bash -c "grep -qxF -- '- notes[1].md — untracked' '$T/staged.out' && ! grep -q 'untracked glob twin' '$T/staged.out' && grep -q 'plain tracked note' '$T/staged.out'"
 
 run_design() { # <outdir> <cwd> [VAR=val ...] [-- critique.sh args]
   local out="$1" cwd="$2"; shift 2
@@ -578,6 +599,19 @@ check "writing mode stays at 240 s and runs where it was started" \
   bash -c "grep -qx 240 '$FK/tmo.advisor-writing-openai' && ! grep -q 'Design document' '$T/both/prompt.md' && [ ! -s '$T/both/sources.md' ]"
 check "writing mode rejects --repo; unknown --rubric exits 2" \
   bash -c "bash '$SK/scripts/critique.sh' '$T/draft.anon.md' --repo '$R' --out '$T/x1' >/dev/null 2>&1; a=\$?; bash '$SK/scripts/critique.sh' '$T/draft.anon.md' --rubric nope --out '$T/x2' >/dev/null 2>&1; b=\$?; [ \$a -eq 2 ] && [ \$b -eq 2 ]"
+
+# python never imports from the caller's folder, which may be the reviewed repository
+plant() { # <dir>: json.py and fnmatch.py that leave a marker file when imported
+  mkdir -p "$1"
+  local m
+  for m in json fnmatch; do
+    printf 'import os\nopen(os.path.join(os.path.dirname(os.path.abspath(__file__)), "PLANTED-%s"), "w").close()\nraise ImportError("planted")\n' "$m" > "$1/$m.py"
+  done
+}
+not_planted() { [[ ! -e "$1/PLANTED-json" && ! -e "$1/PLANTED-fnmatch" ]]; }
+plant "$T/plantcwd"
+run_design "$T/dsg-plant" "$T/plantcwd" -- --repo "$R"
+check "design: modules planted in the caller's folder do not run" not_planted "$T/plantcwd"
 
 # parse_findings: both category sets, paraphrase
 cat > "$T/para.json" <<'JSON'
@@ -619,6 +653,180 @@ bash "$PR" "$T/plan-wrapped.md" --repo "$R" > "$T/pr-wrap.out" 2>&1; rc=$?
 if [[ $rc -eq 0 ]] && grep -qx 'billing/charge.py' "$T/pr-wrap.out"; then ok "plan_risk: a risk path in a wrapped code span is still caught"; else bad "plan_risk: wrapped span exit $rc"; fi
 bash "$PR" "$T/nope.md" >/dev/null 2>&1; rc=$?
 if [[ $rc -eq 2 ]]; then ok "plan_risk: missing document exits 2"; else bad "plan_risk: missing document exit $rc"; fi
+
+# --candidates --all and plan_risk.sh: paths a plain candidate scan misses
+cat > "$T/all.md" <<'MD'
+# 계획
+
+```
+core/auth/login.py
+```
+
+core/billing/pay.py를 고친다. (see core/notes/x.py)
+
+`app/(auth)/login/page.tsx` 와 app/api/auth/[...nextauth]/route.ts 그리고 https://example.com/docs/guide.html 이다.
+MD
+python3 "$GS" --candidates "$T/all.md" > "$T/all-plain.txt"
+python3 "$GS" --candidates --all "$T/all.md" > "$T/all-all.txt"
+check "candidates (no --all): fenced and bare paths are not listed, a bracketed inline path is" \
+  bash -c "! grep -q 'core/auth/login.py' '$T/all-plain.txt' && ! grep -q 'core/billing/pay.py' '$T/all-plain.txt' && grep -qx 'app/(auth)/login/page.tsx' '$T/all-plain.txt'"
+check "candidates --all: a path inside a fenced block" grep -qx 'core/auth/login.py' "$T/all-all.txt"
+check "candidates --all: a bare path with a Korean particle" grep -qx 'core/billing/pay.py' "$T/all-all.txt"
+check "candidates --all: a parenthesised path stays whole" grep -qx 'app/(auth)/login/page.tsx' "$T/all-all.txt"
+check "candidates --all: a [...slug] path stays whole" grep -qx 'app/api/auth/\[...nextauth\]/route.ts' "$T/all-all.txt"
+check "candidates --all: a wrapping bracket is trimmed ((see core/notes/x.py))" grep -qx 'core/notes/x.py' "$T/all-all.txt"
+check "candidates --all: a URL is not printed" bash -c "! grep -q 'example.com' '$T/all-all.txt' && ! grep -q 'guide.html' '$T/all-all.txt'"
+check "candidates --all: inline candidates come first, then bare runs" \
+  bash -c "[ \"\$(head -n 1 '$T/all-all.txt')\" = 'app/(auth)/login/page.tsx' ]"
+check "candidates --all without --candidates exits 2" \
+  bash -c "python3 '$GS' --all '$T/all.md' --repo '$R' --harness-root '$REPO_ROOT' >/dev/null 2>&1; [ \$? -eq 2 ]"
+
+printf '# 로그인\n\n```\ncore/auth/login.py\n```\n' > "$T/plan-fence.md"
+printf '# 로그인\n\ncore/auth/login.py를 고친다.\n' > "$T/plan-bare.md"
+printf '# 로그인\n\napp/(auth)/login/page.tsx 를 고친다.\n' > "$T/plan-paren.md"
+bash "$PR" "$T/plan-fence.md" --repo "$R" > "$T/pr-fence.out" 2>&1; rc=$?
+if [[ $rc -eq 0 ]] && grep -qx 'core/auth/login.py' "$T/pr-fence.out"; then ok "plan_risk: a risk path in a fenced block exits 0"; else bad "plan_risk: fenced exit $rc"; fi
+bash "$PR" "$T/plan-bare.md" --repo "$R" > "$T/pr-bare.out" 2>&1; rc=$?
+if [[ $rc -eq 0 ]]; then ok "plan_risk: a bare risk path followed by a Korean particle exits 0"; else bad "plan_risk: bare exit $rc"; fi
+bash "$PR" "$T/plan-paren.md" --repo "$R" > "$T/pr-paren.out" 2>&1; rc=$?
+if [[ $rc -eq 0 ]] && grep -qx 'app/(auth)/login/page.tsx' "$T/pr-paren.out"; then ok "plan_risk: a parenthesised auth path exits 0"; else bad "plan_risk: parenthesised exit $rc"; fi
+bash "$PR" "$T/plan-docs.md" "$T/plan-bare.md" --repo "$R" > "$T/pr-two.out" 2>&1; rc=$?
+if [[ $rc -eq 0 ]] && grep -qx 'core/auth/login.py' "$T/pr-two.out"; then ok "plan_risk: two documents, only the second cites a risk path, exit 0"; else bad "plan_risk: two documents exit $rc"; fi
+bash "$PR" "$T/plan-bare.md" "$T/plan-fence.md" --repo "$R" > "$T/pr-dup.out" 2>&1
+check "plan_risk: a path cited by several documents is printed once" bash -c "[ \$(grep -cx 'core/auth/login.py' '$T/pr-dup.out') -eq 1 ]"
+# project-declared secret path comes from --repo, not from the caller's environment
+R2="$T/repo2"
+mkdir -p "$R2/.agent" "$R2/config" "$T/other"
+printf '{"risk_areas":{"secrets":{"paths":["config/private.json"]}}}\n' > "$R2/.agent/hook-config.json"
+printf '# 설정\n\nconfig/private.json을 읽는다.\n' > "$T/plan-priv.md"
+env CLAUDE_PROJECT_DIR="$T/other" bash "$PR" "$T/plan-priv.md" --repo "$R2" > "$T/pr-priv.out" 2>&1; rc=$?
+if [[ $rc -eq 0 ]] && grep -qx 'config/private.json' "$T/pr-priv.out"; then ok "plan_risk: secret path declared in --repo wins over CLAUDE_PROJECT_DIR"; else bad "plan_risk: project secret exit $rc"; fi
+
+# a declared secret path that cannot be read (PyYAML unavailable) fails closed, not "no risk"
+R5="$T/repo5"
+mkdir -p "$R5/.agent" "$R5/config/keys" "$T/noyaml"
+printf 'risk_areas:\n  secrets:\n    paths: [config/keys/]\n' > "$R5/.agent/hook-config.yml"
+: > "$T/noyaml/yaml.py"
+printf '# 서명\n\n`config/keys/signing.json`을 읽는다.\n' > "$T/plan-keys.md"
+PYTHONPATH="$T/noyaml" bash "$PR" "$T/plan-keys.md" --repo "$R5" > "$T/pr-noyaml.out" 2>&1; rc=$?
+if [[ $rc -eq 2 ]]; then ok "plan_risk: declared secret paths unreadable (no PyYAML) exits 2"; else bad "plan_risk: no-PyYAML exit $rc (want 2)"; fi
+if python3 -c 'import yaml' 2>/dev/null; then
+  bash "$PR" "$T/plan-keys.md" --repo "$R5" > "$T/pr-yaml.out" 2>&1; rc=$?
+  if [[ $rc -eq 0 ]] && grep -qx 'config/keys/signing.json' "$T/pr-yaml.out"; then ok "plan_risk: with PyYAML the declared secret path is printed, exit 0"; else bad "plan_risk: with PyYAML exit $rc"; fi
+else
+  echo "skip — plan_risk: PyYAML not importable here; the readable half is not checked"
+fi
+# neither the secret-path check nor the classifier runs python inside the reviewed repository
+plant "$T/repo6"
+printf '`core/auth/login.py`\n' > "$T/plan-plant.md"
+(cd "$T/repo6" && bash "$PR" "$T/plan-plant.md" --repo "$T/repo6") > "$T/pr-plant.out" 2>&1; rc=$?
+check "plan_risk: modules planted in the reviewed repository do not run" not_planted "$T/repo6"
+if [[ $rc -eq 0 ]] && grep -qx 'core/auth/login.py' "$T/pr-plant.out"; then ok "plan_risk: classifies with planted modules present"; else bad "plan_risk: planted-module run exit $rc"; fi
+
+# gather_sources.py secret filter: names, folders, symlinks, project tokens, content
+GR="$T/repo3"
+mkdir -p "$GR/k" "$GR/secret" "$GR/.ssh" "$GR/config/env" "$GR/.agent" "$GR/credentials" \
+  "$GR/keys" "$GR/.kube" "$GR/.docker"
+printf '{"risk_areas":{"secrets":{"paths":["config/private.json"]}}}\n' > "$GR/.agent/hook-config.json"
+python3 - "$GR" <<'PY'
+import os, sys
+r = sys.argv[1]
+def w(p, d):
+    with open(os.path.join(r, p), "w") as fh:
+        fh.write(d)
+for n in ("k/.npmrc", "k/id_ed25519", "k/x.tfvars", "k/db_secret.yml", "secret/a.txt", ".ssh/cfg.txt",
+          "config/private.json", "config/env/local", ".env.local", "a.py", "plain.md",
+          "credentials/a.txt", "keys/a.txt", ".kube/cfg.txt", ".docker/cfg.txt", "k/a.gpg",
+          "k/a.asc", "k/a.kdbx", "k/.pgpass", "k/.htpasswd"):
+    w(n, "harmless text\n")
+os.symlink("config/env/local", os.path.join(r, ".env"))
+os.symlink(".env.local", os.path.join(r, "notes.txt"))
+pk = "-----BEGIN " + "RSA PRIVATE KEY" + "-----"
+w("doc-pk.md", "before\n" + pk + "\nafter\n")
+w("doc-aws.md", "key " + "AKIA" + "Q" * 16 + " end\n")
+# token-shaped literals are assembled from pieces so no scanner flags this file
+content = {
+    "pgp": "-----BEGIN " + "PGP PRIVATE KEY BLOCK" + "-----",
+    "asia": "ASIA" + "Q" * 16,
+    "sklive": "sk" + "_live_" + "a" * 24,
+    "rklive": "rk" + "_live_" + "a" * 24,
+    "sktest": "sk" + "_test_" + "a" * 24,
+    "rktest": "rk" + "_test_" + "a" * 24,
+    "glpat": "glpat" + "-" + "a" * 20,
+    "hf": "hf" + "_" + "a" * 34,
+    "npm": "npm" + "_" + "a" * 36,
+    "xoxe": "xoxe" + "-" + "a" * 20,
+    "xapp": "xapp" + "-" + "1-" + "A" * 20,
+    "gocspx": "GOCSPX" + "-" + "a" * 28,
+    "hook": "https://hooks." + "slack.com/services/" + "T0000/B0000/" + "x" * 24,
+    "urlpw": "postgres" + "://u:p@h",
+}
+for k, v in content.items():
+    w("c-" + k + ".md", "before\n" + v + "\nafter\n")
+w("c-template.md", "dsn postgres" + "://${USER}:${PASSWORD}@h/db\n")
+w("c-long.md", "x" * 40000 + "\n")
+PY
+git -C "$GR" init -q 2>/dev/null
+git -C "$GR" add -f . >/dev/null 2>&1
+cat > "$T/secrets.md" <<'MD'
+`k/.npmrc` `k/id_ed25519` `k/x.tfvars` `k/db_secret.yml` `secret/a.txt` `.ssh/cfg.txt` `.env`
+`notes.txt` `config/private.json` `doc-pk.md` `doc-aws.md` `plain.md`
+MD
+python3 "$GS" "$T/secrets.md" --repo "$GR" --harness-root "$REPO_ROOT" > "$T/secrets.out" 2>"$T/secrets.err"; rc=$?
+if [[ $rc -eq 0 ]]; then ok "secret filter: gather_sources exits 0"; else bad "secret filter: exit $rc"; fi
+for n in k/.npmrc k/id_ed25519 k/x.tfvars k/db_secret.yml; do
+  check "secret filter: name rule $n -> secret-like" grep -qxF -- "- $n — secret-like" "$T/secrets.out"
+done
+check "secret filter: a secret/ folder -> secret-like" grep -qxF -- '- secret/a.txt — secret-like' "$T/secrets.out"
+check "secret filter: a .ssh/ folder -> secret-like" grep -qxF -- '- .ssh/cfg.txt — secret-like' "$T/secrets.out"
+check "secret filter: tracked symlink .env -> config/env/local is caught by its cited name" \
+  grep -qxF -- '- .env — secret-like' "$T/secrets.out"
+check "secret filter: tracked symlink notes.txt -> .env.local is caught by its resolved name" \
+  grep -qxF -- '- notes.txt — secret-like' "$T/secrets.out"
+check "secret filter: project-declared token -> secret-like (project)" \
+  grep -qxF -- '- config/private.json — secret-like (project)' "$T/secrets.out"
+check "secret filter: private-key header in a tracked doc -> secret-like content" \
+  grep -qxF -- '- doc-pk.md — secret-like content' "$T/secrets.out"
+check "secret filter: AWS-style key in a tracked doc -> secret-like content" \
+  grep -qxF -- '- doc-aws.md — secret-like content' "$T/secrets.out"
+check "secret filter: a harmless file is still included; no matched text printed" \
+  bash -c "grep -qx '### plain.md' '$T/secrets.out' && ! grep -q 'PRIVATE KEY' '$T/secrets.out' && ! grep -q 'AKIA' '$T/secrets.out' && ! grep -q 'harmless text' <(sed -n '/Not included/,\$p' '$T/secrets.out')"
+for n in credentials/a.txt keys/a.txt .kube/cfg.txt .docker/cfg.txt k/a.gpg k/a.asc k/a.kdbx k/.pgpass k/.htpasswd; do
+  printf '`%s`\n' "$n"
+done > "$T/secrets-names.md"
+python3 "$GS" "$T/secrets-names.md" --repo "$GR" --harness-root "$REPO_ROOT" > "$T/secrets-names.out" 2>&1
+while IFS= read -r n; do
+  check "secret filter: new name rule $n -> secret-like" grep -qxF -- "- $n — secret-like" "$T/secrets-names.out"
+done < <(tr -d '`' < "$T/secrets-names.md")
+for k in pgp asia sklive rklive sktest rktest glpat hf npm xoxe xapp gocspx hook urlpw; do
+  printf '`c-%s.md` ' "$k"
+done > "$T/secrets-content.md"
+printf '`c-template.md` `c-long.md`\n' >> "$T/secrets-content.md"
+python3 "$GS" "$T/secrets-content.md" --repo "$GR" --harness-root "$REPO_ROOT" > "$T/secrets-content.out" 2>&1
+for k in pgp asia sklive rklive sktest rktest glpat hf npm xoxe xapp gocspx hook urlpw; do
+  check "secret filter: new content rule $k -> secret-like content" \
+    grep -qxF -- "- c-$k.md — secret-like content" "$T/secrets-content.out"
+done
+check "secret filter: a \${USER}:\${PASSWORD}@ URL template is still included" \
+  grep -qx '### c-template.md' "$T/secrets-content.out"
+check "secret filter: a 40 KB single line is scanned without a stall" \
+  bash -c "timeout 20 python3 '$GS' '$T/secrets-content.md' --repo '$GR' --harness-root '$REPO_ROOT' --per-file 100000 >/dev/null 2>&1"
+python3 "$GS" "$T/secrets.md" --repo "$GR" >/dev/null 2>&1; rc=$?
+if [[ $rc -eq 2 ]]; then ok "secret filter: missing --harness-root exits 2"; else bad "secret filter: missing --harness-root exit $rc"; fi
+python3 "$GS" "$T/secrets.md" --repo "$GR" --harness-root "$T/nogit" >/dev/null 2>&1; rc=$?
+if [[ $rc -eq 2 ]]; then ok "secret filter: --harness-root without hook_config.py exits 2"; else bad "secret filter: bad harness root exit $rc"; fi
+mkdir -p "$T/hc-broken/core/hooks" "$T/hc-old/core/hooks"
+printf 'import a_module_that_does_not_exist_here\n' > "$T/hc-broken/core/hooks/hook_config.py"
+: > "$T/hc-old/core/hooks/hook_config.py"  # no loaders
+for hc in hc-broken hc-old; do
+  python3 "$GS" "$T/secrets.md" --repo "$GR" --harness-root "$T/$hc" >/dev/null 2>&1; rc=$?
+  if [[ $rc -eq 2 ]]; then ok "secret filter: $hc hook_config exits 2"; else bad "secret filter: $hc hook_config exit $rc"; fi
+done
+# duplicate tokens resolving to one file: included once, no 'over budget' line
+printf 'see `./a.py` and `a.py`\n' > "$T/dup.md"
+python3 "$GS" "$T/dup.md" --repo "$GR" --harness-root "$REPO_ROOT" --max-bytes 20 > "$T/dup.out" 2>&1
+check "sources: ./a.py and a.py are one file — included once, no over budget" \
+  bash -c "[ \$(grep -cx '### a.py' '$T/dup.out') -eq 1 ] && ! grep -q 'over budget' '$T/dup.out'"
 
 # log_run --kind design, reason E1; report keeps design runs apart
 printf '[{"id":"A1","decision":"accept"},{"id":"A2","decision":"reject","reason":"E1"},{"id":"B1","decision":"reject","reason":"R1"}]' > "$T/dsg-dec.json"

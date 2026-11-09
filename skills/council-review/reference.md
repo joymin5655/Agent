@@ -29,6 +29,11 @@ Captures and their index live outside the plugin cache, per project:
 capture (`diff_key` = `$DK`); override the directory with `AGENT_WORKERS_DIR`.
 Lane telemetry goes to `~/.agent/logs/council-lanes.jsonl`.
 
+Read a lane's PARAPHRASE and findings from its own answer only. A codex capture repeats the
+whole prompt, output contract included, before answering: its answer is the block after the
+capture's last `tokens used` count. A gemini capture is one JSON object: its answer is the
+`response` value.
+
 The `[[ -f "$CW" ]]` line is a diagnostic, not a short-circuit: if the path is
 missing the dispatches below still run and each exits 127, which the
 degradation table already maps to "lane absent" — the echo just names the
@@ -115,8 +120,9 @@ Every finding that survives the citation check gets exactly one disposition:
   report's "Escalated" section, and flag Blocker/Major ones at the top for the owner to confirm.
 - `decline` — true but not acted on here (a nit, or Noted/backlog).
 
-Mapping: Act on → `fix`; Dismissed → `contest` or `escalate` (by where the evidence lives);
-Consider/Noted → `fix`, `decline` or `escalate`.
+Mapping: Act on → `fix`; Consider → `fix` or `decline`; Noted → `decline` (or `fix` when it
+is fixed anyway); Dismissed → `contest` or `escalate` (by where the evidence lives).
+`escalate` exists only for Dismissed findings.
 
 Rules: a PARAPHRASE mismatch cannot be contested; never lower a severity without evidence;
 "I wrote it" is not evidence.
@@ -135,13 +141,19 @@ rounds, unlike the diff key. Append one `jq -cn` line per finding per round:
  "disposition":"fix","evidence":"","status":"fixed"}
 ```
 
-`id` = `<lane>-r<round>-<n>`; `status` is `open|settled|fixed`. Store the quote's hash, never
-its text. The ledger is never sent to the lanes (fresh eyes each round); the synthesizer reads
-it:
+`id` = `<lane>-r<round>-<n>`; `status` is `open|settled|deferred|fixed`, set by the
+disposition: `fix` → `fixed`; `contest` → `settled`; `decline` → `deferred`; `escalate` →
+`open` until the owner rules (then `settled`, or re-bucketed and `fixed`/`deferred`). Store the
+quote's hash, never its text.
 
-- a finding matching a `settled` entry is not re-litigated — report "settled in round N";
+Match key: same `file` and equal `quote_sha256`; when the quoted line changed, same `file`,
+same `category` and a `line` within ±5. The ledger is never sent to the lanes (fresh eyes each
+round); the synthesizer reads it:
+
+- a finding matching a `settled` or `deferred` entry is not re-litigated — report
+  "settled/deferred in round N";
 - a finding matching a `fixed` entry reopens it (the fix did not hold);
 - an entry reopened a second time stops the loop and goes to the owner.
 
 The two-round cap stays (see Round cap). The PR body's "Deferred findings" are the ledger's
-`open` entries.
+`deferred` entries; the report's "Escalated" section lists the `open` ones.

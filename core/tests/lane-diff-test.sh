@@ -135,6 +135,97 @@ if grep -q 'rename from run.sh' "$TMP/out"; then ok "rename kept as rename"
 else bad "rename kept as rename"; fi
 if [[ "$(field files)" == 2 ]]; then ok "two files"; else bad "two files" "$(mode)"; fi
 
+echo "=== usage: option-looking target ==="
+# after `--` argparse hands the value to the script as the target; without the check it
+# reaches git, and `git diff --output=<file>` writes that file
+if python3 "$LD" -- "--output=$TMP/pwned" > "$TMP/out" 2> "$TMP/err"; then rc=0; else rc=$?; fi
+if [[ "$rc" == 2 ]]; then ok "dash target exits 2"; else bad "dash target exits 2" "rc=$rc"; fi
+if [[ ! -e "$TMP/pwned" ]]; then ok "dash target created no file"
+else bad "dash target created no file"; fi
+
+echo "=== subdirectory and literal pathspecs ==="
+git commit -qm renames 2>/dev/null || true
+mkdir -p "app/[id]" app/i sub
+printf 'one\n' > "app/[id]/page.tsx"
+printf 'one\n' > app/i/page.tsx
+git add -A
+git commit -qm pages
+printf 'two\n' > "app/[id]/page.tsx"
+printf 'two\n' > app/i/page.tsx
+git add -A
+run --staged
+n1="$(grep -c '^diff --git a/app/\[id\]/page.tsx' "$TMP/out" || true)"
+n2="$(grep -c '^diff --git a/app/i/page.tsx' "$TMP/out" || true)"
+if [[ "$n1" == 1 && "$n2" == 1 ]]; then ok "glob-named file: each hunk once"
+else bad "glob-named file: each hunk once" "[id]=$n1 i=$n2"; fi
+cp "$TMP/out" "$TMP/top.out"
+( cd sub && python3 "$LD" --staged > "$TMP/sub.out" 2> "$TMP/sub.err" )
+if cmp -s "$TMP/top.out" "$TMP/sub.out" && [[ -s "$TMP/sub.out" ]]; then
+  ok "subdirectory output equals top-level output, nonempty"
+else bad "subdirectory output equals top-level output" "$(tail -n 1 "$TMP/sub.err")"; fi
+
+echo "=== repository-configured commands do not run ==="
+printf 'stored\n' > tc.txt
+git add tc.txt
+git commit -qm tc
+printf 'stored2\n' > tc.txt
+git add tc.txt
+printf '%s\n' '#!/bin/sh' "touch \"$TMP/marker-ext\"" 'exit 0' > "$TMP/ext.sh"
+printf '%s\n' '#!/bin/sh' "touch \"$TMP/marker-fsm\"" 'exit 0' > "$TMP/fsm.sh"
+printf '%s\n' '#!/bin/sh' 'tr a-z A-Z < "$1"' > "$TMP/tc.sh"
+chmod +x "$TMP/ext.sh" "$TMP/fsm.sh" "$TMP/tc.sh"
+printf 'tc.txt diff=evil\n*.tsx diff=extdiff\n' > .gitattributes
+git config diff.evil.textconv "$TMP/tc.sh"
+git config diff.extdiff.command "$TMP/ext.sh"
+git add .gitattributes
+printf 'three\n' > app/i/page.tsx
+git add app/i/page.tsx
+# set after the last `git add` of the test so only lane-diff.py can trigger the markers
+git config core.fsmonitor "$TMP/fsm.sh"
+git config diff.external "$TMP/ext.sh"
+rm -f "$TMP/marker-ext" "$TMP/marker-fsm"
+run --staged
+if grep -q '^+stored2' "$TMP/out" && ! grep -q 'STORED' "$TMP/out"; then
+  ok "textconv driver not applied: stored text printed"
+else bad "textconv driver not applied"; fi
+if [[ ! -e "$TMP/marker-ext" ]]; then ok "external diff command not run"
+else bad "external diff command not run"; fi
+if [[ ! -e "$TMP/marker-fsm" ]]; then ok "core.fsmonitor command not run"
+else bad "core.fsmonitor command not run"; fi
+git config --unset diff.external
+git config --unset core.fsmonitor
+
+echo "=== code files as text; pathspec environment ==="
+mkdir "$TMP/repo2"
+(
+  cd "$TMP/repo2"
+  git init -q .
+  git config user.email t@example.invalid
+  git config user.name t
+  git config commit.gpgsign false
+  printf 'def f():\n    return 1\n' > evil.py
+  git add -A
+  git commit -qm base
+  printf 'evil.py -diff\n' > .gitattributes
+  printf 'def f():\n    return 2\n' > evil.py
+  git add -A
+  git commit -qm attrs
+  printf 'def f():\n    return 3\n' > evil.py
+  git add -A
+  git commit -qm change
+)
+cd "$TMP/repo2"
+run HEAD~1..HEAD
+if grep -q '^+    return 3' "$TMP/out" && ! grep -q '^Binary files' "$TMP/out"; then
+  ok "in-tree -diff attribute does not hide a code file"
+else bad "in-tree -diff attribute does not hide a code file" "$(head -n 5 "$TMP/out")"; fi
+printf 'def f():\n    return 4\n' > evil.py
+git add evil.py
+GIT_LITERAL_PATHSPECS=1 python3 "$LD" --staged > "$TMP/out" 2> "$TMP/err" || true
+if grep -q '^+    return 4' "$TMP/out"; then ok "GIT_LITERAL_PATHSPECS in the environment is ignored"
+else bad "GIT_LITERAL_PATHSPECS in the environment is ignored" "$(mode)"; fi
+cd "$TMP/repo"
+
 echo "=== git error ==="
 if python3 "$LD" no-such-rev..other > "$TMP/out" 2> "$TMP/err"; then bad "bad range exits non-zero"
 else ok "bad range exits non-zero"; fi

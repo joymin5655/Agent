@@ -6,7 +6,8 @@ Usage: lane-diff.py [--staged | --head | <range>] [--max-bytes 122880]
 A lane that cannot open files sees only the diff, so an enclosing try/catch or the rest of
 a function is invisible to it. For code files this prints `git diff -W` (whole enclosing
 function) when that stays small; every other file keeps its default diff. Past the byte
-cap the plain default diff of the whole target is printed instead.
+cap the plain default diff of the whole target is printed instead. Code files are diffed as
+text even when an in-tree .gitattributes marks them binary or -diff.
 
 stderr's last line: context_mode=<w|mixed|default|over_cap> bytes=<n> files=<n> w_files=<n>
 """
@@ -82,12 +83,31 @@ class GitError(Exception):
     pass
 
 
+PATHSPEC_ENV = frozenset(
+    [
+        "GIT_LITERAL_PATHSPECS",
+        "GIT_GLOB_PATHSPECS",
+        "GIT_NOGLOB_PATHSPECS",
+        "GIT_ICASE_PATHSPECS",
+    ]
+)
+TOP: str | None = None  # repository top level, resolved once in main()
+
+
 def git(args: list[str], attrs: str | None = None) -> bytes:
+    """Run git with no repository-configured command (fsmonitor, external diff, textconv) and
+    without the caller's pathspec-mode variables (GIT_LITERAL_PATHSPECS and friends)."""
     cmd = ["git"]
+    if TOP:
+        cmd += ["-C", TOP]
+    cmd += ["-c", "core.fsmonitor="]
     if attrs:
         cmd += ["-c", f"core.attributesFile={attrs}"]
+    if args and args[0] == "diff":
+        args = ["diff", "--no-ext-diff", "--no-textconv", *args[1:]]
     cmd += args
-    proc = subprocess.run(cmd, capture_output=True, check=False)
+    env = {k: v for k, v in os.environ.items() if k not in PATHSPEC_ENV}
+    proc = subprocess.run(cmd, capture_output=True, check=False, env=env)
     if proc.returncode != 0:
         reason = proc.stderr.decode("utf-8", "replace").strip().splitlines()
         raise GitError(reason[0] if reason else f"git exited {proc.returncode}")
@@ -128,11 +148,13 @@ def build(selector: list[str], max_bytes: int) -> tuple[bytes, str, int, int]:
         tmp.write(ATTRIBUTES)
     try:
         for paths in files:
-            spec = ["--", *paths]
-            plain = git(["diff", "-M", *selector, *spec])
-            if is_code_file(paths[-1]):
+            spec = ["--", *[f":(literal){p}" for p in paths]]
+            code = is_code_file(paths[-1])
+            text = ["--text"] if code else []
+            plain = git(["diff", *text, "-M", *selector, *spec])
+            if code:
                 eligible += 1
-                wide = git(["diff", "-W", "-M", *selector, *spec], attrs=tmp.name)
+                wide = git(["diff", *text, "-W", "-M", *selector, *spec], attrs=tmp.name)
                 if len(wide) <= 2 * len(plain) + SLACK:
                     parts.append(wide)
                     w_used += 1
@@ -142,7 +164,7 @@ def build(selector: list[str], max_bytes: int) -> tuple[bytes, str, int, int]:
         os.unlink(tmp.name)
     out = b"".join(parts)
     if len(out) > max_bytes:
-        out = git(["diff", *selector])
+        out = git(["diff", "-M", *selector])
         return out, ("over_cap" if len(out) > max_bytes else "default"), len(files), 0
     if w_used == 0:
         mode = "default"
@@ -162,13 +184,22 @@ def main() -> int:
     ap.add_argument("target", nargs="?", help="a git range, passed through")
     ap.add_argument("--max-bytes", type=int, default=122880)
     args = ap.parse_args()
+    if args.target and args.target.startswith("-"):
+        print(
+            "lane-diff: usage: target must be a git range, not an option "
+            f"(got {args.target!r})",
+            file=sys.stderr,
+        )
+        return 2
     if args.target:
-        selector = [args.target]
+        selector = ["--end-of-options", args.target]
     elif args.head:
-        selector = ["HEAD~1..HEAD"]
+        selector = ["--end-of-options", "HEAD~1..HEAD"]
     else:
         selector = ["--staged"]
+    global TOP
     try:
+        TOP = git(["rev-parse", "--show-toplevel"]).decode("utf-8", "surrogateescape").strip()
         out, mode, nfiles, nw = build(selector, args.max_bytes)
     except GitError as exc:
         print(f"lane-diff: git failed: {exc}", file=sys.stderr)

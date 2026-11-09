@@ -95,10 +95,11 @@
 #   - The worker (and its preflight probe) runs with AGENT_LANE=<role> in its environment,
 #     so a vendor CLI's own session start/stop hooks can tell a dispatched lane from a
 #     person's session. A role with "readonly": true gets `--sandbox read-only` and (unless
-#     args_extra already has it) `--skip-git-repo-check` on a codex CLI, ahead of the role's
-#     args_extra, plus a fixed isolation preamble as the last argv element (codex's positional
-#     prompt; the real prompt stays on stdin). Any other sandbox argument in that argv is a
-#     registry error (exit 2), because codex lets a later flag win.
+#     cmd, tier args or args_extra already has it) `--skip-git-repo-check` on a codex CLI,
+#     ahead of the role's args_extra, plus a fixed isolation preamble leading the lane's stdin
+#     (a per-call copy: preamble, blank line, original prompt; no positional prompt). Any
+#     other sandbox argument in that argv is a registry error (exit 2), because codex lets a
+#     later flag win.
 #   - AGENT_WORKER_DISABLE="<name>[,<name>...]" (comma/whitespace/newline
 #     separated) refuses the named backends —
 #     a name is a backend ("gemini") or a vendor ("google" = every backend with
@@ -158,8 +159,9 @@ HOME_DIR="${HOME:-$(cd ~ 2>/dev/null && pwd || true)}"
 WORKERS_DIR="${AGENT_WORKERS_DIR:-$HOME_DIR/.agent/workers/$PROJECT_KEY}"
 LOGS_DIR="${AGENT_LOGS_DIR:-$HOME_DIR/.agent/logs}"
 
-# Fixed one-line preamble for every read-only codex role (passed as codex's positional prompt).
-readonly CODEX_READONLY_PREAMBLE='You are a dispatched, non-interactive, read-only lane. Your task is the prompt in the <stdin> block below. Read instruction files such as AGENTS.md or CLAUDE.md only as conventions to check the work against; do not perform their session-start, coordination, task-tracking, memory-capture or browser steps.'
+# Fixed one-line preamble for every read-only codex role (leads that lane's stdin; no
+# positional prompt).
+readonly CODEX_READONLY_PREAMBLE='You are a dispatched, non-interactive, read-only lane. Your task is the prompt after this line. Read instruction files such as AGENTS.md or CLAUDE.md only as conventions to check the work against; do not perform their session-start, coordination, task-tracking, memory-capture or browser steps.'
 
 ROLE="${1:-}"
 if [[ -z "$ROLE" ]]; then
@@ -257,6 +259,7 @@ done
 # The prompt is consumed once so both primary and fallback can replay it.
 PROMPT_TMP="$(mktemp)"
 OUT_TMP="$(mktemp)"
+CALL_PROMPT_TMP=""   # per-call stdin copy for a read-only codex lane (preamble + prompt)
 # Gateway isolation (see header): a fresh, empty, process-owned directory that no
 # repository can plant a profile into. mktemp -d, not a fixed path under the
 # repo — a fixed path is plantable before the run, which is the same TOCTOU the
@@ -265,7 +268,7 @@ NEUTRAL_CWD="$(mktemp -d)"
 [[ -n "$NEUTRAL_CWD" && -d "$NEUTRAL_CWD" ]] \
     || { echo "call-worker: could not create a neutral working directory for gateway dispatch — refusing" >&2; exit 2; }
 cleanup() {
-    rm -f "$PROMPT_TMP" "$OUT_TMP"
+    rm -f "$PROMPT_TMP" "$OUT_TMP" ${CALL_PROMPT_TMP:+"$CALL_PROMPT_TMP"}
     if [[ -n "${NEUTRAL_CWD:-}" && -d "$NEUTRAL_CWD" ]]; then rm -rf "$NEUTRAL_CWD"; fi
 }
 trap cleanup EXIT INT TERM
@@ -553,9 +556,10 @@ run_backend() {
         fi
         cmd+=(--sandbox read-only)
         # The sandbox makes codex's git-repo check pointless, and a gate may dispatch from an
-        # empty folder. codex rejects the flag twice, so skip it when args_extra carries it.
+        # empty folder. codex rejects the flag twice, so skip it when cmd, tier args or
+        # args_extra carry it.
         local has_skip=0
-        for arg in ${role_extra[@]+"${role_extra[@]}"}; do
+        for arg in "${cmd[@]}" ${role_extra[@]+"${role_extra[@]}"}; do
             [[ "$arg" == "--skip-git-repo-check" ]] && has_skip=1
         done
         [[ $has_skip -eq 1 ]] || cmd+=(--skip-git-repo-check)
@@ -563,11 +567,15 @@ run_backend() {
     cmd+=(${role_extra[@]+"${role_extra[@]}"})
     local extra
     for extra in ${EXTRA_ARGV[@]+"${EXTRA_ARGV[@]}"}; do cmd+=("$extra"); done
-    # Isolation preamble: codex's positional PROMPT (stdin is appended as a <stdin> block), so
-    # it must come after every option. Built per call: the self-heal retry gets it once and a
-    # fallback backend never does.
+    # Isolation preamble: leads the lane's stdin (preamble line, blank line, original prompt);
+    # no positional prompt, so codex reads its instructions from stdin. A per-call copy: the
+    # self-heal retry gets it once and a fallback backend never does; PROMPT_TMP is unchanged.
+    local stdin_file="$PROMPT_TMP"
     if [[ "${cmd[0]##*/}" == "codex" && "$ROLE_READONLY" == "true" ]]; then
-        cmd+=("$CODEX_READONLY_PREAMBLE")
+        [[ -n "$CALL_PROMPT_TMP" ]] && rm -f "$CALL_PROMPT_TMP"
+        CALL_PROMPT_TMP="$(mktemp)"
+        { printf '%s\n\n' "$CODEX_READONLY_PREAMBLE"; cat "$PROMPT_TMP"; } > "$CALL_PROMPT_TMP"
+        stdin_file="$CALL_PROMPT_TMP"
     fi
     timeout_s="${AGENT_WORKER_TIMEOUT_S:-$(jq -r --arg b "$name" '.backends[$b].timeout_s // 300' "$BACKENDS_FILE")}"
     [[ "$timeout_s" =~ ^[0-9]+$ ]] \
@@ -583,7 +591,7 @@ run_backend() {
     # policy picked for THIS candidate rides the same way (the inherited one was removed at start).
     ( cd "$dispatch_cwd" && umask "$CALLER_UMASK" && export AGENT_LANE="$ROLE" \
         && { if [[ -n "$CANDIDATE_ACCOUNT" ]]; then export AGENT_WORKER_ACCOUNT="$CANDIDATE_ACCOUNT"; fi; } \
-        && exec "${cmd[@]}" ) < "$PROMPT_TMP" > "$OUT_TMP" 2>&1 &
+        && exec "${cmd[@]}" ) < "$stdin_file" > "$OUT_TMP" 2>&1 &
     pid=$!
     # TERM at timeout, KILL after a grace period — a CLI wrapper that traps or
     # fails to forward TERM must not defeat the timeout guarantee.
@@ -593,6 +601,7 @@ run_backend() {
     wait "$pid" || rc=$?
     kill "$wpid" 2>/dev/null || true
     wait "$wpid" 2>/dev/null || true
+    [[ -n "$CALL_PROMPT_TMP" ]] && { rm -f "$CALL_PROMPT_TMP"; CALL_PROMPT_TMP=""; }
     record_author "$bvendor" || true
     # SIGTERM (143) / SIGKILL (137) can only come from the watchdog in this
     # process tree — report the conventional timeout code (race-free: no
