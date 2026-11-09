@@ -7,12 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.2] - 2026-11-09
+
+### Fixed
+- `context-mode-guard`: the block message no longer fails on non-ASCII command text, and the
+  guard still prints its deny/ask decision if rendering the message fails.
+
+### Docs
+- Corrected the A/B rule wording in the 0.15.1 entry and in the
+  `inline-python-safepath-test.sh` header.
+
+### Tests
+- `core/tests/context-mode-guard-test.sh`: the block message is printed for non-ASCII command
+  text, and a render failure still yields one deny decision.
+
 ## [0.15.1] - 2026-11-09
 
 ### Fixed
-- Inline Python in hooks and scripts no longer imports from the working folder: standard-library
-  snippets run with `-I`; snippets that load harness modules drop the working folder from
-  `sys.path` first, so PyYAML stays importable from the user site. The Codex fallback wrapper
+- Inline Python in hooks and scripts no longer imports from the working folder: snippets that need
+  nothing from the user site (standard library only, or harness modules that import only the
+  standard library) run with `-I`; snippets that need a user-site package (PyYAML) drop the
+  working folder from `sys.path` first, so PyYAML stays importable. The Codex fallback wrapper
   (`legacy/codex-shell-wrap/`) and the commands in the `brain-ingest` skill get the same `-I`,
   and `setup.sh` runs its PyYAML install from the harness root.
 

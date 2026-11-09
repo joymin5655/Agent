@@ -139,6 +139,43 @@ else
   expect "other-tool-ignored-allow" allow mcp__plugin_context-mode_context-mode__ctx_search \
     "{\"code\":\"cat ${SEC}app.key\"}"
   expect "non-mcp-tool-ignored-allow" allow Bash "{\"command\":\"cat ${SEC}app.key\"}"
+
+  # The block message must still be printed when the command preview is cut inside a multi-byte
+  # character (0 / 1 / 2 filler characters move the cut point), under a UTF-8 locale.
+  UTF8_LOCALE=""
+  for cand in en_US.UTF-8 en_US.utf8 C.UTF-8 C.utf8; do   # glibc lists the dash-less spelling
+    if locale -a 2>/dev/null | grep -qix "$cand"; then UTF8_LOCALE="$cand"; break; fi
+  done
+  KO80="$(python3 -I -c 'print("\uac00" * 80)')"
+  if [[ -z "$UTF8_LOCALE" ]]; then
+    echo "  skip (no en_US or C UTF-8 locale installed: multi-byte preview cases not run)"
+  else
+    for fill in "" "a" "ab"; do
+      body="cat ${SEC}app.key ${fill}${KO80}"
+      input="$(python3 -I -c 'import json,sys; print(json.dumps({"language":"shell","code":sys.argv[1]}))' "$body")"
+      out="$(event mcp__context-mode__ctx_execute "$input" \
+        | env -u LC_ALL -u LC_CTYPE LANG="$UTF8_LOCALE" bash "$ADAPTER" context-mode-guard.sh 2>/dev/null || true)"
+      case "$out" in
+        *'"permissionDecision": "deny"'*) ok "multibyte-preview-deny/fill${#fill}" ;;
+        *) bad "multibyte-preview-deny/fill${#fill}" "no deny printed: ${out:0:120}" ;;
+      esac
+    done
+  fi
+
+  # Rendering failure: only the render snippet (python3 reading its program from stdin) fails;
+  # the guard must still print exactly one JSON object whose decision is deny. Runs in any locale.
+  mkdir -p "$WORK/shim"
+  REAL_PY="$(command -v python3)"
+  cat > "$WORK/shim/python3" <<SHIM
+#!/bin/sh
+if [ "\$1" = "-I" ] && [ "\$2" = "-" ]; then exit 1; fi
+exec "$REAL_PY" "\$@"
+SHIM
+  chmod +x "$WORK/shim/python3"
+  out="$(event mcp__context-mode__ctx_execute "{\"language\":\"shell\",\"code\":\"cat ${SEC}app.key\"}" \
+    | env PATH="$WORK/shim:$PATH" bash "$ADAPTER" context-mode-guard.sh 2>/dev/null || true)"
+  verdict="$(printf '%s' "$out" | python3 -I -c 'import json,sys; print(json.loads(sys.stdin.read())["hookSpecificOutput"]["permissionDecision"])' 2>/dev/null || echo invalid)"
+  if [[ "$verdict" == "deny" ]]; then ok "render-failure-fallback-deny"; else bad "render-failure-fallback-deny" "verdict=$verdict out=${out:0:160}"; fi
 fi
 
 echo

@@ -6,10 +6,12 @@
 # sys.path. Hooks and scripts run in the session's folder (the project being worked on), so a file
 # there named like a standard module (json.py, re.py, …) or a harness module (hook_config.py) would
 # run inside the hook. Two rules keep it out:
-#   A  standard-library-only snippet  -> `python3 -I` (isolated: no cwd, no user site-packages)
-#   B  snippet that loads harness modules or PyYAML (user site) -> its first statements drop the
-#      working folder from sys.path (`sys.path[:] = [p for p in sys.path if p not in ("", …)]`)
-#      before any import other than os / sys.
+#   A  snippet that needs nothing from the user site (standard library only, or harness modules
+#      that import only the standard library) -> `python3 -I` (isolated: no cwd, no user
+#      site-packages)
+#   B  snippet that needs a user-site package (PyYAML) -> its first statements drop the working
+#      folder from sys.path (`sys.path[:] = [p for p in sys.path if p not in ("", …)]`) before
+#      any import other than os / sys; `-I` would hide PyYAML.
 #
 # (1) static scan of every shipped shell file and of the shell code blocks in shipped skill, agent,
 #     command, rule and template Markdown (git ls-files minus core/tests, docs, evals, .github and
