@@ -1637,10 +1637,10 @@ xai_reset; make_policy 75 '{"reason":"weekly cap reached"}'
 cwx - cross-review AGENT_WORKER_POLICY_CMD="$POLICY" AGENT_AUTHOR_VENDOR=anthropic; rc=$?
 cap="$(newest_cap)"
 if [[ $rc -eq 127 && "$(ncalls codex)" == 0 && "$(ncalls claude)" == 0 && "$(ncalls policy)" == 1 ]] \
-   && grep -q '^check --lane openai --role cross-review --hold [0-9]*$' "$MARKERS/policy.calls" \
+   && grep -q '^check --lane openai --role cross-review --hold [0-9]* --accounts$' "$MARKERS/policy.calls" \
    && grep -q "^status: unavailable$" "$cap" \
    && grep -q "^fallback_reason: primary 'codex' unavailable (capped: weekly cap reached)$" "$cap"; then
-    ok "shipped cross-review, author anthropic, codex capped — claude is the author's own: exit 127, single-company review"
+    ok "shipped cross-review, author anthropic, codex capped — claude is the author's own: exit 127, single-company review (the shipped codex backend has account slots, so the policy is asked with --accounts)"
 else
     bad "shipped cross-review/anthropic/capped" "rc=$rc policy=[$(cat "$MARKERS/policy.calls" 2>/dev/null)] cap=$(head -n 9 "$cap" 2>/dev/null | tr '\n' '|')"
 fi
