@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-11-09
+
+### Added
+- **Design mode for writing-critique (#243).** `/writing-critique --design` reviews a plan or
+  design document with the two other-vendor critics: a design rubric (terms, overdesign,
+  contradiction, claims, readiness), a `paraphrase` each critic writes first, and the files the
+  document cites inlined as sources by `gather_sources.py` (the staged version of tracked,
+  in-repository text only, never the working-tree copy; 40 KB each and 120 KB in total; the
+  rest is listed by name with the reason). A file stays out when its cited or resolved path
+  has a secret-like name or folder, matches the project's
+  `risk_areas.secrets.paths` (read through the harness's `hook_config`; when they cannot be
+  read the run stops), or its text holds a private key, a cloud or chat token or a JWT. The
+  critics run with the repository as their working directory and get 900 s; the codex critic
+  can open any file there under its read-only sandbox, so the filter covers only what is
+  inlined. `--if-risky` runs `plan_risk.sh` on every given document first — backticked, linked
+  and bare paths, fenced blocks included, with `(group)` and `[slug]` segments — passes the
+  paths to `council-threshold.sh --classify` with that repository's own secret list, and skips
+  the critique when the plan cites no risk-area path (exit 2, not "no risk", when that secret
+  list cannot be read). Their own Python never imports from the reviewed repository's folder,
+  so a module planted there does not run. Rejection code `E1` marks a finding that is wrong
+  only by evidence outside the critic's input; runs are logged as `kind: design` and
+  `report.py` lists them apart. The `advisor-*` roles stay out of code-review gate evidence.
+- **`/spec` step 3.5** runs `/writing-critique --design --if-risky spec.md plan.md` once when
+  the extras plugin is installed.
+- **Function context for the gemini lane (#243).** council-review builds the gemini lane's
+  diff with `core/infra/lane-diff.py`: `git diff -W` for code files while it stays within twice
+  the plain diff plus 8 KB, the default diff for data, lock, generated and doc files, and the
+  plain diff of every file past 120 KB; code files are shown as text even when an
+  in-tree `.gitattributes` marks them binary (also past the byte cap). Its `context_mode`
+  (`w|mixed|default|over_cap`) is logged per lane. Git runs from the top level with literal
+  pathspecs and with no repository-configured command (fsmonitor, external diff, textconv); a
+  target that starts with `-` is refused.
+- **Dispositions and a round ledger in council-review (#243).** Every surviving finding gets
+  fix, contest (evidence the lane could read), escalate (a Dismissed finding whose evidence lies
+  outside the lane's input, shown to the user) or decline. A per-branch ledger in the workers
+  folder records each finding as fixed, settled, deferred or open, so settled and deferred
+  findings are not argued again in later rounds and a fix that did not hold reopens. Lane
+  telemetry adds `escalated`, `acted` and `context_mode`; `rejected` keeps its definition.
+- Lane answers start with `PARAPHRASE:`; a `NO-FINDINGS` without it counts as unread.
+
+### Changed
+- **Read-only codex lanes skip codex's git-repo check and get an isolation preamble (#243).**
+  call-worker adds `--skip-git-repo-check` (unless the backend command, its tier args or the
+  role's `args_extra` already carry it), so a lane dispatched from an empty temporary folder no
+  longer fails with "Not inside a trusted directory". One fixed preamble leads the lane's stdin
+  (a per-call copy of the prompt) and codex gets no positional prompt, so it reads the whole
+  task from stdin whatever its version: instruction files are conventions to check the work
+  against, not session steps to run. The prompt file and its size metric, the self-heal retry
+  (preamble once), the implementer role and the gemini lane are unchanged.
+- council-review's approval, dispatch and degradation prose moved to its `reference.md`.
+
 ## [0.14.0] - 2026-11-08
 
 ### Added

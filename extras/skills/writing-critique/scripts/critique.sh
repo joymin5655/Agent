@@ -2,6 +2,7 @@
 # critique.sh — send an anonymised draft to two external critics at once and vet the replies.
 #
 # usage: critique.sh <draft> [--purpose "<purpose and reader, one line>"] --out <dir>
+#                    [--rubric writing|design] [--repo <dir>]
 # writes <dir>/findings.json (critics labelled A/B, identity-free), <dir>/labels.json
 # (label -> role/company/status/elapsed), <dir>/status.txt; prints the status lines.
 # exit: 0 at least one critic answered (read `result:` — both|one) | 2 usage/setup
@@ -9,6 +10,11 @@
 #         ended in call-worker exit 3 and the other did too or failed, so the caller can ask
 #         once and re-run; with one answer the status lines name a critic awaiting approval)
 # --purpose may be omitted or empty: the prompt's purpose line then reads "명시 없음".
+# --rubric design (plan or design documents): references/design-rubric.md + design-prompt.md;
+#   the files the document cites are inlined as {{SOURCES}} (gather_sources.py) and both critics
+#   run with --repo (default: the git top level of the cwd; error if none) as their cwd, so a
+#   critic that can read files may check claims against the repository. Findings use the design
+#   category set. Default rubric is writing (unchanged).
 #
 # Cost: each critic is a paid call-worker dispatch (roles advisor-writing-openai,
 # advisor-writing-google). This script never sets the approval flag; call-worker's usage
@@ -19,41 +25,68 @@
 #   approval-needed | timeout | failed. labels.json also records the backend that really ran
 #   and the fallback reason from the capture header, and status.txt shows a fallback.
 # env seams (tests): WRITING_CRITIQUE_CALL_WORKER (path to a call-worker stand-in),
-#                    WRITING_CRITIQUE_TIMEOUT_S (per-critic seconds, default 240)
+#                    WRITING_CRITIQUE_TIMEOUT_S (per-critic seconds, default 240 writing / 900 design)
 set -euo pipefail
 
 SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DRAFT="" PURPOSE="" OUT=""
+DRAFT="" PURPOSE="" OUT="" RUBRIC="writing" REPO=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --purpose) PURPOSE="${2-}"; shift; [[ $# -gt 0 ]] && shift ;;
         --out) OUT="${2:?--out needs a folder}"; shift 2 ;;
-        -h|--help) sed -n 2,22p "$0"; exit 0 ;;
+        --rubric) RUBRIC="${2:?--rubric needs writing|design}"; shift 2 ;;
+        --repo) REPO="${2:?--repo needs a folder}"; shift 2 ;;
+        -h|--help) sed -n 2,28p "$0"; exit 0 ;;
         -*) echo "critique: unknown option $1" >&2; exit 2 ;;
         *) [[ -z "$DRAFT" ]] && DRAFT="$1" || { echo "critique: one draft only" >&2; exit 2; }; shift ;;
     esac
 done
-[[ -f "$DRAFT" && -n "$OUT" ]] || { echo "usage: critique.sh <draft> [--purpose \"...\"] --out <dir>" >&2; exit 2; }
+[[ -f "$DRAFT" && -n "$OUT" ]] || { echo "usage: critique.sh <draft> [--purpose \"...\"] --out <dir> [--rubric writing|design] [--repo <dir>]" >&2; exit 2; }
+case "$RUBRIC" in writing|design) ;; *) echo "critique: --rubric must be writing or design" >&2; exit 2 ;; esac
+if [[ "$RUBRIC" == design ]]; then
+    if [[ -z "$REPO" ]]; then
+        REPO="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "critique: --repo needed (not inside a git repository)" >&2; exit 2; }
+    fi
+    [[ -d "$REPO" ]] || { echo "critique: no such folder: $REPO" >&2; exit 2; }
+    REPO="$(cd "$REPO" && pwd)"
+    DEFAULT_TIMEOUT=900
+else
+    [[ -z "$REPO" ]] || { echo "critique: --repo is for --rubric design only" >&2; exit 2; }
+    DEFAULT_TIMEOUT=240
+fi
 
 CW="${WRITING_CRITIQUE_CALL_WORKER:-}"
-if [[ -z "$CW" ]]; then
+ROOT=""
+if [[ -z "$CW" || "$RUBRIC" == design ]]; then  # design mode needs the root for the source filter
     ROOT="$(bash "$SKILL_DIR/../../scripts/harness-root.sh")" || exit 2
-    CW="$ROOT/core/infra/call-worker.sh"
 fi
+[[ -n "$CW" ]] || CW="$ROOT/core/infra/call-worker.sh"
 [[ -f "$CW" ]] || { echo "critique: call-worker not found at $CW" >&2; exit 2; }
 
 mkdir -p "$OUT"
-python3 - "$SKILL_DIR" "$DRAFT" "$PURPOSE" "$OUT/prompt.md" <<'PY'
+# absolute paths: design mode runs the critics from inside the repository
+OUT="$(cd "$OUT" && pwd)"
+DRAFT="$(cd "$(dirname "$DRAFT")" && pwd)/$(basename "$DRAFT")"
+SOURCES_FILE="$OUT/sources.md"
+if [[ "$RUBRIC" == design ]]; then
+    python3 "$SKILL_DIR/scripts/gather_sources.py" "$DRAFT" --repo "$REPO" --harness-root "$ROOT" > "$SOURCES_FILE" || exit 2
+else
+    : > "$SOURCES_FILE"
+fi
+if [[ "$RUBRIC" == design ]]; then PROMPT_TPL=design-prompt RUBRIC_FILE=design-rubric; else PROMPT_TPL=critic-prompt RUBRIC_FILE=rubric; fi
+python3 - "$SKILL_DIR" "$DRAFT" "$PURPOSE" "$OUT/prompt.md" "$PROMPT_TPL" "$RUBRIC_FILE" "$SOURCES_FILE" <<'PY'
 import sys
-skill, draft, purpose, out = sys.argv[1:5]
-tpl = open(f"{skill}/references/critic-prompt.md", encoding="utf-8").read()
-rub = open(f"{skill}/references/rubric.md", encoding="utf-8").read()
+sys.path[:] = [p for p in sys.path if p not in ("", ".")]  # the cwd may be the reviewed repo
+skill, draft, purpose, out, tpl_name, rub_name, src = sys.argv[1:8]
+tpl = open(f"{skill}/references/{tpl_name}.md", encoding="utf-8").read()
+rub = open(f"{skill}/references/{rub_name}.md", encoding="utf-8").read()
+sources = open(src, encoding="utf-8").read()
 body = open(draft, encoding="utf-8").read()
 purpose = purpose.strip() or "(명시 없음 — 문서 자체로 판단한다)"
 # one pass, so text inside the draft that looks like a placeholder is never expanded
 import re
-vals = {"PURPOSE": purpose, "RUBRIC": rub.strip(), "DRAFT": body.rstrip("\n")}
-open(out, "w", encoding="utf-8").write(re.sub(r"\{\{(PURPOSE|RUBRIC|DRAFT)\}\}", lambda m: vals[m.group(1)], tpl))
+vals = {"PURPOSE": purpose, "RUBRIC": rub.strip(), "DRAFT": body.rstrip("\n"), "SOURCES": sources.strip()}
+open(out, "w", encoding="utf-8").write(re.sub(r"\{\{(PURPOSE|RUBRIC|DRAFT|SOURCES)\}\}", lambda m: vals[m.group(1)], tpl))
 PY
 
 # random A/B: which company is which stays in labels.json only
@@ -63,8 +96,11 @@ role_of() { echo "advisor-writing-$1"; }
 run_critic() { # <label> <company>
     local label="$1" company="$2" t0 t1 rc=0
     t0=$(python3 -c 'import time;print(time.time())')
-    AGENT_WORKER_TIMEOUT_S="${WRITING_CRITIQUE_TIMEOUT_S:-240}" \
-        bash "$CW" "$(role_of "$company")" < "$OUT/prompt.md" > "$OUT/$label.path" 2> "$OUT/$label.err" || rc=$?
+    (   # design mode: cwd = the repository (a subshell, so the caller's cwd is untouched)
+        [[ -z "$REPO" ]] || cd "$REPO"
+        AGENT_WORKER_TIMEOUT_S="${WRITING_CRITIQUE_TIMEOUT_S:-$DEFAULT_TIMEOUT}" \
+            bash "$CW" "$(role_of "$company")" < "$OUT/prompt.md" > "$OUT/$label.path" 2> "$OUT/$label.err"
+    ) || rc=$?
     t1=$(python3 -c 'import time;print(time.time())')
     echo "$rc" > "$OUT/$label.rc"
     python3 -c "print(round($t1-$t0,1))" > "$OUT/$label.sec"
@@ -73,9 +109,11 @@ run_critic A "$LA" &
 run_critic B "$LB" &
 wait
 
-python3 - "$SKILL_DIR" "$DRAFT" "$OUT" "$LA" "$LB" <<'PY'
-import json, re, subprocess, sys
-skill, draft, out, la, lb = sys.argv[1:6]
+python3 - "$SKILL_DIR" "$DRAFT" "$OUT" "$LA" "$LB" "$RUBRIC" <<'PY'
+import sys
+sys.path[:] = [p for p in sys.path if p not in ("", ".")]  # the cwd may be the reviewed repo
+import json, re, subprocess
+skill, draft, out, la, lb, rubric = sys.argv[1:7]
 findings, labels, lines, ok = {}, {}, [], 0
 
 
@@ -110,7 +148,8 @@ for label, company in (("A", la), ("B", lb)):
             entry["status"] = "failed"
         else:
             p = subprocess.run([sys.executable, f"{skill}/scripts/parse_findings.py", path,
-                                "--draft", draft, "--label", label], capture_output=True, text=True)
+                                "--draft", draft, "--label", label, "--rubric", rubric],
+                               capture_output=True, text=True)
             try:
                 r = json.loads(p.stdout)
             except ValueError:
@@ -119,6 +158,8 @@ for label, company in (("A", la), ("B", lb)):
                 empty = r["verdict"] == "revise" and not r["findings"]
                 entry.update(status="success-empty" if empty else "success", verdict=r["verdict"],
                              findings=r["findings"], dropped=r["dropped"])
+                if rubric == "design":
+                    entry["paraphrase"] = r.get("paraphrase", "")
                 ok += 1
             else:
                 entry["status"] = "failed"

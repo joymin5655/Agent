@@ -14,25 +14,8 @@ import os
 import sys
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--days", type=int, default=30)
-    ap.add_argument("--log")
-    ap.add_argument("--json", action="store_true")
-    a = ap.parse_args()
-    path = a.log or os.environ.get("WRITING_CRITIQUE_LOG") or os.path.join(
-        os.environ.get("AGENT_LOGS_DIR") or os.path.expanduser("~/.agent/logs"), "writing-critique.jsonl")
-    cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=a.days)
-    recs = []
-    if os.path.isfile(path):
-        for ln in open(path, encoding="utf-8"):
-            try:
-                r = json.loads(ln)
-                ts = datetime.datetime.strptime(r["ts"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc)
-            except (ValueError, KeyError):
-                continue
-            if ts >= cutoff:
-                recs.append(r)
+def aggregate(recs):
+    """(per-company stats, reject-reason counts, drift pass rate) over the given log records."""
     per, reasons, drift_n, drift_pass = {}, {}, 0, 0
     for r in recs:
         for k, v in r.get("reject_reasons", {}).items():
@@ -59,12 +42,10 @@ def main():
         p["success_rate"] = round((p["success"] + p["success_empty"]) / tried, 2) if tried else None
         d = p["accepted"] + p["rejected"]
         p["accept_rate"] = round(p["accepted"] / d, 2) if d else None
-    out = {"days": a.days, "runs": len(recs), "critics": per, "reject_reasons": reasons,
-           "drift_pass_rate": round(drift_pass / drift_n, 2) if drift_n else None}
-    if a.json:
-        print(json.dumps(out, ensure_ascii=False, indent=2))
-        return 0
-    print(f"writing-critique, last {a.days} days: {len(recs)} run(s)")
+    return per, reasons, round(drift_pass / drift_n, 2) if drift_n else None
+
+
+def print_table(per, reasons, drift_rate, show_drift=True):
     print(f"{'critic':<10}{'runs':>5}{'success':>9}{'empty':>6}{'appr':>5}{'fail':>5}{'fallbk':>7}{'findings':>9}{'accept':>8}  categories")
     for name, p in sorted(per.items()):
         cats = " ".join(f"{k}:{v}" for k, v in sorted(p["by_category"].items()))
@@ -74,7 +55,46 @@ def main():
         print(f"{name:<10}{p['runs']:>5}{sr:>9}{p['success_empty']:>6}{p['approval_needed']:>5}{fail:>5}"
               f"{p['fallback']:>7}{p['findings']:>9}{ar:>8}  {cats}")
     print("reject reasons: " + (" ".join(f"{k}:{v}" for k, v in sorted(reasons.items())) or "-"))
-    print("drift check pass rate: " + ("-" if out["drift_pass_rate"] is None else f"{out['drift_pass_rate']:.0%}"))
+    if show_drift:
+        print("drift check pass rate: " + ("-" if drift_rate is None else f"{drift_rate:.0%}"))
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--days", type=int, default=30)
+    ap.add_argument("--log")
+    ap.add_argument("--json", action="store_true")
+    a = ap.parse_args()
+    path = a.log or os.environ.get("WRITING_CRITIQUE_LOG") or os.path.join(
+        os.environ.get("AGENT_LOGS_DIR") or os.path.expanduser("~/.agent/logs"), "writing-critique.jsonl")
+    cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=a.days)
+    recs = []
+    if os.path.isfile(path):
+        for ln in open(path, encoding="utf-8"):
+            try:
+                r = json.loads(ln)
+                ts = datetime.datetime.strptime(r["ts"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc)
+            except (ValueError, KeyError):
+                continue
+            if ts >= cutoff:
+                recs.append(r)
+    # design runs (kind "design") are summarised apart from writing runs
+    design = [r for r in recs if r.get("doc", {}).get("kind") == "design"]
+    writing = [r for r in recs if r.get("doc", {}).get("kind") != "design"]
+    per, reasons, rate = aggregate(writing)
+    out = {"days": a.days, "runs": len(writing), "critics": per, "reject_reasons": reasons,
+           "drift_pass_rate": rate}
+    if design:
+        dper, dreasons, _ = aggregate(design)
+        out["design"] = {"runs": len(design), "critics": dper, "reject_reasons": dreasons}
+    if a.json:
+        print(json.dumps(out, ensure_ascii=False, indent=2))
+        return 0
+    print(f"writing-critique, last {a.days} days: {len(writing)} run(s)")
+    print_table(per, reasons, out["drift_pass_rate"])
+    if design:
+        print(f"design runs: {len(design)}")
+        print_table(out["design"]["critics"], out["design"]["reject_reasons"], None, show_drift=False)
     return 0
 
 

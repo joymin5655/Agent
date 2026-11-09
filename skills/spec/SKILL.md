@@ -206,10 +206,15 @@ Before asking for approval, lint and review the plan:
    (`agent-harness:plan-checker`) with the `spec.md` and `plan.md` paths. It returns
    a verdict-schema object (`docs/scoring-convention.md`); its `refutations` are
    the semantic findings.
+   If the `agent-harness-extras` plugin is installed, run
+   `/writing-critique --design --if-risky spec.md plan.md` once (first round only, not
+   every round): its `plan_risk.sh` check lets the cross-vendor critique run only when the
+   plan cites risk-area paths. Fold the accepted findings into the next revision. Not
+   installed: skip it and say so.
 3. Revise `plan.md` (and `spec.md` if a decision is missing), then re-run. At most
    **3 rounds** in total.
-4. Whatever lint defects or refutations remain after the last round are listed in
-   the Step 4 approval message — never silently dropped.
+4. Whatever lint defects, refutations or design-critique findings remain after the last
+   round are listed in the Step 4 approval message — never silently dropped.
 
 ### 4. Route to approval
 

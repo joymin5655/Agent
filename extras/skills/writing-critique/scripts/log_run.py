@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """log_run.py — append one metadata-only line per writing-critique run.
 
-usage: log_run.py --draft FILE --kind general|user-voiced --labels labels.json \
+usage: log_run.py --draft FILE --kind general|user-voiced|design --labels labels.json \
          --findings findings.json [--decisions decisions.json] [--drift drift.json]
-decisions.json: [{"id": "A1", "decision": "accept|reject", "reason": "R1..R5 (reject only)"}]
+decisions.json: [{"id": "A1", "decision": "accept|reject", "reason": "R1..R5 or E1 (reject only)"}]
 drift.json:     the drift_check.py output of the FINAL text.
 
 Log: $WRITING_CRITIQUE_LOG, else ${AGENT_LOGS_DIR:-~/.agent/logs}/writing-critique.jsonl.
@@ -18,7 +18,7 @@ import json
 import os
 import sys
 
-REASONS = {"R1", "R2", "R3", "R4", "R5"}
+REASONS = {"R1", "R2", "R3", "R4", "R5", "E1"}  # E1: design mode, wrong only by evidence outside the critic's input
 
 
 def counts(items, key):
@@ -39,7 +39,7 @@ def log_path():
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--draft", required=True)
-    ap.add_argument("--kind", choices=["general", "user-voiced"], required=True)
+    ap.add_argument("--kind", choices=["general", "user-voiced", "design"], required=True)
     ap.add_argument("--labels", required=True)
     ap.add_argument("--findings", required=True)
     ap.add_argument("--decisions")
@@ -55,7 +55,7 @@ def main():
         if d.get("decision") not in ("accept", "reject"):
             sys.exit("log_run: decision must be accept|reject")
         if d["decision"] == "reject" and d.get("reason") not in REASONS:
-            sys.exit("log_run: a rejection needs reason R1..R5")
+            sys.exit("log_run: a rejection needs reason R1..R5 or E1")
         by_id[d["id"]] = d
 
     critics, reasons = [], {}
