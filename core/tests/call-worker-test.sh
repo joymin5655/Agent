@@ -928,7 +928,8 @@ make_rec_stub() {  # make_rec_stub <dir> <name> <reply>
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "$MARKERS/$name.calls"
 printf '%s\n' "\${AGENT_LANE:-<unset>}" >> "$MARKERS/$name.lane"
-cat >/dev/null
+printf '%s\n' "\$@" > "$MARKERS/$name.argvlines"
+cat > "$MARKERS/$name.stdin"
 echo "$reply"
 exit "\${REC_STUB_EXIT:-0}"
 EOF
@@ -1009,7 +1010,9 @@ EOF
     chmod +x "$POLICY"
 }
 
-xai_reset() { rm -rf "$WORK/wx" "$MARKERS"/*.calls "$MARKERS"/*.lane "$MARKERS/policy.ppid"; }
+xai_reset() { rm -rf "$WORK/wx" "$MARKERS"/*.calls "$MARKERS"/*.lane "$MARKERS"/*.argvlines "$MARKERS"/*.stdin "$MARKERS/policy.ppid"; }
+PRE="$(sed -n "s/^readonly CODEX_READONLY_PREAMBLE='\(.*\)'\$/\1/p" "$DISPATCHER")"
+[[ -n "$PRE" ]] || { echo "FATAL: preamble not found in $DISPATCHER" >&2; exit 1; }
 cwx() {  # cwx <registry|-> <role> [VAR=value...] — one dispatch; "-" = the shipped registry
     local reg="$1" role="$2"; shift 2
     local regenv=(AGENT_BACKENDS_FILE="$reg")
@@ -1435,13 +1438,14 @@ cwx "$REG7" solo AGENT_WORKER_YES=1; rc=$?
 # 13g. readonly roles: --sandbox read-only on codex, ahead of args_extra; clashes are config errors
 xai_reset
 cwx "$REG7" rev AGENT_WORKER_YES=1 AGENT_AUTHOR_VENDOR=anthropic >/dev/null
-[[ "$(lastcall codex)" == "exec --profile deep --sandbox read-only" ]] \
-    && ok "readonly — codex argv is cmd + tier args + '--sandbox read-only'" \
+[[ "$(lastcall codex)" == "exec --profile deep --sandbox read-only --skip-git-repo-check $PRE" ]] \
+    && ok "readonly — codex argv is cmd + tier args + sandbox + skip-git-repo-check + preamble" \
     || bad "readonly argv" "got=[$(lastcall codex)]"
 xai_reset
 cwx "$REG7" ro-extra AGENT_WORKER_YES=1 >/dev/null
-[[ "$(lastcall codex)" == "exec --profile deep --sandbox read-only --skip-git-repo-check" ]] \
-    && ok "readonly — the sandbox flag sits ahead of the role's args_extra" \
+[[ "$(lastcall codex)" == "exec --profile deep --sandbox read-only --skip-git-repo-check $PRE" ]] \
+    && [[ "$(grep -c -x -e '--skip-git-repo-check' "$MARKERS/codex.argvlines")" == 1 ]] \
+    && ok "readonly — the sandbox flag sits ahead of the role's args_extra; its own skip flag is not doubled" \
     || bad "readonly order" "got=[$(lastcall codex)]"
 xai_reset
 cwx "$REG7" solo AGENT_WORKER_YES=1 >/dev/null
@@ -1465,6 +1469,43 @@ for n in 1 2 3 4 5 6 7 8 9; do
     fi
 done
 
+# 13g2. the preamble: last argv element, once; stdin untouched; never on non-readonly, gemini, fallback
+xai_reset
+cwx "$REG7" ro-extra AGENT_WORKER_YES=1 >/dev/null
+if [[ "$(tail -n 1 "$MARKERS/codex.argvlines")" == "$PRE" ]] \
+   && [[ "$(grep -c -F -x -e "$PRE" "$MARKERS/codex.argvlines")" == 1 ]] \
+   && [[ "$(cat "$MARKERS/codex.stdin")" == "sample prompt" ]]; then
+    ok "readonly codex — preamble is the last argv element exactly once; stdin is the caller's prompt, unchanged"
+else
+    bad "preamble placement" "last=[$(tail -n 1 "$MARKERS/codex.argvlines")] stdin=[$(cat "$MARKERS/codex.stdin")]"
+fi
+xai_reset
+cwx "$REG7" solo AGENT_WORKER_YES=1 >/dev/null
+if [[ "$(lastcall codex)" == "exec --profile deep" ]] && ! grep -q -F -e "$PRE" "$MARKERS/codex.argvlines"; then
+    ok "non-readonly codex role — no skip flag, no preamble"
+else
+    bad "non-readonly codex" "got=[$(lastcall codex)]"
+fi
+xai_reset
+cwx "$REG7" ro-gem AGENT_WORKER_YES=1 >/dev/null
+if ! grep -q -F -e "$PRE" "$MARKERS/gemini.argvlines" "$MARKERS/gemini.stdin" \
+   && [[ "$(cat "$MARKERS/gemini.stdin")" == "sample prompt" ]]; then
+    ok "readonly gemini role — no preamble in argv or stdin"
+else
+    bad "gemini preamble" "argv=[$(tr '\n' ' ' < "$MARKERS/gemini.argvlines")]"
+fi
+xai_reset
+cwx "$REG7" rev AGENT_WORKER_YES=1 REC_STUB_EXIT=1 >/dev/null; rc=$?
+# codex fails (stub exits 1 for every CLI), so the claude fallback runs too
+if [[ "$(ncalls codex)" -ge 1 && "$(ncalls claude)" -ge 1 ]] \
+   && ! grep -q -F -e "$PRE" "$MARKERS/claude.argvlines" "$MARKERS/claude.stdin" \
+   && ! grep -q -e '--sandbox' -e '--skip-git-repo-check' "$MARKERS/claude.argvlines" \
+   && [[ "$(cat "$MARKERS/claude.stdin")" == "sample prompt" ]]; then
+    ok "fallback claude — no preamble, no codex flags, stdin is the caller's prompt"
+else
+    bad "fallback claude" "codex=$(ncalls codex) claude=$(ncalls claude) argv=[$(tr '\n' ' ' < "$MARKERS/claude.argvlines" 2>/dev/null)]"
+fi
+
 # 13h. AGENT_LANE: the worker and its preflight see the role, whatever the caller exported
 xai_reset
 cwx "$REG7" pfrole AGENT_WORKER_YES=1 AGENT_LANE=caller-set; rc=$?
@@ -1480,7 +1521,7 @@ xai_reset
 cwx - cross-review AGENT_WORKER_YES=1 AGENT_AUTHOR_VENDOR=anthropic; rc=$?
 cap="$(newest_cap)"
 if [[ $rc -eq 0 && "$(ncalls claude)" == 0 && "$(sed -n 1p "$MARKERS/codex.calls")" == "login status" \
-      && "$(lastcall codex)" == "exec --profile deep --sandbox read-only" ]] \
+      && "$(lastcall codex)" == "exec --profile deep --sandbox read-only --skip-git-repo-check $PRE" ]] \
    && grep -q "^backend: codex$" "$cap" \
    && row_is '.role == "cross-review" and .vendor == "openai" and .author_vendor == "anthropic"'; then
     ok "shipped cross-review, author anthropic — codex (read-only sandbox) reviews, claude untouched"
@@ -1511,7 +1552,7 @@ else
 fi
 xai_reset
 cwx - second-opinion-review AGENT_WORKER_YES=1; rc=$?
-[[ $rc -eq 0 && "$(lastcall codex)" == "exec --profile deep --sandbox read-only" ]] \
+[[ $rc -eq 0 && "$(lastcall codex)" == "exec --profile deep --sandbox read-only --skip-git-repo-check $PRE" ]] \
     && ok "shipped second-opinion-review — read-only sandbox" || bad "shipped second-opinion-review" "rc=$rc got=[$(lastcall codex)]"
 xai_reset
 cwx - implementer AGENT_WORKER_YES=1; rc=$?

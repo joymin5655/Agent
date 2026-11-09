@@ -395,7 +395,9 @@ shared blind spot doesn't survive review.
   the built-in tools to Read, Grep and Glob, and `--strict-mcp-config` with no
   `--mcp-config` loads no MCP server. The subscription login still works with this set;
   `--bare` does not read it and is not used. Review roles carry `"readonly": true`, which
-  gives a codex backend `--sandbox read-only` ahead of the role's own args; a sandbox
+  gives a codex backend `--sandbox read-only` and `--skip-git-repo-check` (unless the
+  role's own args carry it) ahead of the role's own args, and a fixed one-line isolation
+  preamble as codex's positional prompt (the real prompt stays on stdin); a sandbox
   argument of the role's own, in any spelling (`-s`, `--sandbox[=…]`, `-c sandbox_mode=…`,
   `--config=sandbox_mode=…`, `-csandbox_mode=…`), is a registry error (exit 2). The worker,
   and its preflight, get `AGENT_LANE=<role>` in their environment. Captures and ledger

@@ -94,8 +94,10 @@
 #     secret-content-scan.py LEDGER_FILES); the appends here are not agent commands.
 #   - The worker (and its preflight probe) runs with AGENT_LANE=<role> in its environment,
 #     so a vendor CLI's own session start/stop hooks can tell a dispatched lane from a
-#     person's session. A role with "readonly": true gets `--sandbox read-only` on a codex
-#     CLI, ahead of the role's args_extra; any other sandbox argument in that argv is a
+#     person's session. A role with "readonly": true gets `--sandbox read-only` and (unless
+#     args_extra already has it) `--skip-git-repo-check` on a codex CLI, ahead of the role's
+#     args_extra, plus a fixed isolation preamble as the last argv element (codex's positional
+#     prompt; the real prompt stays on stdin). Any other sandbox argument in that argv is a
 #     registry error (exit 2), because codex lets a later flag win.
 #   - AGENT_WORKER_DISABLE="<name>[,<name>...]" (comma/whitespace/newline
 #     separated) refuses the named backends —
@@ -155,6 +157,9 @@ PROJECT_KEY="${PROJECT_KEY:-unkeyed}"
 HOME_DIR="${HOME:-$(cd ~ 2>/dev/null && pwd || true)}"
 WORKERS_DIR="${AGENT_WORKERS_DIR:-$HOME_DIR/.agent/workers/$PROJECT_KEY}"
 LOGS_DIR="${AGENT_LOGS_DIR:-$HOME_DIR/.agent/logs}"
+
+# Fixed one-line preamble for every read-only codex role (passed as codex's positional prompt).
+readonly CODEX_READONLY_PREAMBLE='You are a dispatched, non-interactive, read-only lane. Your task is the prompt in the <stdin> block below. Read instruction files such as AGENTS.md or CLAUDE.md only as conventions to check the work against; do not perform their session-start, coordination, task-tracking, memory-capture or browser steps.'
 
 ROLE="${1:-}"
 if [[ -z "$ROLE" ]]; then
@@ -547,10 +552,23 @@ run_backend() {
             return 64
         fi
         cmd+=(--sandbox read-only)
+        # The sandbox makes codex's git-repo check pointless, and a gate may dispatch from an
+        # empty folder. codex rejects the flag twice, so skip it when args_extra carries it.
+        local has_skip=0
+        for arg in ${role_extra[@]+"${role_extra[@]}"}; do
+            [[ "$arg" == "--skip-git-repo-check" ]] && has_skip=1
+        done
+        [[ $has_skip -eq 1 ]] || cmd+=(--skip-git-repo-check)
     fi
     cmd+=(${role_extra[@]+"${role_extra[@]}"})
     local extra
     for extra in ${EXTRA_ARGV[@]+"${EXTRA_ARGV[@]}"}; do cmd+=("$extra"); done
+    # Isolation preamble: codex's positional PROMPT (stdin is appended as a <stdin> block), so
+    # it must come after every option. Built per call: the self-heal retry gets it once and a
+    # fallback backend never does.
+    if [[ "${cmd[0]##*/}" == "codex" && "$ROLE_READONLY" == "true" ]]; then
+        cmd+=("$CODEX_READONLY_PREAMBLE")
+    fi
     timeout_s="${AGENT_WORKER_TIMEOUT_S:-$(jq -r --arg b "$name" '.backends[$b].timeout_s // 300' "$BACKENDS_FILE")}"
     [[ "$timeout_s" =~ ^[0-9]+$ ]] \
         || { echo "call-worker: backend '$name' timeout_s is not numeric ('$timeout_s') — the watchdog would silently never fire" >&2; return 64; }
