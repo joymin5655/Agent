@@ -150,6 +150,31 @@ The tier profiles pin a model ID, and the vendor retires or restricts IDs withou
   It never edits profile files; run `apply` to persist.
 - `setup.sh --doctor` WARNs when `check` exits 10.
 
+## Accounts
+
+One host can hold more than one codex login. The usage policy (`AGENT_WORKER_POLICY_CMD`) picks
+which one a run uses; with no pick, nothing changes (the default `~/.codex` login, and an
+inherited `CODEX_HOME` is left exactly as it was).
+
+Set up a second login (e.g. an API-key login named `api`):
+
+```bash
+mkdir -m 700 ~/.codex-api
+# the key is read from stdin; never put it on the command line or in a file in a repo
+printenv OPENAI_API_KEY | CODEX_HOME=~/.codex-api codex login --with-api-key
+```
+
+How it is used: the codex backend declares `"account_slots": true` and
+`"account_home": {"env": "CODEX_HOME", "prefix": ".codex-"}` in `core/infra/backends.json`, so
+`call-worker.sh` asks the policy with `--accounts`. When the exit-0 JSON says
+`{"account": "api"}`, that candidate's preflight (`codex login status`) and its `codex exec`
+both run with `CODEX_HOME=$HOME/.codex-api` (the self-heal model lookup too). Before anything
+of that candidate runs, the directory must exist, be a real directory (not a symlink), belong
+to the current user and not be group- or world-writable (mode 700); otherwise the candidate is
+reported unavailable ("account home ... is missing / a symlink / not owned by you / writable by
+others") and the usual fallback / exit-127 handling applies. The account name must match
+`^[a-z][a-z0-9]{0,15}$`; only `CODEX_HOME` is accepted as the variable.
+
 ## Test
 
 ```bash
