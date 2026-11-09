@@ -175,6 +175,11 @@ PROJECT_SECRET_TOKENS=""
 if command -v python3 >/dev/null 2>&1; then
   PROJECT_SECRET_TOKENS="$(_HD="$FRAMEWORK_ROOT/core/hooks" python3 - "$PROJECT_ROOT" <<'PY' 2>/dev/null
 import os, sys
+try:
+    _cwd = os.getcwd()
+except OSError:  # deleted working directory
+    _cwd = ""
+sys.path[:] = [p for p in sys.path if p not in ("", ".", _cwd)]
 sys.path.insert(0, os.environ.get("_HD", ""))
 try:
     import hook_config

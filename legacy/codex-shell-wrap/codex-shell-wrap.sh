@@ -47,7 +47,7 @@ for hook in pre-tool-guard.sh r4-mutex-check.sh; do
     DECISION=$("$ADAPTER" "$hook" --tool Bash --command "$REAL_CMD" 2>/dev/null || true)
 
     if [[ -n "$DECISION" ]] && command -v python3 >/dev/null 2>&1; then
-        VERDICT=$(echo "$DECISION" | python3 -c "
+        VERDICT=$(echo "$DECISION" | python3 -I -c "
 import json, sys
 try:
     obj = json.loads(sys.stdin.read())
@@ -56,7 +56,7 @@ try:
 except Exception:
     print('')
 " 2>/dev/null || echo "")
-        REASON=$(echo "$DECISION" | python3 -c "
+        REASON=$(echo "$DECISION" | python3 -I -c "
 import json, sys
 try:
     obj = json.loads(sys.stdin.read())

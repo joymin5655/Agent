@@ -163,7 +163,7 @@ resolve_sink() {
     printf '%s' "$default"
     return
   fi
-  python3 - "$root" "$SINK_RELATIVE" "$default" <<'PY'
+  python3 -I - "$root" "$SINK_RELATIVE" "$default" <<'PY'
 import os, sys, tempfile
 root, rel, default = sys.argv[1], sys.argv[2], sys.argv[3]
 path = os.path.realpath(rel if os.path.isabs(rel) else os.path.join(root, rel))
@@ -196,7 +196,7 @@ CANARY_RC=$?
 # still leave the file-existence refutation firing while the test-failure
 # refutation silently never fires, and the overall verdict would still read
 # REFUTED. Only trusting the top-level verdict would miss exactly that.
-read -r CANARY_VERDICT CANARY_HAS_FILE_CHECK CANARY_HAS_TEST_CHECK <<<"$(printf '%s' "$CANARY_OUT" | python3 -c '
+read -r CANARY_VERDICT CANARY_HAS_FILE_CHECK CANARY_HAS_TEST_CHECK <<<"$(printf '%s' "$CANARY_OUT" | python3 -I -c '
 import sys, json
 d = sys.stdin.read().strip()
 try:
@@ -237,12 +237,12 @@ fi
 VERIFIER_STDERR=""
 if [[ ! -f "$CLAIM" ]]; then
   if [[ -n "$EXPLICIT_CLAIM" ]]; then
-    VERDICT_JSON="$(python3 -c 'import json,sys; print(json.dumps({
+    VERDICT_JSON="$(python3 -I -c 'import json,sys; print(json.dumps({
     "verdict": "REFUTED", "score": 0.0, "target": sys.argv[1],
     "dimensions": {}, "refutations": ["claim file missing: %s (explicit path)" % sys.argv[1]],
     "schema_version": "1.0.0"}))' "$EXPLICIT_CLAIM")"
   else
-    VERDICT_JSON="$(python3 -c 'import json,sys; print(json.dumps({
+    VERDICT_JSON="$(python3 -I -c 'import json,sys; print(json.dumps({
     "verdict": "REFUTED", "score": 0.0, "target": sys.argv[1],
     "dimensions": {}, "refutations": [
         "claim file missing: tried %s (wave-suffixed) and %s (repo convention .agent/claims/<slug>.yml) — neither exists" % (sys.argv[1], sys.argv[2])
@@ -268,7 +268,7 @@ mkdir -p "$(dirname "$SINK")" 2>/dev/null || true
 REPRODUCE="false"
 [[ "${AGENT_REPRODUCE_TEST:-0}" == "1" ]] && REPRODUCE="true"
 
-RECORD="$(python3 - "$VERDICT_JSON" "$SLUG" "$WAVE" "$MODE" "$REPRODUCE" "$CLAIM" "${DIFF_BASE:-}" "$VERIFIER_STDERR" <<'PY'
+RECORD="$(python3 -I - "$VERDICT_JSON" "$SLUG" "$WAVE" "$MODE" "$REPRODUCE" "$CLAIM" "${DIFF_BASE:-}" "$VERIFIER_STDERR" <<'PY'
 import json, sys
 from datetime import datetime, timezone
 
@@ -319,7 +319,7 @@ fi
 # dimension only counts as "failed" when it is PRESENT and passed<total, so
 # an absent or fully-passing evidence/trajectory dimension does not block
 # needs_semantic.
-read -r GATE_VERDICT CORE_TOTAL SEMANTIC_ELIGIBLE <<<"$(printf '%s' "$RECORD" | python3 -c '
+read -r GATE_VERDICT CORE_TOTAL SEMANTIC_ELIGIBLE <<<"$(printf '%s' "$RECORD" | python3 -I -c '
 import sys, json
 try:
     d = json.load(sys.stdin)
@@ -351,7 +351,7 @@ fi
 
 if [[ "$MODE" == "block" && "$GATE_VERDICT" == "REFUTED" ]]; then
   echo "completion-gate: REFUTED — $CLAIM" >&2
-  printf '%s' "$RECORD" | python3 -c '
+  printf '%s' "$RECORD" | python3 -I -c '
 import sys, json
 d = json.load(sys.stdin)
 for r in d.get("refutations", []):

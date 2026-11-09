@@ -116,7 +116,7 @@ if [[ -n "$OWNER" ]]; then
     [.sessions[]? | select(.session_id == $sid) | (.files // [])[]? | select(.path == $p) | .last_edit] | first // ""
   ' "$LOCK_FILE")
 
-  python3 - "$REL" "$OWNER" "$OWNER_AGENT" "$OWNER_BRANCH" "$LAST_EDIT" "$SESSION_ID" <<'PY'
+  python3 -I - "$REL" "$OWNER" "$OWNER_AGENT" "$OWNER_BRANCH" "$LAST_EDIT" "$SESSION_ID" <<'PY'
 import json, sys
 path, owner, owner_agent, owner_branch, last_edit, current = sys.argv[1:7]
 reason = (

@@ -71,7 +71,7 @@ if [[ -n "$TOOL" ]]; then
     # (breaking cross-adapter parity) and was a guard-bypass vector (a crafted command
     # could inject python and force an allow).
     INPUT_JSON=$(_EVENT="$EVENT" _TOOL="$TOOL" _CMD="$TOOL_CMD" _FILE="$TOOL_FILE" _CONTENT="$TOOL_CONTENT" \
-        python3 -c '
+        python3 -I -c '
 import json, os
 out = {"event": os.environ["_EVENT"], "ai": "codex", "tool_name": os.environ["_TOOL"], "tool_input": {}}
 if os.environ.get("_CMD"):     out["tool_input"]["command"]   = os.environ["_CMD"]

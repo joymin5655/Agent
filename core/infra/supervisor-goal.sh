@@ -85,7 +85,7 @@ SQL
 # AGENT_NOW_MS pins the clock (tests only).
 now_ms() {
     if [[ -n "${AGENT_NOW_MS:-}" && ! "$AGENT_NOW_MS" =~ ^[0-9]+$ ]]; then echo "ERROR: AGENT_NOW_MS must be integer ms" >&2; exit 2; fi
-    if [[ -n "${AGENT_NOW_MS:-}" ]]; then echo "$AGENT_NOW_MS"; else python3 -c 'import time; print(int(time.time()*1000))'; fi; }
+    if [[ -n "${AGENT_NOW_MS:-}" ]]; then echo "$AGENT_NOW_MS"; else python3 -I -c 'import time; print(int(time.time()*1000))'; fi; }
 now_iso() { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
 
 sql_escape() { printf "%s" "$1" | sed "s/'/''/g"; }
@@ -131,12 +131,12 @@ cmd_init() {
 
     local spec_sha="" plan_spec=""
     if [[ -n "$spec" ]]; then
-        spec_sha="$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$spec")"
+        spec_sha="$(python3 -I -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$spec")"
         # The audit compares <plan dir>/goal.json with the stored spec: put a copy there when
         # there is none; a different goal.json already there is a conflict.
         plan_spec="$(goal_spec_path "$slug")"
         if [[ -f "$plan_spec" ]]; then
-            if [[ "$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$plan_spec")" != "$spec_sha" ]]; then
+            if [[ "$(python3 -I -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$plan_spec")" != "$spec_sha" ]]; then
                 echo "ERROR: $plan_spec differs from --spec $spec — goal not started" >&2
                 exit 2
             fi
