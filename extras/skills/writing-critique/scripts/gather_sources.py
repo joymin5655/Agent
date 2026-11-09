@@ -125,7 +125,8 @@ def candidates(text, keep_urls=False, all_runs=False):
         else:
             raw.append(m.group(2))
     if all_runs:
-        raw.extend(RUN.findall(full))
+        # split links at `](` so the TEXT of [text](target) is its own run
+        raw.extend(RUN.findall(full.replace("](", " ")))
     seen, out = set(), []
     for tok in raw:
         is_url = bool(URL.match(tok.strip().strip("'\"")))
@@ -151,7 +152,8 @@ def secret_like(rel):
 
 
 def project_secret_tokens(harness_root, repo):
-    """The project's declared risk_areas.secrets.paths tokens; None when they cannot be honored."""
+    """The project's declared risk_areas.secrets.paths tokens. None when hook_config.py is
+    missing or the risk areas cannot be parsed; exit 2 when hook_config fails to load or raises."""
     hooks = os.path.join(harness_root or "", "core", "hooks")
     if not harness_root or not os.path.isfile(os.path.join(hooks, "hook_config.py")):
         print(f"gather_sources: --harness-root must hold core/hooks/hook_config.py: {harness_root}",

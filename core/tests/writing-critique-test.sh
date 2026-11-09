@@ -697,13 +697,20 @@ for w in "wrap-p:billing/charge.py" "wrap-b:core/auth/login.py" "link-p:app/(aut
   bash "$PR" "$T/plan-${w%%:*}.md" --repo "$R" > "$T/pr-${w%%:*}.out" 2>&1; rc=$?
   if [[ $rc -eq 0 ]] && grep -qxF -- "${w#*:}" "$T/pr-${w%%:*}.out"; then ok "plan_risk: ${w#*:} cited inside brackets or a link exits 0"; else bad "plan_risk: ${w#*:} exit $rc"; fi
 done
+printf '# 결제\n\n[billing/charge.py](docs/x.md) 와 [core/auth/login.py](https://example.com/core/auth/login.py)\n' > "$T/plan-linktext.md"
+bash "$PR" "$T/plan-linktext.md" --repo "$R" > "$T/pr-linktext.out" 2>&1; rc=$?
+if [[ $rc -eq 0 ]] && grep -qxF 'billing/charge.py' "$T/pr-linktext.out" && grep -qxF 'core/auth/login.py' "$T/pr-linktext.out"; then ok "plan_risk: a risk path as the text of a markdown link exits 0"; else bad "plan_risk: link text exit $rc"; fi
+printf 'see [billing/charge.py](docs/x.md)\n' > "$T/linktext-cand.md"
+python3 "$GS" --candidates --all "$T/linktext-cand.md" > "$T/linktext-cand.out"
+check "candidates --all: the text and the target of a markdown link are both candidates" \
+  bash -c "grep -qxF 'billing/charge.py' '$T/linktext-cand.out' && grep -qxF 'docs/x.md' '$T/linktext-cand.out'"
 printf '`(billing/charge.py)` und `[core/auth/login.py]`, `(a)/(b).ts`\n' > "$T/wrap-cand.md"
 python3 "$GS" --candidates --all "$T/wrap-cand.md" > "$T/wrap-cand.out"
 check "candidates --all: a whole-token bracket pair is unwrapped, inner brackets stay" \
   bash -c "grep -qx 'billing/charge.py' '$T/wrap-cand.out' && grep -qx 'core/auth/login.py' '$T/wrap-cand.out' && grep -qxF '(a)/(b).ts' '$T/wrap-cand.out'"
 bash "$PR" --help > "$T/pr-help.out" 2>&1
-check "plan_risk --help: ends at the exit lines, no set -euo pipefail" \
-  bash -c "grep -q '^# exit:' '$T/pr-help.out' && ! grep -q 'set -euo pipefail' '$T/pr-help.out'"
+check "plan_risk --help: prints the whole header, no set -euo pipefail" \
+  bash -c "grep -q '^# exit:' '$T/pr-help.out' && grep -q 'cannot be read, e.g. PyYAML missing' '$T/pr-help.out' && ! grep -q 'set -euo pipefail' '$T/pr-help.out'"
 bash "$PR" "$T/plan-docs.md" "$T/plan-bare.md" --repo "$R" > "$T/pr-two.out" 2>&1; rc=$?
 if [[ $rc -eq 0 ]] && grep -qx 'core/auth/login.py' "$T/pr-two.out"; then ok "plan_risk: two documents, only the second cites a risk path, exit 0"; else bad "plan_risk: two documents exit $rc"; fi
 bash "$PR" "$T/plan-bare.md" "$T/plan-fence.md" --repo "$R" > "$T/pr-dup.out" 2>&1

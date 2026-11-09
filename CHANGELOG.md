@@ -34,7 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Function context for the gemini lane (#243).** council-review builds the gemini lane's
   diff with `core/infra/lane-diff.py`: `git diff -W` for code files while it stays within twice
   the plain diff plus 8 KB, the default diff for data, lock, generated and doc files, and the
-  default diff of the whole target past 120 KB; code files are shown as text even when an
+  plain diff of every file past 120 KB; code files are shown as text even when an
   in-tree `.gitattributes` marks them binary (also past the byte cap). Its `context_mode`
   (`w|mixed|default|over_cap`) is logged per lane. Git runs from the top level with literal
   pathspecs and with no repository-configured command (fsmonitor, external diff, textconv); a

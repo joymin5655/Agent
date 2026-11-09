@@ -228,7 +228,8 @@ printf 'def f():\n    return 5\n' > evil.py
 python3 -c "print('\n'.join('row %d' % i for i in range(400)))" > big.dat
 git add evil.py big.dat
 run --staged --max-bytes 500
-if grep -q '^+    return 5' "$TMP/out" && ! grep -q '^Binary files' "$TMP/out"; then
+if grep -q '^+    return 5' "$TMP/out" && ! grep -q '^Binary files' "$TMP/out" \
+   && [[ "$(field context_mode)" == over_cap ]]; then
   ok "past the byte cap a -diff code file is still shown as text"
 else bad "past the byte cap a -diff code file is still shown as text" "$(mode)"; fi
 cd "$TMP/repo"
