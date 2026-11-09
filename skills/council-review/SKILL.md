@@ -1,6 +1,6 @@
 ---
 name: council-review
-description: Multi-vendor code review council — runs the Claude code-reviewer agent alongside external second opinions (codex, gemini) in parallel, then synthesizes with citation verification, source tagging, and disagreement surfacing. NOT a completion gate (that is /verify-completion), NOT a security audit (security findings route to security-reviewer), and NOT free for the codex/gemini lanes — those are CLI calls on a vendor subscription, approved by a usage-policy command while they fit inside it and by the user otherwise.
+description: Multi-vendor code review council — runs the Claude code-reviewer agent alongside external second opinions (codex, gemini) in parallel, then synthesizes with citation verification, source tagging, and disagreement surfacing. NOT a completion gate (that is /verify-completion), NOT a security audit (security findings route to security-reviewer), NOT plan or design documents (that is writing-critique --design in the extras plugin), and NOT free for the codex/gemini lanes — those are CLI calls on a vendor subscription, approved by a usage-policy command while they fit inside it and by the user otherwise.
 when_to_use: User wants a code review with independent cross-vendor opinions — "council review", "get a second opinion on this diff", "review with codex/gemini", `/council-review [--staged|--head|<range>]`; 한국어 "교차 리뷰", "다른 AI로 검토", "council 리뷰" — or `council-escalation-gate.py` denied a plain code-reviewer dispatch because the diff is council-scale (core/infra/council-threshold.sh). Applies even when the diff is pasted inline or you could review it yourself — a same-vendor self-review is not a second opinion.
 tools: Bash, Read, Grep, Glob, Agent
 ---
@@ -66,7 +66,7 @@ still-fresh flag left behind would silently un-gate a later, unrelated diff.
 
 Default `--staged` (`git diff --staged`); `--head` reviews `HEAD~1..HEAD`; an
 explicit `<range>` is passed through. Abort with a one-liner if the diff is
-empty. Build ONE shared core, identical for every external lane:
+empty. Build ONE shared core for every external lane; only the diff representation differs:
 
 - the diff, plus 3-5 lines of stated intent (from the commit message / user);
 - the **impact context**, if any. Run
@@ -77,10 +77,16 @@ empty. Build ONE shared core, identical for every external lane:
   because a reviewer who sees only the diff cannot see a caller it breaks.
   Findings about an outside caller must still quote a line from the diff
   (step 4's filter is unchanged);
+- the gemini lane (it has no tools) gets its diff from
+  `python3 "${CLAUDE_PLUGIN_ROOT}/core/infra/lane-diff.py" <same target>`: function context
+  for code files, size-guarded, 120 KB budget. Keep the `context_mode=` value from its
+  stderr for step 5.5. The codex lane keeps the plain diff (it reads the repository itself);
 - the output contract — findings only, each with:
   `file:line` · **verbatim quote of the offending line(s)** · severity
   (Blocker/Major/Minor/Note) · category · one-sentence rationale;
-- "reply `NO-FINDINGS` if clean; do not restate the diff."
+- the reply starts with `PARAPHRASE: <two sentences — what this diff changes and why>`,
+  then the findings; `NO-FINDINGS` is valid only after the PARAPHRASE line; do not
+  restate the diff.
 
 The verbatim-quote field is what makes step 4's hallucination filter possible
 — a finding that cannot quote the code it indicts cannot be verified.
@@ -121,14 +127,9 @@ Only on approval set `AGENT_WORKER_YES=1` — per-invocation, never exported int
 session (the env-only gate contract in call-worker.sh: the session that owns the user
 relationship asks first).
 
-**Approval declined**: skip every external lane that needed it (no YES call for it;
-with no policy that means no `call-worker.sh` calls at all) and proceed with the lanes
-that ran, or the Claude `code-reviewer` lane alone. When no external lane ran, this is the same
-"single-vendor review" degrade the single-vendor warning (step 5) reports for,
-so the report's first line must say so rather than borrow the council's
-authority. This lane's own `code-reviewer` dispatch still needs the step 0.5
-flag — the gate does not know approval was declined, only that the
-council-active flag is fresh and bound to this diff's hash.
+**Approval declined**: skip every external lane that needed it and report it absent; with
+no external lane run, the report opens with the single-vendor line (step 5). Detail in
+reference.md.
 
 ### 3. Dispatch all lanes in parallel
 
@@ -202,34 +203,29 @@ fi
 # council-lanes:end
 ```
 
-Each lane runs once per attempt (an approved policy exit 3 retries at most once, with YES),
-and every attempt writes its own `<lane>.<attempt>.path`/`.err`.
-`core/tests/council-lanes-test.sh` runs the lines between the `council-lanes` markers. In
-the policy branch the first wait happens before the question, because only exit 3 lanes are
-asked about; the `code-reviewer` lane below still runs alongside them.
-
 Where captures live and what the `[[ -f "$CW" ]]` line means: `${CLAUDE_PLUGIN_ROOT}/skills/council-review/reference.md`.
 
 Simultaneously dispatch the `code-reviewer` agent (Agent tool) on the same
-diff — its frontmatter model pin stands; do not override. The block above
-already waits per lane and keeps each exit code in `rc_codex` / `rc_gemini`
-(`skip` = not called) — the degradation table below keys off these codes, and
-the pre-dispatch refusal path (exit 3) writes no capture file, so the exit code
-is the only signal for it. Each lane's `timeout_s` in backends.json is the hard
-cap — no sleep-polling.
+diff — its frontmatter model pin stands; do not override. The block above keeps each
+lane's exit code in `rc_codex` / `rc_gemini` (`skip` = not called); the degradation
+table (reference.md) keys off them. Each lane's `timeout_s` in backends.json is the hard cap.
 
 ### 4. Synthesize — in this order
 
 1. **Mechanical truth first**: read each capture file's frontmatter; only
    `status: complete` lanes are seated. Anything else → the lane status table
    (step 5), with `unavailable_reason`/`fallback_reason` quoted.
-2. **Dedup** across lanes: same file + overlapping lines + same essential
+2. **Paraphrase check**: compare each lane's PARAPHRASE with the stated intent. A mismatch
+   is a `spec`-category finding (the reader misread the change or the intent is unclear),
+   never dismissed as a lane error. `NO-FINDINGS` with no PARAPHRASE → lane status "no
+   evidence of reading" (kept, not a clean pass).
+3. **Dedup** across lanes: same file + overlapping lines + same essential
    issue = one finding, all sources credited.
-3. **Citation check** — the hallucination filter: `Read` the actual file at
+4. **Citation check** — the hallucination filter: `Read` the actual file at
    each finding's `file:line` and compare against the finding's verbatim
    quote. No match after dedup → DROP the finding, and count drops per lane
    (reported — a lane's drop rate is signal about that lane).
-4. **Severity re-rating**: re-rate every surviving finding against repo
+5. **Severity re-rating**: re-rate every surviving finding against repo
    context yourself; external self-ratings are input, not verdict. Filter
    before bucketing (each drop is **Dismissed** with its reason, never silent):
    - A lane whose findings are all trivia or taste → say the change is
@@ -243,14 +239,14 @@ cap — no sleep-polling.
    - A security or correctness claim from one lane is verified against the
      code, never waved off on judgment; unverifiable → Consider. Security
      claims stay security-reviewer's.
-5. **Source tagging**: `[claude]` `[codex]` `[gemini]`. Findings reached
+6. **Source tagging**: `[claude]` `[codex]` `[gemini]`. Findings reached
    independently by ≥2 seated vendors are marked **high-signal** and listed
    first. Lenses don't weaken this rule — a defect two lanes reached through
    *different* questions is, if anything, stronger agreement than two copies of
    the same question would give.
-6. **Disagreements**: where seated lanes conflict, show both positions and
+7. **Disagreements**: where seated lanes conflict, show both positions and
    adjudicate with a stated reason — against the code, not against authority.
-7. **Action bucket**: give every surviving finding exactly one bucket, separate
+8. **Action bucket**: give every surviving finding exactly one bucket, separate
    from severity (severity = how risky it is; bucket = what the reader does):
    - **Act on** — fix before merge; verified against the code.
    - **Consider** — real trade-off or judgment call; owner decides.
@@ -258,10 +254,13 @@ cap — no sleep-polling.
    - **Dismissed** — a lane raised it, you checked, it does not hold.
    Each entry carries a one-line reason and its source lanes. Dismissed items
    stay visible (never silently dropped) so the reader can overrule you.
-8. **Agreement map**: one short table or list of where the seated lanes agreed,
+9. **Agreement map**: one short table or list of where the seated lanes agreed,
    where they diverged, and where only one lane spoke (a lone voice is not
    wrong, but it is unconfirmed). It summarizes the pattern across lanes; the
    per-finding detail stays in Findings.
+10. **Dispositions and ledger**: record a disposition for every finding and update the
+   round ledger — rules in reference.md § Dispositions and ledger; read it before writing
+   the report.
 
 Security-shaped findings (auth, injection, secrets, crypto) are LISTED but
 not adjudicated here — route them to `security-reviewer` (the
@@ -319,10 +318,14 @@ OUT_DIR="${AGENT_LOGS_DIR:-$HOME/.agent/logs}"
 `author_vendor` is the comma list `author-vendor` printed (e.g. `anthropic,openai`), kept
 as is.
 
-`$LANES` = one entry per lane, the Claude lane included, e.g. `{"lane":"second-opinion-review",
-"vendor":"openai","status":"complete","raised":4,"accepted":2,"rejected":2}`: `raised` = findings
-the lane returned, `accepted` = kept (Act on / Consider / Noted), `rejected` = dropped by the
-citation check or Dismissed. An absent lane keeps its status, with zeros.
+`$LANES` = one entry per lane, the Claude lane included, e.g. `{"lane":"third-opinion-review",
+"vendor":"google","status":"complete","raised":4,"accepted":2,"rejected":2,"escalated":1,
+"acted":1,"context_mode":"w"}`: `raised` = findings the lane returned, `accepted` = kept
+(Act on / Consider / Noted), `rejected` = dropped by the citation check or Dismissed,
+`escalated` = Dismissed findings whose disproof needed evidence outside what that lane
+received (a subset of `rejected`), `acted` = Act on + Consider, `context_mode` = the
+lane-diff value for the gemini lane (null for other lanes). An absent lane keeps its
+status, with zeros.
 
 ### 6. Clear the council-active flag
 
@@ -338,14 +341,7 @@ python3 "$CEG" --council-flag clear
 
 ## Degradation
 
-| Signal | Meaning | Action |
-|---|---|---|
-| call-worker exit 3 | not approved: no `AGENT_WORKER_YES=1`, or the policy said no / failed closed | ask once (step 2, the user's money decision) and re-run with YES, or drop the lane |
-| exit 127 / `status: unavailable` | lane disabled, CLI or preflight missing, capped by the policy, or the author's own vendor | lane absent, quote reason |
-| exit 124 / `status: timeout` | hung CLI killed | lane absent |
-| exit 1 / `status: rate-limited` | vendor quota/rate limit hit (e.g. the Antigravity account quota) | lane absent — fail-open; report "rate-limited, retry later", never an upgrade pitch |
-| exit 1 / `status: failed` | backend errored | lane absent, quote stderr tail |
-
+Exit codes and statuses → lane absent (fail-open); the table is in reference.md § Degradation.
 External failures never abort the review — the Claude lane carries it.
 
 ## Credits
