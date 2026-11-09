@@ -1,7 +1,7 @@
 ---
 name: writing-critique
-description: Have two other-vendor AIs (OpenAI via codex, Google via gemini) critique a new Korean document against a rubric without knowing who wrote it, then accept only evidence-backed findings, polish, proofread, check that the meaning did not drift, and log the run. NOT spelling/spacing correction (that is proofread), NOT removing AI tone or style polish (that is the humanize family), NOT code review (that is council-review).
-when_to_use: A new Korean document that will be kept as a file (report, proposal, speech, blog post, README prose), or any text written in the user's own name regardless of length — "critique this draft", "get an outside read before I send it", "/writing-critique <file>". Not for chat replies, pull-request bodies, commit messages, code or code comments.
+description: Have two other-vendor AIs (OpenAI via codex, Google via gemini) critique a new Korean document against a rubric without knowing who wrote it, then accept only evidence-backed findings, polish, proofread, check that the meaning did not drift, and log the run. With --design it reviews a plan or design document the same way, checking its claims against the repository files it cites. NOT spelling/spacing correction (that is proofread), NOT removing AI tone or style polish (that is the humanize family), NOT code review (that is council-review).
+when_to_use: A new Korean document that will be kept as a file (report, proposal, speech, blog post, README prose), or any text written in the user's own name regardless of length — "critique this draft", "get an outside read before I send it", "/writing-critique <file>". Not for chat replies, pull-request bodies, commit messages, code or code comments. `--design`: a plan or design document before the plan is approved (run automatically when the plan touches risk-area paths).
 tools: Read, Write, Edit, Bash
 ---
 
@@ -41,10 +41,22 @@ All scripts live in `${CLAUDE_PLUGIN_ROOT}/skills/writing-critique/scripts/`. Wo
 
 `python3 "${CLAUDE_PLUGIN_ROOT}/skills/writing-critique/scripts/report.py" [--days 30] [--json]` summarises the log: per-critic success rate, acceptance rate and category mix.
 
+## Design mode (--design)
+
+For plan or design documents before a plan is approved: on request, or in the automatic form (step 0). Run from the target repository's root, or pass `--repo ROOT`. Several documents (e.g. `spec.md plan.md`) are joined in the given order into `WORK/doc.md`, which then stands for `DOC`. A document review is never a code review: the `advisor-*` roles stay out of code-review gate evidence.
+
+0. **Automatic form** (`--design --if-risky DOC...`, used by `/spec` and before approving a plan): `bash "${CLAUDE_PLUGIN_ROOT}/skills/writing-critique/scripts/plan_risk.sh" DOC [--repo ROOT]`. Exit 1: say "design critique skipped: no risk-area path" and stop. Exit 2: report the error and stop. Exit 0: it printed the risk-area paths the plan cites (auth, secrets, billing, migrations, edge functions); name them and continue.
+1. Anonymise as in step 2 (`DOC` -> `WORK/draft.anon.md`).
+2. `bash "${CLAUDE_PLUGIN_ROOT}/skills/writing-critique/scripts/critique.sh" WORK/draft.anon.md --rubric design --repo ROOT --out WORK/c` — each critic gets 900 s and runs with `ROOT` as its cwd; the tracked, non-secret files the document cites are inlined as sources (`gather_sources.py`; the rest is listed under "Not included"). Findings use the categories terms / overdesign / contradiction / claims / readiness, and `findings.json` carries each critic's `paraphrase`. Approval, exit codes and failure handling are as in step 3.
+3. Apply as in step 4, with these codes: accept / **R1** the document or an included source shows the critic is wrong / **R2** outside what was asked / **R4** conflicts with another finding / **E1** wrong only by evidence outside the critic's input — cite that evidence and list it for the user. R3 and R5 are not used: a misread means the document is unclear, so fix the document. A paraphrase that misstates the document's intent is a comprehension finding, accepted by default (clarify the document).
+4. Tell the user (step 8 form) and log with `log_run.py ... --kind design`. Skip polish, proofread and the drift check (steps 5-7); the user's plan file is edited only to fix accepted findings.
+
 ## Files
 
 - `references/rubric.md` — six categories × three severities.
 - `references/critic-prompt.md` — the critic's instruction template (no author information).
+- `references/design-rubric.md`, `references/design-prompt.md` — the design-mode rubric (five categories) and prompt.
+- `gather_sources.py` (cited files as sources; `--candidates` lists the paths) and `plan_risk.sh` (risk-area paths a plan cites) — design mode.
 - `parse_findings.py` (in the scripts folder) — extracts the JSON, drops quotes not found in the draft, merges duplicates, caps at 12.
 - `tests/fixtures/` and the repo's `writing-critique-test.sh` — offline tests with a stand-in call-worker.
 

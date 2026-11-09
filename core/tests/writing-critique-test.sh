@@ -15,6 +15,9 @@
 #                    script; findings.json carries no vendor name.
 #   5. DRIFT       — a changed number or flipped negation is caught; a style-only edit passes.
 #   6. LOG/REPORT  — the log line holds metadata only (no document or critic text).
+#   7. DESIGN      — --rubric design: design rubric/prompt + cited sources (tracked, in-repo,
+#                    non-secret, capped), 900 s limit, critics run with cwd = repo; plan_risk.sh;
+#                    design category set and paraphrase; --kind design / E1 in the log.
 #
 # Portability: bash + python3 stdlib. Usage: bash core/tests/writing-critique-test.sh
 set -u
@@ -37,7 +40,9 @@ check() { # <label> <command...>
 pyj() { python3 -c 'import json,sys; d=json.load(open(sys.argv[1],encoding="utf-8")); sys.exit(0 if eval(sys.argv[2]) else 1)' "$1" "$2"; }
 
 # ---------------------------------------------------------------- 1. layout
-for f in SKILL.md references/rubric.md references/critic-prompt.md scripts/anonymize.py scripts/critique.sh \
+for f in SKILL.md references/rubric.md references/critic-prompt.md references/design-rubric.md \
+         references/design-prompt.md scripts/gather_sources.py scripts/plan_risk.sh \
+         tests/fixtures/design-plan.md tests/fixtures/critic-design.json scripts/anonymize.py scripts/critique.sh \
          scripts/parse_findings.py scripts/drift_check.py scripts/log_run.py scripts/report.py \
          tests/fixtures/report-draft.md tests/fixtures/blog-clean.md; do
   [[ -f "$SK/$f" ]] && ok "exists: $f" || bad "missing: $f"
@@ -220,6 +225,7 @@ role="${1:?}"; prompt="$(cat)"
 tag="${role//-/_}"
 echo "${AGENT_WORKER_YES:-unset}" > "$FAKE_DIR/yes.$role"
 echo "${AGENT_WORKER_TIMEOUT_S:-unset}" > "$FAKE_DIR/tmo.$role"
+pwd -P > "$FAKE_DIR/cwd.$role"
 python3 -c 'import time;print(time.time())' > "$FAKE_DIR/start.$role"
 sleep "${FAKE_SLEEP:-0}"
 python3 -c 'import time;print(time.time())' > "$FAKE_DIR/end.$role"
@@ -231,6 +237,7 @@ case "$mode" in
   echo)     body="$prompt
 $(cat "$FX/critic-ok.json")" ;;
   origonly) body="$(cat "$FX/critic-origonly.json")" ;;
+  design)   body="$(cat "$FX/critic-design.json")" ;;
   revise0)  body='{"verdict":"revise","findings":[]}' ;;
   fallback) body="$(cat "$FX/critic-ok.json")"; extra=$'backend: fb-backend\nfallback_reason: primary unavailable' ;;
   fail)     echo "backend failed" >&2; exit 1 ;;
@@ -468,6 +475,170 @@ check "report: approval-needed is left out of the success-rate base" pyj "$T/rep
 check "log: backend and fallback flag recorded, still no text" bash -c "grep -q '\"fallback\": true' '$LOG2' && grep -q 'fb-backend' '$LOG2' && ! grep -q 'primary unavailable' '$LOG2'"
 check "report: table prints a row per critic" bash -c "WRITING_CRITIQUE_LOG='$LOG' python3 '$SK/scripts/report.py' --days 7 | grep -q '^openai'"
 check "report: a missing log is not an error" bash -c "WRITING_CRITIQUE_LOG='$T/absent.jsonl' python3 '$SK/scripts/report.py' | grep -q '0 run'"
+
+# ---------------------------------------------------------------- 7. design
+# a throwaway repository: tracked text, an untracked file, secret-like tracked files, a binary,
+# a big file and a symlink that points out of the repository
+R="$T/repo"
+mkdir -p "$R/src" "$R/billing" "$R/docs" "$R/secrets" "$R/config" "$T/nogit"
+python3 - "$R" "$T/outside.txt" <<'PY'
+import os, sys
+r, outside = sys.argv[1:3]
+def w(p, d):
+    with open(os.path.join(r, p), "wb") as fh:
+        fh.write(d)
+w("src/app.py", b"# app\n" + b"x" * 50 + b"\n")
+w("billing/charge.py", b"# charge\n" + b"y" * 47 + b"\n")
+w("AGENTS.md", b"# notes\n" + b"z" * 48 + b"\n")
+w("src/untracked.py", b"print('untracked')\n")
+w(".env", b"TOPSECRET=1\n")
+w("secrets/prod.txt", b"TOPSECRET=2\n")
+w("config/server.pem", b"TOPSECRET=3\n")
+w("src/blob.bin", b"\x00\x01binary")
+w("src/big.txt", b"b" * 500)
+with open(outside, "w") as fh:
+    fh.write("OUTSIDE-CONTENT\n")
+os.symlink(outside, os.path.join(r, "src/link.txt"))
+PY
+git -C "$R" init -q 2>/dev/null
+git -C "$R" add -f src/app.py billing/charge.py AGENTS.md .env secrets/prod.txt config/server.pem \
+  src/blob.bin src/big.txt src/link.txt >/dev/null 2>&1
+sed "s#OUTSIDE_PATH#$T/outside.txt#" "$FX/design-plan.md" > "$T/design-plan.md"
+GS="$SK/scripts/gather_sources.py"
+
+python3 "$GS" --candidates "$T/design-plan.md" > "$T/cand.txt"
+check "candidates: first-mention order, :line and #anchor stripped, deduplicated, URL left out" \
+  bash -c "[ \"\$(head -n 3 '$T/cand.txt' | tr '\n' ' ')\" = 'src/app.py billing/charge.py AGENTS.md ' ] && [ \$(grep -cx 'src/app.py' '$T/cand.txt') -eq 1 ] && ! grep -q 'example.com' '$T/cand.txt' && ! grep -q '#' '$T/cand.txt' && ! grep -q ':10' '$T/cand.txt'"
+python3 "$GS" --candidates -z "$T/design-plan.md" | tr '\0' '\n' > "$T/cand-z.txt"
+check "candidates -z: NUL-separated, same list" cmp -s "$T/cand.txt" "$T/cand-z.txt"
+
+python3 "$GS" "$T/design-plan.md" --repo "$R" > "$T/src.md"; rc=$?
+if [[ $rc -eq 0 ]]; then ok "gather_sources: exit 0"; else bad "gather_sources: exit $rc"; fi
+check "sources: tracked in-repo text files are included under a path heading" \
+  bash -c "grep -qx '### src/app.py' '$T/src.md' && grep -qx '### billing/charge.py' '$T/src.md' && grep -qx '### AGENTS.md' '$T/src.md'"
+check "sources: untracked file skipped with reason" bash -c "grep -q 'src/untracked.py — untracked' '$T/src.md' && ! grep -qx '### src/untracked.py' '$T/src.md'"
+check "sources: outside-repo paths (absolute, ../, symlink out) skipped, content never printed" \
+  bash -c "grep -q '/etc/hosts — outside repository' '$T/src.md' && grep -q '../outside.txt — outside repository' '$T/src.md' && grep -q 'src/link.txt — outside repository' '$T/src.md' && ! grep -q 'OUTSIDE-CONTENT' '$T/src.md' && ! grep -q 'localhost' '$T/src.md'"
+check "sources: secret-like paths skipped, content never printed" \
+  bash -c "grep -q '.env — secret-like' '$T/src.md' && grep -q 'secrets/prod.txt — secret-like' '$T/src.md' && grep -q 'config/server.pem — secret-like' '$T/src.md' && ! grep -q 'TOPSECRET' '$T/src.md'"
+check "sources: binary skipped; URL listed as URL" bash -c "grep -q 'src/blob.bin — binary' '$T/src.md' && grep -q 'https://example.com/x — URL' '$T/src.md'"
+check "sources: has a '### Not included' section" grep -qx '### Not included' "$T/src.md"
+python3 "$GS" "$T/design-plan.md" --repo "$R" --per-file 100 > "$T/src-pf.md"
+check "sources: --per-file caps a big file (too large)" bash -c "grep -q 'src/big.txt — too large' '$T/src-pf.md' && ! grep -qx '### src/big.txt' '$T/src-pf.md'"
+python3 "$GS" "$T/design-plan.md" --repo "$R" --max-bytes 100 > "$T/src-mb.md"
+check "sources: --max-bytes caps the total (first file in, next ones over budget)" \
+  bash -c "grep -qx '### src/app.py' '$T/src-mb.md' && ! grep -qx '### billing/charge.py' '$T/src-mb.md' && grep -q 'billing/charge.py — over budget' '$T/src-mb.md'"
+check "gather_sources: missing --repo exits 2" bash -c "python3 '$GS' '$T/design-plan.md' >/dev/null 2>&1; [ \$? -eq 2 ]"
+printf 'see `~/gs-test-not-here.md`\n' > "$T/tilde.md"
+python3 "$GS" "$T/tilde.md" --repo "$R" > "$T/src-tilde.md"
+check "sources: a ~/ path is outside the repository, not an untracked repo file" \
+  grep -q '~/gs-test-not-here.md — outside repository' "$T/src-tilde.md"
+printf 'run `python3\nbilling/charge.py --x` and `src/nothere.py`.\n\n`a\n\nsrc/app.py` end\n' > "$T/wrap.md"
+python3 "$GS" "$T/wrap.md" --repo "$R" > "$T/src-wrap.md"
+check "sources: a code span wrapped onto the next line is still read; a blank line ends it" \
+  bash -c "grep -qx '### billing/charge.py' '$T/src-wrap.md' && ! grep -qx '### src/app.py' '$T/src-wrap.md'"
+check "sources: a path that does not exist is 'no such path', not 'untracked'" \
+  grep -q 'src/nothere.py — no such path' "$T/src-wrap.md"
+
+run_design() { # <outdir> <cwd> [VAR=val ...] [-- critique.sh args]
+  local out="$1" cwd="$2"; shift 2
+  local envs=() args=()
+  while [[ $# -gt 0 && "$1" != "--" ]]; do envs+=("$1"); shift; done
+  [[ "${1:-}" == "--" ]] && shift
+  args=("$@")
+  mkdir -p "$T/fk-$(basename "$out")"
+  ( cd "$cwd" && env -u AGENT_WORKER_YES -u AGENT_WORKER_TIMEOUT_S -u WRITING_CRITIQUE_TIMEOUT_S \
+      FAKE_DIR="$T/fk-$(basename "$out")" FX="$FX" WRITING_CRITIQUE_CALL_WORKER="$T/fake-cw.sh" \
+      FAKE_MODE_advisor_writing_openai=design FAKE_MODE_advisor_writing_google=design "${envs[@]+"${envs[@]}"}" \
+      bash "$SK/scripts/critique.sh" "$T/design-plan.md" --rubric design --out "$out" "${args[@]+"${args[@]}"}" \
+      > "$out.stdout" 2> "$out.stderr" )
+}
+RREAL="$(cd "$R" && pwd -P)"
+run_design "$T/dsg" "$T" -- --repo "$R" --purpose "재시도 설계 검토"; rc=$?
+FD="$T/fk-dsg"
+if [[ $rc -eq 0 ]]; then ok "design: both critics answer, exit 0"; else bad "design: exit $rc"; fi
+check "design: prompt has the design rubric, the sources block and the document; no placeholder left" \
+  bash -c "grep -q 'Design document critique rubric' '$T/dsg/prompt.md' && grep -q '^## Sources' '$T/dsg/prompt.md' && grep -qx '### src/app.py' '$T/dsg/prompt.md' && grep -q '캐시 방식은 구현 중에 정한다' '$T/dsg/prompt.md' && grep -q '재시도 설계 검토' '$T/dsg/prompt.md' && ! grep -q '{{' '$T/dsg/prompt.md' && ! grep -q 'Writing critique rubric' '$T/dsg/prompt.md'"
+check "design: prompt sources exclude untracked, outside-repo and secret-like content" \
+  bash -c "! grep -qx '### src/untracked.py' '$T/dsg/prompt.md' && ! grep -q 'OUTSIDE-CONTENT' '$T/dsg/prompt.md' && ! grep -q 'TOPSECRET' '$T/dsg/prompt.md'"
+check "design: each critic gets a 900 s limit" bash -c "grep -qx 900 '$FD/tmo.advisor-writing-openai' && grep -qx 900 '$FD/tmo.advisor-writing-google'"
+check "design: critics run with cwd = the repository" bash -c "grep -qx '$RREAL' '$FD/cwd.advisor-writing-openai' && grep -qx '$RREAL' '$FD/cwd.advisor-writing-google'"
+check "design: findings use the design category set; writing category and unquoted finding dropped" \
+  pyj "$T/dsg/findings.json" 'all(len(e["findings"])==3 and {f["category"] for f in e["findings"]}=={"claims","readiness","overdesign"} and e["dropped"]["reasons"]=={"invalid_format":1,"quote_not_in_draft":1} for e in d.values())'
+check "design: findings.json carries the paraphrase per critic, and names no vendor" \
+  bash -c "python3 -c 'import json,sys; d=json.load(open(sys.argv[1],encoding=\"utf-8\")); sys.exit(0 if all(e[\"paraphrase\"].startswith(\"문서는\") for e in d.values()) else 1)' '$T/dsg/findings.json' && ! grep -qiE 'openai|google|codex|gemini|advisor' '$T/dsg/findings.json'"
+run_design "$T/dsg-sub" "$R/src" -- ; rc=$?
+if [[ $rc -eq 0 ]]; then ok "design: --repo defaults to the git top level of the cwd"; else bad "design: default repo exit $rc"; fi
+check "design: default repo is the top level (critic cwd = repo, not the subfolder)" grep -qx "$RREAL" "$T/fk-dsg-sub/cwd.advisor-writing-openai"
+run_design "$T/dsg-nogit" "$T/nogit" -- ; rc=$?
+if [[ $rc -eq 2 ]]; then ok "design: no --repo outside a git repository exits 2"; else bad "design: no repo exit $rc (want 2)"; fi
+run_design "$T/dsg-tmo" "$T" WRITING_CRITIQUE_TIMEOUT_S=77 -- --repo "$R"
+check "design: WRITING_CRITIQUE_TIMEOUT_S still overrides the 900 s default" grep -qx 77 "$T/fk-dsg-tmo/tmo.advisor-writing-google"
+check "writing mode stays at 240 s and runs where it was started" \
+  bash -c "grep -qx 240 '$FK/tmo.advisor-writing-openai' && ! grep -q 'Design document' '$T/both/prompt.md' && [ ! -s '$T/both/sources.md' ]"
+check "writing mode rejects --repo; unknown --rubric exits 2" \
+  bash -c "bash '$SK/scripts/critique.sh' '$T/draft.anon.md' --repo '$R' --out '$T/x1' >/dev/null 2>&1; a=\$?; bash '$SK/scripts/critique.sh' '$T/draft.anon.md' --rubric nope --out '$T/x2' >/dev/null 2>&1; b=\$?; [ \$a -eq 2 ] && [ \$b -eq 2 ]"
+
+# parse_findings: both category sets, paraphrase
+cat > "$T/para.json" <<'JSON'
+{"paraphrase": "  요약이다  ", "verdict": "revise", "findings": [
+ {"quote": "캐시 방식은 구현 중에 정한다.", "problem": "p", "suggestion": "s", "category": "readiness", "severity": "major", "changes_fact": false},
+ {"quote": "새 설정 계층을 추가한다.", "problem": "p", "suggestion": "s", "category": "fact", "severity": "minor", "changes_fact": false}]}
+JSON
+python3 "$PF" "$T/para.json" --draft "$T/design-plan.md" --rubric design > "$T/p-d.json"
+check "parse --rubric design: design category kept, writing category invalid, paraphrase trimmed" \
+  pyj "$T/p-d.json" 'len(d["findings"])==1 and d["findings"][0]["category"]=="readiness" and d["dropped"]["reasons"]=={"invalid_format":1} and d["paraphrase"]=="요약이다"'
+python3 "$PF" "$T/para.json" --draft "$T/design-plan.md" > "$T/p-w.json"
+check "parse (default writing set): design category invalid, writing category kept, paraphrase still returned" \
+  pyj "$T/p-w.json" 'len(d["findings"])==1 and d["findings"][0]["category"]=="fact" and d["dropped"]["reasons"]=={"invalid_format":1} and d["paraphrase"]=="요약이다"'
+python3 - "$T/long.json" <<'PY'
+import json, sys
+json.dump({"paraphrase": "가" * 1500, "verdict": "ok", "findings": []}, open(sys.argv[1], "w", encoding="utf-8"), ensure_ascii=False)
+PY
+python3 "$PF" "$T/long.json" --draft "$T/design-plan.md" --rubric design > "$T/p-l.json"
+check "parse: paraphrase is capped at 1,000 characters" pyj "$T/p-l.json" 'len(d["paraphrase"])==1000'
+python3 "$PF" "$FX/critic-ok.json" --draft "$T/draft.anon.md" > "$T/p-np.json"
+check "parse: no paraphrase in the reply gives an empty string" pyj "$T/p-np.json" 'd["paraphrase"]==""'
+
+# plan_risk.sh
+PR="$SK/scripts/plan_risk.sh"
+printf '# 문서 계획\n\n`AGENTS.md`와 `README.md`만 고친다.\n' > "$T/plan-docs.md"
+printf '# 청구 변경\n\n`billing/charge.py`를 고친다.\n' > "$T/plan-billing.md"
+printf '# 스키마\n\n`migrations/001_init.sql`을 추가한다.\n' > "$T/plan-mig.md"
+printf '# 로그인\n\n`src/auth/login.py`를 바꾼다. [링크](AGENTS.md)\n' > "$T/plan-auth.md"
+printf '# 청구\n\n`python3\nbilling/charge.py --dry-run`을 고친다.\n' > "$T/plan-wrapped.md"
+bash "$PR" "$T/plan-docs.md" --repo "$R" > "$T/pr-docs.out" 2>&1; rc=$?
+if [[ $rc -eq 1 && ! -s "$T/pr-docs.out" ]]; then ok "plan_risk: docs-only plan exits 1, prints nothing"; else bad "plan_risk: docs-only exit $rc"; fi
+bash "$PR" "$T/plan-billing.md" --repo "$R" > "$T/pr-bill.out" 2>&1; rc=$?
+if [[ $rc -eq 0 ]] && grep -qx 'billing/charge.py' "$T/pr-bill.out"; then ok "plan_risk: billing path exits 0 and is printed"; else bad "plan_risk: billing exit $rc"; fi
+bash "$PR" "$T/plan-mig.md" --repo "$R" > "$T/pr-mig.out" 2>&1; rc=$?
+if [[ $rc -eq 0 ]] && grep -qx 'migrations/001_init.sql' "$T/pr-mig.out"; then ok "plan_risk: migration path exits 0"; else bad "plan_risk: migration exit $rc"; fi
+bash "$PR" "$T/plan-auth.md" --repo "$R" > "$T/pr-auth.out" 2>&1; rc=$?
+if [[ $rc -eq 0 ]] && grep -qx 'src/auth/login.py' "$T/pr-auth.out" && ! grep -q 'AGENTS.md' "$T/pr-auth.out"; then ok "plan_risk: auth code path exits 0, safe paths not printed"; else bad "plan_risk: auth exit $rc"; fi
+bash "$PR" "$T/plan-wrapped.md" --repo "$R" > "$T/pr-wrap.out" 2>&1; rc=$?
+if [[ $rc -eq 0 ]] && grep -qx 'billing/charge.py' "$T/pr-wrap.out"; then ok "plan_risk: a risk path in a wrapped code span is still caught"; else bad "plan_risk: wrapped span exit $rc"; fi
+bash "$PR" "$T/nope.md" >/dev/null 2>&1; rc=$?
+if [[ $rc -eq 2 ]]; then ok "plan_risk: missing document exits 2"; else bad "plan_risk: missing document exit $rc"; fi
+
+# log_run --kind design, reason E1; report keeps design runs apart
+printf '[{"id":"A1","decision":"accept"},{"id":"A2","decision":"reject","reason":"E1"},{"id":"B1","decision":"reject","reason":"R1"}]' > "$T/dsg-dec.json"
+LOGD="$T/design.jsonl"
+WRITING_CRITIQUE_LOG="$LOGD" python3 "$SK/scripts/log_run.py" --draft "$T/design-plan.md" --kind design \
+  --labels "$T/dsg/labels.json" --findings "$T/dsg/findings.json" --decisions "$T/dsg-dec.json" >/dev/null 2>&1; rc=$?
+if [[ $rc -eq 0 ]]; then ok "log_run: --kind design with reason E1 accepted"; else bad "log_run: design/E1 exit $rc"; fi
+check "log: design kind and E1 recorded, metadata only" \
+  bash -c "python3 -c 'import json,sys; d=json.loads(open(sys.argv[1],encoding=\"utf-8\").read().splitlines()[-1]); sys.exit(0 if d[\"doc\"][\"kind\"]==\"design\" and d[\"reject_reasons\"]==dict(E1=1,R1=1) else 1)' '$LOGD' && ! grep -q '캐시 방식' '$LOGD' && ! grep -q '재시도' '$LOGD'"
+WRITING_CRITIQUE_LOG="$LOGD" python3 "$SK/scripts/log_run.py" --draft "$FX/blog-clean.md" --kind general \
+  --labels "$T/both/labels.json" --findings "$T/both/findings.json" >/dev/null 2>&1
+WRITING_CRITIQUE_LOG="$LOGD" python3 "$SK/scripts/report.py" --json > "$T/rep-d.json"
+check "report: design runs listed apart from writing runs" \
+  pyj "$T/rep-d.json" 'd["runs"]==1 and d["design"]["runs"]==1 and d["design"]["reject_reasons"]=={"E1":1,"R1":1} and "E1" not in d["reject_reasons"]'
+check "report: table prints a separate design line" bash -c "WRITING_CRITIQUE_LOG='$LOGD' python3 '$SK/scripts/report.py' | grep -q '^design runs: 1'"
+check "SKILL.md documents design mode: --design, plan_risk, E1, kind design, no R3/R5" \
+  bash -c "grep -q '## Design mode (--design)' '$SK/SKILL.md' && grep -q 'plan_risk.sh' '$SK/SKILL.md' && grep -q -- '--design --if-risky' '$SK/SKILL.md' && grep -q '\*\*E1\*\*' '$SK/SKILL.md' && grep -q -- '--kind design' '$SK/SKILL.md' && grep -q 'R3 and R5 are not used' '$SK/SKILL.md'"
+check "design prompt names no author or vendor" bash -c "! grep -qiE 'claude|gpt|gemini|codex|anthropic|openai' '$SK/references/design-prompt.md'"
+check "spec SKILL.md wires /writing-critique --design after plan-checker" \
+  bash -c "grep -q 'writing-critique --design --if-risky' '$REPO_ROOT/skills/spec/SKILL.md'"
 
 echo
 echo "writing-critique-test: $PASS passed, $FAIL failed"

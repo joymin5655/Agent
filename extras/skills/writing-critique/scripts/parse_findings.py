@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """parse_findings.py — pull one critique JSON out of a worker capture and vet it.
 
-usage: parse_findings.py CAPTURE --draft DRAFT [--label A]
-stdout: {"ok", "error", "verdict", "findings", "dropped": {"total", "reasons"}}
+usage: parse_findings.py CAPTURE --draft DRAFT [--label A] [--rubric writing|design]
+stdout: {"ok", "error", "verdict", "paraphrase", "findings", "dropped": {"total", "reasons"}}
 exit:   0 parsed and valid shape | 1 no usable JSON (ok=false)
 
+--rubric picks the category set: writing (default) fact|logic|reader|fluency|request|format, design
+terms|overdesign|contradiction|claims|readiness. `paraphrase` (a critic's own summary of the
+document, design prompt only) is kept trimmed to 1,000 characters, "" when absent.
 Checks: a JSON object with verdict + findings; each finding has the six fields in range
 (one malformed finding is dropped as invalid_format, the rest survive). `changes_fact`
 absent means true. A quote must be 8-300 chars on one line (quote_too_short / quote_too_long /
@@ -22,6 +25,8 @@ import re
 import sys
 
 CATS = {"fact", "logic", "reader", "fluency", "request", "format"}
+DESIGN_CATS = {"terms", "overdesign", "contradiction", "claims", "readiness"}
+PARAPHRASE_MAX = 1000
 SEVS = ["critical", "major", "minor"]
 LIMIT = 12
 MAX_SCAN = 400_000  # characters from the end of the capture: the answer comes last
@@ -74,7 +79,7 @@ def pick(text):
 QUOTE_MIN, QUOTE_MAX = 8, 300
 
 
-def vet(f):
+def vet(f, cats=CATS):
     """Return (finding, None) or (None, reason). Never raises on a malformed value."""
     if not isinstance(f, dict):
         return None, "invalid_format"
@@ -84,7 +89,7 @@ def vet(f):
     s = f.get("suggestion", "")
     cf = f.get("changes_fact", True)  # absent = unknown: treat as changing a fact (no apply without a source)
     cat, sev = f.get("category"), f.get("severity")
-    if (not isinstance(cat, str) or cat not in CATS or not isinstance(sev, str) or sev not in SEVS
+    if (not isinstance(cat, str) or cat not in cats or not isinstance(sev, str) or sev not in SEVS
             or not isinstance(s, str) or not isinstance(cf, bool)):
         return None, "invalid_format"
     q = q.strip()
@@ -103,14 +108,15 @@ def main():
     ap.add_argument("capture")
     ap.add_argument("--draft", required=True)
     ap.add_argument("--label", default="")
+    ap.add_argument("--rubric", choices=["writing", "design"], default="writing")
     a = ap.parse_args()
     reasons = {}
 
     def drop(why, n=1):
         reasons[why] = reasons.get(why, 0) + n
 
-    def emit(ok, error, verdict="", findings=()):
-        print(json.dumps({"ok": ok, "error": error, "verdict": verdict, "findings": list(findings),
+    def emit(ok, error, verdict="", findings=(), paraphrase=""):
+        print(json.dumps({"ok": ok, "error": error, "verdict": verdict, "paraphrase": paraphrase, "findings": list(findings),
                           "dropped": {"total": sum(reasons.values()), "reasons": reasons}},
                          ensure_ascii=False))
         return 0 if ok else 1
@@ -127,9 +133,12 @@ def main():
     if verdict not in ("ok", "revise"):
         return emit(False, "verdict is not ok|revise")
 
+    para = obj.get("paraphrase")
+    para = para.strip()[:PARAPHRASE_MAX].strip() if isinstance(para, str) else ""
+    cats = DESIGN_CATS if a.rubric == "design" else CATS
     kept = {}
     for f in obj["findings"]:
-        v, why = vet(f)
+        v, why = vet(f, cats)
         if v is None:
             drop(why)
         elif norm(v["quote"]) not in draft:
@@ -151,7 +160,7 @@ def main():
         out = out[:LIMIT]
     for n, f in enumerate(out, 1):
         f["id"] = f"{a.label}{n}"
-    return emit(True, "", verdict, out)
+    return emit(True, "", verdict, out, para)
 
 
 if __name__ == "__main__":
