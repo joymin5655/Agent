@@ -74,7 +74,7 @@ else
     : > "$SOURCES_FILE"
 fi
 if [[ "$RUBRIC" == design ]]; then PROMPT_TPL=design-prompt RUBRIC_FILE=design-rubric; else PROMPT_TPL=critic-prompt RUBRIC_FILE=rubric; fi
-python3 - "$SKILL_DIR" "$DRAFT" "$PURPOSE" "$OUT/prompt.md" "$PROMPT_TPL" "$RUBRIC_FILE" "$SOURCES_FILE" <<'PY'
+python3 -I - "$SKILL_DIR" "$DRAFT" "$PURPOSE" "$OUT/prompt.md" "$PROMPT_TPL" "$RUBRIC_FILE" "$SOURCES_FILE" <<'PY'
 import sys
 sys.path[:] = [p for p in sys.path if p not in ("", ".")]  # the cwd may be the reviewed repo
 skill, draft, purpose, out, tpl_name, rub_name, src = sys.argv[1:8]
@@ -109,7 +109,7 @@ run_critic A "$LA" &
 run_critic B "$LB" &
 wait
 
-python3 - "$SKILL_DIR" "$DRAFT" "$OUT" "$LA" "$LB" "$RUBRIC" <<'PY'
+python3 -I - "$SKILL_DIR" "$DRAFT" "$OUT" "$LA" "$LB" "$RUBRIC" <<'PY'
 import sys
 sys.path[:] = [p for p in sys.path if p not in ("", ".")]  # the cwd may be the reviewed repo
 import json, re, subprocess

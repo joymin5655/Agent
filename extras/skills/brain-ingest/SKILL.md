@@ -37,7 +37,7 @@ List the quarantined captures and read the ones worth curating:
 
 ```bash
 HR="$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/harness-root.sh")"
-find "$(python3 "$HR/core/brain/store.py" paths | python3 -c 'import json,sys;print(json.load(sys.stdin)["raw"])')" -name '*.md'
+find "$(python3 "$HR/core/brain/store.py" paths | python3 -I -c 'import json,sys;print(json.load(sys.stdin)["raw"])')" -name '*.md'
 ```
 
 Read each candidate. A capture is worth distilling only if it carries a durable
@@ -67,7 +67,7 @@ neutralization the store guarantees):
 
 ```bash
 HR="$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/harness-root.sh")"
-python3 - "$HR" <<'PY'
+python3 -I - "$HR" <<'PY'
 import sys; sys.path.insert(0, sys.argv[1] + "/core/brain")
 import store
 store.write_note(
@@ -115,7 +115,7 @@ Select them:
 
 ```bash
 HR="$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/harness-root.sh")"
-python3 - "$HR" <<'PY'
+python3 -I - "$HR" <<'PY'
 import sys; sys.path.insert(0, sys.argv[1] + "/core/brain")
 import store
 for n in store.notes_by_status("evergreen"):

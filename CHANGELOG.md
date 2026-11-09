@@ -13,12 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Inline Python in hooks and scripts no longer imports from the working folder: standard-library
   snippets run with `-I`; snippets that load harness modules drop the working folder from
   `sys.path` first, so PyYAML stays importable from the user site. The Codex fallback wrapper
-  (`legacy/codex-shell-wrap/`) gets the same `-I`, and `setup.sh` runs its PyYAML install from
-  the harness root.
+  (`legacy/codex-shell-wrap/`) and the commands in the `brain-ingest` skill get the same `-I`,
+  and `setup.sh` runs its PyYAML install from the harness root.
 
 ### Tests
-- `core/tests/inline-python-safepath-test.sh`: a static scan of every shipped inline Python start,
-  and planted-module checks for `council-threshold.sh`, `pre-tool-guard.sh` and
+- `core/tests/inline-python-safepath-test.sh`: a static scan of every shipped inline Python start
+  (shell files and the shell blocks of skill, agent, command, rule and template Markdown), and
+  planted-module checks for `council-threshold.sh`, `pre-tool-guard.sh` and
   `context-mode-guard.sh`.
 
 ## [0.15.0] - 2026-11-09

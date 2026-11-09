@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# inline-python-safepath-test.sh — inline Python in shipped shell code must not import from the
-# working folder.
+# inline-python-safepath-test.sh — inline Python in shipped shell code and skill instructions must
+# not import from the working folder.
 #
 # `python3 -c '…'`, `python3 - <<'PY'` and `python3 -m mod` put the current working folder first on
 # sys.path. Hooks and scripts run in the session's folder (the project being worked on), so a file
@@ -8,15 +8,18 @@
 # run inside the hook. Two rules keep it out:
 #   A  standard-library-only snippet  -> `python3 -I` (isolated: no cwd, no user site-packages)
 #   B  snippet that loads harness modules or PyYAML (user site) -> its first statements drop the
-#      working folder from sys.path (`sys.path[:] = [p for p in sys.path if p not in (…)]`) before
-#      any import other than os / sys.
+#      working folder from sys.path (`sys.path[:] = [p for p in sys.path if p not in ("", …)]`)
+#      before any import other than os / sys.
 #
-# (1) static scan of every shipped shell file (git ls-files minus core/tests, docs, evals, .github
-#     and the retired lanes in legacy/lanes-2026-10, which setup.sh no longer installs or links;
+# (1) static scan of every shipped shell file and of the shell code blocks in shipped skill, agent,
+#     command, rule and template Markdown (git ls-files minus core/tests, docs, evals, .github and
+#     the retired lanes in legacy/lanes-2026-10, which setup.sh no longer installs or links;
 #     legacy/codex-shell-wrap stays in scope as the documented fallback when Codex native hooks
-#     are off): each Python start with -c / - / -m needs -I or the drop-before-import shape. Code
-#     held in a variable and text lines are in EXEMPT below; an exemption that no longer matches a
-#     line fails the test, so the list cannot rot.
+#     are off). A Python start that takes its program from -c, runs -m, or reads it from stdin
+#     (`-`, a here-doc, a here-string, a redirect or a pipe) needs -I or the drop-before-import
+#     shape. Code held in a variable is checked where the variable is filled (VAR_CODE); lines
+#     that only name Python are in EXEMPT. An entry that no longer matches fails the test, so the
+#     lists cannot rot.
 # (2) dynamic: a git repo planted with stand-ins for standard and harness modules, each appending
 #     its name to a marker file when imported; the scripts run with that folder as the working
 #     folder and must neither import a stand-in nor change their decision.
@@ -39,14 +42,18 @@ export AGENT_GATE_SINK_DIR="$WORK/gate-sink"
 
 echo "=== (1) static scan: every inline Python start carries -I or the drop-before-import shape ==="
 SCAN_OUT="$WORK/scan.out"
-(cd "$REPO_ROOT" && git ls-files -z | python3 -I -c '
+(cd "$REPO_ROOT" && python3 -I -c '
 import re, subprocess, sys
 
 SKIP = ("core/tests/", "docs/", "evals/", "legacy/lanes-2026-10/", ".github/")
-# (file, fixed substring, reason) — lines that name Python without starting a snippet here.
+# Markdown an agent runs commands from: only lines inside shell code blocks count.
+MD_DIRS = ("skills/", "extras/skills/", "agents/", "commands/", "rules/", "templates/")
+SHELL_FENCES = ("", "bash", "sh", "shell", "zsh", "console")
+# (file, fixed substring holding the Python start, reason) — lines that name Python without
+# starting a snippet here.
 EXEMPT = [
-    ("core/hooks/pre-tool-guard.sh", "-c \"$_RISK_PY\"",
-     "code held in a variable; its first statements are the drop (dynamic check 2b covers it)"),
+    ("core/hooks/pre-tool-guard.sh", "python3 -c \"$_RISK_PY\"",
+     "code held in a variable; VAR_CODE checks the here-doc that fills it"),
     ("core/hooks/pre-tool-guard.sh", "or python3 -m pip install --user pyyaml",
      "message text shown to the user"),
     ("setup.sh", "(python3 -m pip install --user pyyaml)", "message text shown to the user"),
@@ -54,9 +61,12 @@ EXEMPT = [
      "command text, run through the harness root by the eval call"),
     ("setup.sh", "(python3 -c '"'"'import yaml'"'"' failed)", "message text shown to the user"),
 ]
-DROP = re.compile(r"sys\.path\[:\]\s*=\s*\[p for p in sys\.path if p not in \(")
+# (file, variable): code read by `read -r -d "" VAR <<TAG` and run with `python3 -c "$VAR"`.
+VAR_CODE = [("core/hooks/pre-tool-guard.sh", "_RISK_PY")]
+DROP = re.compile(r"sys\.path\[:\]\s*=\s*\[p for p in sys\.path if p not in \(\s*\x22\x22\s*,")
 HEREDOC = re.compile(r"<<-?\s*([\x27\"]?)(\w+)\1")
-START = re.compile(r"(?<![\w./$-])python3?\b")
+START = re.compile(r"(?<![\w.$-])(?:/[\w.-]+)*/?python3?(?:\.\d+)?\b|\$\{?PY[A-Z_]*(?::-[^}\s]*)?\}?")
+IMPORT = re.compile(r"(?:^|[;\n:])[ \t]*(?:import[ \t]+([\w., \t]+)|from[ \t]+(\w+)[ \t]+import)")
 
 def is_shell(path, text):
     if path.endswith((".sh", ".bash")):
@@ -68,76 +78,130 @@ def drop_ok(body):
     m = DROP.search(body)
     if not m:
         return False
-    for imp in re.finditer(r"(?:^|[;\n])[ \t]*(?:import[ \t]+([\w., \t]+)|from[ \t]+(\w+)[ \t]+import)", body[:m.start()]):
+    head = body[:m.start()]
+    if "__import__" in head or "importlib" in head:
+        return False
+    for imp in IMPORT.finditer(head):
         names = [n.split(" as ")[0].strip() for n in imp.group(1).split(",")] if imp.group(1) else [imp.group(2)]
         if any(n not in ("os", "sys") for n in names):
             return False
     return True
 
-def start_of(line, at):
-    """Return (kind, flags, rest) for a python start with -c / - / -m at `at`, else None."""
-    toks = re.compile(r"\s+(\S+)").finditer(line, at + len(START.match(line, at).group(0)))
+def piped(line, at):  # a shell pipe straight into the interpreter (not `a|python3` in a regex)
+    return re.search(r"(?:^|\s)\|\s*[\x27\"]?$", line[:at]) is not None
+
+def start_of(line, m):
+    """Return (kind, flags, rest) for the Python start m, else None. kind: c / m / stdin."""
     flags = []
-    for t in toks:
-        w = t.group(1).lstrip("\"")
+    want_arg = False
+    for t in re.finditer(r"\s+(\S+)", line[m.end():]):
+        w = t.group(1).lstrip("\"\x27")
+        rest = line[m.end() + t.end():]
+        if want_arg:  # the value of -W / -X
+            want_arg = False
+            continue
         if re.fullmatch(r"-[A-Za-z]+", w):
             flags.append(w)
-            if w[-1] in "cm":
-                return ("c" if w[-1] == "c" else "m"), flags, line[t.end():]
+            if w in ("-W", "-X"):
+                want_arg = True
+            elif w[-1] in "cm":
+                return ("c" if w[-1] == "c" else "m"), flags, rest
             continue
-        if w == "-" or w.startswith("-<") or w.startswith("-\x27"):
-            return "stdin", flags, line[t.end():]
+        if w == "-" or w.startswith(("-<", "-\x27", "<")):
+            return "stdin", flags, rest
+        if w[:1] in ")|;&" and piped(line, m.start()):
+            return "stdin", flags, rest
         return None
+    return ("stdin", flags, "") if piped(line, m.start()) else None
+
+def exempt_for(path, line, at):
+    for e in EXEMPT:
+        if e[0] != path:
+            continue
+        p = line.find(e[1])
+        while p != -1:
+            if p <= at < p + len(e[1]):
+                return e
+            p = line.find(e[1], p + 1)
     return None
 
+ls = subprocess.run(["git", "ls-files", "-z"], capture_output=True)
+if ls.returncode != 0:
+    print("SUMMARY git ls-files failed: " + ls.stderr.decode(errors="replace").strip()[:200])
+    sys.exit(1)
 bad = []
 matched = set()
-files = subprocess.run(["git", "ls-files", "-z"], capture_output=True).stdout.decode().split("\0")
-for path in files:
+var_seen = set()
+for path in ls.stdout.decode().split("\0"):
     if not path or path.startswith(SKIP):
         continue
     try:
         text = open(path, encoding="utf-8").read()
     except (OSError, UnicodeDecodeError):
         continue
-    if not is_shell(path, text):
-        continue
     lines = text.split("\n")
-    for i, line in enumerate(lines):
-        if line.lstrip().startswith("#"):
+    if is_shell(path, text):
+        idx = range(len(lines))
+    elif path.endswith(".md") and path.startswith(MD_DIRS):
+        idx, fence = [], None
+        for i, line in enumerate(lines):
+            s = line.strip()
+            if s.startswith("```"):
+                fence = None if fence is not None else s[3:].strip().lower()
+                continue
+            if fence in SHELL_FENCES:
+                idx.append(i)
+    else:
+        continue
+    for vpath, var in VAR_CODE:
+        if vpath == path:
+            var_seen.add((vpath, var))
+            h = re.search(r"read -r -d \x27\x27 " + var + r" <<-?\x27(\w+)\x27", text)
+            vbody = text[h.end():].split("\n" + h.group(1) + "\n", 1)[0] if h else ""
+            if not drop_ok(vbody):
+                bad.append("%s: the code in %s does not drop the working folder first" % (path, var))
+    done = -1
+    for i in idx:
+        if i <= done or lines[i].lstrip().startswith("#"):
             continue
-        for m in START.finditer(line):
-            s = start_of(line, m.start())
+        full, last = lines[i], i
+        while full.rstrip().endswith("\\") and last + 1 < len(lines):
+            last += 1
+            full = full.rstrip()[:-1] + " " + lines[last]
+        done = last
+        for m in START.finditer(full):
+            s = start_of(full, m)
             if not s:
                 continue
             kind, flags, rest = s
-            exempt = [e for e in EXEMPT if e[0] == path and e[1] in line]
-            for e in exempt:
+            e = exempt_for(path, full, m.start())
+            if e:
                 matched.add(e)
-            if exempt or any("I" in f for f in flags):
+                continue
+            if any("I" in f for f in flags):
                 continue
             body = None
             if kind == "c":
                 q = rest.lstrip()[:1]
                 if q in ("\x27", "\""):
                     buf = rest.lstrip()[1:]
-                    j = i
+                    j = last
                     while q not in buf and j + 1 < len(lines):
                         j += 1
                         buf += "\n" + lines[j]
                     body = buf
             elif kind == "stdin":
-                h = HEREDOC.search(line)
+                h = HEREDOC.search(full)
                 if h:
                     buf = []
-                    for k in range(i + 1, len(lines)):
+                    for k in range(last + 1, len(lines)):
                         if lines[k].strip() == h.group(2):
                             break
                         buf.append(lines[k])
                     body = "\n".join(buf)
             if body is None or not drop_ok(body):
-                bad.append("%s:%d: %s" % (path, i + 1, line.strip()[:110]))
-stale = [e for e in EXEMPT if e not in matched]
+                bad.append("%s:%d: %s" % (path, i + 1, full.strip()[:110]))
+stale = [e for e in EXEMPT if e not in matched] + [v for v in VAR_CODE if v not in var_seen]
 for b in bad:
     print("VIOLATION " + b)
 for e in stale:
@@ -187,9 +251,10 @@ check_marker() {  # check_marker <label>
   rm -f "$MARKER"
 }
 
-# 2a: council-threshold.sh --classify loads project secret paths through hook_config.
+# 2a: council-threshold.sh --classify loads project secret paths through hook_config. The project
+# folder is pinned: the script prefers AGENT_PROJECT_DIR / CLAUDE_PROJECT_DIR over git.
 printf '%s\n' '{"risk_areas": {"secrets": {"paths": ["vault/"]}}}' > "$PLANT/.agent/hook-config.json"
-OUT_A="$(cd "$PLANT" && printf 'vault/token.dat\0docs/readme.txt\0' | bash "$REPO_ROOT/core/infra/council-threshold.sh" --classify 2>/dev/null | tr '\0' '|')"
+OUT_A="$(cd "$PLANT" && printf 'vault/token.dat\0docs/readme.txt\0' | AGENT_PROJECT_DIR="$PLANT" bash "$REPO_ROOT/core/infra/council-threshold.sh" --classify 2>/dev/null | tr '\0' '|')"
 if [[ "$OUT_A" == "vault/token.dat|" ]]; then
   ok "2a council-threshold --classify still classifies the declared secret path"
 else
@@ -199,8 +264,26 @@ check_marker "2a council-threshold --classify"
 rm -f "$PLANT/.agent/hook-config.json"
 
 # 2b: pre-tool-guard.sh risk-area extension (_RISK_PY) and the declared secret path (guard 11b).
+# Declared in JSON (needs no PyYAML, so it always runs) and, when PyYAML is importable, in YAML —
+# the case rule B exists for: PyYAML must stay importable from the user site.
+run_2b() {  # run_2b <label>
+  local ev out got
+  ev="$(mk_event Bash '{"command":"git add billing/plan.py"}')"
+  out="$(cd "$PLANT" && printf '%s' "$ev" | AGENT_PROJECT_DIR="$PLANT" bash "$REPO_ROOT/core/hooks/pre-tool-guard.sh" 2>/dev/null || true)"
+  got="$(decision_of "$out")"
+  if [[ "$got" == "deny" ]]; then ok "2b $1: risk-area extension still denies a declared payment path"; else bad "2b $1: risk-area decision" "want=deny got=$got :: $out"; fi
+  check_marker "2b $1: pre-tool-guard risk extension"
+  ev="$(mk_event Bash '{"command":"cat vault/notes.txt"}')"
+  out="$(cd "$PLANT" && printf '%s' "$ev" | AGENT_PROJECT_DIR="$PLANT" bash "$REPO_ROOT/core/hooks/pre-tool-guard.sh" 2>/dev/null || true)"
+  got="$(decision_of "$out")"
+  if [[ "$got" == "deny" ]]; then ok "2b $1: declared secret path still denied"; else bad "2b $1: secret-path decision" "want=deny got=$got :: $out"; fi
+  check_marker "2b $1: pre-tool-guard secret path"
+}
+printf '%s\n' '{"risk_areas": {"secrets": {"paths": ["vault/**"], "decision": "deny"}, "payment": {"pattern": "^billing/", "decision": "deny"}}}' > "$PLANT/.agent/hook-config.json"
+run_2b json
+rm -f "$PLANT/.agent/hook-config.json"
 if ! (cd "$WORK" && python3 -c 'import yaml' 2>/dev/null); then
-  echo "  SKIP  2b pre-tool-guard risk extension — PyYAML not importable (the guard's own skip reason)"
+  echo "  SKIP  2b yaml — PyYAML not importable (the JSON run above covers the same snippet)"
 else
   cat > "$PLANT/.agent/hook-config.yml" <<'YML'
 risk_areas:
@@ -212,16 +295,7 @@ risk_areas:
     pattern: '^billing/'
     decision: deny
 YML
-  EV_B="$(mk_event Bash '{"command":"git add billing/plan.py"}')"
-  OUT_B="$(cd "$PLANT" && printf '%s' "$EV_B" | AGENT_PROJECT_DIR="$PLANT" bash "$REPO_ROOT/core/hooks/pre-tool-guard.sh" 2>/dev/null || true)"
-  GOT_B="$(decision_of "$OUT_B")"
-  if [[ "$GOT_B" == "deny" ]]; then ok "2b risk-area extension still denies a declared payment path"; else bad "2b risk-area decision" "want=deny got=$GOT_B :: $OUT_B"; fi
-  check_marker "2b pre-tool-guard risk extension"
-  EV_B2="$(mk_event Bash '{"command":"cat vault/notes.txt"}')"
-  OUT_B2="$(cd "$PLANT" && printf '%s' "$EV_B2" | AGENT_PROJECT_DIR="$PLANT" bash "$REPO_ROOT/core/hooks/pre-tool-guard.sh" 2>/dev/null || true)"
-  GOT_B2="$(decision_of "$OUT_B2")"
-  if [[ "$GOT_B2" == "deny" ]]; then ok "2b declared secret path still denied"; else bad "2b secret-path decision" "want=deny got=$GOT_B2 :: $OUT_B2"; fi
-  check_marker "2b pre-tool-guard secret path"
+  run_2b yaml
   rm -f "$PLANT/.agent/hook-config.yml"
 fi
 
