@@ -141,7 +141,8 @@ else
   expect "non-mcp-tool-ignored-allow" allow Bash "{\"command\":\"cat ${SEC}app.key\"}"
 
   # The block message must still be printed when the command preview is cut inside a multi-byte
-  # character (0 / 1 / 2 filler characters move the cut point), under a UTF-8 locale.
+  # character, under a UTF-8 locale. 1 / 2 filler characters move the cut inside a character;
+  # 0 puts it on a character boundary (the control case).
   UTF8_LOCALE=""
   for cand in en_US.UTF-8 en_US.utf8 C.UTF-8 C.utf8; do   # glibc lists the dash-less spelling
     if locale -a 2>/dev/null | grep -qix "$cand"; then UTF8_LOCALE="$cand"; break; fi
@@ -163,7 +164,8 @@ else
   fi
 
   # Rendering failure: only the render snippet (python3 reading its program from stdin) fails;
-  # the guard must still print exactly one JSON object whose decision is deny. Runs in any locale.
+  # the guard must still print exactly one JSON object, in the same shape as a normal decision,
+  # whose decision is deny and whose reason still names the matched rule. Runs in any locale.
   mkdir -p "$WORK/shim"
   REAL_PY="$(command -v python3)"
   cat > "$WORK/shim/python3" <<SHIM
@@ -174,8 +176,13 @@ SHIM
   chmod +x "$WORK/shim/python3"
   out="$(event mcp__context-mode__ctx_execute "{\"language\":\"shell\",\"code\":\"cat ${SEC}app.key\"}" \
     | env PATH="$WORK/shim:$PATH" bash "$ADAPTER" context-mode-guard.sh 2>/dev/null || true)"
-  verdict="$(printf '%s' "$out" | python3 -I -c 'import json,sys; print(json.loads(sys.stdin.read())["hookSpecificOutput"]["permissionDecision"])' 2>/dev/null || echo invalid)"
-  if [[ "$verdict" == "deny" ]]; then ok "render-failure-fallback-deny"; else bad "render-failure-fallback-deny" "verdict=$verdict out=${out:0:160}"; fi
+  parsed="$(printf '%s' "$out" | python3 -I -c 'import json,sys; h=json.loads(sys.stdin.read())["hookSpecificOutput"]; print(h["permissionDecision"], h["permissionDecisionReason"])' 2>/dev/null || echo invalid)"
+  if [[ "$parsed" == "deny Context-Mode sandbox guard BLOCK: ${SEC} path reference (message rendering failed)" \
+        && "$out" == *'"permissionDecision": "deny"'* ]]; then
+    ok "render-failure-fallback-deny"
+  else
+    bad "render-failure-fallback-deny" "parsed=${parsed:0:120} out=${out:0:160}"
+  fi
 fi
 
 echo

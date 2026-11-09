@@ -119,7 +119,8 @@ Use the dedicated path:
 See rules/policy/security-guards.md and docs/hook-protocol.md."
 
 # Render into a variable first so a failed render leaves no partial output; on failure (or no
-# python3) print the same decision with a fixed ASCII reason: the block must never be lost.
+# python3) print the same decision through the shared hook_emit_decision (same JSON shape) with a
+# short ASCII reason that still names the rule: the block must never be lost.
 render_decision() {
   python3 -I - "$1" "$2" <<'PY'
 import json, sys
@@ -138,5 +139,5 @@ PY
 if RENDERED=$(render_decision "$DENY_MSG" "$DECISION" 2>/dev/null); then
   printf '%s\n' "$RENDERED"
 else
-  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"%s","permissionDecisionReason":"Context-Mode sandbox guard BLOCK (message rendering failed)"}}\n' "$DECISION"
+  hook_emit_decision "$DECISION" "Context-Mode sandbox guard BLOCK: $REASON (message rendering failed)"
 fi

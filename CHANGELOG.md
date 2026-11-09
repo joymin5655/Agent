@@ -11,7 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - `context-mode-guard`: the block message no longer fails on non-ASCII command text, and the
-  guard still prints its deny/ask decision if rendering the message fails.
+  guard still prints its deny/ask decision (usual format, naming the matched rule) if rendering
+  the message fails.
 
 ### Docs
 - Corrected the A/B rule wording in the 0.15.1 entry and in the
@@ -19,7 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tests
 - `core/tests/context-mode-guard-test.sh`: the block message is printed for non-ASCII command
-  text, and a render failure still yields one deny decision.
+  text, and a render failure still yields one deny decision in the usual format that names the
+  matched rule.
 
 ## [0.15.1] - 2026-11-09
 
