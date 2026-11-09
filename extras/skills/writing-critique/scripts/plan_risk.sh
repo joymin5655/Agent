@@ -17,7 +17,7 @@ DOCS=() REPO=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --repo) REPO="${2:?--repo needs a folder}"; shift 2 ;;
-        -h|--help) sed -n 2,13p "$0"; exit 0 ;;
+        -h|--help) sed -n 2,12p "$0"; exit 0 ;;
         -*) echo "plan_risk: unknown option $1" >&2; exit 2 ;;
         *) DOCS+=("$1"); shift ;;
     esac

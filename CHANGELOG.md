@@ -35,10 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   diff with `core/infra/lane-diff.py`: `git diff -W` for code files while it stays within twice
   the plain diff plus 8 KB, the default diff for data, lock, generated and doc files, and the
   default diff of the whole target past 120 KB; code files are shown as text even when an
-  in-tree `.gitattributes` marks them binary. Its `context_mode` (`w|mixed|default|over_cap`)
-  is logged per lane. Git runs from the top level with literal pathspecs and with no
-  repository-configured command (fsmonitor, external diff, textconv); a target that starts
-  with `-` is refused.
+  in-tree `.gitattributes` marks them binary (also past the byte cap). Its `context_mode`
+  (`w|mixed|default|over_cap`) is logged per lane. Git runs from the top level with literal
+  pathspecs and with no repository-configured command (fsmonitor, external diff, textconv); a
+  target that starts with `-` is refused.
 - **Dispositions and a round ledger in council-review (#243).** Every surviving finding gets
   fix, contest (evidence the lane could read), escalate (a Dismissed finding whose evidence lies
   outside the lane's input, shown to the user) or decline. A per-branch ledger in the workers

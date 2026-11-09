@@ -690,6 +690,20 @@ bash "$PR" "$T/plan-bare.md" --repo "$R" > "$T/pr-bare.out" 2>&1; rc=$?
 if [[ $rc -eq 0 ]]; then ok "plan_risk: a bare risk path followed by a Korean particle exits 0"; else bad "plan_risk: bare exit $rc"; fi
 bash "$PR" "$T/plan-paren.md" --repo "$R" > "$T/pr-paren.out" 2>&1; rc=$?
 if [[ $rc -eq 0 ]] && grep -qx 'app/(auth)/login/page.tsx' "$T/pr-paren.out"; then ok "plan_risk: a parenthesised auth path exits 0"; else bad "plan_risk: parenthesised exit $rc"; fi
+printf '# 결제\n\n결제 처리(billing/charge.py)를 고친다.\n' > "$T/plan-wrap-p.md"
+printf '# 로그인\n\nsee [core/auth/login.py] here\n' > "$T/plan-wrap-b.md"
+printf '# 로그인\n\n[Login](app/(auth)/login/page.tsx) 를 고친다.\n' > "$T/plan-link-p.md"
+for w in "wrap-p:billing/charge.py" "wrap-b:core/auth/login.py" "link-p:app/(auth)/login/page.tsx"; do
+  bash "$PR" "$T/plan-${w%%:*}.md" --repo "$R" > "$T/pr-${w%%:*}.out" 2>&1; rc=$?
+  if [[ $rc -eq 0 ]] && grep -qxF -- "${w#*:}" "$T/pr-${w%%:*}.out"; then ok "plan_risk: ${w#*:} cited inside brackets or a link exits 0"; else bad "plan_risk: ${w#*:} exit $rc"; fi
+done
+printf '`(billing/charge.py)` und `[core/auth/login.py]`, `(a)/(b).ts`\n' > "$T/wrap-cand.md"
+python3 "$GS" --candidates --all "$T/wrap-cand.md" > "$T/wrap-cand.out"
+check "candidates --all: a whole-token bracket pair is unwrapped, inner brackets stay" \
+  bash -c "grep -qx 'billing/charge.py' '$T/wrap-cand.out' && grep -qx 'core/auth/login.py' '$T/wrap-cand.out' && grep -qxF '(a)/(b).ts' '$T/wrap-cand.out'"
+bash "$PR" --help > "$T/pr-help.out" 2>&1
+check "plan_risk --help: ends at the exit lines, no set -euo pipefail" \
+  bash -c "grep -q '^# exit:' '$T/pr-help.out' && ! grep -q 'set -euo pipefail' '$T/pr-help.out'"
 bash "$PR" "$T/plan-docs.md" "$T/plan-bare.md" --repo "$R" > "$T/pr-two.out" 2>&1; rc=$?
 if [[ $rc -eq 0 ]] && grep -qx 'core/auth/login.py' "$T/pr-two.out"; then ok "plan_risk: two documents, only the second cites a risk path, exit 0"; else bad "plan_risk: two documents exit $rc"; fi
 bash "$PR" "$T/plan-bare.md" "$T/plan-fence.md" --repo "$R" > "$T/pr-dup.out" 2>&1
@@ -741,6 +755,7 @@ for n in ("k/.npmrc", "k/id_ed25519", "k/x.tfvars", "k/db_secret.yml", "secret/a
     w(n, "harmless text\n")
 os.symlink("config/env/local", os.path.join(r, ".env"))
 os.symlink(".env.local", os.path.join(r, "notes.txt"))
+os.symlink("a.py", os.path.join(r, "alias.py"))
 pk = "-----BEGIN " + "RSA PRIVATE KEY" + "-----"
 w("doc-pk.md", "before\n" + pk + "\nafter\n")
 w("doc-aws.md", "key " + "AKIA" + "Q" * 16 + " end\n")
@@ -815,10 +830,11 @@ python3 "$GS" "$T/secrets.md" --repo "$GR" >/dev/null 2>&1; rc=$?
 if [[ $rc -eq 2 ]]; then ok "secret filter: missing --harness-root exits 2"; else bad "secret filter: missing --harness-root exit $rc"; fi
 python3 "$GS" "$T/secrets.md" --repo "$GR" --harness-root "$T/nogit" >/dev/null 2>&1; rc=$?
 if [[ $rc -eq 2 ]]; then ok "secret filter: --harness-root without hook_config.py exits 2"; else bad "secret filter: bad harness root exit $rc"; fi
-mkdir -p "$T/hc-broken/core/hooks" "$T/hc-old/core/hooks"
+mkdir -p "$T/hc-broken/core/hooks" "$T/hc-old/core/hooks" "$T/hc-crash/core/hooks"
+printf 'raise RuntimeError("boom")\n' > "$T/hc-crash/core/hooks/hook_config.py"
 printf 'import a_module_that_does_not_exist_here\n' > "$T/hc-broken/core/hooks/hook_config.py"
 : > "$T/hc-old/core/hooks/hook_config.py"  # no loaders
-for hc in hc-broken hc-old; do
+for hc in hc-broken hc-old hc-crash; do
   python3 "$GS" "$T/secrets.md" --repo "$GR" --harness-root "$T/$hc" >/dev/null 2>&1; rc=$?
   if [[ $rc -eq 2 ]]; then ok "secret filter: $hc hook_config exits 2"; else bad "secret filter: $hc hook_config exit $rc"; fi
 done
@@ -827,6 +843,17 @@ printf 'see `./a.py` and `a.py`\n' > "$T/dup.md"
 python3 "$GS" "$T/dup.md" --repo "$GR" --harness-root "$REPO_ROOT" --max-bytes 20 > "$T/dup.out" 2>&1
 check "sources: ./a.py and a.py are one file — included once, no over budget" \
   bash -c "[ \$(grep -cx '### a.py' '$T/dup.out') -eq 1 ] && ! grep -q 'over budget' '$T/dup.out'"
+
+# .env and ./.env are one candidate: listed once
+printf 'see `.env` and `./.env`\n' > "$T/dupenv.md"
+python3 "$GS" "$T/dupenv.md" --repo "$GR" --harness-root "$REPO_ROOT" > "$T/dupenv.out" 2>&1
+check "sources: .env and ./.env are listed once as secret-like" \
+  bash -c "grep -qxF -- '- .env — secret-like' '$T/dupenv.out' && ! grep -qF -- '- ./.env' '$T/dupenv.out'"
+# a symlink and its target: one inclusion, the second citation is not 'over budget'
+printf 'see `a.py` and `alias.py`\n' > "$T/alias.md"
+python3 "$GS" "$T/alias.md" --repo "$GR" --harness-root "$REPO_ROOT" --max-bytes 20 > "$T/alias.out" 2>&1
+check "sources: a symlink and its target are one file — included once, no over budget" \
+  bash -c "[ \$(grep -cx '### a.py' '$T/alias.out') -eq 1 ] && ! grep -q 'over budget' '$T/alias.out'"
 
 # log_run --kind design, reason E1; report keeps design runs apart
 printf '[{"id":"A1","decision":"accept"},{"id":"A2","decision":"reject","reason":"E1"},{"id":"B1","decision":"reject","reason":"R1"}]' > "$T/dsg-dec.json"

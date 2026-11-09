@@ -6,8 +6,10 @@ Usage: lane-diff.py [--staged | --head | <range>] [--max-bytes 122880]
 A lane that cannot open files sees only the diff, so an enclosing try/catch or the rest of
 a function is invisible to it. For code files this prints `git diff -W` (whole enclosing
 function) when that stays small; every other file keeps its default diff. Past the byte
-cap the plain default diff of the whole target is printed instead. Code files are diffed as
-text even when an in-tree .gitattributes marks them binary or -diff.
+cap the plain diff of every file is printed instead (code files still as text). Code files
+are diffed as text even when an in-tree .gitattributes marks them binary or -diff; a code
+file has an extension in CODE_EXT, lies outside dist/, build/, vendor/ and node_modules/, and
+is not a lock, minified, protobuf or generated name.
 
 stderr's last line: context_mode=<w|mixed|default|over_cap> bytes=<n> files=<n> w_files=<n>
 """
@@ -143,6 +145,7 @@ def build(selector: list[str], max_bytes: int) -> tuple[bytes, str, int, int]:
     if not files:
         return b"", "default", 0, 0
     parts: list[bytes] = []
+    plains: list[bytes] = []
     eligible = w_used = 0
     with tempfile.NamedTemporaryFile("w", suffix=".attrs", delete=False) as tmp:
         tmp.write(ATTRIBUTES)
@@ -152,6 +155,7 @@ def build(selector: list[str], max_bytes: int) -> tuple[bytes, str, int, int]:
             code = is_code_file(paths[-1])
             text = ["--text"] if code else []
             plain = git(["diff", *text, "-M", *selector, *spec])
+            plains.append(plain)
             if code:
                 eligible += 1
                 wide = git(["diff", *text, "-W", "-M", *selector, *spec], attrs=tmp.name)
@@ -164,7 +168,7 @@ def build(selector: list[str], max_bytes: int) -> tuple[bytes, str, int, int]:
         os.unlink(tmp.name)
     out = b"".join(parts)
     if len(out) > max_bytes:
-        out = git(["diff", "-M", *selector])
+        out = b"".join(plains)
         return out, ("over_cap" if len(out) > max_bytes else "default"), len(files), 0
     if w_used == 0:
         mode = "default"

@@ -15,7 +15,9 @@ Otherwise prints markdown: one `### <repo-relative path>` + fenced content per i
 then `### Not included` with each skipped candidate and its reason (outside repository /
 secret-like / no such path / untracked / not a file / binary / too large / over budget / URL).
 A file is included only if its real path is inside --repo, git has it staged (the text inlined
-is the staged version from the index, never the working-tree copy), it is not secret-like
+is the staged version from the index, never the working-tree copy; a cited symlink is followed
+in the working tree and the staged version of the file it resolves to is inlined, both names
+being checked), it is not secret-like
 (name or folder of the cited path and of the resolved path, the project's declared
 risk_areas.secrets.paths read through --harness-root, or secret-looking content), it is text, and
 it fits the caps. Nothing outside the repository is ever read or printed; matches are never shown.
@@ -59,18 +61,33 @@ CONTENT_SECRETS = [re.compile(p) for p in (
 )]
 RUN = re.compile(r"[A-Za-z0-9_./@+~%$()\[\]-]+")
 INLINE = re.compile(r"`((?:[^`\n]|\n(?![ \t]*\n))+)`")  # a code span may wrap, not cross a paragraph
-LINK = re.compile(r"\]\(\s*<?([^)\s>]+)")
+LINK = re.compile(r"\]\(\s*<?((?:[^()\s<>]|\([^()\s<>]*\))+)")
 FENCE = re.compile(r"^(```|~~~).*?^\1[^\n]*$", re.DOTALL | re.MULTILINE)
 URL = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")
 
 
+def _wraps(tok, op, cl):
+    """True when tok[0] is op and the cl that closes it is tok's last character."""
+    if len(tok) < 2 or tok[0] != op or tok[-1] != cl:
+        return False
+    depth = 0
+    for i, ch in enumerate(tok):
+        depth += (ch == op) - (ch == cl)
+        if depth == 0:
+            return i == len(tok) - 1
+    return False
+
+
 def _trim(tok):
-    """Strip trailing `.,;`, a trailing `)`/`]` and a leading `(`/`[` only while unbalanced."""
+    """Strip trailing `.,;`, a trailing `)`/`]` and a leading `(`/`[` only while unbalanced, and
+    a bracket pair that wraps the whole token (`(a/b.py)`); `app/(auth)/x.tsx` stays whole."""
     prev = None
     while tok != prev:
         prev = tok
         tok = tok.rstrip(".,;")
         for op, cl in (("(", ")"), ("[", "]")):
+            if _wraps(tok, op, cl):
+                tok = tok[1:-1]
             while tok.endswith(cl) and tok.count(cl) > tok.count(op):
                 tok = tok[:-1]
             while tok.startswith(op) and tok.count(op) > tok.count(cl):
@@ -148,10 +165,10 @@ def project_secret_tokens(harness_root, repo):
                   "its declared secret paths cannot be honored", file=sys.stderr)
             return None
         return list(hook_config.load_risk_area_secret_paths(repo))
-    except (ImportError, SyntaxError, AttributeError) as e:  # fail closed; loaders never raise
+    except Exception as e:  # fail closed: any load or call failure is a setup error (exit 2)
         print(f"gather_sources: cannot load hook_config ({type(e).__name__}); "
               "the project's declared secret paths cannot be honored", file=sys.stderr)
-        return None
+        raise SystemExit(2) from e
     finally:
         if sys.path and sys.path[0] == hooks:
             sys.path.pop(0)

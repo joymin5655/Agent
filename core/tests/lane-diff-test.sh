@@ -224,6 +224,13 @@ git add evil.py
 GIT_LITERAL_PATHSPECS=1 python3 "$LD" --staged > "$TMP/out" 2> "$TMP/err" || true
 if grep -q '^+    return 4' "$TMP/out"; then ok "GIT_LITERAL_PATHSPECS in the environment is ignored"
 else bad "GIT_LITERAL_PATHSPECS in the environment is ignored" "$(mode)"; fi
+printf 'def f():\n    return 5\n' > evil.py
+python3 -c "print('\n'.join('row %d' % i for i in range(400)))" > big.dat
+git add evil.py big.dat
+run --staged --max-bytes 500
+if grep -q '^+    return 5' "$TMP/out" && ! grep -q '^Binary files' "$TMP/out"; then
+  ok "past the byte cap a -diff code file is still shown as text"
+else bad "past the byte cap a -diff code file is still shown as text" "$(mode)"; fi
 cd "$TMP/repo"
 
 echo "=== git error ==="
