@@ -1637,10 +1637,10 @@ xai_reset; make_policy 75 '{"reason":"weekly cap reached"}'
 cwx - cross-review AGENT_WORKER_POLICY_CMD="$POLICY" AGENT_AUTHOR_VENDOR=anthropic; rc=$?
 cap="$(newest_cap)"
 if [[ $rc -eq 127 && "$(ncalls codex)" == 0 && "$(ncalls claude)" == 0 && "$(ncalls policy)" == 1 ]] \
-   && grep -q '^check --lane openai --role cross-review --hold [0-9]*$' "$MARKERS/policy.calls" \
+   && grep -q '^check --lane openai --role cross-review --hold [0-9]* --accounts$' "$MARKERS/policy.calls" \
    && grep -q "^status: unavailable$" "$cap" \
    && grep -q "^fallback_reason: primary 'codex' unavailable (capped: weekly cap reached)$" "$cap"; then
-    ok "shipped cross-review, author anthropic, codex capped — claude is the author's own: exit 127, single-company review"
+    ok "shipped cross-review, author anthropic, codex capped — claude is the author's own: exit 127, single-company review (the shipped codex backend has account slots, so the policy is asked with --accounts)"
 else
     bad "shipped cross-review/anthropic/capped" "rc=$rc policy=[$(cat "$MARKERS/policy.calls" 2>/dev/null)] cap=$(head -n 9 "$cap" 2>/dev/null | tr '\n' '|')"
 fi
@@ -1923,6 +1923,126 @@ if [[ $rc -eq 0 && "$(acct_of agy-a)" == "<unset>," ]] && ! grep -q '^account:' 
 else
     bad "policy 3 + YES" "rc=$rc worker=[$(acct_of agy-a)]"
 fi
+
+# 14i. account home: a backend with "account_home" runs its preflight and worker with
+# CODEX_HOME=$HOME/<prefix><account> when the policy picked an account — and only then. The
+# directory is checked first (exists, real directory, not a symlink, owned by us, not
+# group/world-writable); a bad one makes the candidate unavailable and nothing of it runs.
+
+for b in codex-acc; do
+    cat > "$ACC_BIN/$b" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$MARKERS/$b.calls"
+printf '%s\n' "\${CODEX_HOME-<unset>}" >> "$MARKERS/$b.home"
+printf '%s\n' "\${AGENT_WORKER_ACCOUNT-<unset>}" >> "$MARKERS/$b.acct"
+cat >/dev/null
+echo "$b-reply"
+EOF
+    chmod +x "$ACC_BIN/$b"
+done
+cat > "$ACC_BIN/pf-home" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\${CODEX_HOME-<unset>}" >> "$MARKERS/pf.home"
+exit 0
+EOF
+chmod +x "$ACC_BIN/pf-home"
+
+REG9="$WORK/backends-home.json"
+cat > "$REG9" <<'JSON'
+{
+  "version": 2,
+  "roles": {
+    "home":   { "backend": "homeb", "tier": "TOP", "fallback": null },
+    "homefb": { "backend": "homeb", "tier": "TOP", "fallback": "plainb" }
+  },
+  "backends": {
+    "homeb":  { "vendor": "openai", "connection": "cli", "enabled": true, "cmd": ["codex-acc"],
+                "tier_args": { "TOP": [] }, "preflight": ["pf-home"], "account_slots": true,
+                "account_home": { "env": "CODEX_HOME", "prefix": ".codex-" }, "timeout_s": 30 },
+    "plainb": { "vendor": "google", "connection": "cli", "enabled": true, "cmd": ["plain-cli"],
+                "tier_args": { "TOP": [] }, "preflight": ["pf-acc"], "timeout_s": 30 }
+  }
+}
+JSON
+home_reset() { acc_reset; rm -f "$MARKERS"/*.home "$MARKERS"/pf.acct; rm -rf "$WORK/hh"; mkdir -p "$WORK/hh"; }
+home_cwx() { XAI_PATH="$ACC_BIN" cwx "$REG9" "$@"; }
+home_of() { tr '\n' ',' < "$MARKERS/$1.home" 2>/dev/null; }
+
+# (a) account + valid home: preflight and worker both see CODEX_HOME=<home>/.codex-<acct>
+home_reset; mkdir -m 700 "$WORK/hh/.codex-api"; acc_answer openai '{"account":"api"}'
+home_cwx home AGENT_WORKER_POLICY_CMD="$POLICY_ACC" HOME="$WORK/hh" CODEX_HOME=/caller/home; rc=$?
+cap="$(newest_cap)"
+if [[ $rc -eq 0 && "$(home_of codex-acc)" == "$WORK/hh/.codex-api," && "$(cat "$MARKERS/pf.home")" == "$WORK/hh/.codex-api" ]] \
+   && [[ "$(acct_of codex-acc)" == "api," ]] && grep -q "^account: api$" "$cap"; then
+    ok "account home — worker and preflight both see CODEX_HOME=<home>/.codex-api (the caller's CODEX_HOME replaced); header names the account"
+else
+    bad "account home passed" "rc=$rc worker=[$(home_of codex-acc)] pf=[$(cat "$MARKERS/pf.home" 2>/dev/null)] err=$(head -n 3 "$WORK/wx.err")"
+fi
+
+# (b)(c)(d) a bad home: neither the preflight nor the worker runs; unavailable like a failed preflight
+for kind in missing symlink groupw worldw file; do
+    home_reset; acc_answer openai '{"account":"api"}'
+    case "$kind" in
+        missing) want="is missing" ;;
+        symlink) mkdir -m 700 "$WORK/hh/real"; ln -s "$WORK/hh/real" "$WORK/hh/.codex-api"; want="is a symlink" ;;
+        groupw)  mkdir "$WORK/hh/.codex-api"; chmod 770 "$WORK/hh/.codex-api"; want="is writable by others" ;;
+        worldw)  mkdir "$WORK/hh/.codex-api"; chmod 702 "$WORK/hh/.codex-api"; want="is writable by others" ;;
+        file)    : > "$WORK/hh/.codex-api"; want="is not a directory" ;;
+    esac
+    home_cwx home AGENT_WORKER_POLICY_CMD="$POLICY_ACC" HOME="$WORK/hh"; rc=$?
+    cap="$(newest_cap)"
+    if [[ $rc -eq 127 && "$(ncalls codex-acc)" == 0 && ! -s "$MARKERS/pf.home" ]] \
+       && grep -q "unavailable_reason: .*account home $WORK/hh/.codex-api $want" "$cap" \
+       && grep -q "account home .* $want" "$WORK/wx.err"; then
+        ok "account home — $kind: neither preflight nor worker ran, reason logged, exit 127 (unavailable primary)"
+    else
+        bad "account home $kind" "rc=$rc calls=$(ncalls codex-acc) pf=[$(cat "$MARKERS/pf.home" 2>/dev/null)] cap=$(head -n 9 "$cap" 2>/dev/null | tr '\n' '|')"
+    fi
+done
+# ... and the fallback then runs, with no CODEX_HOME of the primary leaking to it
+home_reset; acc_answer openai '{"account":"api"}'
+home_cwx homefb AGENT_WORKER_POLICY_CMD="$POLICY_ACC" HOME="$WORK/hh"; rc=$?
+cap="$(newest_cap)"
+if [[ $rc -eq 0 && "$(ncalls codex-acc)" == 0 && "$(ncalls plain-cli)" == 1 ]] \
+   && grep -q "^fallback_reason: primary 'homeb' unavailable (.*account home .* is missing)" "$cap"; then
+    ok "account home — a missing home on the primary falls back like any unavailable primary"
+else
+    bad "account home fallback" "rc=$rc primary=$(ncalls codex-acc) fb=$(ncalls plain-cli)"
+fi
+
+# (e) no account: CODEX_HOME is whatever the caller had, even with a valid .codex-* around
+for have in set unset; do
+    home_reset; mkdir -m 700 "$WORK/hh/.codex-api"; acc_answer openai ''
+    if [[ "$have" == set ]]; then
+        home_cwx home AGENT_WORKER_POLICY_CMD="$POLICY_ACC" HOME="$WORK/hh" CODEX_HOME=/caller/home; rc=$?
+        want="/caller/home,"; wantpf="/caller/home"
+    else
+        home_cwx home AGENT_WORKER_POLICY_CMD="$POLICY_ACC" HOME="$WORK/hh"; rc=$?
+        want="<unset>,"; wantpf="<unset>"
+    fi
+    if [[ $rc -eq 0 && "$(home_of codex-acc)" == "$want" && "$(cat "$MARKERS/pf.home")" == "$wantpf" ]]; then
+        ok "account home — no account: CODEX_HOME left as the caller had it ($have)"
+    else
+        bad "account home no account ($have)" "rc=$rc worker=[$(home_of codex-acc)] pf=[$(cat "$MARKERS/pf.home" 2>/dev/null)]"
+    fi
+done
+
+# (f) registry errors (exit 2): no account_slots, an env other than CODEX_HOME, a bad prefix
+for variant in noslots badenv badprefix1 badprefix2; do
+    home_reset; mkdir -m 700 "$WORK/hh/.codex-api"; acc_answer openai '{"account":"api"}'
+    case "$variant" in
+        noslots)    jq '.backends.homeb.account_slots = false' "$REG9" > "$WORK/reg-bad.json" ;;
+        badenv)     jq '.backends.homeb.account_home.env = "HOME"' "$REG9" > "$WORK/reg-bad.json" ;;
+        badprefix1) jq '.backends.homeb.account_home.prefix = "../x-"' "$REG9" > "$WORK/reg-bad.json" ;;
+        badprefix2) jq '.backends.homeb.account_home.prefix = ".codex"' "$REG9" > "$WORK/reg-bad.json" ;;
+    esac
+    XAI_PATH="$ACC_BIN" cwx "$WORK/reg-bad.json" home AGENT_WORKER_POLICY_CMD="$POLICY_ACC" HOME="$WORK/hh"; rc=$?
+    if [[ $rc -eq 2 && "$(ncalls codex-acc)" == 0 && ! -s "$MARKERS/pf.home" ]] && grep -q "account_home" "$WORK/wx.err"; then
+        ok "account home — registry error ($variant): exit 2, nothing ran"
+    else
+        bad "account home registry $variant" "rc=$rc err=$(head -n 2 "$WORK/wx.err")"
+    fi
+done
 
 # --- tally ---------------------------------------------------------------
 

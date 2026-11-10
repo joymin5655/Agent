@@ -98,7 +98,12 @@
         "status"
       ],
       "preflight_timeout_s": 15,
-      "comment": "preflight = 'codex login status', measured 2026-08-20 on codex 0.147.0: logged-out exits 1 and prints 'Not logged in'; logged-in exits 0. A local check (reads cached auth state, no network inference) and not billable — unlike '--version' it actually distinguishes an authenticated lane from a dead one. timeout_s 600: 26 of 163 local runs were cut at the old 300 s cap.",
+      "account_slots": true,
+      "account_home": {
+        "env": "CODEX_HOME",
+        "prefix": ".codex-"
+      },
+      "comment": "account_slots + account_home: when the usage policy names an account, call-worker runs this lane's preflight and worker with CODEX_HOME=$HOME/.codex-<account> (a separate local login; no account = the default login, unchanged). preflight = 'codex login status', measured 2026-08-20 on codex 0.147.0: logged-out exits 1 and prints 'Not logged in'; logged-in exits 0. A local check (reads cached auth state, no network inference) and not billable — unlike '--version' it actually distinguishes an authenticated lane from a dead one. timeout_s 600: 26 of 163 local runs were cut at the old 300 s cap.",
       "timeout_s": 600
     },
     "claude": {

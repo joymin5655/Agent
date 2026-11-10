@@ -55,6 +55,19 @@
 #               An inherited AGENT_WORKER_ACCOUNT is removed at start, so a caller never picks
 #               the account, and it is reset for every candidate. A policy that does not
 #               accept --accounts (any exit but 0/3/75) fails closed like any other bad answer.
+#               A backend that also declares "account_home": {"env": "CODEX_HOME", "prefix": ".codex-"}
+#               (the codex lane; account_slots must be true, env must be exactly CODEX_HOME,
+#               prefix must match ^\.[a-z][a-z0-9]*-$, else a registry error, exit 2) maps the
+#               picked account to a separate login directory: $HOME/<prefix><account>. Before that
+#               candidate's preflight or worker runs, the directory must exist, be a real
+#               directory (not a symlink), be owned by the current user and not be group- or
+#               world-writable; any failure makes the candidate unavailable (like a failed
+#               preflight: "account home <dir> is missing|a symlink|not a directory|not owned by
+#               you|writable by others"), so the fallback / exit-127 logic runs as usual. On
+#               success <env>=<dir> reaches ONLY that candidate's preflight and worker (and the
+#               model self-heal lookup for it), alongside AGENT_WORKER_ACCOUNT. With no account
+#               the environment is left exactly as the caller had it (an inherited CODEX_HOME
+#               stays, an unset one stays unset).
 #     exit 3  = not approved: runs only with AGENT_WORKER_YES=1 (a person approved this
 #               invocation; approval "user"), else this script exits 3
 #     exit 75 = capped: that backend is reported unavailable as "capped: <reason>" and the
@@ -278,6 +291,8 @@ START_S=$SECONDS
 # CANDIDATE_ACCOUNT — the account the policy picked for the candidate being run ("" = none);
 # reset for every candidate so one candidate's account never reaches the next.
 CANDIDATE_ACCOUNT=""
+# CANDIDATE_HOME_ENV — "<env>=<dir>" for the candidate's account home ("" = none); reset like the account.
+CANDIDATE_HOME_ENV=""
 
 # policy_gate <name> <lane> — ask AGENT_WORKER_POLICY_CMD whether this candidate may run now.
 # 0 = go ahead (APPROVAL settled: "policy", or "user" when the policy said 3 and a person
@@ -409,6 +424,7 @@ EXTRA_ARGV=()
 run_backend() {
     local name="$1" timeout_s grace_s rc=0 pid wpid
     CANDIDATE_ACCOUNT=""
+    CANDIDATE_HOME_ENV=""
     jq -e --arg b "$name" '.backends[$b]' "$BACKENDS_FILE" >/dev/null 2>&1 \
         || { echo "call-worker: backend '$name' not defined in $BACKENDS_FILE" >&2; return 64; }
     # v2: a declared backend can be switched off — refuse loudly, never silently.
@@ -453,6 +469,24 @@ run_backend() {
         UNAVAILABLE_REASON="backend '$name' CLI '${cmd[0]}' not found"
         return 127
     fi
+    # account_home registry shape (header): checked for every candidate that declares it.
+    local ah_env="" ah_prefix=""
+    if [[ "$(jq -r --arg b "$name" '.backends[$b] | has("account_home")' "$BACKENDS_FILE")" == "true" ]]; then
+        ah_env="$(jq -r --arg b "$name" '.backends[$b].account_home | if type == "object" and (.env | type) == "string" then .env else "" end' "$BACKENDS_FILE")"
+        ah_prefix="$(jq -r --arg b "$name" '.backends[$b].account_home | if type == "object" and (.prefix | type) == "string" then .prefix else "" end' "$BACKENDS_FILE")"
+        if [[ "$(jq -r --arg b "$name" '.backends[$b].account_slots == true' "$BACKENDS_FILE")" != "true" ]]; then
+            echo "call-worker: backend '$name' declares account_home without account_slots: true in $BACKENDS_FILE" >&2
+            return 64
+        fi
+        if [[ "$ah_env" != "CODEX_HOME" ]]; then
+            echo "call-worker: backend '$name' account_home.env must be exactly CODEX_HOME in $BACKENDS_FILE" >&2
+            return 64
+        fi
+        if [[ ! "$ah_prefix" =~ ^\.[a-z][a-z0-9]*-$ ]]; then
+            echo "call-worker: backend '$name' account_home.prefix must match ^\\.[a-z][a-z0-9]*-\$ in $BACKENDS_FILE" >&2
+            return 64
+        fi
+    fi
     # Usage policy (AGENT_WORKER_POLICY_CMD): asked last before any spend, so before the
     # preflight too (a probe can itself be a billable inference call), and asked even with
     # AGENT_WORKER_YES=1 (header). Only the host's own anthropic subscription is exempt
@@ -463,6 +497,30 @@ run_backend() {
         if [[ $WORKER_YES -eq 1 ]]; then APPROVAL="user"; else APPROVAL="policy"; fi
     else
         policy_gate "$name" "${bvendor:-$name}" || return $?
+    fi
+    # Account home (header): only when the policy picked an account for a backend with account_home.
+    # Nothing of that candidate runs — preflight included — until the directory passes every check.
+    if [[ -n "$ah_env" && -n "$CANDIDATE_ACCOUNT" ]]; then
+        local ah_dir="$HOME_DIR/$ah_prefix$CANDIDATE_ACCOUNT" ah_why="" ah_mode ah_uid
+        if [[ -L "$ah_dir" ]]; then ah_why="a symlink"
+        elif [[ ! -e "$ah_dir" ]]; then ah_why="missing"
+        elif [[ ! -d "$ah_dir" ]]; then ah_why="not a directory"
+        else
+            # GNU form first: GNU stat reads `-f` as --file-system, prints that block for the
+            # directory and fails on the '%u' operand, which would glue garbage onto the value.
+            # BSD stat rejects `-c` without writing to stdout, so the fallback stays clean.
+            ah_uid="$(stat -c %u "$ah_dir" 2>/dev/null || stat -f %u "$ah_dir" 2>/dev/null || true)"
+            ah_mode="$(stat -c %a "$ah_dir" 2>/dev/null || stat -f %Lp "$ah_dir" 2>/dev/null || true)"
+            if [[ "$ah_uid" != "$(id -u)" ]]; then ah_why="not owned by you"
+            elif [[ ! "$ah_mode" =~ ^[0-7]+$ ]] || (( (8#$ah_mode & 8#022) != 0 )); then ah_why="writable by others"
+            fi
+        fi
+        if [[ -n "$ah_why" ]]; then
+            UNAVAILABLE_REASON="backend '$name' account home $ah_dir is $ah_why"
+            echo "call-worker: $UNAVAILABLE_REASON" >&2
+            return 125
+        fi
+        CANDIDATE_HOME_ENV="$ah_env=$ah_dir"
     fi
     # Gateway isolation (see header). Any non-empty "gateway" value isolates —
     # including a malformed one: an unrecognized shape is treated as "this
@@ -509,6 +567,7 @@ run_backend() {
             || { echo "call-worker: AGENT_WORKER_PREFLIGHT_TIMEOUT_S is not numeric ('$pf_timeout') — the watchdog would silently never fire" >&2; return 64; }
         local acct_env=()
         if [[ -n "$CANDIDATE_ACCOUNT" ]]; then acct_env=(AGENT_WORKER_ACCOUNT="$CANDIDATE_ACCOUNT"); fi
+        if [[ -n "$CANDIDATE_HOME_ENV" ]]; then acct_env+=("$CANDIDATE_HOME_ENV"); fi
         ( cd "$dispatch_cwd" && umask "$CALLER_UMASK" && exec env \
             AGENT_BACKENDS_FILE="$BACKENDS_FILE" \
             AGENT_PREFLIGHT_LANE="$name" \
@@ -591,6 +650,7 @@ run_backend() {
     # policy picked for THIS candidate rides the same way (the inherited one was removed at start).
     ( cd "$dispatch_cwd" && umask "$CALLER_UMASK" && export AGENT_LANE="$ROLE" \
         && { if [[ -n "$CANDIDATE_ACCOUNT" ]]; then export AGENT_WORKER_ACCOUNT="$CANDIDATE_ACCOUNT"; fi; } \
+        && { if [[ -n "$CANDIDATE_HOME_ENV" ]]; then export "${CANDIDATE_HOME_ENV?}"; fi; } \
         && exec "${cmd[@]}" ) < "$stdin_file" > "$OUT_TMP" 2>&1 &
     pid=$!
     # TERM at timeout, KILL after a grace period — a CLI wrapper that traps or
@@ -614,6 +674,8 @@ FALLBACK_REASON=""
 BACKEND_USED="$PRIMARY"
 rc=0
 run_backend "$PRIMARY" || rc=$?
+# The primary's account home, kept apart from CANDIDATE_HOME_ENV (which the next run_backend resets).
+PRIMARY_HOME_ENV="$CANDIDATE_HOME_ENV"
 
 # Model self-heal: a codex pin that the vendor retired or the account cannot use
 # fails identically on every call. Only codex's own "ERROR:" lines count: it
@@ -631,7 +693,7 @@ if [[ "$PRIMARY" == "codex" && $rc -ne 0 && $rc -ne 124 ]] \
     running_model="$(sed -n 's/^model: *//p' "$OUT_TMP" | head -n 1)"
     new_model=""
     if [[ -n "$old_model" && "$old_model" == "$running_model" ]]; then
-        new_model="$(python3 "$(dirname "${BASH_SOURCE[0]}")/codex-models.py" upgrade-for "$old_model" 2>/dev/null || true)"
+        new_model="$(env ${PRIMARY_HOME_ENV:+"$PRIMARY_HOME_ENV"} python3 "$(dirname "${BASH_SOURCE[0]}")/codex-models.py" upgrade-for "$old_model" 2>/dev/null || true)"
     fi
     if [[ -n "$new_model" && "$new_model" != "$old_model" ]]; then
         RETRY_REASON="model-unsupported $old_model->$new_model"

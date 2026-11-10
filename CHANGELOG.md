@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.3] - 2026-11-09
+
+### Added
+- `call-worker`: the codex lane can run on a policy-picked account home. A backend with
+  `"account_home": {"env": "CODEX_HOME", "prefix": ".codex-"}` (requires `account_slots: true`;
+  `env` must be `CODEX_HOME`; `prefix` must match `^\.[a-z][a-z0-9]*-$`) runs that candidate's
+  preflight and worker with `CODEX_HOME=$HOME/.codex-<account>` when the usage policy names an
+  account. The directory must exist, be a real directory, be owned by the caller and not be
+  group- or world-writable, otherwise the candidate is unavailable (fallback / exit 127 as for
+  any unavailable primary). With no account nothing changes. The codex backend now declares both.
+- `adapters/codex/README.md` "Accounts"; `docs/model-routing.md` mentions it.
+
+### Compatibility
+- The codex lane now asks the usage policy with `--accounts`. Under the existing contract a
+  policy that rejects the flag fails closed (exit 3) on the codex lane, so policies must accept
+  `--accounts` on the `openai` lane (they may ignore it).
+
+### Tests
+- `core/tests/call-worker-test.sh` section 14i (valid home, missing / symlink / group- or
+  world-writable / not-a-directory home, fallback, no-account env passthrough, registry errors);
+  `core/tests/backends-schema-test.sh` validates `account_home`.
+
 ## [0.15.2] - 2026-11-09
 
 ### Fixed

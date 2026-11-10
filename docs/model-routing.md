@@ -344,6 +344,11 @@ shared blind spot doesn't survive review.
   with `--accounts` appended; the policy may then add `"account": "<name>"` to its exit-0
   JSON, which reaches only that candidate's preflight and worker as `AGENT_WORKER_ACCOUNT`
   (see `adapters/antigravity/README.md` "Accounts"); a malformed name fails closed (exit 3).
+  The `codex` lane also sets `"account_slots": true` and declares `"account_home"`
+  (`CODEX_HOME`, prefix `.codex-`): a picked account `<name>` runs that candidate's preflight
+  and worker with `CODEX_HOME=$HOME/.codex-<name>` after the directory passes the ownership /
+  mode / no-symlink checks, else the candidate is unavailable (`adapters/codex/README.md`
+  "Accounts"). A policy therefore has to accept `--accounts` on the `openai` lane too.
   With no policy set, `AGENT_WORKER_YES=1` is the only approval.
   An `anthropic` backend is not asked only while it is plainly the host's own
   subscription: the registry is the shipped one (`AGENT_BACKENDS_FILE` empty or that same

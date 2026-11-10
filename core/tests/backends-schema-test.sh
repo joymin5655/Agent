@@ -239,6 +239,18 @@ check "account-slots-is-a-boolean" $?
 jq -e '.backends.gemini.account_slots == true' "$REGISTRY" >/dev/null 2>&1
 check "gemini-lane-has-account-slots" $?
 
+# account_home maps a policy-picked account to a login directory (call-worker.sh): only CODEX_HOME,
+# a dotted lowercase prefix ending in "-", and only on an account_slots backend.
+jq -e '[.backends[] | select(has("account_home"))
+        | (.account_slots == true) and (.account_home | type == "object")
+          and (.account_home.env == "CODEX_HOME")
+          and (.account_home.prefix | type == "string" and test("\\A\\.[a-z][a-z0-9]*-\\z"))] | all' \
+    "$REGISTRY" >/dev/null 2>&1
+check "account-home-shape" $?
+jq -e '.backends.codex.account_slots == true and .backends.codex.account_home == {env: "CODEX_HOME", prefix: ".codex-"}' \
+    "$REGISTRY" >/dev/null 2>&1
+check "codex-lane-has-account-home" $?
+
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]
