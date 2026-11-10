@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.4] - 2026-11-10
+
+### Fixed
+- `writing-critique`: `parse_findings.py` now reads the critique inside a Gemini (agy) reply envelope.
+  The antigravity worker forwards `--output-format json` unchanged, so the capture body is
+  `{"status": ..., "response": "<critique JSON as a string>", ...}`; the escaped inner JSON never
+  decoded and a successful Gemini critic was recorded as failed. When a decoded object is not a
+  critique but has a non-empty `response` string, the critique is searched for inside it (one level
+  only, its own `MAX_TRIES` budget). Codex captures are unchanged.
+
+### Tests
+- `core/tests/writing-critique-test.sh` section 3: envelope with a bare critique, with a fenced
+  critique, with a non-critique response (exit 1), and an envelope inside an envelope (exit 1).
+
 ## [0.15.3] - 2026-11-09
 
 ### Added
