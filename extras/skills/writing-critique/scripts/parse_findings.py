@@ -18,6 +18,8 @@ When several JSON objects appear (a CLI may echo the prompt's example), the LAST
 (valid = verdict ok|revise with a findings list). Only the last MAX_SCAN characters are read
 and bare objects are tried newest first, at most MAX_TRIES of them, so a long or hostile
 capture costs bounded time.
+A Gemini (agy) reply envelope ({"status", "response": "<text>", ...}) is not a critique itself:
+the critique is looked for inside its `response` string (one level only, its own MAX_TRIES budget).
 """
 import argparse
 import json
@@ -49,30 +51,51 @@ def valid(v):
 
 def pick(text):
     """The valid critique that starts last: fenced blocks, then bare objects from the end back."""
-    text = text[-MAX_SCAN:]
-    best = None
-    for n, m in enumerate(re.finditer(r"```(?:json|JSON)?\s*\n(.*?)```", text, re.S)):
-        if n >= MAX_TRIES:
-            break
-        try:
-            v = json.loads(m.group(1))
-        except ValueError:
-            continue
-        if valid(v):
-            best = (m.start(), v)
-    dec, end = json.JSONDecoder(), len(text)
-    for _ in range(MAX_TRIES):
-        i = text.rfind("{", 0, end)
-        if i < 0 or (best is not None and i < best[0]):
-            break
-        end = i
-        try:
-            v, _ = dec.raw_decode(text, i)
-        except ValueError:
-            continue
-        if valid(v):
-            best = (i, v)
-            break
+    # decode attempts per depth and kind; every envelope's inner search shares the depth-1 budget
+    budget = {(d, k): MAX_TRIES for d in (0, 1) for k in ("fence", "bare")}
+
+    def find(text, depth):
+        text = text[-MAX_SCAN:]
+        best = None
+
+        def cand(v):
+            if valid(v):
+                return v
+            if depth == 0 and isinstance(v, dict):
+                r = v.get("response")
+                if isinstance(r, str) and r.strip():  # agy reply envelope: unwrap one level
+                    inner = find(r, 1)
+                    return inner[1] if inner else None
+            return None
+
+        for m in re.finditer(r"```(?:json|JSON)?\s*\n(.*?)```", text, re.S):
+            if budget[depth, "fence"] <= 0:
+                break
+            budget[depth, "fence"] -= 1
+            try:
+                v = cand(json.loads(m.group(1)))
+            except ValueError:
+                continue
+            if v is not None:
+                best = (m.start(), v)
+        dec, end = json.JSONDecoder(), len(text)
+        while budget[depth, "bare"] > 0:
+            i = text.rfind("{", 0, end)
+            if i < 0 or (best is not None and i < best[0]):
+                break
+            end = i
+            budget[depth, "bare"] -= 1
+            try:
+                v, _ = dec.raw_decode(text, i)
+            except ValueError:
+                continue
+            v = cand(v)
+            if v is not None:
+                best = (i, v)
+                break
+        return best
+
+    best = find(text, 0)
     return best[1] if best else None
 
 

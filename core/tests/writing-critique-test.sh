@@ -183,6 +183,40 @@ printf -- '---\nrole: x\nstatus: complete\n---\n\n' > "$T/fm.txt"
 cat "$FX/critic-ok.json" >> "$T/fm.txt"
 python3 "$PF" "$T/fm.txt" --draft "$T/draft.anon.md" > "$T/p-fm.json"
 check "parse: capture front matter is skipped" pyj "$T/p-fm.json" 'd["ok"] and len(d["findings"])==5'
+# Gemini (agy) forwards its --output-format json envelope unchanged: the critique is a string inside it.
+python3 - "$FX/critic-ok.json" "$T" <<'PY'
+import json, sys
+crit = open(sys.argv[1], encoding="utf-8").read()
+t = sys.argv[2]
+head = "---\nrole: advisor-writing-google\nbackend: antigravity\nstatus: complete\n---\n\n"
+
+
+def env(resp):
+    return json.dumps({"conversation_id": "c1", "status": "SUCCESS", "response": resp,
+                       "duration_seconds": 1.5, "num_turns": 1,
+                       "usage": {"input_tokens": 1, "output_tokens": 1}})
+
+
+cases = {
+    "env-ok": env(crit),
+    "env-fence": env("Review follows.\n```json\n" + crit + "\n```\nDone."),
+    "env-text": env("ok"),
+    "env-nested": env(env(crit)),
+}
+for name, body in cases.items():
+    open(f"{t}/{name}.txt", "w", encoding="utf-8").write(head + body + "\n")
+PY
+python3 "$PF" "$T/env-ok.txt" --draft "$T/draft.anon.md" --label A > "$T/p-env-ok.json"; rc=$?
+if [[ $rc -eq 0 ]]; then ok "parse: Gemini reply envelope exits 0"; else bad "parse: Gemini reply envelope exit $rc"; fi
+check "parse: envelope gives the same result as the bare critique (5 kept, same drops, revise)" \
+  pyj "$T/p-env-ok.json" 'd["ok"] and len(d["findings"])==5 and d["dropped"]["reasons"]=={"quote_not_in_draft":1,"duplicate_merged":1} and d["verdict"]=="revise"'
+python3 "$PF" "$T/env-fence.txt" --draft "$T/draft.anon.md" --label A > "$T/p-env-fence.json"
+check "parse: fenced critique inside the envelope's response" pyj "$T/p-env-fence.json" 'd["ok"] and len(d["findings"])==5'
+python3 "$PF" "$T/env-text.txt" --draft "$T/draft.anon.md" > "$T/p-env-text.json"; rc=$?
+if [[ $rc -eq 1 ]]; then ok "parse: envelope whose response is not a critique exits 1"; else bad "parse: non-critique envelope exit $rc"; fi
+check "parse: the envelope itself is not accepted as a critique" pyj "$T/p-env-text.json" 'not d["ok"] and d["findings"]==[]'
+python3 "$PF" "$T/env-nested.txt" --draft "$T/draft.anon.md" > "$T/p-env-nest.json"; rc=$?
+if [[ $rc -eq 1 ]]; then ok "parse: an envelope inside an envelope is not unwrapped (one level)"; else bad "parse: nested envelope exit $rc"; fi
 python3 - "$T" <<'PY'
 import json, sys
 t = sys.argv[1]
