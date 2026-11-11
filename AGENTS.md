@@ -77,7 +77,12 @@ For any new hook in `core/hooks/`, write a reproduce test in `core/tests/<name>-
   second reviewer from a different AI vendor than the change's author both approve the same
   head commit. PRs that change hooks, guards, or permission policy additionally need the
   strongest available model as the independent reviewer. PRs that change release/deploy
-  configuration wait for human review + merge. Other contributors' agents never merge.
+  configuration (CI workflows, deploy-service settings, release scripts) follow the same path
+  when the repository belongs to the owner's own account or an organization only the owner
+  administers, unless the change adds or alters secrets, permissions, or privileged triggers.
+  Those changes, release/deploy configuration in any other organization, and merges into
+  release/production branches wait for human review + merge. Other contributors' agents never
+  merge.
 
 ---
 
