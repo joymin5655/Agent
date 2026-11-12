@@ -71,6 +71,10 @@ For any new hook in `core/hooks/`, write a reproduce test in `core/tests/<name>-
 - Branch naming: `<agent>/<task-slug>` (e.g., `codex/add-pre-pr-hook`, `claude/fix-supervisor-race`)
 - Push to your own branch, never to `main`
 - Open a PR with full description: what, why, how tested, before/after
+- A PR that changes `skills/**` or `extras/skills/**` runs `python3 evals/plugin/regress.py`
+  locally before merge (it checks the changed skills that have eval cases; skills without
+  cases are reported as skipped) and pastes its summary into the PR body. Advisory, not a
+  merge gate; it calls a model, so CI never runs it.
 - Merge: the repository owner's supervisor agent may squash-merge planned work (an
   owner-approved plan or a direct owner request) once CI passes and the review ladder
   (`core/infra/review-tier.sh`) is satisfied, and only after an independent reviewer and a

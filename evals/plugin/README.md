@@ -53,33 +53,90 @@ Notes on grading:
 - Behavior graders are loose by design: the sandbox is empty, so a correct reply often
   reports a blocker (no diff, no plan, no Bash). That counts as a pass.
 
-## Baseline (2026-10-20, v2.1.304, `--model sonnet`, 3 runs per arm)
+## Baseline (2026-11-12, v2.1.322, `--model sonnet`, 3 runs per arm)
 
 Skill invocations out of 3 runs. "Fires" cases should be 3 with the plugin; "quiet" cases 0.
+The "Without plugin" column is `—` for fires cases: that grader is with-only, so it is not
+measured in that arm (0 by construction).
 
 | Case | With plugin | Without plugin | Behavior pass (with / without) |
 |---|---|---|---|
-| `spec-fires` | 3/3 | 0/3 | 3/3 / 3/3 |
+| `spec-fires` | 3/3 | — | 3/3 / 3/3 |
 | `spec-quiet` | 0/3 | 0/3 | 3/3 / 3/3 |
-| `supervise-fires` | 3/3 | 0/3 | 3/3 / 3/3 |
+| `supervise-fires` | 3/3 | — | 3/3 / 3/3 |
 | `supervise-quiet` | 0/3 | 0/3 | 3/3 / 3/3 |
-| `verify-completion-fires` | 3/3 | 0/3 | 3/3 / 3/3 |
+| `verify-completion-fires` | 3/3 | — | 3/3 / 3/3 |
 | `verify-completion-quiet` | 0/3 | 0/3 | 3/3 / 3/3 |
-| `council-review-fires` | 3/3 | 0/3 | 3/3 / 3/3 |
+| `council-review-fires` | 3/3 | — | 3/3 / 3/3 |
 | `council-review-quiet` | 0/3 | 0/3 | 3/3 / 3/3 |
-| `wrap-fires` ("커밋하고 푸쉬해줘") | **0/3** | 0/3 | 3/3 / 3/3 |
-| `wrap-fires-ship-it` | 3/3 | 0/3 | 3/3 / 3/3 |
+| `wrap-fires` ("커밋하고 푸쉬해줘") | 3/3 | — | 3/3 / 3/3 |
+| `wrap-fires-ship-it` | 3/3 | — | 3/3 / 3/3 |
 | `wrap-quiet` | 0/3 | 0/3 | 3/3 / 3/3 |
 
 Suite result: 11/11 cases pass, mean Δ 0.00 (the scored graders pass in both arms), one run
-$2.96 and 159 s.
+$2.87 and 178 s.
 
-Finding: the bare Korean "커밋하고 푸쉬해줘" does not invoke `wrap` from the plugin alone (0/3).
-The skill's `description` / `when_to_use` only carry English triggers ("wrap up", "ship this");
-the Korean routing today lives in the user's global CLAUDE.md, which the isolated eval session
-does not load. Because the fires grader is with-only, the case still shows as passing; the
-indicator is the signal. A Korean trigger in `skills/wrap/SKILL.md` would be the fix, tracked
-separately from this suite.
+History: the 2026-10-20 baseline (v2.1.304) was identical except `wrap-fires`, which was 0/3.
+The bare Korean "커밋하고 푸쉬해줘" did not invoke `wrap` from the plugin alone, because the
+skill's triggers were English only. Fixed by the Korean trigger added to `skills/wrap/SKILL.md`
+in 82c3f54 (resolved).
+
+## Regression check
+
+A PR that edits only `skills/*/SKILL.md` gets no review (review level 0), so a wording change
+can silently stop a skill from firing. `regress.py` compares the fire rate before and after:
+
+```bash
+# from the repo root, on the PR branch; calls a model (see cost below)
+python3 evals/plugin/regress.py                     # base origin/main, head HEAD
+python3 evals/plugin/regress.py --plan              # print revisions, skills, commands only
+python3 evals/plugin/regress.py --skill wrap --runs 5
+```
+
+- It compares COMMITTED revisions only: staged or uncommitted edits are invisible, so commit
+  first. The baseline is the merge-base of `--base` and `--head` (printed as
+  `base origin/main → merge-base <sha>`), so a branch that is behind main is not blamed for
+  main's own skill edits.
+- It picks the skills changed since that merge-base (or `--skill`), keeps those that exist in
+  head and have `<skill>-*` cases here, and exports both revisions with `git archive` into
+  temp trees (your working tree and index are not touched). Both trees run the same cases
+  (`--cases-from`, default head), so only the skill text differs.
+- Per side and skill it runs `claude plugin eval <plugin> ... --case '<skill>-*'` with the same
+  flags as "Run" above, then calls `compare.py`. `<plugin>` is `.` for `skills/NAME/` and
+  `extras` for `extras/skills/NAME/`; the eval reads `--eval-dir` below that plugin, so the
+  cases are copied there in the exported trees. Skills without cases are reported as skipped.
+- Flags (default in brackets):
+  - `--base REV` [`origin/main`]: the merge-base of this and `--head` is the baseline.
+  - `--head REV` [`HEAD`].
+  - `--cases-from REV` [head]: revision whose `evals/plugin` both trees use.
+  - `--skill NAME` [changed skills]: repeatable; must exist as `skills/NAME/` or
+    `extras/skills/NAME/` in head.
+  - `--runs N` [3]: runs per case; minimum 3 (the thresholds below assume 3).
+  - `--model M` [`sonnet`], `--max-cost-usd X` [6, per eval call].
+  - `--out-dir DIR` [a new temp dir]: result JSON, `compare.md`, `compare.json`. A relative
+    `DIR` is taken from the directory you run `regress.py` in.
+  - `--plan` [off]: print the plan, call no model, create no directory.
+  - `--keep` [off]: keep the exported temp trees.
+  - `REGRESS_CLAUDE_BIN` [`claude`]: environment variable naming another eval binary.
+- Cost: two eval calls per checked skill, each capped by `--max-cost-usd`. A call that hits
+  its ceiling marks the report PARTIAL.
+- Run it only on branches you trust: the eval runs with `--trust-plugin`, which executes the
+  exported tree's hooks.
+- `compare.py --base A.json ... --head B.json ...` can also be run on saved results. It reads
+  only the `with` arm. A `tool_used` grader with `max: 0` is quiet, every other `tool_used`
+  grader is fires. Verdicts per case and routing grader:
+  - `REGRESSION`: a fires case lost two or more runs, or a quiet case gained any false fire.
+  - `NOISE`: a fires case lost one run; re-run before acting on it.
+  - `IMPROVED` / `UNCHANGED`: more fires (or fewer false fires) / no change. A fires case at
+    0/3 on both sides reads UNCHANGED: a broken baseline is not detected.
+  - `UNDETERMINED`: an errored run, zero or different run counts, or a grader that changed
+    kind; re-run. A `PARTIAL` report (cost ceiling hit) also needs a re-run.
+  - `ONLY-IN-BASE` / `ONLY-IN-HEAD`: the case exists on one side only (reported, not a fail).
+- Exit 1 on any `REGRESSION`, 0 otherwise, 2 for unreadable input (including no routing
+  grader at all), an eval result with zero cases, or an eval infrastructure failure. The
+  result is advisory: paste the summary into the PR body. It is not a merge gate and not part
+  of CI, which never calls a model. The model-free logic is tested by
+  `core/tests/plugin-eval-compare-test.sh`.
 
 ## Limits
 

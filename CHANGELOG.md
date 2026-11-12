@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `evals/plugin/regress.py` + `compare.py`: local, advisory before/after skill-routing check for
+  PRs that change skills (exports the merge-base with the base revision and head with
+  `git archive`, runs `claude plugin eval` on each for changed skills that have cases, labels
+  REGRESSION / NOISE / IMPROVED / UNDETERMINED). Model-free logic tested by
+  `core/tests/plugin-eval-compare-test.sh`; the plugin eval baseline is refreshed to v2.1.322.
+
 ## [0.15.4] - 2026-11-10
 
 ### Fixed
