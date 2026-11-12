@@ -60,19 +60,22 @@ def changed_skills(top: str, base: str, head: str) -> list[str]:
     return sorted(names)
 
 
-def skill_exists(top: str, rev: str, name: str) -> bool:
-    out = git(top, "ls-tree", "--name-only", rev, "--", f"skills/{name}", f"extras/skills/{name}")
-    return bool(out.strip())
+def skill_root(top: str, rev: str, name: str) -> str | None:
+    """Plugin root holding skill NAME at REV: '.' (core) or 'extras', else None."""
+    for root, skills_dir in ((".", "skills"), ("extras", "extras/skills")):
+        if git(top, "ls-tree", "--name-only", rev, "--", f"{skills_dir}/{name}").strip():
+            return root
+    return None
 
 
 def case_names(top: str, rev: str) -> list[str]:
     return git(top, "ls-tree", "--name-only", f"{rev}:{EVAL_DIR}").splitlines()
 
 
-def eval_command(claude: str, model: str, runs: int, cost: float, skill: str, json_path: Path
-                 ) -> list[str]:
+def eval_command(claude: str, model: str, runs: int, cost: float, skill: str, root: str,
+                 json_path: Path) -> list[str]:
     return [
-        claude, "plugin", "eval", ".", "--eval-dir", EVAL_DIR, "--trust-plugin", "--no-publish",
+        claude, "plugin", "eval", root, "--eval-dir", EVAL_DIR, "--trust-plugin", "--no-publish",
         "-j", "4", "--model", model, "--runs", str(runs), "--max-cost-usd", f"{cost:g}",
         "--case", f"{skill}-*", "--json", str(json_path),
     ]
@@ -90,8 +93,9 @@ def export_tree(top: str, rev: str, dest: Path, paths: tuple[str, ...] = ()) -> 
         raise Infra(f"tar extract failed: {untar.stderr.decode(errors='replace').strip()}")
 
 
-def pin_cases(tree: Path, source: Path) -> None:
-    target = tree / EVAL_DIR
+def pin_cases(tree: Path, source: Path, root: str) -> None:
+    # the eval reads --eval-dir below the plugin root, so the cases go under that root
+    target = tree / root / EVAL_DIR
     if target.exists():
         shutil.rmtree(target)
     shutil.copytree(source, target)
@@ -110,10 +114,11 @@ def check_result(json_path: Path, label: str) -> None:
 
 
 def run_evals(args: argparse.Namespace, top: str, base: str, head: str, cases_rev: str,
-              skills: list[str], claude: str) -> int:
+              skills: dict[str, str], claude: str) -> int:
     work = Path(tempfile.mkdtemp(prefix="regress-trees-"))
     try:
-        out_dir = Path(args.out_dir) if args.out_dir else Path(
+        # absolute: each eval runs with cwd = an exported tree, not the caller's directory
+        out_dir = Path(args.out_dir).resolve() if args.out_dir else Path(
             tempfile.mkdtemp(prefix="regress-out-"))
         out_dir.mkdir(parents=True, exist_ok=True)
         print(f"out dir: {out_dir}")
@@ -123,13 +128,14 @@ def run_evals(args: argparse.Namespace, top: str, base: str, head: str, cases_re
         trees = {"base": base, "head": head}
         for side, rev in trees.items():
             export_tree(top, rev, work / side)
-            pin_cases(work / side, source)
+            for root in sorted(set(skills.values())):
+                pin_cases(work / side, source, root)
         partial = False
         for side in trees:
-            for skill in skills:
+            for skill, root in skills.items():
                 json_path = out_dir / f"{side}-{skill}.json"
                 json_path.unlink(missing_ok=True)
-                cmd = eval_command(claude, args.model, args.runs, args.max_cost_usd, skill,
+                cmd = eval_command(claude, args.model, args.runs, args.max_cost_usd, skill, root,
                                    json_path)
                 print(f"running [{side}] {skill} ...", flush=True)
                 proc = subprocess.run(cmd, cwd=work / side, check=False)
@@ -175,14 +181,15 @@ def plan_or_run(args: argparse.Namespace) -> int:
         print(f"no target: no skill changed between {args.base} and {args.head}")
         return 0
     have = case_names(top, cases_rev)
-    skills = []
+    skills: dict[str, str] = {}  # skill name -> plugin root that holds it in head
     for name in wanted:
-        if not skill_exists(top, head, name):
+        root = skill_root(top, head, name)
+        if root is None:
             print(f"skipped: no skill named {name}")
         # ponytail: cases match by the `NAME-` prefix, so a skill named as another skill's prefix
         # shares its cases - upgrade: a skill field in the case front matter
         elif any(c.startswith(f"{name}-") for c in have):
-            skills.append(name)
+            skills[name] = root
         else:
             print(f"skipped: no eval cases for {name}")
     if not skills:
@@ -193,11 +200,11 @@ def plan_or_run(args: argparse.Namespace) -> int:
     print(f"cost note: {2 * len(skills)} eval calls (base and head per skill), "
           f"each capped at ${args.max_cost_usd:g}")
     if args.plan:
-        out = args.out_dir or "<new temp dir>"
+        out = str(Path(args.out_dir).resolve()) if args.out_dir else "<new temp dir>"
         print(f"out dir: {out}")
         for side in ("base", "head"):
-            for skill in skills:
-                cmd = eval_command(claude, args.model, args.runs, args.max_cost_usd, skill,
+            for skill, root in skills.items():
+                cmd = eval_command(claude, args.model, args.runs, args.max_cost_usd, skill, root,
                                    Path(out) / f"{side}-{skill}.json")
                 print(f"[{side}] cd <{side} tree> && {shlex.join(cmd)}")
         return 0

@@ -175,6 +175,20 @@ run noarm --base "$TMP/noarm.json" --head "$TMP/h1.json"
 check "missing arms.with" 2 "$RC"
 has "  names the file" "unrecognized result shape: $TMP/noarm.json" "$TMP/noarm.err"
 
+python3 - "$TMP/badgraders.json" <<'PY'
+import json
+import sys
+
+gdef = {"name": "skill-fired", "type": "tool_used", "config": {"tool": "Skill"}}
+run = {"passed": True, "error": None, "graders": 5}
+case = {"name": "a-fires", "graders": [gdef], "arms": {"with": [run], "without": []}}
+json.dump({"schemaVersion": 1, "cases": [case]}, open(sys.argv[1], "w"))
+PY
+run badgraders --base "$TMP/badgraders.json" --head "$TMP/h1.json"
+check "run graders not a list" 2 "$RC"
+hasnt "  no traceback" "Traceback" "$TMP/badgraders.err"
+has "  names the file" "unrecognized result shape: $TMP/badgraders.json" "$TMP/badgraders.err"
+
 mk "$TMP/dup.json" a-fires:fires:3:3
 run dup --base "$TMP/dup.json" "$TMP/dup.json" --head "$TMP/h1.json"
 check "duplicate name on one side" 2 "$RC"
@@ -258,19 +272,25 @@ cat > "$TMP/fake-claude.sh" <<'SH'
 set -euo pipefail
 out=""
 glob=""
+target=""
+prev=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --json) out="$2" ;;
     --case) glob="$2" ;;
   esac
+  if [ "$prev" = "eval" ]; then target="$1"; fi
+  prev="$1"
   shift
 done
 skill="${glob%-\*}"
-echo "$skill" >> "$FAKE_LOG"
+echo "$skill $target" >> "$FAKE_LOG"
 echo "$(basename "$PWD") $(cat evals/plugin/foo-fires/prompt.md)" >> "$FAKE_SEEN"
+# like the real CLI: --eval-dir is read below the plugin target, which loads only its own skills
+if [ ! -d "$target/evals/plugin/$skill-fires" ]; then echo "no cases under $target" >&2; exit 4; fi
 mode="${FAKE_MODE:-normal}"
 fires=0
-if grep -qs MARKER "skills/$skill/SKILL.md" "extras/skills/$skill/SKILL.md"; then fires=3; fi
+if grep -qs MARKER "$target/skills/$skill/SKILL.md"; then fires=3; fi
 case "$mode" in
   nojson) exit 0 ;;
   zero) python3 "$FAKE_MK" "$out"; exit 0 ;;
@@ -351,6 +371,7 @@ fi
 if [ "$(trees_left)" = "0" ]; then ok "  temp trees removed"; else bad "  temp trees left"; fi
 calls=$(wc -l < "$FAKE_LOG" | tr -d ' ')
 if [ "$calls" = "2" ]; then ok "  two eval calls (base, head)"; else bad "  eval calls: $calls"; fi
+hasline "  foo runs against the core plugin" "foo ." "$FAKE_LOG"
 if [ -z "$(gitr "$REPO" status --porcelain)" ]; then
   ok "  working tree untouched"
 else
@@ -373,6 +394,17 @@ REGRESS_CLAUDE_BIN="$FAKE" run_regress extras --base "$HEAD_REV" --head "$EXT_RE
 check "skill under extras/skills" 0 "$RC"
 has "  checks ext" "skills: ext" "$TMP/extras.out"
 has "  IMPROVED" "| ext-fires | skill-fired | 0/3 | 3/3 | IMPROVED |" "$TMP/extras.out"
+hasline "  ext runs against the extras plugin" "ext extras" "$FAKE_LOG"
+
+reset_logs
+REGRESS_CLAUDE_BIN="$FAKE" run_regress relout --base "$BASE_REV" --head "$HEAD_REV" \
+  --out-dir ../out-rel
+check "relative --out-dir" 0 "$RC"
+if [ -s "$TMP/out-rel/compare.json" ]; then
+  ok "  results land under the caller's directory"
+else
+  bad "  results not under the caller's directory"
+fi
 
 FAKE_MODE=partial REGRESS_CLAUDE_BIN="$FAKE" run_regress partial --base "$BASE_REV" \
   --head "$HEAD_REV" --out-dir "$TMP/out-partial"

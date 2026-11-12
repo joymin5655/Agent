@@ -90,7 +90,12 @@ def _case_data(case: dict[str, Any], path: str) -> CaseData:
             total += 1
             if run.get("error") is not None:
                 errors += 1
-            for rg in run.get("graders") or []:
+            run_graders = run.get("graders")
+            if run_graders is None:
+                run_graders = []
+            if not isinstance(run_graders, list):
+                raise _shape_error(path)
+            for rg in run_graders:
                 if isinstance(rg, dict) and rg.get("name") == name and rg.get("passed") is True:
                     passed += 1
         data.graders[name] = GraderStat(_classify(gdef), Counts(passed, total, errors))

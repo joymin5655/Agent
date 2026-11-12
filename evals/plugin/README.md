@@ -101,8 +101,10 @@ python3 evals/plugin/regress.py --skill wrap --runs 5
   head and have `<skill>-*` cases here, and exports both revisions with `git archive` into
   temp trees (your working tree and index are not touched). Both trees run the same cases
   (`--cases-from`, default head), so only the skill text differs.
-- Per side and skill it runs `claude plugin eval ... --case '<skill>-*'` with the same flags
-  as "Run" above, then calls `compare.py`. Skills without cases are reported as skipped.
+- Per side and skill it runs `claude plugin eval <plugin> ... --case '<skill>-*'` with the same
+  flags as "Run" above, then calls `compare.py`. `<plugin>` is `.` for `skills/NAME/` and
+  `extras` for `extras/skills/NAME/`; the eval reads `--eval-dir` below that plugin, so the
+  cases are copied there in the exported trees. Skills without cases are reported as skipped.
 - Flags (default in brackets):
   - `--base REV` [`origin/main`]: the merge-base of this and `--head` is the baseline.
   - `--head REV` [`HEAD`].
@@ -111,7 +113,8 @@ python3 evals/plugin/regress.py --skill wrap --runs 5
     `extras/skills/NAME/` in head.
   - `--runs N` [3]: runs per case; minimum 3 (the thresholds below assume 3).
   - `--model M` [`sonnet`], `--max-cost-usd X` [6, per eval call].
-  - `--out-dir DIR` [a new temp dir]: result JSON, `compare.md`, `compare.json`.
+  - `--out-dir DIR` [a new temp dir]: result JSON, `compare.md`, `compare.json`. A relative
+    `DIR` is taken from the directory you run `regress.py` in.
   - `--plan` [off]: print the plan, call no model, create no directory.
   - `--keep` [off]: keep the exported temp trees.
   - `REGRESS_CLAUDE_BIN` [`claude`]: environment variable naming another eval binary.
