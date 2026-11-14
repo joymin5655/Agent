@@ -135,6 +135,22 @@ jobs:
         shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # Pinned lint tools for core/tests/ruff-gate.sh and shellcheck-gate.sh (both are `all` in
+      # verify-all-must-run.txt, so a missing tool fails the run instead of skipping). A failed
+      # download or checksum mismatch fails this step; there is no silent fallback. shellcheck
+      # v0.11.0 linux x86_64 .tar.xz sha256 comes from the official release asset digest
+      # (api.github.com/repos/koalaman/shellcheck/releases/tags/v0.11.0).
+      - name: Install pinned ruff and shellcheck
+        run: |
+          python3 -m venv "$RUNNER_TEMP/ruff-venv"
+          "$RUNNER_TEMP/ruff-venv/bin/python" -m pip install --quiet ruff==0.16.5
+          echo "$RUNNER_TEMP/ruff-venv/bin" >> "$GITHUB_PATH"
+          mkdir -p "$RUNNER_TEMP/shellcheck-dl"
+          curl -fsSL -o "$RUNNER_TEMP/shellcheck-dl/sc.tar.xz" \
+            https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz
+          echo "8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198  $RUNNER_TEMP/shellcheck-dl/sc.tar.xz" | sha256sum -c -
+          tar -xJf "$RUNNER_TEMP/shellcheck-dl/sc.tar.xz" -C "$RUNNER_TEMP/shellcheck-dl" shellcheck-v0.11.0/shellcheck
+          echo "$RUNNER_TEMP/shellcheck-dl/shellcheck-v0.11.0" >> "$GITHUB_PATH"
       # Anti-lying self-test first: proves the runner enumerates every core/tests
       # script (a battery/gate dropped from the runner fails here) and that the shards
       # partition the set before we trust their all-green. It is deterministic and does not

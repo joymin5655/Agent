@@ -119,8 +119,8 @@ RULE AG-7 | AGENTS.md § Multi-session | Concurrent sessions register and take f
 RULE AG-8 | AGENTS.md § Agent brain | Agents write only the raw/ quarantine, never curated notes or the vault | PARTIAL script:core/brain/brain-mcp.py,test:core/tests/brain-capture-test.sh ~ the MCP server exposes only the capture tool, but a direct file write into notes/ or the vault is not blocked
 RULE AG-9a | AGENTS.md § Style | Guarded grep-count idiom in strict-mode shell | PARTIAL test:core/tests/pipefail-idiom-scan.sh ~ scans only core/hooks, core/infra, adapters, evals and setup.sh, only for the counting idiom, and skips scripts that lack set -e or pipefail
 RULE AG-9c | AGENTS.md § Style | Every shell script starts with set -euo pipefail | UNENFORCED
-RULE AG-9b | AGENTS.md § Style | Shell scripts are shellcheck clean (no CI step runs it) | UNENFORCED
-RULE AG-10 | AGENTS.md § Style | Python is ruff clean and type-hinted (no CI step runs it) | UNENFORCED
+RULE AG-9b | AGENTS.md § Style | Shell scripts are shellcheck clean | PARTIAL test:core/tests/shellcheck-gate.sh,ci:.github/workflows/ci.yml ~ info and style levels, SC2319 in core/tests, and legacy/ are not checked
+RULE AG-10 | AGENTS.md § Style | Python is ruff clean and type-hinted | PARTIAL test:core/tests/ruff-gate.sh,ci:.github/workflows/ci.yml ~ only E4/E7/E9/F; type hints only may not grow per file (865 gaps remain); legacy/ excluded
 RULE AG-11 | AGENTS.md § Style | Hook stdout is strict json.dumps, never print | UNENFORCED
 RULE AG-12 | AGENTS.md § Style | Markdown prose at most 100 columns, no trailing whitespace | UNENFORCED
 RULE AG-13 | AGENTS.md § Style | Comments only where the why is non-obvious | UNENFORCED
