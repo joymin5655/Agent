@@ -718,9 +718,11 @@ check "20001 paths: warned + fail-closed HIT on every area with a pattern" $?
 [[ "$CLI_OUT" != *$'HIT\tdata'* ]]; check "areas without a pattern are not marked" $?
 P=$(mkgit as-n)
 printf 'risk_areas:\n  payment:\n    pattern: "^pay/"\n' > "$P/.agent/hook-config.yml"
+# shellcheck disable=SC2046 # intentional word splitting: builds a 20001-argument call
 as "$P" "" $(python3 -c 'print(" ".join("src/f%d" % i for i in range(20001)))')
 [[ $AS_RC -eq 14 ]]; check "auto-ship: truncated list aborts (exit 14, fail-closed)" $?
 rm "$P/.agent/hook-config.yml"
+# shellcheck disable=SC2046 # intentional word splitting: builds a 20001-argument call
 as "$P" "" $(python3 -c 'print(" ".join("src/f%d" % i for i in range(20001)))')
 [[ $AS_RC -eq 17 ]]; check "auto-ship: same big list without config is unaffected" $?
 W=$(mkrepo pp-n)
@@ -963,14 +965,19 @@ ptg "$Pa" 'echo $(( $(touch db/migrations/a) + 1 ))'
 
 echo
 echo "=== (W) r4: an extraction failure never discards the hits already found ==="
+# shellcheck disable=SC2034 # read indirectly through ${!var} in the loop below
 BOMB_ARITH="$(python3 -c 'print("touch db/migrations/a.sql; echo " + "$((1+" * 2000 + "0" + "))" * 2000)')"
+# shellcheck disable=SC2034 # read indirectly through ${!var} in the loop below
 BOMB_SUBST="$(python3 -c 'print("touch db/migrations/a.sql; echo " + "$(echo " * 2000 + "x" + ")" * 2000)')"
+# shellcheck disable=SC2034 # read indirectly through ${!var} in the loop below
 BOMB_TICK="$(python3 -c '
 s = "touch db/migrations/b.sql"
 for _ in range(12):
     s = "echo `" + s.replace("\\", "\\\\").replace("`", "\\`") + "`"
 print("touch db/migrations/a.sql; " + s)')"
+# shellcheck disable=SC2034 # read indirectly through ${!var} in the loop below
 BOMB_EVAL="touch db/migrations/a.sql; eval eval eval eval eval eval eval eval touch db/migrations/b.sql"
+# shellcheck disable=SC2034 # read indirectly through ${!var} in the loop below
 BOMB_SHELL="$(python3 -c '
 import shlex
 s = "touch db/migrations/b.sql"

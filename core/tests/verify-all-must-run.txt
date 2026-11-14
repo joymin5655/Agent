@@ -48,3 +48,7 @@ worker-setup-skill-test.sh         all
 # gitleaks (secret scan and its allowlist battery)
 gitleaks                           local
 gitleaks-allowlist-test.sh         local
+ruff-gate.sh                       all
+ruff-gate-test.sh                  all
+shellcheck-gate.sh                 all
+shellcheck-gate-test.sh            all

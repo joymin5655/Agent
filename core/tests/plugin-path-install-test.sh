@@ -164,7 +164,7 @@ check "red-probe-broken-manifest-named" $?
 echo
 echo "=== (d2) CONTROL: unmodified manifest fixture -> registry-drift passes (probe is not an always-fail) ==="
 cp "$REPO_ROOT/.claude-plugin/plugin.json" "$RFX/.claude-plugin/plugin.json"
-OUT_D2="$(REGISTRY_DRIFT_ROOT="$RFX" bash "$REGISTRY_DRIFT" 2>&1)"
+REGISTRY_DRIFT_ROOT="$RFX" bash "$REGISTRY_DRIFT" >/dev/null 2>&1
 RC_D2=$?
 [[ $RC_D2 -eq 0 ]]
 check "control-clean-manifest-passes" $?

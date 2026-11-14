@@ -51,7 +51,7 @@ make_repo() {
 run_case() {
   local name="$1" repo="$2" expect="$3"
   local out
-  out="$( cd "$repo" && AGENT_AUTOSYNC_DRYRUN=1 GITHUB_ACTIONS= bash "$HOOK" 2>/dev/null )"
+  out="$( cd "$repo" && AGENT_AUTOSYNC_DRYRUN=1 GITHUB_ACTIONS='' bash "$HOOK" 2>/dev/null )"
   local got="no"
   if printf '%s\n' "$out" | grep -q "^DRYRUN push origin "; then
     got="yes"

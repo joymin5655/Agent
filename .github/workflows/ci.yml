@@ -135,6 +135,33 @@ jobs:
         shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # Pinned lint tools for core/tests/ruff-gate.sh and shellcheck-gate.sh (both are `all` in
+      # verify-all-must-run.txt, so a missing tool fails the run instead of skipping). Both are
+      # official release binaries checked against the release asset digest; a failed download or
+      # checksum mismatch fails this step, with no silent fallback. Only a dedicated bin dir
+      # holding just `ruff` and `shellcheck` goes on PATH, so the runner python3/pip stay the
+      # system ones. Digests: api.github.com/repos/astral-sh/ruff/releases/tags/0.16.5 (ruff
+      # x86_64-unknown-linux-gnu.tar.gz) and api.github.com/repos/koalaman/shellcheck/releases/tags/v0.11.0
+      # (shellcheck-v0.11.0.linux.x86_64.tar.xz).
+      - name: Install pinned ruff and shellcheck
+        run: |
+          set -euo pipefail
+          dl="$RUNNER_TEMP/lint-dl"
+          bin="$RUNNER_TEMP/lint-bin"
+          mkdir -p "$dl" "$bin"
+          curl -fsSL -o "$dl/ruff.tar.gz" \
+            https://github.com/astral-sh/ruff/releases/download/0.16.5/ruff-x86_64-unknown-linux-gnu.tar.gz
+          echo "65b8bae7e43f12a91b71036a52176012b3aefb725d5ae263e2771474110a0983  $dl/ruff.tar.gz" | sha256sum -c -
+          tar -xzf "$dl/ruff.tar.gz" -C "$dl" ruff-x86_64-unknown-linux-gnu/ruff
+          install -m 0755 "$dl/ruff-x86_64-unknown-linux-gnu/ruff" "$bin/ruff"
+          curl -fsSL -o "$dl/sc.tar.xz" \
+            https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz
+          echo "8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198  $dl/sc.tar.xz" | sha256sum -c -
+          tar -xJf "$dl/sc.tar.xz" -C "$dl" shellcheck-v0.11.0/shellcheck
+          install -m 0755 "$dl/shellcheck-v0.11.0/shellcheck" "$bin/shellcheck"
+          "$bin/ruff" --version
+          "$bin/shellcheck" --version
+          echo "$bin" >> "$GITHUB_PATH"
       # Anti-lying self-test first: proves the runner enumerates every core/tests
       # script (a battery/gate dropped from the runner fails here) and that the shards
       # partition the set before we trust their all-green. It is deterministic and does not

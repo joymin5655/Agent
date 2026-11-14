@@ -306,7 +306,7 @@ JSON
 mkdir -p "$FIX_G/cache/market/agent-harness/0.5.4" "$FIX_G/cache/market/agent-harness/0.5.5"
 mkdir -p "$FIX_G/skills/spec" "$FIX_G/skills/supervise"
 OUT_G_FILE="$FIX_G/out.yml"
-OUT_G="$(AGENT_GLOBAL_SETTINGS="$FIX_G/settings.json" AGENT_PLUGIN_CACHE_ROOT="$FIX_G/cache" AGENT_GLOBAL_SKILLS_DIR="$FIX_G/skills" AGENT_EXPORT_SCANNER="$SCANNER_SEAM_VALUE" bash "$EXPORTER" "$OUT_G_FILE" 2>&1)"
+AGENT_GLOBAL_SETTINGS="$FIX_G/settings.json" AGENT_PLUGIN_CACHE_ROOT="$FIX_G/cache" AGENT_GLOBAL_SKILLS_DIR="$FIX_G/skills" AGENT_EXPORT_SCANNER="$SCANNER_SEAM_VALUE" bash "$EXPORTER" "$OUT_G_FILE" >/dev/null 2>&1
 RC_G=$?
 [[ $RC_G -eq 0 && -f "$OUT_G_FILE" ]]
 check "export-happy-path-exit-0-file-written" $?
@@ -389,7 +389,7 @@ cat > "$FIX_I3/settings.json" <<'JSON'
 ]}]}}
 JSON
 OUT_I3_FILE="$FIX_I3/out.yml"
-OUT_I3="$(AGENT_GLOBAL_SETTINGS="$FIX_I3/settings.json" AGENT_PLUGIN_CACHE_ROOT="$FIX_I3/no-cache" AGENT_GLOBAL_SKILLS_DIR="$FIX_I3/no-skills" AGENT_EXPORT_SCANNER="$SCANNER_SEAM_VALUE" bash "$EXPORTER" "$OUT_I3_FILE" 2>&1)"
+AGENT_GLOBAL_SETTINGS="$FIX_I3/settings.json" AGENT_PLUGIN_CACHE_ROOT="$FIX_I3/no-cache" AGENT_GLOBAL_SKILLS_DIR="$FIX_I3/no-skills" AGENT_EXPORT_SCANNER="$SCANNER_SEAM_VALUE" bash "$EXPORTER" "$OUT_I3_FILE" >/dev/null 2>&1
 RC_I3=$?
 [[ $RC_I3 -eq 0 && -f "$OUT_I3_FILE" ]] && \
   [[ "$(cat "$OUT_I3_FILE")" == *'command: "real-hook.sh"'* ]] && \
@@ -408,7 +408,7 @@ cat > "$FIX_I4/settings.json" <<'JSON'
 ]}]}}
 JSON
 OUT_I4_FILE="$FIX_I4/out.yml"
-OUT_I4="$(AGENT_GLOBAL_SETTINGS="$FIX_I4/settings.json" AGENT_PLUGIN_CACHE_ROOT="$FIX_I4/no-cache" AGENT_GLOBAL_SKILLS_DIR="$FIX_I4/no-skills" AGENT_EXPORT_SCANNER="$SCANNER_SEAM_VALUE" bash "$EXPORTER" "$OUT_I4_FILE" 2>&1)"
+AGENT_GLOBAL_SETTINGS="$FIX_I4/settings.json" AGENT_PLUGIN_CACHE_ROOT="$FIX_I4/no-cache" AGENT_GLOBAL_SKILLS_DIR="$FIX_I4/no-skills" AGENT_EXPORT_SCANNER="$SCANNER_SEAM_VALUE" bash "$EXPORTER" "$OUT_I4_FILE" >/dev/null 2>&1
 RC_I4=$?
 [[ $RC_I4 -eq 0 && "$(cat "$OUT_I4_FILE")" == *'command: "real-hook.sh"'* && "$(cat "$OUT_I4_FILE")" != *leaked.py* ]]
 check "export-arg-extension-does-not-win" $?
@@ -425,7 +425,7 @@ cat > "$FIX_I5/settings.json" <<'JSON'
 ]}]}}
 JSON
 OUT_I5_FILE="$FIX_I5/out.yml"
-OUT_I5="$(AGENT_GLOBAL_SETTINGS="$FIX_I5/settings.json" AGENT_PLUGIN_CACHE_ROOT="$FIX_I5/no-cache" AGENT_GLOBAL_SKILLS_DIR="$FIX_I5/no-skills" AGENT_EXPORT_SCANNER="$SCANNER_SEAM_VALUE" bash "$EXPORTER" "$OUT_I5_FILE" 2>&1)"
+AGENT_GLOBAL_SETTINGS="$FIX_I5/settings.json" AGENT_PLUGIN_CACHE_ROOT="$FIX_I5/no-cache" AGENT_GLOBAL_SKILLS_DIR="$FIX_I5/no-skills" AGENT_EXPORT_SCANNER="$SCANNER_SEAM_VALUE" bash "$EXPORTER" "$OUT_I5_FILE" >/dev/null 2>&1
 RC_I5=$?
 # both hooks present (executable basenames rtk / node), no argument values leaked
 [[ $RC_I5 -eq 0 ]] && \
@@ -459,7 +459,7 @@ echo
 echo "=== (j) setup.sh --doctor is unaffected: still exit 0, still read-only (scratch-HOME snapshot) ==="
 SCRATCH_J="$(safe_mktemp_d)" || { echo "FAIL: mktemp -d"; exit 1; }
 BEFORE_J="$(find "$SCRATCH_J" -mindepth 1 | sort)"
-OUT_J="$(HOME="$SCRATCH_J" PYTHONDONTWRITEBYTECODE=1 AGENT_PLUGIN_CACHE_ROOT="$SCRATCH_J/no-cache" AGENT_GLOBAL_SETTINGS=/nonexistent/settings.json AGENT_CLAUDE_USER_CONFIG="$SCRATCH_J/.claude.json" "$BASH_BIN" "$SETUP" --doctor 2>&1)"
+HOME="$SCRATCH_J" PYTHONDONTWRITEBYTECODE=1 AGENT_PLUGIN_CACHE_ROOT="$SCRATCH_J/no-cache" AGENT_GLOBAL_SETTINGS=/nonexistent/settings.json AGENT_CLAUDE_USER_CONFIG="$SCRATCH_J/.claude.json" "$BASH_BIN" "$SETUP" --doctor >/dev/null 2>&1
 RC_J=$?
 AFTER_J="$(find "$SCRATCH_J" -mindepth 1 | sort)"
 [[ $RC_J -eq 0 ]]

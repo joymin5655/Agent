@@ -193,7 +193,7 @@ CODEX_BRAIN="$(render "$CODEX_T" | awk '
   /^\[/ { f=0 }
   f')"
 if [[ -n "$CODEX_BRAIN" ]] \
-   && grep -qE "command[[:space:]]*=[[:space:]]*[\"']$EXPECT_CMD[\"']" <<<"$CODEX_BRAIN" \
+   && grep -qE "command[[:space:]]*=[[:space:]]*[\"']${EXPECT_CMD}[\"']" <<<"$CODEX_BRAIN" \
    && grep -qF "$EXPECT_ARG" <<<"$CODEX_BRAIN"; then
   rok "codex-mcp"
 else
