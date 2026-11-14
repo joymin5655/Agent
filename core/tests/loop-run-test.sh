@@ -65,7 +65,7 @@ ledger_rows() {  # ledger_rows -> data row count (excludes header), 0 if absent
 
 echo "=== (a) init: state file + active flag + goal row ==="
 run_lr init improve-test --target 'agents/.*' --base "$BASE_REF" --cap 3 --timeout-s 5
-check "init-exit-0" $([[ $RC -eq 0 ]]; echo $?)
+check "init-exit-0" "$([[ $RC -eq 0 ]]; echo $?)"
 [[ -f "$REPO/.agent/loop/state/improve-test.json" ]]; check "state-file-created" $?
 [[ -f "$REPO/.agent/loop/active" ]]; check "active-flag-created" $?
 run_lr status improve-test

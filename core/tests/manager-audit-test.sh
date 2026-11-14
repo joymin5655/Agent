@@ -267,6 +267,7 @@ if ! has_finding role-compliance review-lane-missing WARN; then ok "c5-code-revi
 
 echo
 echo "=== mode: --global (slug-less cross-session sweep) ==="
+# shellcheck disable=SC2120 # "$@" carries optional extra args; current calls pass none
 grun() { # grun [extra args...] -> OUT, RC  (no slug; always --json)
     OUT="$(env \
         AGENT_MODEL_ROUTING_SINK="$LOGS/routing.jsonl" \

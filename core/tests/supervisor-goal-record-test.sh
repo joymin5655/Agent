@@ -50,7 +50,7 @@ build_fixture() {
 echo "=== (a) complete drops RECORD.md with the four ledger fields ==="
 FX=$(build_fixture)
 (
-  cd "$FX"
+  cd "$FX" || exit 1
   bash core/infra/supervisor-goal.sh init demo 2 >/dev/null
   bash core/infra/supervisor-goal.sh advance-wave demo 1 >/dev/null
   bash core/infra/supervisor-goal.sh advance-wave demo 2 >/dev/null
@@ -79,7 +79,7 @@ FX=$(build_fixture)
 mkdir -p "$FX/.agent/plans/demo"
 printf '# demo — execution record\nhand-written by the skill\n' > "$FX/.agent/plans/demo/RECORD.md"
 (
-  cd "$FX"
+  cd "$FX" || exit 1
   bash core/infra/supervisor-goal.sh init demo 1 >/dev/null
   bash core/infra/supervisor-goal.sh complete demo >/dev/null
 )
@@ -93,7 +93,7 @@ RO_DIR="$TMP_ROOT/readonly-plans"
 mkdir -p "$RO_DIR"
 chmod -w "$RO_DIR"
 (
-  cd "$FX"
+  cd "$FX" || exit 1
   bash core/infra/supervisor-goal.sh init demo 1 >/dev/null
   AGENT_PLANS_DIR="$RO_DIR" bash core/infra/supervisor-goal.sh complete demo >/dev/null
 )
@@ -112,7 +112,7 @@ echo "=== (e) AGENT_PLANS_DIR seam is honored ==="
 FX=$(build_fixture)
 ALT="$TMP_ROOT/alt-plans"
 (
-  cd "$FX"
+  cd "$FX" || exit 1
   bash core/infra/supervisor-goal.sh init demo 1 >/dev/null
   AGENT_PLANS_DIR="$ALT" bash core/infra/supervisor-goal.sh complete demo >/dev/null
 )
@@ -122,7 +122,7 @@ echo
 echo "=== (f) traversal slug -> no ledger written outside the plans root, complete still succeeds ==="
 FX=$(build_fixture)
 (
-  cd "$FX"
+  cd "$FX" || exit 1
   bash core/infra/supervisor-goal.sh init good 1 >/dev/null
   bash core/infra/supervisor-goal.sh complete '../../escape' >/dev/null
 )
@@ -137,7 +137,7 @@ FX=$(build_fixture)
 GW_DIR="$TMP_ROOT/graceful-wiki"
 mkdir -p "$GW_DIR"
 (
-  cd "$FX"
+  cd "$FX" || exit 1
   # a budget-limited transition is what fires _emit_graceful_wrap; the goal's
   # slug carries traversal characters, so the guard must skip the stub write.
   bash core/infra/supervisor-goal.sh init '..escape' 1 10 >/dev/null

@@ -22,8 +22,9 @@ cleanup() { rm -rf "$DIR"; }
 trap cleanup EXIT
 
 # fixture <file> <prefix> <stop_hooks_json_array> [extra_event_json]
+# $2 (prefix) is accepted for call-site symmetry with h() and not used here
 fixture() {
-  local file="$1" prefix="$2" stop="$3" extra="${4:-}"
+  local file="$1" stop="$3" extra="${4:-}"
   cat > "$file" <<JSON
 {
   "hooks": {

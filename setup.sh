@@ -640,8 +640,10 @@ PY
 
     # 9. ~/.agent/plans
     if [[ -d "$HOME/.agent/plans" ]]; then
+        # shellcheck disable=SC2088 # display text, not a path to expand
         add_row PASS "~/.agent/plans — exists"
     else
+        # shellcheck disable=SC2088 # display text, not a path to expand
         add_row WARN "~/.agent/plans — missing; mkdir -p ~/.agent/plans"
     fi
 
@@ -1069,7 +1071,8 @@ PY
     # copy-pasteable shell command is a command-injection vector for any path
     # containing shell metacharacters (spaces, $(), backticks, ;) — install_claude()
     # (line ~120) already quotes its own brain_mcp path for the same reason.
-    local brain_reg_cmd="claude mcp add brain --scope user -- python3 $(printf '%q' "$FRAMEWORK_ROOT")/core/brain/brain-mcp.py"
+    local brain_reg_cmd
+    brain_reg_cmd="claude mcp add brain --scope user -- python3 $(printf '%q' "$FRAMEWORK_ROOT")/core/brain/brain-mcp.py"
     # strip terminal-active chars before echoing a config-derived path back to a
     # terminal (display spoofing — same hardening as checks 12/15).
     local claude_user_cfg_shown
@@ -1173,7 +1176,7 @@ PY
     # both argvs verbatim, so an unresolvable one is a dead lane (exit 127),
     # not merely an unhardened one.
     if command -v jq >/dev/null 2>&1 && [[ -f "$FRAMEWORK_ROOT/core/infra/backends.json" ]]; then
-        local wl_missing="" wl_lanes="" wl_row
+        local wl_missing="" wl_lanes=""
         while IFS=$'\t' read -r wl_lane wl_bin; do
             [[ -n "$wl_bin" ]] || continue
             case ",$wl_lanes," in *",$wl_lane,"*) ;; *) wl_lanes="${wl_lanes:+$wl_lanes,}$wl_lane" ;; esac
