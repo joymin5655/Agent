@@ -53,7 +53,7 @@ RISK_DEPLOY_PATTERN="${AGENT_RISK_DEPLOY_PATTERN:-^.*/functions/.*/index\.ts$}"
 DIFF_FILES=""
 DIFF_RANGE=""
 ZERO=0000000000000000000000000000000000000000
-while read -r local_ref local_sha remote_ref remote_sha; do
+while read -r _ local_sha _ remote_sha; do
   [ -z "${local_sha:-}" ] && continue
   if [ "$local_sha" = "$ZERO" ]; then
     continue  # branch delete
@@ -88,6 +88,7 @@ URL_SCAN="$ROOT/core/git-hooks/scan-remote-url.py"
 if command -v python3 >/dev/null 2>&1 && [ -f "$URL_SCAN" ]; then
   REMOTE_URL="$(git remote get-url "$REMOTE" 2>/dev/null || true)"
   if [ -n "$REMOTE_URL" ]; then
+    # shellcheck disable=SC2069  # intentional: drop stdout, keep stderr on the hook stdout; the failure branch re-runs the scan to print it on stderr
     if ! printf '%s\n' "$REMOTE_URL" | python3 "$URL_SCAN" 2>&1 >/dev/null; then
       printf '%s\n' "$REMOTE_URL" | python3 "$URL_SCAN" >&2 || true
       echo "${RED}✗ remote URL embeds a credential — push blocked.${NC}" >&2
