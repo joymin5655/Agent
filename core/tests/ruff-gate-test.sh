@@ -91,6 +91,35 @@ check "ann-drop-still-exit-0" "$(rc_is 0)"
 has "mod.py: 0 < baseline 1"; check "ann-drop-reports-lower-baseline" $?
 
 echo
+echo "=== (4b) a noqa comment cannot hide a new ANN gap ==="
+FX="$(new_fixture)"
+printf 'def h(y: int):  # noqa: ANN201\n    return y\n' >> "$FX/mod.py"
+git -C "$FX" add -A
+run "$FX"
+check "noqa-ann-growth-exit-1" "$(rc_is 1)"
+has "mod.py: 2 ANN > baseline 1"; check "noqa-ann-growth-counted" $?
+
+echo
+echo "=== (4c) outside a git work tree fails instead of passing on 0 files ==="
+NOGIT="$(mktemp -d "$TMP_ROOT/nogitXXXXXX")"
+run "$NOGIT"
+check "no-git-exit-1" "$(rc_is 1)"
+has "FAIL ruff-gate"; check "no-git-says-fail" $?
+
+echo
+echo "=== (4d) --print-baseline refuses an unpinned ruff; a relative --baseline resolves ==="
+FX="$(new_fixture)"
+FAKEBIN="$(mktemp -d "$TMP_ROOT/fakeXXXXXX")"
+printf '#!/bin/sh\necho "ruff 0.0.1"\n' > "$FAKEBIN/ruff"
+chmod +x "$FAKEBIN/ruff"
+OUT="$(PATH="$FAKEBIN:$PATH" bash "$GATE" --root "$FX" --print-baseline 2>&1)"; RC=$?
+check "print-baseline-unpinned-exit-1" "$(rc_is 1)"
+has "--print-baseline needs ruff"; check "print-baseline-unpinned-says-why" $?
+printf '%s\n' "$OUT" | grep -q '"counts"'; [[ $? -ne 0 ]]; check "print-baseline-unpinned-prints-no-json" $?
+OUT="$(cd "$FX" && bash "$GATE" --root "$FX" --baseline core/tests/ann-baseline.json 2>&1)"; RC=$?
+check "relative-baseline-exit-0" "$(rc_is 0)"
+
+echo
 echo "=== (5) the shipped baseline matches the real tree ==="
 run "$REPO_ROOT"
 check "shipped-tree-passes" "$(rc_is 0)"

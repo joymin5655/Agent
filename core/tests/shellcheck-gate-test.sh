@@ -100,5 +100,27 @@ run "$FX"
 check "non-shell-file-ignored-exit-0" "$(rc_is 0)"
 
 echo
+echo "=== (5) shebang edge cases: tab after the interpreter is checked; fish and zsh are not ==="
+FX="$(new_fixture)"
+printf '#!/bin/bash\t\nleftover=1\n' > "$FX/bin/tabbed"
+git -C "$FX" add -A
+run "$FX"
+check "tab-after-interpreter-exit-1" "$(rc_is 1)"
+has "bin/tabbed"; check "tab-after-interpreter-named" $?
+FX="$(new_fixture)"
+printf '#!/usr/bin/env fish\nset unused 1\n' > "$FX/bin/fishy"
+printf '#!/bin/zsh\nunused=1\n' > "$FX/bin/zshy"
+git -C "$FX" add -A
+run "$FX"
+check "fish-and-zsh-ignored-exit-0" "$(rc_is 0)"
+
+echo
+echo "=== (6) outside a git work tree fails instead of passing on 0 files ==="
+NOGIT="$(mktemp -d "$TMP_ROOT/nogitXXXXXX")"
+run "$NOGIT"
+check "no-git-exit-1" "$(rc_is 1)"
+has "FAIL shellcheck-gate"; check "no-git-says-fail" $?
+
+echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]

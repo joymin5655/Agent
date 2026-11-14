@@ -8,11 +8,14 @@
 #      only — lowering the baseline is a reviewed edit, never automatic.
 #
 # ruff missing -> `SKIP ruff not installed` as the only output line, exit 2 (verify-all.sh SKIP
-# contract). A ruff other than the pinned version is announced and still judged, but that result
-# is not evidence and must not be used to regenerate the baseline.
+# contract). A ruff other than the pinned version is announced and still judged, and its PASS line
+# says "unpinned: not gate evidence"; --print-baseline refuses to run on it (exit 1), so the
+# baseline can only be regenerated with the pinned ruff. The ANN count uses --ignore-noqa, so a
+# `# noqa: ANN...` comment cannot hide a type-hint gap.
 #
 # Usage: bash core/tests/ruff-gate.sh [--root DIR] [--baseline FILE] [--print-baseline]
-#   --print-baseline  print the current per-file ANN counts as baseline JSON and exit 0.
+#   --print-baseline  print the current per-file ANN counts as baseline JSON and exit 0
+#                     (exit 1 without output when ruff is not the pinned version).
 # Exit 0 pass, 1 violation, 2 skipped.
 set -euo pipefail
 
@@ -24,7 +27,7 @@ PRINT=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --root) ROOT="$(cd "$2" && pwd)"; shift 2 ;;
-    --baseline) BASELINE="$2"; shift 2 ;;
+    --baseline) BASELINE="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift 2 ;;
     --print-baseline) PRINT=1; shift ;;
     *) echo "unknown argument: $1" >&2; exit 64 ;;
   esac
@@ -38,19 +41,31 @@ fi
 VER="$(ruff --version | awk '{print $2}')"
 if [[ "$VER" != "$PINNED" ]]; then
   echo "NOTE ruff $VER is not the pinned $PINNED: this result is not gate evidence" >&2
+  if [[ $PRINT -eq 1 ]]; then
+    echo "FAIL --print-baseline needs ruff $PINNED (found $VER)" >&2
+    exit 1
+  fi
 fi
 
 cd "$ROOT"
+LIST="$(mktemp)"
+ANN_JSON="$(mktemp)"
+trap 'rm -f "$LIST" "$ANN_JSON"' EXIT
+if ! git -c core.quotePath=false ls-files -z -- '*.py' > "$LIST"; then
+  echo "FAIL ruff-gate: git ls-files failed in $ROOT (not a git work tree?)"
+  exit 1
+fi
 FILES=()
-while IFS= read -r f; do FILES+=("$f"); done < <(git ls-files -- '*.py' | { grep -v '^legacy/' || true; })
+while IFS= read -r -d '' f; do
+  case "$f" in legacy/*) continue ;; esac
+  FILES+=("$f")
+done < "$LIST"
 if [[ ${#FILES[@]} -eq 0 ]]; then
   echo "no tracked python files"
   exit 0
 fi
 
-ANN_JSON="$(mktemp)"
-trap 'rm -f "$ANN_JSON"' EXIT
-ruff check --select ANN --exit-zero --output-format json "${FILES[@]}" > "$ANN_JSON"
+ruff check --select ANN --ignore-noqa --exit-zero --output-format json "${FILES[@]}" > "$ANN_JSON"
 
 if [[ $PRINT -eq 1 ]]; then
   python3 -I - "$ANN_JSON" "$ROOT" "$VER" <<'PY'
@@ -92,5 +107,11 @@ if bad:
 print(f"ok ANN no-growth: {sum(counts.values())} gaps in {len(counts)} files")
 PY
 
-if [[ $RC -eq 0 ]]; then echo "PASS ruff-gate (ruff $VER, ${#FILES[@]} files)"; fi
+if [[ $RC -eq 0 ]]; then
+  if [[ "$VER" == "$PINNED" ]]; then
+    echo "PASS ruff-gate (ruff $VER, ${#FILES[@]} files)"
+  else
+    echo "PASS ruff-gate (ruff $VER, ${#FILES[@]} files; unpinned: not gate evidence)"
+  fi
+fi
 exit "$RC"
