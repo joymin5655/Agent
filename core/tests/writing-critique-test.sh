@@ -450,6 +450,7 @@ drift_pair range-date-ok "기간은 2026-10-30부터 3-5일이다." "기간은 2
 drift_pair numeral-team "두 팀이 참여했다." "세 팀이 참여했다." numeral
 drift_pair dir-swap "매출은 증가하고 비용은 감소했다." "매출은 감소하고 비용은 증가했다." direction
 drift_pair name-swap "담당자는 Alice이고 검토자는 Bob이다." "담당자는 Bob이고 검토자는 Alice이다." english
+# shellcheck disable=SC1111 # typographic quotes are the test data: a quote-swap drift
 drift_pair quote-swap "“성공”에서 “실패”로 바뀌었다." "“실패”에서 “성공”으로 바뀌었다." quote
 drift_pair url-period-ok "주소는 https://example.com/docs." "주소는 https://example.com/docs 에 있다." clean
 drift_pair list-numbers $'## 1. 배경\n현재 상태를 설명한다.\n## 2. 결과\n결과를 설명한다.' $'## 1. 배경\n현재 상태를 설명한다.\n## 2. 방법\n방법을 적는다.\n## 3. 결과\n결과를 설명한다.' clean
@@ -565,6 +566,7 @@ check "sources: --max-bytes caps the total (first file in, next ones over budget
 check "gather_sources: missing --repo exits 2" bash -c "python3 '$GS' '$T/design-plan.md' >/dev/null 2>&1; [ \$? -eq 2 ]"
 printf 'see `~/gs-test-not-here.md`\n' > "$T/tilde.md"
 python3 "$GS" "$T/tilde.md" --repo "$R" --harness-root "$REPO_ROOT" > "$T/src-tilde.md"
+# shellcheck disable=SC2088 # the pattern is the literal text "~/", not a path to expand
 check "sources: a ~/ path is outside the repository, not an untracked repo file" \
   grep -q '~/gs-test-not-here.md — outside repository' "$T/src-tilde.md"
 printf 'run `python3\nbilling/charge.py --x` and `src/nothere.py`.\n\n`a\n\nsrc/app.py` end\n' > "$T/wrap.md"

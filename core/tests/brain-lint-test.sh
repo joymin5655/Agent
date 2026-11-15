@@ -127,7 +127,7 @@ provenance:
 body
 EOF
 OUT_DEFAULT="$(python3 "$LINT" 2>&1)"; RC_DEFAULT=$?
-OUT_STRICT="$(python3 "$LINT" --strict 2>&1)"; RC_STRICT=$?
+python3 "$LINT" --strict >/dev/null 2>&1; RC_STRICT=$?
 if [[ "$RC_DEFAULT" -eq 0 && "$OUT_DEFAULT" == *"W1"* && "$OUT_DEFAULT" == *"W2"* \
       && "$RC_STRICT" -eq 1 ]]; then
   ok "warnings-default-strict"

@@ -128,7 +128,7 @@ fi
 
 # --- default mode: scan the working tree ---
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-cd "$ROOT"
+cd "$ROOT" || exit 1
 
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
   echo "FAIL — not a git work tree (audit scans git-tracked scope)"

@@ -304,6 +304,7 @@ done
 write_profiles gpt-5.6-sol gpt-6-luna
 HOOKCWD="$WORK/cwd"; mkdir -p "$HOOKCWD"
 STAMP="$WORK/state/codex-catalog-check"
+# shellcheck disable=SC2120 # "$@" carries optional extra env; current calls pass none
 run_hook() {  # run_hook [extra-env...]
     ( cd "$HOOKCWD" && env PATH="$WORK/bin:/usr/bin:/bin" CODEX_HOME="$CH" \
         AGENT_CODEX_TIERS_FILE="$WORK/none.json" AGENT_STATE_DIR="$WORK/state" \

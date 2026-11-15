@@ -197,7 +197,7 @@ python3 "$INSTALLER" --root "$REPO_ROOT" >/dev/null 2>&1; rc=$?
 check "reinstall-after-extra-rc" 0 "$rc"
 check_true "reinstall-after-extra-restores-files" test -f "$DEFAULT_DIR/hooks.json" -a -f "$DEFAULT_DIR/plugin.json"
 check "reinstall-after-extra-keeps-file" "mine" "$(cat "$DEFAULT_DIR/extra.txt" 2>/dev/null)"
-SETUP_HOME_OUT="$(bash "$SETUP" --antigravity 2>&1)"; rc=$?
+bash "$SETUP" --antigravity >/dev/null 2>&1; rc=$?
 check "setup-after-partial-uninstall-rc" 0 "$rc"
 # A clean uninstall leaves no marker behind: the folder goes away entirely.
 rm -f "$DEFAULT_DIR/extra.txt"

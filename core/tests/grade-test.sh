@@ -45,12 +45,11 @@ seed_pass_dir() {
 }
 make_fail() { printf '%s\n' '#!/usr/bin/env bash' 'exit 1' > "$1"; }
 
-run_grade() {  # <tests_dir> [extra args...] -> stdout+stderr, sets RC
+run_grade() {  # <tests_dir> [extra args...] -> stdout+stderr in OUT
   # hermetic: GRADE_HERMETIC=1 gates the seams (C3) and skips the INTEGRITY phase,
   # so scoring logic is tested with stubs in a tmp dir (no git repo).
   local d="$1"; shift
   OUT="$(GRADE_HERMETIC=1 GRADE_TESTS_DIR="$d" GRADE_RUBRIC="$RUBRIC" GRADE_SKIP_GITLEAKS=1 bash "$GRADE" "$@" 2>&1)"
-  RC=$?
 }
 
 echo "=== (a) clean tree: GATE pass + all guards green -> harness_score 11.0 ==="
@@ -90,7 +89,7 @@ echo
 echo "=== (e) unparseable rubric -> fail-closed harness_score 0 ==="
 D="$(mktemp -d "$TMP_ROOT/eXXXX")"; seed_pass_dir "$D"
 BAD="$TMP_ROOT/bad.yaml"; printf '%s\n' 'not: [a valid, failure_modes' '  - broken' > "$BAD"
-OUT="$(GRADE_TESTS_DIR="$D" GRADE_RUBRIC="$BAD" GRADE_SKIP_GITLEAKS=1 bash "$GRADE" 2>&1)"; RC=$?
+OUT="$(GRADE_TESTS_DIR="$D" GRADE_RUBRIC="$BAD" GRADE_SKIP_GITLEAKS=1 bash "$GRADE" 2>&1)"
 printf '%s\n' "$OUT" | grep -qE '^harness_score: 0$'; check "bad-rubric-score-0" $?
 printf '%s\n' "$OUT" | grep -qiE 'fail-closed'; check "bad-rubric-fail-closed-msg" $?
 

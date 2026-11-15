@@ -83,7 +83,7 @@ done
 [[ "$LAST" == *"Circuit Breaker"* ]]
 check "posttoolusefailure-threshold-fires" $? "got: $LAST"
 EV_NAME=$(printf '%s' "$LAST" | python3 -c 'import json,sys; print(json.load(sys.stdin)["hookSpecificOutput"]["hookEventName"])' 2>/dev/null)
-check "posttoolusefailure-advisory-echoes-its-event-name" $([[ "$EV_NAME" == "PostToolUseFailure" ]]; echo $?) "hookEventName=$EV_NAME"
+check "posttoolusefailure-advisory-echoes-its-event-name" "$([[ "$EV_NAME" == "PostToolUseFailure" ]]; echo $?)" "hookEventName=$EV_NAME"
 
 echo
 echo "=== 1c. dedupe: repeated tool_use_id in PostToolUseFailure does not double-count ==="

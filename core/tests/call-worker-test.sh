@@ -1929,6 +1929,7 @@ fi
 # directory is checked first (exists, real directory, not a symlink, owned by us, not
 # group/world-writable); a bad one makes the candidate unavailable and nothing of it runs.
 
+# shellcheck disable=SC2043 # single-item loop kept so more fake worker binaries can be added
 for b in codex-acc; do
     cat > "$ACC_BIN/$b" <<EOF
 #!/usr/bin/env bash
