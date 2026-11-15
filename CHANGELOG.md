@@ -7,12 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.5] - 2026-11-15
+
 ### Added
 - `evals/plugin/regress.py` + `compare.py`: local, advisory before/after skill-routing check for
   PRs that change skills (exports the merge-base with the base revision and head with
   `git archive`, runs `claude plugin eval` on each for changed skills that have cases, labels
   REGRESSION / NOISE / IMPROVED / UNDETERMINED). Model-free logic tested by
   `core/tests/plugin-eval-compare-test.sh`; the plugin eval baseline is refreshed to v2.1.322.
+
+### Changed
+- `pre-tool-guard.sh`: the two large inline Python programs (guard 5's Lexer `_S5_PY` and the
+  guard 3a scan `_G3_PY`) are read into their variables only on the branches that run them
+  (`_load_s5_py` / `_load_g3_py`, at most once per run) instead of on every Bash call. Decisions are
+  unchanged (`pre-tool-guard-test.sh` 3329 passed / 0 failed before and after); an ordinary command
+  takes about 30 ms less (median of 12 runs), and a command that reaches both scans takes the same
+  time as before. Both variables are cleared where their loaders are defined, so a value inherited
+  from the environment is never run (the eager reads used to overwrite it).
+
+### Tests
+- `core/tests/pre-tool-guard-test.sh`: `inherited-py-env-3a-deny` and
+  `inherited-py-env-secrets-deny` run the hook with hostile `_S5_PY` / `_G3_PY` values in its
+  environment and expect a deny.
 
 ## [0.15.4] - 2026-11-10
 
