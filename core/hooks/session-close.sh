@@ -75,7 +75,7 @@ fi
 # 4. Broadcast 'done' event for multi-session visibility
 SESSION_SH="$PROJECT_ROOT/core/infra/agent-session.sh"
 if [[ -x "$SESSION_SH" ]]; then
-  "$SESSION_SH" broadcast done "session ended" 2>/dev/null || true
+  "$SESSION_SH" broadcast "done" "session ended" 2>/dev/null || true
 fi
 
 exit 0
