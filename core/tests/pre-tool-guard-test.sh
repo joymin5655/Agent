@@ -1298,6 +1298,14 @@ run_case_timed "kind2-benign-scan-alarm-expires-deny" \
 # lookalike that must stay allowed: the same scan, given its full budget, finishes and finds nothing
 run_case_timed "kind2-benign-large-allow" \
   "git log --oneline --grep='secrets/'; ${K2FLAT}true"           allow
+# the lazily loaded scan programs must never come from the inherited environment: a hostile
+# _S5_PY / _G3_PY that prints "allow" or nothing must not switch the 3a / 5 / secrets checks off
+run_case_timed "inherited-py-env-3a-deny" \
+  "printenv"                                                     deny \
+  '_S5_PY=print("allow"); raise SystemExit(0)' '_G3_PY=print("allow"); raise SystemExit(0)'
+run_case_timed "inherited-py-env-secrets-deny" \
+  "cat secrets/prod.env"                                         deny \
+  '_S5_PY=print("inert")'
 
 echo
 echo "=== guard 5: git log/show whose options print no file content may name the path -> allow ==="

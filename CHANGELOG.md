@@ -22,7 +22,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`_load_s5_py` / `_load_g3_py`, at most once per run) instead of on every Bash call. Decisions are
   unchanged (`pre-tool-guard-test.sh` 3329 passed / 0 failed before and after); an ordinary command
   takes about 30 ms less (median of 12 runs), and a command that reaches both scans takes the same
-  time as before.
+  time as before. Both variables are cleared where their loaders are defined, so a value inherited
+  from the environment is never run (the eager reads used to overwrite it).
+
+### Tests
+- `core/tests/pre-tool-guard-test.sh`: `inherited-py-env-3a-deny` and
+  `inherited-py-env-secrets-deny` run the hook with hostile `_S5_PY` / `_G3_PY` values in its
+  environment and expect a deny.
 
 ## [0.15.4] - 2026-11-10
 

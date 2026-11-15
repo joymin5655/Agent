@@ -472,6 +472,7 @@ fi
 # A command the Lexer cannot parse, or a shell fed by a pipe, is denied only when a dangerous word is
 # present (coarse text match). Not covered: $( ) values built at run time, python -c one-liners, scripts
 # written and run later.
+_S5_PY=""  # never run an inherited env value: only the loader below may fill it
 _load_s5_py() {
 IFS= read -r -d '' _S5_PY <<'PY'
 import fnmatch
@@ -2125,7 +2126,9 @@ if __name__ == "__main__" and "lib" not in sys.argv[1:]:
     arm_alarm()
     sys.stdout.write(verdict(os.environ.get("SCAN_INPUT", "")))
 PY
+  return 0
 }
+_G3_PY=""  # never run an inherited env value: only the loader below may fill it
 _load_g3_py() {
 IFS= read -r -d '' _G3_PY <<'PY'
 
@@ -2968,6 +2971,7 @@ signal.signal(signal.SIGALRM, signal.SIG_DFL)
 signal.setitimer(signal.ITIMER_REAL, 14.0)
 g3_main()
 PY
+  return 0
 }
 _DG_ASK=""
 # cheap pre-filter on the quote-stripped text: only commands that name a judged verb pay for the scan
