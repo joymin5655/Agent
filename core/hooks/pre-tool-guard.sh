@@ -472,6 +472,7 @@ fi
 # A command the Lexer cannot parse, or a shell fed by a pipe, is denied only when a dangerous word is
 # present (coarse text match). Not covered: $( ) values built at run time, python -c one-liners, scripts
 # written and run later.
+_load_s5_py() {
 IFS= read -r -d '' _S5_PY <<'PY'
 import fnmatch
 import os
@@ -2124,6 +2125,8 @@ if __name__ == "__main__" and "lib" not in sys.argv[1:]:
     arm_alarm()
     sys.stdout.write(verdict(os.environ.get("SCAN_INPUT", "")))
 PY
+}
+_load_g3_py() {
 IFS= read -r -d '' _G3_PY <<'PY'
 
 # ---------------------------------------------------------------------------------------------------
@@ -2965,6 +2968,7 @@ signal.signal(signal.SIGALRM, signal.SIG_DFL)
 signal.setitimer(signal.ITIMER_REAL, 14.0)
 g3_main()
 PY
+}
 _DG_ASK=""
 # cheap pre-filter on the quote-stripped text: only commands that name a judged verb pay for the scan
 _DG_RE='(^|[^[:alnum:]_.-])(git|rm|find|rsync|env|printenv|export|declare|typeset|set|ps|eval|sh|bash|zsh|dash|ksh|ash|command|builtin)([^[:alnum:]_-]|$)|/proc/[^/ ]+/environ'
@@ -2972,6 +2976,8 @@ _DG_FLAT=$(printf '%s' "$SCAN_CMD" | tr -d "\\\\\"'")
 _DG_JOIN=$(printf '%s' "$SCAN_CMD" | tr -d "\\\\\"'\n")
 if printf '%s' "$_DG_FLAT" | grep -qiE "$_DG_RE" || printf '%s' "$_DG_JOIN" | grep -qiE "$_DG_RE" \
    || printf '%s' "$SCAN_CMD" | grep -qF "\$'" ; then
+  [[ -n "${_S5_PY-}" ]] || _load_s5_py
+  [[ -n "${_G3_PY-}" ]] || _load_g3_py
   _DG_OUT=$({ printf '%s\n' "$_S5_PY"; printf '%s\n' "$_G3_PY"; } | python3 -I - lib 3<<<"$SCAN_CMD" 2>/dev/null) || _DG_OUT=""
   _DG_HEAD="${_DG_OUT%%$'\n'*}"
   case "$_DG_HEAD" in
@@ -3234,6 +3240,7 @@ _SECRET_CMD_START='(^|[;&|(`]|&&)[[:space:]]*(((env|nohup|time|command|exec|sudo
 _SECRET_MORE_READERS='base64|base32|basenc|sort|uniq|cut|paste|column|join|comm|expand|unexpand|fmt|shuf|cksum|b2sum|sha1sum|sha224sum|sha384sum|zgrep|bzgrep|xzgrep|iconv|split|look|vim|nano|emacs|jq|yq'
 _secrets_verdict() {
   # a python3 that is missing, exits non-zero or is killed leaves `error` behind, never an allow
+  [[ -n "${_S5_PY-}" ]] || _load_s5_py
   printf '%s\n' "$_S5_PY" | SCAN_INPUT="$1" SCAN_READERS="$_SECRET_MORE_READERS|$_SECRET_STAGE12_ONLY" python3 -I - 2>/dev/null || printf 'error'
 }
 _S5_BLOCK=""
