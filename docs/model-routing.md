@@ -85,7 +85,8 @@ The tier assignment:
 
 Synthesis of subagent results stays in the main loop (TOP — orchestration
 judgment). `core/hooks/model-routing-observer.py` records every Task/Agent
-dispatch's verdict (`override` / `pinned_specialist` / `inherit_top`) to
+dispatch's verdict (`override` / `pinned_specialist` / `inherit_top`; lifecycle
+rows are `unclassified`) to
 `.agent/logs/model-routing.jsonl`, so this convention is measured, not assumed.
 `core/infra/manager-audit.sh` (consumed by `/manager-audit`) audits those
 records after a supervise run — TOP-inherit leaks, floor violations, and a
@@ -240,7 +241,7 @@ just what this doc recommends.
 | Claude Code — judgment unpinned / per-call MID (execution dispatch) & LOW overrides; coordination-cost check and worker-reuse (cache) | Convention, documented not CI-checked (frontmatter *absence*, call-time overrides, and call-time reuse-vs-spawn choices are not statically verifiable) | `skills/supervise/SKILL.md` Model policy |
 | Claude Code — decision-time reminder | `model-routing-advisor.py` (PreToolUse Task/Agent), advisory: one-line `additionalContext` nudge, never blocks, decision stays with the dispatcher | `core/hooks/model-routing-advisor.py`, `docs/gate-registry.md` GATE model-routing-advisor |
 | Claude Code — accumulation-time reminder | Retired 2026-10 (unregistered; script kept under `legacy/top-edit-advisor/`) | `legacy/top-edit-advisor/README.md` |
-| Codex CLI | GPT-6 named profiles (per-profile config files): `quick` = LOW (`gpt-6-luna` @ low effort), `mid` = MID (`gpt-6.1-sol` @ medium effort, pinned like the other two), `deep` = TOP (`gpt-6-astra` @ xhigh effort); `model_reasoning_effort` is the effort dial; all three set `[features] fast_mode = false` / `ultrafast_mode = false` so worker lanes run at standard speed instead of inheriting an interactive Fast `service_tier` | `adapters/codex/codex-config.toml.template` + `quick.config.toml.template` / `mid.config.toml.template` / `deep.config.toml.template` |
+| Codex CLI | GPT-6 named profiles (per-profile config files): `quick` = LOW (`gpt-6-luna` @ low effort), `mid` = MID (`gpt-6.1-sol` @ medium effort, pinned like the other two), `deep` = TOP (`gpt-6.1-sol` @ high effort); `model_reasoning_effort` is the effort dial; all three set `[features] fast_mode = false` / `ultrafast_mode = false` so worker lanes run at standard speed instead of inheriting an interactive Fast `service_tier` | `adapters/codex/codex-config.toml.template` + `quick.config.toml.template` / `mid.config.toml.template` / `deep.config.toml.template` |
 | Antigravity (the live gemini lane) | Tiers keyed by model ID in a single tiers file the antigravity-worker resolves per call — MID/TOP entries, moved from the vendor-owned directory to a harness-owned path so an agy CLI reinstall can't silently reset the pin; `--effort` flag optional alongside the tier's own baked-in reasoning level | `~/.agent/antigravity-tiers.json` (installed from `adapters/antigravity/antigravity-tiers.json.template`), `adapters/antigravity/antigravity-worker.sh` |
 | Claude Code — purpose launchers | Session-start human choice of tier (`claude-build`/`claude-quick`/`claude-research`); a launcher presets the model before the session exists — the allowed side of the no-runtime-switching line | `adapters/claude-code/launchers/`, `docs/launchers.md` |
 
@@ -498,14 +499,11 @@ update — a rule-based refresh of the per-task model/effort table from public
 leaderboard data, written to a user-level file with an update log
 (`~/.agent/logs/model-radar.jsonl`) so any change can be read back and undone —
 and filling a `model` or `effort` slot the caller left empty from that table.
-The caller's own value is never touched.
+The caller's own value is never touched. This repo only states the boundary; the
+table-refresh job and the slot-filling mechanism live in the user's personal
+harness layer, not in this source.
 
 **Still not allowed:**
-
-- A classifier that reads the request and picks a model, overwriting a value the
-  caller wrote, and automatic selection of any model billed outside the
-  subscription (Fable, Gemini Argon, Codex fast/priority speed). Those need the
-  user's explicit choice every time.
 
 - **No runtime model-switching hooks.** A per-prompt classifier that picks a
   model was evaluated and rejected (config-coupled, opaque, and it moves a
@@ -520,8 +518,16 @@ The caller's own value is never touched.
   PostToolUse reminder keyed on a measured edit count, never a decision. The boundary is
   narrower than "no automated behavior at decision time"; it is "no automated
   *decision*" — a reminder is inside that line, a classifier or a switch is not.
+  The table fill above is the only exception: it applies a fixed, logged table to
+  slots the caller left empty, never reads the request, and never overwrites a
+  value the caller wrote.
+- **No overriding the caller, no automatic premium choice.** A value the caller
+  wrote is never overwritten, and options that use far more of the plan's limits
+  or are billed separately (Fable, Gemini Argon, Codex fast/priority speed) are
+  never picked automatically; the user chooses them explicitly every time.
 - **No automatic tier escalation.** Promotion is a caller decision, made
-  per-task, visible in the invocation.
+  per-task, visible in the invocation. Filling an empty slot from the table is
+  not promotion: the caller had not decided that slot.
 - **No dedicated low-tier agents.** The LOW rung is reached with a per-call
   override, not by shipping more agents; the agent roster stays curated.
 - **No price constants.** Tiers are relative; absolute prices live outside
@@ -535,7 +541,7 @@ dispatch call, the agent definition's `model:` frontmatter, and the
 transcripts, the order is **call argument > agent frontmatter > environment
 variable**: with the variable set to `sonnet`, an agent whose frontmatter pins
 `opus` (`security-reviewer`) ran as opus at `high` effort in both observed
-runs (19 and 34 turns), and a dispatch that passed `model: haiku` ran as haiku.
+runs, and a dispatch that passed `model: haiku` ran as haiku.
 Evidence is the `model` field of each `assistant` line in the subagent
 transcript plus its `.meta.json` (`model` when requested, `effort`,
 `launchedWithDefaults`), recorded per run by `core/hooks/model-routing-observer.py`

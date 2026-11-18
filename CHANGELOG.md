@@ -9,10 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - `model-routing-observer.py` measured runs: on SubagentStop it reads the subagent's own transcript
-  (`agent_transcript_path`, else `<transcript_path>/subagents/agent-<id>.jsonl`) and `.meta.json` and
-  appends one row to the user-level `~/.agent/logs/subagent-runs.jsonl` (override: env
-  `AGENT_SUBAGENT_RUNS_SINK`) with `agent_type, agent_id, model` (most frequent `message.model`)`,
-  effort, requested_model, launched_with_defaults, started, ended, duration_s, turns, outcome, origin`.
+  (`agent_transcript_path`, else `<transcript_path without .jsonl>/subagents/agent-<id>.jsonl`) and
+  `.meta.json` and appends one row to the user-level `~/.agent/logs/subagent-runs.jsonl` (override:
+  env `AGENT_SUBAGENT_RUNS_SINK`) with `agent_type`, `agent_id`, `model` (most frequent distinct-message
+  `message.model`, `<synthetic>` ignored), `effort`, `requested_model`, `launched_with_defaults`,
+  `started`, `ended`, `duration_s`, `turns` (distinct `message.id` count), `outcome`, `origin`.
   No prompt or answer text is copied; transcripts over 64MB are skipped (`outcome: "unknown"`);
   failures are swallowed. PostToolUse rows also gain `resolved_model` and `env_subagent_model`.
 - Codex MID tier profile: `adapters/codex/mid.config.toml.template` (sol family, medium effort),

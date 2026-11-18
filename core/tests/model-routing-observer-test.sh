@@ -295,6 +295,34 @@ OUT="$(printf '%s' "$(stop_evt Explore a1 "$TRANS")" | env AGENT_MODEL_ROUTING_S
 after="$(wc -l < "$SINK")"
 if [[ "$RC" -eq 0 && -z "$OUT" && "$after" -eq $((before + 1)) ]]; then ok "m11-runs-sink-failure-silent-project-row-kept"; else bad "m11-sink-fail" "rc=$RC out=$OUT $before->$after"; fi
 
+# 프로젝트별 기록 쓰기 실패(경로가 파일 아래)여도 사용자 단위 실측 줄은 남고 rc 0
+before="$(wc -l < "$RUNS")"
+OUT="$(printf '%s' "$(stop_evt Explore a1 "$TRANS")" | env AGENT_MODEL_ROUTING_SINK="$BLOCK/x/routing.jsonl" AGENT_SUBAGENT_RUNS_SINK="$RUNS" \
+  AGENT_REGISTRY_PATH="$REG" python3 "$HOOK" 2>/dev/null)"; RC=$?
+after="$(wc -l < "$RUNS")"
+if [[ "$RC" -eq 0 && -z "$OUT" && "$after" -eq $((before + 1)) ]]; then ok "m12-project-sink-failure-silent-runs-row-kept"; else bad "m12-proj-fail" "rc=$RC out=$OUT $before->$after"; fi
+
+# 한 응답이 내용 조각마다 여러 줄 — 고유 message.id 만 세고 <synthetic> 줄은 뺀다
+{
+  for _ in 1 2 3; do printf '%s\n' '{"type":"assistant","timestamp":"2026-11-18T10:00:00.000Z","message":{"id":"msg_1","model":"claude-opus-5-5"}}'; done
+  for i in 1 2 3; do printf '%s\n' '{"type":"assistant","timestamp":"2026-11-18T10:00:01.000Z","message":{"id":"syn_'$i'","model":"<synthetic>"}}'; done
+  printf '%s\n' '{"type":"assistant","timestamp":"2026-11-18T10:00:02.000Z","message":{"id":"msg_2","model":"claude-opus-5-5"}}'
+} > "$SESS/subagents/agent-a7.jsonl"
+run "$(stop_evt Explore a7 "$SESS/subagents/agent-a7.jsonl")"
+last="$(tail -1 "$RUNS")"
+if printf '%s' "$last" | python3 -c '
+import json,sys
+r=json.load(sys.stdin)
+assert r["turns"]==2 and r["model"]=="claude-opus-5-5" and r["outcome"]=="ok", r
+'; then ok "m13-turns-count-unique-message-ids-skip-synthetic"; else bad "m13-turns" "$last"; fi
+
+# agent_id 에 경로 조각이 있으면 대체 경로를 만들지 않는다
+mkdir -p "$SESS/subagents/agent-zz"
+printf '%s\n' '{"type":"assistant","timestamp":"2026-11-18T10:00:00.000Z","message":{"model":"claude-opus-5-5"}}' > "$SESS/subagents/decoy.jsonl"
+run "$(printf '{"hook_event_name":"SubagentStop","session_id":"sess-1","transcript_path":"%s","agent_type":"Explore","agent_id":"zz/../decoy"}' "$PROJ/sess-1.jsonl")"
+last="$(tail -1 "$RUNS")"
+if [[ "$RC" -eq 0 && "$last" == *'"turns": 0'* && "$last" == *'"outcome": "unknown"'* ]]; then ok "m14-agent-id-path-injection-rejected"; else bad "m14-inject" "rc=$RC $last"; fi
+
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]

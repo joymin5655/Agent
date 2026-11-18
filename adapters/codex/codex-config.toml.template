@@ -15,8 +15,8 @@ network_access = false
 # See adapters/codex/README.md for coverage details.
 
 # Model tier profiles (docs/model-routing.md). The unprefixed default model is
-# the workhorse (MID) tier (GPT-6 family as of 2026-09 — Sol; GPT-5.x retired);
-# the LOW, MID and TOP rungs are reached with
+# the interactive session's model (Sol family as of 2026-09; GPT-5.x retired);
+# worker lanes use the LOW, MID and TOP rungs, reached with
 # `codex --profile quick` / `codex --profile mid` / `codex --profile deep`.
 # Recent Codex CLI builds reject inline `[profiles.*]` tables as legacy —
 # each profile lives in its own file next to config.toml instead:

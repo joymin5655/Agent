@@ -13,6 +13,9 @@ convention measurable: one JSONL record per subagent dispatch, classified as
                       (bare or plugin-namespaced); its frontmatter pin rules
   inherit_top       — neither: the dispatch inherits the session's top model.
                       This is the leak the observer exists to count.
+  unclassified      — a SubagentStart/SubagentStop lifecycle row whose agent is
+                      not a registry agent. Not a dispatch verdict: the dispatch
+                      verdict lives on the PostToolUse row.
 
 Each record also carries a spend signal for downstream audits
 (core/infra/manager-audit.sh):
@@ -55,7 +58,8 @@ Measured runs: on SubagentStop one extra row goes to the user-level sink
 (AGENT_SUBAGENT_RUNS_SINK, default ~/.agent/logs/subagent-runs.jsonl) built from
 the subagent's own transcript (event.agent_transcript_path, else
 <transcript_path minus .jsonl>/subagents/agent-<agent_id>.jsonl) and its
-.meta.json: the model that actually answered, effort, turns, duration. No
+.meta.json: the model that actually answered, effort, turns (distinct
+message.id count; <synthetic> placeholder rows are skipped), duration. No
 prompt/answer text is ever copied. Transcripts over 64MB are skipped
 (outcome "unknown"); failures here are swallowed.
 
@@ -73,6 +77,7 @@ runtime session_id). Registered in docs/gate-registry.md (GATE model-routing-obs
 import collections
 import json
 import os
+import re
 import sys
 from datetime import datetime, timezone
 
@@ -199,7 +204,8 @@ def _agent_transcript(event, agent_id):
     if isinstance(path, str) and path.strip():
         return os.path.expanduser(path)
     main = event.get("transcript_path")
-    if isinstance(main, str) and main.endswith(".jsonl") and agent_id:
+    if (isinstance(main, str) and main.endswith(".jsonl")
+            and re.fullmatch(r"[A-Za-z0-9_-]{1,128}", agent_id or "")):
         return os.path.join(
             os.path.expanduser(main[: -len(".jsonl")]), "subagents", "agent-%s.jsonl" % agent_id
         )
@@ -259,12 +265,14 @@ def measure_run(event, agent_type, agent_id):
             record["effort"] = meta_effort
             return record
     except OSError:
+        record["effort"] = meta_effort
         return record
 
     models, efforts = collections.Counter(), collections.Counter()
     first_ts = last_ts = None
     turns = 0
     errored = False
+    seen_ids = set()
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
             for line in f:
@@ -280,17 +288,26 @@ def measure_run(event, agent_type, agent_id):
                     last_ts = ts
                 if row.get("type") != "assistant":
                     continue
-                turns += 1
+                # 실제 기록의 오류 표시만 인정한다(isApiErrorMessage / error 키).
+                errored = bool(row.get("isApiErrorMessage") is True or row.get("error"))
                 msg = row.get("message")
-                model = msg.get("model") if isinstance(msg, dict) else None
+                msg = msg if isinstance(msg, dict) else {}
+                # 응답 하나가 내용 조각마다 한 줄씩 기록되므로 고유 message.id 로 센다.
+                mid = msg.get("id")
+                if isinstance(mid, str) and mid:
+                    if mid in seen_ids:
+                        continue
+                    seen_ids.add(mid)
+                model = msg.get("model")
+                if model == "<synthetic>":
+                    continue
+                turns += 1
                 if isinstance(model, str) and model:
                     models[model] += 1
                 eff = row.get("effort")
                 eff = eff.strip().lower() if isinstance(eff, str) else None
                 if eff in EFFORT_LEVELS:
                     efforts[eff] += 1
-                # 실제 기록의 오류 표시만 인정한다(isApiErrorMessage / error 키).
-                errored = bool(row.get("isApiErrorMessage") is True or row.get("error"))
     except OSError:
         return record
 
@@ -362,10 +379,13 @@ def handle_subagent_event(event, hook_event_name):
         last_msg = last_msg if isinstance(last_msg, str) else ""
         record["last_assistant_message_len"] = len(last_msg)
 
-    sink = _sink_path()
-    os.makedirs(os.path.dirname(sink), exist_ok=True)
-    with open(sink, "a", encoding="utf-8") as f:
-        f.write(json.dumps(record) + "\n")
+    try:  # 프로젝트 기록 실패가 사용자 단위 실측 기록을 막지 않게
+        sink = _sink_path()
+        os.makedirs(os.path.dirname(sink), exist_ok=True)
+        with open(sink, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record) + "\n")
+    except Exception:
+        pass
 
     if hook_event_name == "SubagentStop":
         try:

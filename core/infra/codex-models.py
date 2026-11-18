@@ -6,7 +6,7 @@ Reading it is free; applying a change is gated by a paid `codex exec` probe,
 because a catalog entry marked "list" can still be rejected for the account.
 
   check [--json]                 exit 0 match, 10 change suggested, 2 no catalog
-  apply [--tier top|low] [--yes] probe candidates, rewrite the profile's model line
+  apply [--tier top|mid|low] [--yes] probe candidates, rewrite the profile's model line
   upgrade-for <id>               successor of a retired/unsupported model (exit 1: none)
 
 Tier -> family comes from $AGENT_CODEX_TIERS_FILE (default ~/.agent/codex-tiers.json),
