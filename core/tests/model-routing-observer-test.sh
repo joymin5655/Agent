@@ -237,7 +237,7 @@ want={"ts","agent_type","agent_id","model","effort","requested_model","launched_
 assert set(r)==want, sorted(set(r)^want)
 assert r["model"]=="claude-opus-5-5" and r["effort"]=="high" and r["requested_model"]=="haiku", r
 assert r["launched_with_defaults"] is True and r["turns"]==3 and r["duration_s"]==60, r
-assert r["started"]=="2026-11-18T10:00:00.000Z" and r["ended"]=="2026-11-18T10:01:00.000Z", r
+assert r["started"]=="2026-11-18T10:00:00+00:00" and r["ended"]=="2026-11-18T10:01:00+00:00", r
 assert r["outcome"]=="ok" and r["agent_id"]=="a1", r
 '; then ok "m1-run-record-keys-and-values"; else bad "m1-run-record" "rc=$RC last=$last"; fi
 if ! grep -q "SECRET" "$RUNS"; then ok "m2-no-prompt-or-answer-content"; else bad "m2-content-leak" "$(cat "$RUNS")"; fi
@@ -322,6 +322,58 @@ printf '%s\n' '{"type":"assistant","timestamp":"2026-11-18T10:00:00.000Z","messa
 run "$(printf '{"hook_event_name":"SubagentStop","session_id":"sess-1","transcript_path":"%s","agent_type":"Explore","agent_id":"zz/../decoy"}' "$PROJ/sess-1.jsonl")"
 last="$(tail -1 "$RUNS")"
 if [[ "$RC" -eq 0 && "$last" == *'"turns": 0'* && "$last" == *'"outcome": "unknown"'* ]]; then ok "m14-agent-id-path-injection-rejected"; else bad "m14-inject" "rc=$RC $last"; fi
+
+# 위조된 입력 방어: FIFO·/dev/zero 는 열지 않고 2초 안에 rc 0 으로 끝난다
+timed_run() {  # $1 = 이벤트 JSON; 2초 안에 안 끝나면 rc 124
+  printf '%s' "$1" | env AGENT_MODEL_ROUTING_SINK="$SINK" AGENT_SUBAGENT_RUNS_SINK="$RUNS" \
+    AGENT_REGISTRY_PATH="$REG" python3 -c '
+import subprocess, sys
+try:
+    sys.exit(subprocess.run([sys.executable, sys.argv[1]], input=sys.stdin.buffer.read(),
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2).returncode)
+except subprocess.TimeoutExpired:
+    sys.exit(124)
+' "$HOOK"
+}
+FIFO="$SESS/subagents/agent-fifo.jsonl"; mkfifo "$FIFO"
+timed_run "$(stop_evt Explore a8 "$FIFO")"; RC=$?
+last="$(tail -1 "$RUNS")"
+if [[ "$RC" -eq 0 && "$last" == *'"agent_id": "a8"'* && "$last" == *'"turns": 0'* ]]; then ok "m15-fifo-transcript-skipped-no-hang"; else bad "m15-fifo" "rc=$RC $last"; fi
+timed_run "$(stop_evt Explore a9 /dev/zero)"; RC=$?
+last="$(tail -1 "$RUNS")"
+if [[ "$RC" -eq 0 && "$last" == *'"agent_id": "a9"'* && "$last" == *'"turns": 0'* ]]; then ok "m16-devzero-transcript-skipped"; else bad "m16-zero" "rc=$RC $last"; fi
+# meta.json 이 FIFO 여도 멈추지 않는다
+printf '%s\n' '{"type":"assistant","message":{"model":"claude-opus-5-5"}}' > "$SESS/subagents/agent-a10.jsonl"
+mkfifo "$SESS/subagents/agent-a10.meta.json"
+timed_run "$(stop_evt Explore a10 "$SESS/subagents/agent-a10.jsonl")"; RC=$?
+last="$(tail -1 "$RUNS")"
+if [[ "$RC" -eq 0 && "$last" == *'"agent_id": "a10"'* ]]; then ok "m17-fifo-meta-skipped-no-hang"; else bad "m17-meta-fifo" "rc=$RC $last"; fi
+
+# 본문 복사 금지를 구조로: 긴 임의 문자열은 timestamp·model 칸에 들어가지 않는다
+python3 - "$SESS/subagents/agent-a11.jsonl" "$SESS/subagents/agent-a11.meta.json" <<'PY'
+import json, sys
+junk = "Z" * 100 + " \n " + "W" * 100
+with open(sys.argv[1], "w") as f:
+    f.write(json.dumps({"type": "assistant", "timestamp": junk, "message": {"id": "m1", "model": junk}}) + "\n")
+with open(sys.argv[2], "w") as f:
+    json.dump({"model": junk}, f)
+PY
+run "$(stop_evt Explore a11 "$SESS/subagents/agent-a11.jsonl")"
+last="$(tail -1 "$RUNS")"
+if [[ "$RC" -eq 0 && "$last" != *ZZZZZ* && "$last" != *WWWWW* ]] && printf '%s' "$last" | python3 -c '
+import json,sys
+r=json.load(sys.stdin)
+assert r["started"] is None and r["ended"] is None and r["model"] is None and r["requested_model"] is None, r
+assert r["turns"]==1, r
+'; then ok "m18-freeform-strings-not-copied-null"; else bad "m18-freeform" "$last"; fi
+
+# 새로 만든 사용자 단위 기록 파일은 0600, 새 폴더는 0700
+FRESH="$WORK/fresh-dir/runs.jsonl"
+printf '%s' "$(stop_evt Explore a1 "$TRANS")" | env AGENT_MODEL_ROUTING_SINK="$SINK" AGENT_SUBAGENT_RUNS_SINK="$FRESH" \
+  AGENT_REGISTRY_PATH="$REG" python3 "$HOOK" >/dev/null 2>&1
+modeof() { python3 -c 'import os,sys,stat; print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode))[2:])' "$1"; }
+fmode="$(modeof "$FRESH")"; dmode="$(modeof "$WORK/fresh-dir")"
+if [[ "$fmode" == "600" && "$dmode" == "700" ]]; then ok "m19-new-runs-file-0600-dir-0700"; else bad "m19-perm" "file=$fmode dir=$dmode"; fi
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="

@@ -78,6 +78,7 @@ import collections
 import json
 import os
 import re
+import stat
 import sys
 from datetime import datetime, timezone
 
@@ -86,6 +87,8 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 DISPATCH_TOOLS = {"Task", "Agent"}
 EFFORT_LEVELS = {"low", "medium", "high", "xhigh", "max"}
 SUBAGENT_EVENTS = {"SubagentStart", "SubagentStop"}
+META_MAX_BYTES = 1024 * 1024
+MODEL_RE = re.compile(r"[A-Za-z0-9._:\-\[\]]{1,64}")  # 모델 id 모양만 기록한다(본문 복사 방지)
 RUNS_MAX_BYTES = 64 * 1024 * 1024  # 큰 기록은 줄 단위로 읽어도 15초 상한을 넘길 수 있어 건너뛴다
 
 # Fail-safe import (same guard pattern as secret-content-scan.py): a broken or
@@ -212,6 +215,35 @@ def _agent_transcript(event, agent_id):
     return None
 
 
+def _open_regular(path, max_bytes):
+    """Open path for reading only if it is a regular file within max_bytes.
+
+    O_NONBLOCK keeps a FIFO from blocking the open; the type and size checks
+    use the same descriptor (fstat), so nothing can be swapped in between.
+    Returns a text file object, or None when unreadable/not regular/too big."""
+    fd = None
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_size > max_bytes:
+            os.close(fd)
+            return None
+        f = os.fdopen(fd, "r", encoding="utf-8", errors="replace")
+        fd = None
+        return f
+    except OSError:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        return None
+
+
+def _safe_model(value):
+    return value if isinstance(value, str) and MODEL_RE.fullmatch(value) else None
+
+
 def _parse_ts(value):
     try:
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -242,15 +274,16 @@ def measure_run(event, agent_type, agent_id):
     path = _agent_transcript(event, agent_id)
     meta = {}
     if path:
+        meta_path = path[: -len(".jsonl")] + ".meta.json" if path.endswith(".jsonl") else path + ".meta.json"
         try:
-            with open(path[: -len(".jsonl")] + ".meta.json" if path.endswith(".jsonl") else path + ".meta.json",
-                      encoding="utf-8") as f:
-                loaded = json.load(f)
-            meta = loaded if isinstance(loaded, dict) else {}
+            mf = _open_regular(meta_path, META_MAX_BYTES)
+            if mf is not None:
+                with mf:
+                    loaded = json.load(mf)
+                meta = loaded if isinstance(loaded, dict) else {}
         except Exception:
             meta = {}
-    requested = meta.get("model")
-    record["requested_model"] = requested if isinstance(requested, str) and requested else None
+    record["requested_model"] = _safe_model(meta.get("model"))
     launched = meta.get("launchedWithDefaults")
     record["launched_with_defaults"] = launched if isinstance(launched, bool) else None
     meta_effort = meta.get("effort")
@@ -260,11 +293,8 @@ def measure_run(event, agent_type, agent_id):
     if not path:
         record["effort"] = meta_effort
         return record
-    try:
-        if os.path.getsize(path) > _runs_max_bytes():
-            record["effort"] = meta_effort
-            return record
-    except OSError:
+    tf = _open_regular(path, _runs_max_bytes())
+    if tf is None:  # 없음·일반 파일 아님·너무 큼 — 모두 outcome unknown
         record["effort"] = meta_effort
         return record
 
@@ -274,8 +304,8 @@ def measure_run(event, agent_type, agent_id):
     errored = False
     seen_ids = set()
     try:
-        with open(path, encoding="utf-8", errors="replace") as f:
-            for line in f:
+        with tf:
+            for line in tf:
                 try:
                     row = json.loads(line)
                 except Exception:
@@ -302,7 +332,8 @@ def measure_run(event, agent_type, agent_id):
                 if model == "<synthetic>":
                     continue
                 turns += 1
-                if isinstance(model, str) and model:
+                model = _safe_model(model)
+                if model:
                     models[model] += 1
                 eff = row.get("effort")
                 eff = eff.strip().lower() if isinstance(eff, str) else None
@@ -313,8 +344,10 @@ def measure_run(event, agent_type, agent_id):
 
     record["model"] = models.most_common(1)[0][0] if models else None
     record["effort"] = efforts.most_common(1)[0][0] if efforts else meta_effort
-    record["started"], record["ended"] = first_ts, last_ts
     t0, t1 = _parse_ts(first_ts or ""), _parse_ts(last_ts or "")
+    # 읽은 문자열이 아니라 파싱한 시각을 다시 써서 넣는다 — 임의 문자열은 복사되지 않는다.
+    record["started"] = t0.isoformat() if t0 else None
+    record["ended"] = t1.isoformat() if t1 else None
     if t0 and t1:
         record["duration_s"] = int(round((t1 - t0).total_seconds()))
     record["turns"] = turns
@@ -325,8 +358,9 @@ def measure_run(event, agent_type, agent_id):
 
 def write_run(record):
     sink = _runs_sink_path()
-    os.makedirs(os.path.dirname(sink), exist_ok=True)
-    with open(sink, "a", encoding="utf-8") as f:
+    os.makedirs(os.path.dirname(sink), mode=0o700, exist_ok=True)
+    fd = os.open(sink, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+    with os.fdopen(fd, "a", encoding="utf-8") as f:
         f.write(json.dumps(record) + "\n")
 
 
