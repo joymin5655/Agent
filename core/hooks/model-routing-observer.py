@@ -74,6 +74,8 @@ AGENT_SESSION_ID (recorded as agent_session_id; session_id prefers the event's
 runtime session_id). Registered in docs/gate-registry.md (GATE model-routing-observer).
 """
 
+from __future__ import annotations
+
 import collections
 import json
 import os
@@ -81,6 +83,7 @@ import re
 import stat
 import sys
 from datetime import datetime, timezone
+from typing import IO
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -179,7 +182,7 @@ def total_tokens(event):
     return None
 
 
-def resolved_model(event):
+def resolved_model(event: dict) -> str | None:
     """tool_response.resolvedModel (documented Agent PostToolUse field); None if absent."""
     response = event.get("tool_response")
     if isinstance(response, dict):
@@ -189,20 +192,20 @@ def resolved_model(event):
     return None
 
 
-def _runs_sink_path():
+def _runs_sink_path() -> str:
     return os.environ.get("AGENT_SUBAGENT_RUNS_SINK") or os.path.join(
         os.path.expanduser("~"), ".agent", "logs", "subagent-runs.jsonl"
     )
 
 
-def _runs_max_bytes():
+def _runs_max_bytes() -> int:
     try:
         return int(os.environ.get("AGENT_SUBAGENT_RUNS_MAX_BYTES", "") or RUNS_MAX_BYTES)
     except ValueError:
         return RUNS_MAX_BYTES
 
 
-def _agent_transcript(event, agent_id):
+def _agent_transcript(event: dict, agent_id: str | None) -> str | None:
     path = event.get("agent_transcript_path")
     if isinstance(path, str) and path.strip():
         return os.path.expanduser(path)
@@ -215,7 +218,7 @@ def _agent_transcript(event, agent_id):
     return None
 
 
-def _open_regular(path, max_bytes):
+def _open_regular(path: str, max_bytes: int) -> IO[str] | None:
     """Open path for reading only if it is a regular file within max_bytes.
 
     O_NONBLOCK keeps a FIFO from blocking the open; the type and size checks
@@ -240,18 +243,18 @@ def _open_regular(path, max_bytes):
         return None
 
 
-def _safe_model(value):
+def _safe_model(value: object) -> str | None:
     return value if isinstance(value, str) and MODEL_RE.fullmatch(value) else None
 
 
-def _parse_ts(value):
+def _parse_ts(value: str) -> datetime | None:
     try:
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
     except Exception:
         return None
 
 
-def measure_run(event, agent_type, agent_id):
+def measure_run(event: dict, agent_type: str, agent_id: str | None) -> dict:
     """One measured-run record from the subagent's own transcript + meta.json.
 
     Only counts, model ids, effort and timestamps are read out — never message
@@ -356,7 +359,7 @@ def measure_run(event, agent_type, agent_id):
     return record
 
 
-def write_run(record):
+def write_run(record: dict) -> None:
     sink = _runs_sink_path()
     os.makedirs(os.path.dirname(sink), mode=0o700, exist_ok=True)
     fd = os.open(sink, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
