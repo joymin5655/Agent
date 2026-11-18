@@ -67,6 +67,9 @@ write_profiles() {  # deep=$1 quick=$2 (also resets the probe-failure memory)
     printf '# deep profile\nmodel = "%s"\nmodel_reasoning_effort = "high"\n# model = "commented"\n' "$1" > "$CH/deep.config.toml"
     printf 'model = "%s"\nmodel_reasoning_effort = "low"\n' "$2" > "$CH/quick.config.toml"
 }
+write_mid() {  # mid=$1
+    printf 'model = "%s"\nmodel_reasoning_effort = "medium"\n' "$1" > "$CH/mid.config.toml"
+}
 
 run() {  # run <args...>  (env seams pinned)
     env PATH="$WORK/bin:/usr/bin:/bin" CODEX_HOME="$CH" \
@@ -87,6 +90,22 @@ assert t["top"]["current"]=="gpt-5.6-sol", t
 assert t["low"]["resolved"]=="gpt-6-luna", t
 '; then ok "resolve — skips hide/upgrade models, min priority per family"
 else bad "resolve" "rc=$rc out=$out"; fi
+
+# --- 1b. mid tier (sol family, medium) is managed like top/low -------------
+write_profiles gpt-6.1-sol gpt-6-luna; write_mid gpt-5.6-sol
+out="$(run check --json 2>/dev/null)"; rc=$?
+if [[ $rc -eq 10 ]] && printf '%s' "$out" | python3 -c '
+import json,sys
+d=json.load(sys.stdin)
+t={x["tier"]:x for x in d["tiers"]}
+assert t["mid"]["resolved"]=="gpt-6.1-sol" and t["mid"]["current"]=="gpt-5.6-sol" and t["mid"]["change"], t
+assert not t["top"]["change"] and not t["low"]["change"], t
+'; then ok "check — mid profile resolved from sol family, drift -> 10"
+else bad "mid resolve" "rc=$rc out=$out"; fi
+write_mid gpt-6.1-sol
+run check >/dev/null 2>&1; rc=$?
+[[ $rc -eq 0 ]] && ok "check — mid matches -> 0" || bad "mid match" "rc=$rc"
+rm -f "$CH/mid.config.toml"
 
 # --- 2. check exit codes --------------------------------------------------
 write_profiles gpt-6.1-sol gpt-6-luna

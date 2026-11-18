@@ -13,6 +13,9 @@ convention measurable: one JSONL record per subagent dispatch, classified as
                       (bare or plugin-namespaced); its frontmatter pin rules
   inherit_top       — neither: the dispatch inherits the session's top model.
                       This is the leak the observer exists to count.
+  unclassified      — a SubagentStart/SubagentStop lifecycle row whose agent is
+                      not a registry agent. Not a dispatch verdict: the dispatch
+                      verdict lives on the PostToolUse row.
 
 Each record also carries a spend signal for downstream audits
 (core/infra/manager-audit.sh):
@@ -40,6 +43,26 @@ W2-3: each record also carries the dispatch's effort budget and model tier:
            a fable-pinned specialist or `model: fable` override must not
            read as an under-tiered dispatch.
 
+Verdict scope (inherit_top inflation fix): the 86% "inherit_top" headline was
+mostly SubagentStart/SubagentStop lifecycle rows — each subagent writes two,
+plus a PostToolUse row — and most of those carry an empty agent_type (Claude
+Code's own internal agents). A lifecycle row only knows "agent_type is/isn't a
+registry id", so a non-registry one is now "unclassified", not inherit_top; the
+real dispatch verdict comes from the PostToolUse row. PostToolUse rows also
+record resolved_model (tool_response.resolvedModel, null if absent) and
+env_subagent_model (CLAUDE_CODE_SUBAGENT_MODEL as seen by the hook). The
+verdict stays inherit_top there: the env var is NOT assumed to apply (a
+header-less Plan agent was observed running the session's top model).
+
+Measured runs: on SubagentStop one extra row goes to the user-level sink
+(AGENT_SUBAGENT_RUNS_SINK, default ~/.agent/logs/subagent-runs.jsonl) built from
+the subagent's own transcript (event.agent_transcript_path, else
+<transcript_path minus .jsonl>/subagents/agent-<agent_id>.jsonl) and its
+.meta.json: the model that actually answered, effort, turns (distinct
+message.id count; <synthetic> placeholder rows are skipped), duration. No
+prompt/answer text is ever copied. Transcripts over 64MB are skipped
+(outcome "unknown"); failures here are swallowed.
+
 Pure observer: emits nothing on stdout, never blocks, always exits 0; any
 exception is swallowed (a broken observer must not tax dispatches). Analyze
 with jq, e.g.:
@@ -51,16 +74,25 @@ AGENT_SESSION_ID (recorded as agent_session_id; session_id prefers the event's
 runtime session_id). Registered in docs/gate-registry.md (GATE model-routing-observer).
 """
 
+from __future__ import annotations
+
+import collections
 import json
 import os
+import re
+import stat
 import sys
 from datetime import datetime, timezone
+from typing import IO
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 DISPATCH_TOOLS = {"Task", "Agent"}
 EFFORT_LEVELS = {"low", "medium", "high", "xhigh", "max"}
 SUBAGENT_EVENTS = {"SubagentStart", "SubagentStop"}
+META_MAX_BYTES = 1024 * 1024
+MODEL_RE = re.compile(r"[A-Za-z0-9._:\-\[\]]{1,64}")  # 모델 id 모양만 기록한다(본문 복사 방지)
+RUNS_MAX_BYTES = 64 * 1024 * 1024  # 큰 기록은 줄 단위로 읽어도 15초 상한을 넘길 수 있어 건너뛴다
 
 # Fail-safe import (same guard pattern as secret-content-scan.py): a broken or
 # missing hook_config.py must never tax this observer — it just falls back to
@@ -150,6 +182,191 @@ def total_tokens(event):
     return None
 
 
+def resolved_model(event: dict) -> str | None:
+    """tool_response.resolvedModel (documented Agent PostToolUse field); None if absent."""
+    response = event.get("tool_response")
+    if isinstance(response, dict):
+        value = response.get("resolvedModel")
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+def _runs_sink_path() -> str:
+    return os.environ.get("AGENT_SUBAGENT_RUNS_SINK") or os.path.join(
+        os.path.expanduser("~"), ".agent", "logs", "subagent-runs.jsonl"
+    )
+
+
+def _runs_max_bytes() -> int:
+    try:
+        return int(os.environ.get("AGENT_SUBAGENT_RUNS_MAX_BYTES", "") or RUNS_MAX_BYTES)
+    except ValueError:
+        return RUNS_MAX_BYTES
+
+
+def _agent_transcript(event: dict, agent_id: str | None) -> str | None:
+    path = event.get("agent_transcript_path")
+    if isinstance(path, str) and path.strip():
+        return os.path.expanduser(path)
+    main = event.get("transcript_path")
+    if (isinstance(main, str) and main.endswith(".jsonl")
+            and re.fullmatch(r"[A-Za-z0-9_-]{1,128}", agent_id or "")):
+        return os.path.join(
+            os.path.expanduser(main[: -len(".jsonl")]), "subagents", "agent-%s.jsonl" % agent_id
+        )
+    return None
+
+
+def _open_regular(path: str, max_bytes: int) -> IO[str] | None:
+    """Open path for reading only if it is a regular file within max_bytes.
+
+    O_NONBLOCK keeps a FIFO from blocking the open; the type and size checks
+    use the same descriptor (fstat), so nothing can be swapped in between.
+    Returns a text file object, or None when unreadable/not regular/too big."""
+    fd = None
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_size > max_bytes:
+            os.close(fd)
+            return None
+        f = os.fdopen(fd, "r", encoding="utf-8", errors="replace")
+        fd = None
+        return f
+    except OSError:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        return None
+
+
+def _safe_model(value: object) -> str | None:
+    return value if isinstance(value, str) and MODEL_RE.fullmatch(value) else None
+
+
+def _parse_ts(value: str) -> datetime | None:
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def measure_run(event: dict, agent_type: str, agent_id: str | None) -> dict:
+    """One measured-run record from the subagent's own transcript + meta.json.
+
+    Only counts, model ids, effort and timestamps are read out — never message
+    text. Any unreadable piece degrades to null/unknown instead of raising."""
+    record = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "agent_type": agent_type,
+        "agent_id": agent_id,
+        "model": None,
+        "effort": None,
+        "requested_model": None,
+        "launched_with_defaults": None,
+        "started": None,
+        "ended": None,
+        "duration_s": None,
+        "turns": 0,
+        "outcome": "unknown",
+        "origin": _log_origin(),
+    }
+    path = _agent_transcript(event, agent_id)
+    meta = {}
+    if path:
+        meta_path = path[: -len(".jsonl")] + ".meta.json" if path.endswith(".jsonl") else path + ".meta.json"
+        try:
+            mf = _open_regular(meta_path, META_MAX_BYTES)
+            if mf is not None:
+                with mf:
+                    loaded = json.load(mf)
+                meta = loaded if isinstance(loaded, dict) else {}
+        except Exception:
+            meta = {}
+    record["requested_model"] = _safe_model(meta.get("model"))
+    launched = meta.get("launchedWithDefaults")
+    record["launched_with_defaults"] = launched if isinstance(launched, bool) else None
+    meta_effort = meta.get("effort")
+    meta_effort = meta_effort.strip().lower() if isinstance(meta_effort, str) else None
+    meta_effort = meta_effort if meta_effort in EFFORT_LEVELS else None
+
+    if not path:
+        record["effort"] = meta_effort
+        return record
+    tf = _open_regular(path, _runs_max_bytes())
+    if tf is None:  # 없음·일반 파일 아님·너무 큼 — 모두 outcome unknown
+        record["effort"] = meta_effort
+        return record
+
+    models, efforts = collections.Counter(), collections.Counter()
+    first_ts = last_ts = None
+    turns = 0
+    errored = False
+    seen_ids = set()
+    try:
+        with tf:
+            for line in tf:
+                try:
+                    row = json.loads(line)
+                except Exception:
+                    continue
+                if not isinstance(row, dict):
+                    continue
+                ts = row.get("timestamp")
+                if isinstance(ts, str) and ts:
+                    first_ts = first_ts or ts
+                    last_ts = ts
+                if row.get("type") != "assistant":
+                    continue
+                # 실제 기록의 오류 표시만 인정한다(isApiErrorMessage / error 키).
+                errored = bool(row.get("isApiErrorMessage") is True or row.get("error"))
+                msg = row.get("message")
+                msg = msg if isinstance(msg, dict) else {}
+                # 응답 하나가 내용 조각마다 한 줄씩 기록되므로 고유 message.id 로 센다.
+                mid = msg.get("id")
+                if isinstance(mid, str) and mid:
+                    if mid in seen_ids:
+                        continue
+                    seen_ids.add(mid)
+                model = msg.get("model")
+                if model == "<synthetic>":
+                    continue
+                turns += 1
+                model = _safe_model(model)
+                if model:
+                    models[model] += 1
+                eff = row.get("effort")
+                eff = eff.strip().lower() if isinstance(eff, str) else None
+                if eff in EFFORT_LEVELS:
+                    efforts[eff] += 1
+    except OSError:
+        return record
+
+    record["model"] = models.most_common(1)[0][0] if models else None
+    record["effort"] = efforts.most_common(1)[0][0] if efforts else meta_effort
+    t0, t1 = _parse_ts(first_ts or ""), _parse_ts(last_ts or "")
+    # 읽은 문자열이 아니라 파싱한 시각을 다시 써서 넣는다 — 임의 문자열은 복사되지 않는다.
+    record["started"] = t0.isoformat() if t0 else None
+    record["ended"] = t1.isoformat() if t1 else None
+    if t0 and t1:
+        record["duration_s"] = int(round((t1 - t0).total_seconds()))
+    record["turns"] = turns
+    # errored 는 마지막 assistant 줄 기준 — 중간 재시도 오류는 오류로 치지 않는다.
+    record["outcome"] = "error" if errored else ("ok" if turns else "unknown")
+    return record
+
+
+def write_run(record: dict) -> None:
+    sink = _runs_sink_path()
+    os.makedirs(os.path.dirname(sink), mode=0o700, exist_ok=True)
+    fd = os.open(sink, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+    with os.fdopen(fd, "a", encoding="utf-8") as f:
+        f.write(json.dumps(record) + "\n")
+
+
 def _sink_path():
     return os.environ.get("AGENT_MODEL_ROUTING_SINK") or os.path.join(
         os.getcwd(), ".agent", "logs", "model-routing.jsonl"
@@ -186,7 +403,7 @@ def handle_subagent_event(event, hook_event_name):
         "event": hook_event_name,
         "agent_type": agent_type,
         "agent_id": agent_id,
-        "verdict": "pinned_specialist" if tier != "unknown" else "inherit_top",
+        "verdict": "pinned_specialist" if tier != "unknown" else "unclassified",
         "effort": None,
         "tier": tier,
         "session_id": _session_id(event),
@@ -199,10 +416,19 @@ def handle_subagent_event(event, hook_event_name):
         last_msg = last_msg if isinstance(last_msg, str) else ""
         record["last_assistant_message_len"] = len(last_msg)
 
-    sink = _sink_path()
-    os.makedirs(os.path.dirname(sink), exist_ok=True)
-    with open(sink, "a", encoding="utf-8") as f:
-        f.write(json.dumps(record) + "\n")
+    try:  # 프로젝트 기록 실패가 사용자 단위 실측 기록을 막지 않게
+        sink = _sink_path()
+        os.makedirs(os.path.dirname(sink), exist_ok=True)
+        with open(sink, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record) + "\n")
+    except Exception:
+        pass
+
+    if hook_event_name == "SubagentStop":
+        try:
+            write_run(measure_run(event, agent_type, agent_id))
+        except Exception:
+            pass  # 사용자 단위 실측 기록 실패가 세션이나 프로젝트별 기록을 막지 않는다
 
 
 def main():
@@ -245,6 +471,8 @@ def main():
         "tier": effective_tier(subagent_type, model, verdict),
         "prompt_chars": len(prompt),
         "total_tokens": total_tokens(event),
+        "resolved_model": resolved_model(event),
+        "env_subagent_model": os.environ.get("CLAUDE_CODE_SUBAGENT_MODEL") or None,
         "session_id": _session_id(event),
         "agent_session_id": os.environ.get("AGENT_SESSION_ID", ""),
         "origin": _log_origin(),

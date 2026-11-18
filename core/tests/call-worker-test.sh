@@ -1619,8 +1619,8 @@ cwx - second-opinion-review AGENT_WORKER_YES=1; rc=$?
     && ok "shipped second-opinion-review — read-only sandbox" || bad "shipped second-opinion-review" "rc=$rc got=[$(lastcall codex)]"
 xai_reset
 cwx - implementer AGENT_WORKER_YES=1; rc=$?
-if [[ $rc -eq 0 && "$(lastcall codex)" == "exec --sandbox workspace-write" ]] && ! grep -q -- '--ask-for-approval' "$MARKERS/codex.calls"; then
-    ok "shipped implementer — 'exec --sandbox workspace-write', no --ask-for-approval (codex 0.161 rejects it)"
+if [[ $rc -eq 0 && "$(lastcall codex)" == "exec --profile mid --sandbox workspace-write" ]] && ! grep -q -- '--ask-for-approval' "$MARKERS/codex.calls"; then
+    ok "shipped implementer — 'exec --profile mid --sandbox workspace-write', no --ask-for-approval (codex 0.161 rejects it)"
 else
     bad "shipped implementer" "rc=$rc got=[$(lastcall codex)]"
 fi

@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `model-routing-observer.py` measured runs: on SubagentStop it reads the subagent's own transcript
+  (`agent_transcript_path`, else `<transcript_path without .jsonl>/subagents/agent-<id>.jsonl`) and
+  `.meta.json` and appends one row to the user-level `~/.agent/logs/subagent-runs.jsonl` (override:
+  env `AGENT_SUBAGENT_RUNS_SINK`) with `agent_type`, `agent_id`, `model` (most frequent distinct-message
+  `message.model`, `<synthetic>` ignored), `effort`, `requested_model`, `launched_with_defaults`,
+  `started`, `ended`, `duration_s`, `turns` (distinct `message.id` count), `outcome`, `origin`.
+  No prompt or answer text is copied; transcripts over 64MB are skipped (`outcome: "unknown"`);
+  failures are swallowed. PostToolUse rows also gain `resolved_model` and `env_subagent_model`.
+  Hardened against forged input: transcript and `.meta.json` are opened only as regular files
+  (`O_NONBLOCK` + `fstat`, so a FIFO or `/dev/zero` is skipped without hanging; size caps use the same
+  descriptor, 1MB for meta), `started`/`ended` are re-serialized parsed timestamps and models must look
+  like a model id (else `null`) so free-form text can never be copied, and a newly created user-level
+  record file is mode 0600 in a 0700 directory.
+- Codex MID tier profile: `adapters/codex/mid.config.toml.template` (sol family, medium effort),
+  installed as `~/.codex/mid.config.toml` by `setup.sh --codex`, checked by `setup.sh --doctor`,
+  and managed by `core/infra/codex-models.py` (`mid` joins `top`/`low`; `codex-tiers.json.template`
+  gains `"mid": "sol"`). `core/infra/backends.json` MID is now `--profile mid` instead of no profile,
+  so MID workers no longer inherit the interactive config's model and effort.
+- Codex worker profiles (`quick`/`mid`/`deep`) set `[features] fast_mode = false` and
+  `ultrafast_mode = false`: a base `config.toml` that enables Fast mode (`service_tier`) is inherited
+  by every profile and spends more plan usage per task. Measured on codex-cli 0.170.0: exec sessions
+  recorded `thread_settings.service_tier = "priority"` without the table and no tier with it.
+  `codex-template-currency-test.sh` checks all three templates.
+
+### Fixed
+- `inherit_top` inflation (~83% of 24k rows across local logs): SubagentStart/SubagentStop lifecycle
+  rows (2 per subagent, mostly empty `agent_type` from Claude Code's internal agents) were counted as
+  dispatches. They now carry verdict `unclassified` unless the agent is a registry id, and
+  `telemetry-digest.sh --model` skips `source: "subagent_event"` rows like `manager-audit.sh` already
+  did. Dispatch rows alone: 52 of 1685 (3.1%) `inherit_top`.
+
+### Changed
+- `docs/model-routing.md`: § What this policy deliberately does not do now separates the allowed
+  (periodic, deterministic, logged, reversible routing-table refresh; filling a caller-empty
+  `model`/`effort`) from the still-forbidden (request classifier, overwriting caller values, automatic
+  choice of models billed outside the subscription); adds the Fable policy, the observed model
+  precedence (call argument > agent frontmatter > `CLAUDE_CODE_SUBAGENT_MODEL`, Claude Code 2.1.327),
+  the routing-table update log pointer and the LMArena CC BY 4.0 attribution.
+
 ## [0.15.5] - 2026-11-15
 
 ### Added

@@ -275,9 +275,9 @@ echo
 echo "=== (j) codex tier profiles: both present beside config -> PASS ==="
 CODEX_FIX="$(safe_mktemp_d)" || { echo "FAIL: mktemp -d failed (codex tier profiles fixture)"; exit 1; }
 track_fixture "$CODEX_FIX"
-touch "$CODEX_FIX/config.toml" "$CODEX_FIX/quick.config.toml" "$CODEX_FIX/deep.config.toml"
+touch "$CODEX_FIX/config.toml" "$CODEX_FIX/quick.config.toml" "$CODEX_FIX/mid.config.toml" "$CODEX_FIX/deep.config.toml"
 OUT_J="$(CODEX_CONFIG="$CODEX_FIX/config.toml" bash "$SETUP" --doctor 2>&1)"
-[[ "$OUT_J" == *"[PASS"*"codex tier profiles — quick/deep profiles present"* ]]
+[[ "$OUT_J" == *"[PASS"*"codex tier profiles — quick/mid/deep profiles present"* ]]
 check "codex-profiles-present-pass" $?
 
 echo
@@ -289,6 +289,12 @@ check "codex-profile-missing-warn" $?
 RC_J2="$(CODEX_CONFIG="$CODEX_FIX/config.toml" bash "$SETUP" --doctor >/dev/null 2>&1; echo $?)"
 [[ "$RC_J2" -eq 0 ]]
 check "codex-profile-missing-is-warn-not-fail" $?
+echo
+echo "=== (j2b) codex tier profiles: mid missing -> WARN naming it ==="
+touch "$CODEX_FIX/deep.config.toml"; rm -f "$CODEX_FIX/mid.config.toml"
+OUT_J2B="$(CODEX_CONFIG="$CODEX_FIX/config.toml" bash "$SETUP" --doctor 2>&1)"
+[[ "$OUT_J2B" == *"[WARN"*"codex tier profiles — missing mid.config.toml"* ]]
+check "codex-mid-profile-missing-warn" $?
 rm -rf "$CODEX_FIX"
 
 echo
@@ -304,6 +310,7 @@ track_fixture "$CODEX_FIX4"
 touch "$CODEX_FIX4/config.toml"
 printf 'model = "gpt-5.6-sol"\n' > "$CODEX_FIX4/deep.config.toml"
 printf 'model = "gpt-6-luna"\n' > "$CODEX_FIX4/quick.config.toml"
+printf 'model = "gpt-6.1-sol"\n' > "$CODEX_FIX4/mid.config.toml"
 printf '{"models":[{"slug":"gpt-6.1-sol","visibility":"list","priority":1,"upgrade":null},{"slug":"gpt-6-luna","visibility":"list","priority":2,"upgrade":null}]}' > "$CODEX_FIX4/models_cache.json"
 OUT_J4="$(CODEX_CONFIG="$CODEX_FIX4/config.toml" AGENT_CODEX_TIERS_FILE=/nonexistent/tiers.json bash "$SETUP" --doctor 2>&1)"
 [[ "$OUT_J4" == *"[WARN"*"codex tier profiles"*"codex-models.py apply"* ]]

@@ -300,6 +300,8 @@ cat > "$MODEL_DIR/routing.jsonl" <<'EOF'
 {"gate":"model-routing-observer","subagent_type":"code-reviewer","model":"","verdict":"pinned_specialist","prompt_chars":200,"total_tokens":500,"session_id":"s1","ts":"2026-07-17T01:05:00Z"}
 {"gate":"model-routing-observer","subagent_type":"Explore","model":"","verdict":"inherit_top","prompt_chars":800,"total_tokens":null,"session_id":"s1","ts":"2026-07-17T01:10:00Z"}
 {"gate":"model-routing-observer","subagent_type":"fanout-worker","model":"opus","verdict":"override","prompt_chars":50,"total_tokens":9000,"session_id":"s1","ts":"2026-07-17T01:20:00Z"}
+{"gate":"model-routing-observer","event":"SubagentStart","agent_type":"","agent_id":"x1","verdict":"inherit_top","source":"subagent_event","session_id":"s1","ts":"2026-07-17T01:21:00Z"}
+{"gate":"model-routing-observer","event":"SubagentStop","agent_type":"","agent_id":"x1","verdict":"unclassified","source":"subagent_event","session_id":"s1","ts":"2026-07-17T01:22:00Z"}
 EOF
 cat > "$MODEL_DIR/registry.json" <<'EOF'
 {"agents": [{"id": "code-reviewer", "model": "sonnet"}]}
@@ -310,7 +312,8 @@ RC_M=$?
 [[ $RC_M -eq 0 ]]; check "model-exit-0" $?
 printf '%s' "$OUT_M" | python3 -c "import json,sys; json.loads(sys.stdin.read())" >/dev/null 2>&1
 check "model-json-parses" $?
-# override=2, pinned_specialist=1, inherit_top=1 (4 records)
+# override=2, pinned_specialist=1, inherit_top=1 (4 dispatch records; the two
+# subagent_event lifecycle rows are not dispatches and must not be counted)
 printf '%s' "$OUT_M" | python3 -c "
 import json,sys
 d=json.load(sys.stdin)

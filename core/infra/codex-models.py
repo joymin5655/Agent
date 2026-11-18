@@ -6,7 +6,7 @@ Reading it is free; applying a change is gated by a paid `codex exec` probe,
 because a catalog entry marked "list" can still be rejected for the account.
 
   check [--json]                 exit 0 match, 10 change suggested, 2 no catalog
-  apply [--tier top|low] [--yes] probe candidates, rewrite the profile's model line
+  apply [--tier top|mid|low] [--yes] probe candidates, rewrite the profile's model line
   upgrade-for <id>               successor of a retired/unsupported model (exit 1: none)
 
 Tier -> family comes from $AGENT_CODEX_TIERS_FILE (default ~/.agent/codex-tiers.json),
@@ -25,8 +25,8 @@ import subprocess
 import sys
 import tempfile
 
-DEFAULT_TIERS = {"top": "sol", "low": "luna"}
-PROFILE_FOR_TIER = {"top": "deep.config.toml", "low": "quick.config.toml"}
+DEFAULT_TIERS = {"top": "sol", "mid": "sol", "low": "luna"}
+PROFILE_FOR_TIER = {"top": "deep.config.toml", "mid": "mid.config.toml", "low": "quick.config.toml"}
 FAMILY_RE = re.compile(r"^[a-z]+$")
 ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 MODEL_LINE_RE = re.compile(r"""^(\s*model\s*=\s*)(["'])([^"']+)\2""")

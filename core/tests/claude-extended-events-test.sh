@@ -239,9 +239,10 @@ check "postmodelswitch-advisory-not-blocking" $?
 echo
 echo "=== 5. SubagentStart/SubagentStop -> model-routing-observer.py ==="
 MR_SINK="$WORK/model-routing.jsonl"
+MR_RUNS="$WORK/subagent-runs.jsonl"
 
 SS_EVENT='{"ai":"claude-code","hook_event_name":"SubagentStart","session_id":"ext-5","agent_type":"code-reviewer","agent_id":"ag-1"}'
-OUT=$(printf '%s' "$SS_EVENT" | AGENT_MODEL_ROUTING_SINK="$MR_SINK" bash "$ADAPTER" model-routing-observer.py 2>/dev/null); RC=$?
+OUT=$(printf '%s' "$SS_EVENT" | AGENT_MODEL_ROUTING_SINK="$MR_SINK" AGENT_SUBAGENT_RUNS_SINK="$MR_RUNS" bash "$ADAPTER" model-routing-observer.py 2>/dev/null); RC=$?
 check "subagentstart-exit-0" $((RC == 0 ? 0 : 1)) "rc=$RC"
 check "subagentstart-empty-stdout" $((${#OUT} == 0 ? 0 : 1)) "out=$OUT"
 LAST=$(tail -1 "$MR_SINK" 2>/dev/null)
@@ -249,12 +250,14 @@ LAST=$(tail -1 "$MR_SINK" 2>/dev/null)
 check "subagentstart-record-shape" $? "last=$LAST"
 
 SE2_EVENT='{"ai":"claude-code","hook_event_name":"SubagentStop","session_id":"ext-5","agent_type":"code-reviewer","agent_id":"ag-1","last_assistant_message":"done, no issues found"}'
-OUT=$(printf '%s' "$SE2_EVENT" | AGENT_MODEL_ROUTING_SINK="$MR_SINK" bash "$ADAPTER" model-routing-observer.py 2>/dev/null); RC=$?
+OUT=$(printf '%s' "$SE2_EVENT" | AGENT_MODEL_ROUTING_SINK="$MR_SINK" AGENT_SUBAGENT_RUNS_SINK="$MR_RUNS" bash "$ADAPTER" model-routing-observer.py 2>/dev/null); RC=$?
 check "subagentstop-exit-0" $((RC == 0 ? 0 : 1)) "rc=$RC"
 check "subagentstop-empty-stdout" $((${#OUT} == 0 ? 0 : 1)) "out=$OUT"
 LAST=$(tail -1 "$MR_SINK" 2>/dev/null)
 [[ "$LAST" == *'"event": "SubagentStop"'* && "$LAST" == *'"last_assistant_message_len": 21'* ]]
 check "subagentstop-record-shape" $? "last=$LAST"
+[[ "$(wc -l < "$MR_RUNS" 2>/dev/null | tr -d ' ')" == "1" ]]
+check "subagentstop-measured-run-to-test-sink" $? "runs=$(cat "$MR_RUNS" 2>/dev/null)"
 
 echo
 echo "=== 5b. PostToolUse Task/Agent dispatch record now carries source=post_tool_use ==="

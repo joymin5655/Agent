@@ -29,6 +29,15 @@ maintainer decision below. The exact model alias behind each class still lives o
 consumer — an agent's `model:` frontmatter, an adapter's tier file — never
 here.
 
+**Fable policy (maintainer decision 2026-11-18).** Fable-class models are not a
+default anywhere: they cost a lot and spend a large share of the weekly
+subscription limit. The main session runs Opus; a task that truly needs Fable
+is put to the user first and only then run. A subagent dispatch that asks for
+`model: fable` is meant to be confirmed by the user before it runs — that
+confirmation device belongs to the user's personal harness layer, not to this
+public source. The TOP-F row above is therefore a reservation, never an
+automatic choice.
+
 **Effort before tier-up.** Before promoting a task one rung, raise the effort
 dial *within* the rung first. A MID model at high effort beats a TOP model at
 low effort for most bounded tasks, at a fraction of the cost. Frontier-model
@@ -76,7 +85,8 @@ The tier assignment:
 
 Synthesis of subagent results stays in the main loop (TOP — orchestration
 judgment). `core/hooks/model-routing-observer.py` records every Task/Agent
-dispatch's verdict (`override` / `pinned_specialist` / `inherit_top`) to
+dispatch's verdict (`override` / `pinned_specialist` / `inherit_top`; lifecycle
+rows are `unclassified`) to
 `.agent/logs/model-routing.jsonl`, so this convention is measured, not assumed.
 `core/infra/manager-audit.sh` (consumed by `/manager-audit`) audits those
 records after a supervise run — TOP-inherit leaks, floor violations, and a
@@ -202,7 +212,7 @@ governs promoting effort before promoting tier):
 | `/supervise` implementation waves | low → medium | A wave dispatched against an approved, concrete plan is spec-gated work — the plan already forecloses most hidden edge cases; promote to medium only for a wave with no prior spec-gate pass |
 | Code review (`code-reviewer`, council lanes) | high | Reviewing is exactly the "hidden edge case" shape the vendor study measured gains in — a shallow pass misses the defect it exists to catch |
 | `/verify-completion` terminal verdict | high | A refute-by-default judge that verifies at low effort silently degrades into a rubber stamp — the gate's entire value is in the verification budget |
-| Security review (`security-reviewer`) | high | Pinned `opus` @ `high` by a 2026-10-16 maintainer decision: latency vs benefit — security review passes took 22–26 min at fable @ max. History: the 2026-09-26 `max` pin rested on the vendor study's largest measured gain in this domain (64%→87%) and was the one TOP-F reservation; a missed finding is still a security incident, so `high` effort stays and the tier stays TOP (see The ladder) |
+| Security review (`security-reviewer`) | high | Pinned `opus` @ `high` by a 2026-10-16 maintainer decision: latency vs benefit — security review passes took 22–26 min at fable @ max. History: the 2026-09-26 `max` pin rested on the vendor study's largest measured gain in this domain (64%→87%) and was the one TOP-F reservation; a missed finding is still a security incident, so `high` effort stays and the tier stays TOP (see The ladder). Later changes to this row's model or effort are recorded in the routing-table update log (`~/.agent/logs/model-radar.jsonl`, see Currency log) |
 
 **Advisory nudge.** `core/hooks/model-routing-advisor.py` adds one short note
 (inside its single `additionalContext` object, combined with the missing-`model`
@@ -231,7 +241,7 @@ just what this doc recommends.
 | Claude Code — judgment unpinned / per-call MID (execution dispatch) & LOW overrides; coordination-cost check and worker-reuse (cache) | Convention, documented not CI-checked (frontmatter *absence*, call-time overrides, and call-time reuse-vs-spawn choices are not statically verifiable) | `skills/supervise/SKILL.md` Model policy |
 | Claude Code — decision-time reminder | `model-routing-advisor.py` (PreToolUse Task/Agent), advisory: one-line `additionalContext` nudge, never blocks, decision stays with the dispatcher | `core/hooks/model-routing-advisor.py`, `docs/gate-registry.md` GATE model-routing-advisor |
 | Claude Code — accumulation-time reminder | Retired 2026-10 (unregistered; script kept under `legacy/top-edit-advisor/`) | `legacy/top-edit-advisor/README.md` |
-| Codex CLI | GPT-6 named profiles (per-profile config files): `quick` = LOW (`gpt-6-luna` @ low effort), default = MID (`gpt-6-sol` @ medium effort), `deep` = TOP (`gpt-6-astra` @ xhigh effort); `model_reasoning_effort` is the effort dial | `adapters/codex/codex-config.toml.template` + `quick.config.toml.template` / `deep.config.toml.template` |
+| Codex CLI | GPT-6 named profiles (per-profile config files): `quick` = LOW (`gpt-6-luna` @ low effort), `mid` = MID (`gpt-6.1-sol` @ medium effort, pinned like the other two), `deep` = TOP (`gpt-6.1-sol` @ high effort); `model_reasoning_effort` is the effort dial; all three set `[features] fast_mode = false` / `ultrafast_mode = false` so worker lanes run at standard speed instead of inheriting an interactive Fast `service_tier` | `adapters/codex/codex-config.toml.template` + `quick.config.toml.template` / `mid.config.toml.template` / `deep.config.toml.template` |
 | Antigravity (the live gemini lane) | Tiers keyed by model ID in a single tiers file the antigravity-worker resolves per call — MID/TOP entries, moved from the vendor-owned directory to a harness-owned path so an agy CLI reinstall can't silently reset the pin; `--effort` flag optional alongside the tier's own baked-in reasoning level | `~/.agent/antigravity-tiers.json` (installed from `adapters/antigravity/antigravity-tiers.json.template`), `adapters/antigravity/antigravity-worker.sh` |
 | Claude Code — purpose launchers | Session-start human choice of tier (`claude-build`/`claude-quick`/`claude-research`); a launcher presets the model before the session exists — the allowed side of the no-runtime-switching line | `adapters/claude-code/launchers/`, `docs/launchers.md` |
 
@@ -484,6 +494,17 @@ shared blind spot doesn't survive review.
 
 ## What this policy deliberately does not do
 
+**Allowed** (deterministic, logged, reversible): a periodic routing-table
+update — a rule-based refresh of the per-task model/effort table from public
+leaderboard data, written to a user-level file with an update log
+(`~/.agent/logs/model-radar.jsonl`) so any change can be read back and undone —
+and filling a `model` or `effort` slot the caller left empty from that table.
+The caller's own value is never touched. This repo only states the boundary; the
+table-refresh job and the slot-filling mechanism live in the user's personal
+harness layer, not in this source.
+
+**Still not allowed:**
+
 - **No runtime model-switching hooks.** A per-prompt classifier that picks a
   model was evaluated and rejected (config-coupled, opaque, and it moves a
   human-auditable decision into a hook). `/manager-audit` stays on the right
@@ -497,14 +518,44 @@ shared blind spot doesn't survive review.
   PostToolUse reminder keyed on a measured edit count, never a decision. The boundary is
   narrower than "no automated behavior at decision time"; it is "no automated
   *decision*" — a reminder is inside that line, a classifier or a switch is not.
+  The table fill above is the only exception: it applies a fixed, logged table to
+  slots the caller left empty, never reads the request, and never overwrites a
+  value the caller wrote.
+- **No overriding the caller, no automatic premium choice.** A value the caller
+  wrote is never overwritten, and options that use far more of the plan's limits
+  or are billed separately (Fable, Gemini Argon, Codex fast/priority speed) are
+  never picked automatically; the user chooses them explicitly every time.
 - **No automatic tier escalation.** Promotion is a caller decision, made
-  per-task, visible in the invocation.
+  per-task, visible in the invocation. Filling an empty slot from the table is
+  not promotion: the caller had not decided that slot.
 - **No dedicated low-tier agents.** The LOW rung is reached with a per-call
   override, not by shipping more agents; the agent roster stays curated.
 - **No price constants.** Tiers are relative; absolute prices live outside
   the repo.
 
+## Which model setting wins (observed, Claude Code 2.1.327)
+
+A subagent's model can come from three places: the `model` argument of the
+dispatch call, the agent definition's `model:` frontmatter, and the
+`CLAUDE_CODE_SUBAGENT_MODEL` environment variable. Measured from subagent
+transcripts, the order is **call argument > agent frontmatter > environment
+variable**: with the variable set to `sonnet`, an agent whose frontmatter pins
+`opus` (`security-reviewer`) ran as opus at `high` effort in both observed
+runs, and a dispatch that passed `model: haiku` ran as haiku.
+Evidence is the `model` field of each `assistant` line in the subagent
+transcript plus its `.meta.json` (`model` when requested, `effort`,
+`launchedWithDefaults`), recorded per run by `core/hooks/model-routing-observer.py`
+into `~/.agent/logs/subagent-runs.jsonl`. Whether an agent with neither a
+frontmatter model nor a call argument really runs on the variable's value is
+**not yet confirmed** by those records. This is observed behavior of one
+version, not a documented contract — re-check after Claude Code upgrades.
+
 ## Currency log
+
+Routing-table updates (the rule-based refresh described under *What this policy
+deliberately does not do*) are logged to `~/.agent/logs/model-radar.jsonl`; that
+file, not this section, is the record for them. Agent leaderboard data: LMArena,
+lmarena-ai/leaderboard-dataset (config agent), licensed CC BY 4.0.
 
 Dated re-verifications of this policy against the live model landscape (the
 tier table itself is generation-agnostic, so entries here record *that* the

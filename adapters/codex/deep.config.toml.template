@@ -8,3 +8,12 @@
 # (docs/model-routing.md)
 model = "gpt-6.1-sol"
 model_reasoning_effort = "high"
+
+# Worker lanes run at standard speed. A base ~/.codex/config.toml that turns on
+# Fast mode (service_tier) is inherited by every profile and spends more plan
+# usage per task; turning the Fast/Ultrafast feature off drops that tier for
+# this profile only (measured on codex-cli 0.170.0: thread_settings.service_tier
+# "priority" without this table, absent with it). (docs/model-routing.md)
+[features]
+fast_mode = false
+ultrafast_mode = false

@@ -690,6 +690,11 @@ def main():
         origin = rec.get("origin")
         if not (origin is None or origin == "session"):
             continue
+        # SubagentStart/Stop lifecycle rows are not dispatches (no model, and
+        # 2-3 rows per subagent): counting them inflated inherit_top to ~86%.
+        # Same exclusion as manager-audit.sh.
+        if rec.get("source") == "subagent_event":
+            continue
         built = build_record(rec)
         if built is None:
             skipped += 1

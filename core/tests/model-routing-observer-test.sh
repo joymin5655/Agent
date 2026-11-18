@@ -29,6 +29,7 @@ FAIL=0
 
 WORK="$(mktemp -d)"
 SINK="$WORK/model-routing.jsonl"
+RUNS="$WORK/subagent-runs.jsonl"
 REG="$WORK/registry.json"
 trap '[[ -n "$WORK" && -d "$WORK" ]] && rm -rf "$WORK"' EXIT
 
@@ -43,6 +44,7 @@ bad() { echo "  FAIL [$1] $2"; FAIL=$((FAIL + 1)); }
 run() {
   OUT="$(printf '%s' "$1" | env \
     AGENT_MODEL_ROUTING_SINK="$SINK" \
+    AGENT_SUBAGENT_RUNS_SINK="$RUNS" \
     AGENT_REGISTRY_PATH="$REG" \
     AGENT_SESSION_ID=test \
     python3 "$HOOK" 2>/dev/null)"
@@ -161,6 +163,7 @@ echo "=== registry fallback: unreadable registry never crashes, still records ==
 before="$(wc -l < "$SINK")"
 OUT="$(printf '%s' "$(evt Task code-reviewer)" | env \
   AGENT_MODEL_ROUTING_SINK="$SINK" \
+  AGENT_SUBAGENT_RUNS_SINK="$RUNS" \
   AGENT_REGISTRY_PATH="$WORK/nonexistent.json" \
   AGENT_SESSION_ID=test \
   python3 "$HOOK" 2>/dev/null)"; RC=$?
@@ -188,6 +191,189 @@ last="$(tail -1 "$SINK")"
 if [[ "$last" == *'"session_id": "uuid-2"'* && "$last" == *'"agent_session_id": "test"'* ]]; then
   ok "s3-subagent-event-dual-ids"
 else bad "s3-subagent-event" "$last"; fi
+
+echo
+echo "=== subagent lifecycle rows are not dispatch verdicts (86% inherit_top inflation) ==="
+run '{"hook_event_name":"SubagentStart","agent_type":"","agent_id":"i1"}'
+last="$(tail -1 "$SINK")"
+if [[ "$last" == *'"verdict": "unclassified"'* && "$last" != *inherit_top* ]]; then ok "r1-internal-agent-event-not-inherit-top"; else bad "r1-internal-agent" "$last"; fi
+run '{"hook_event_name":"SubagentStop","agent_type":"agent-harness:code-reviewer","agent_id":"i2"}'
+last="$(tail -1 "$SINK")"
+if [[ "$last" == *'"verdict": "pinned_specialist"'* ]]; then ok "r2-registry-agent-event-still-pinned"; else bad "r2-pinned-event" "$last"; fi
+rm -f "$RUNS"
+run '{"hook_event_name":"SubagentStart","agent_type":"Explore","agent_id":"i3"}'
+if [[ ! -s "$RUNS" ]]; then ok "r3-start-writes-no-measured-run"; else bad "r3-start-no-run" "$(cat "$RUNS")"; fi
+
+echo
+echo "=== PostToolUse record: resolved_model + env_subagent_model (measured, additive) ==="
+OUT="$(printf '%s' '{"event":"PostToolUse","tool_name":"Agent","tool_input":{"subagent_type":"Explore","prompt":"x"},"tool_response":{"resolvedModel":"claude-sonnet-5-5"}}' | env \
+  AGENT_MODEL_ROUTING_SINK="$SINK" AGENT_SUBAGENT_RUNS_SINK="$RUNS" AGENT_REGISTRY_PATH="$REG" \
+  CLAUDE_CODE_SUBAGENT_MODEL=sonnet python3 "$HOOK" 2>/dev/null)"; RC=$?
+last="$(tail -1 "$SINK")"
+if [[ "$RC" -eq 0 && -z "$OUT" && "$last" == *'"resolved_model": "claude-sonnet-5-5"'* && "$last" == *'"env_subagent_model": "sonnet"'* ]]; then
+  ok "t1-resolved-model-and-env-recorded"; else bad "t1-resolved" "rc=$RC $last"; fi
+run "$(evt Task Explore)"
+last="$(tail -1 "$SINK")"
+if [[ "$last" == *'"resolved_model": null'* ]]; then ok "t2-no-resolved-model-is-null"; else bad "t2-null" "$last"; fi
+
+echo
+echo "=== measured run record: SubagentStop -> user-level subagent-runs sink ==="
+PROJ="$WORK/proj"; SESS="$PROJ/sess-1"; mkdir -p "$SESS/subagents"
+TRANS="$SESS/subagents/agent-a1.jsonl"
+cat > "$TRANS" <<'EOF'
+{"type":"user","timestamp":"2026-11-18T10:00:00.000Z","message":{"role":"user","content":"SECRET-PROMPT-TEXT"}}
+{"type":"assistant","timestamp":"2026-11-18T10:00:05.000Z","effort":"high","message":{"model":"claude-opus-5-5","content":[{"type":"text","text":"SECRET-ANSWER-TEXT"}]}}
+{"type":"assistant","timestamp":"2026-11-18T10:00:20.000Z","effort":"high","message":{"model":"claude-opus-5-5","content":[]}}
+{"type":"assistant","timestamp":"2026-11-18T10:01:00.000Z","message":{"model":"claude-sonnet-5-5","content":[]}}
+EOF
+printf '{"agentType":"agent-harness:security-reviewer","launchedWithDefaults":true,"effort":"low","model":"haiku"}' > "$SESS/subagents/agent-a1.meta.json"
+stop_evt() { printf '{"hook_event_name":"SubagentStop","session_id":"sess-1","transcript_path":"%s","agent_type":"%s","agent_id":"%s","agent_transcript_path":"%s","last_assistant_message":"SECRET-ANSWER-TEXT"}' "$PROJ/sess-1.jsonl" "$1" "$2" "$3"; }
+run "$(stop_evt agent-harness:security-reviewer a1 "$TRANS")"
+last="$(tail -1 "$RUNS" 2>/dev/null)"
+if [[ "$RC" -eq 0 && -z "$OUT" ]] && printf '%s' "$last" | python3 -c '
+import json,sys
+r=json.load(sys.stdin)
+want={"ts","agent_type","agent_id","model","effort","requested_model","launched_with_defaults","started","ended","duration_s","turns","outcome","origin"}
+assert set(r)==want, sorted(set(r)^want)
+assert r["model"]=="claude-opus-5-5" and r["effort"]=="high" and r["requested_model"]=="haiku", r
+assert r["launched_with_defaults"] is True and r["turns"]==3 and r["duration_s"]==60, r
+assert r["started"]=="2026-11-18T10:00:00+00:00" and r["ended"]=="2026-11-18T10:01:00+00:00", r
+assert r["outcome"]=="ok" and r["agent_id"]=="a1", r
+'; then ok "m1-run-record-keys-and-values"; else bad "m1-run-record" "rc=$RC last=$last"; fi
+if ! grep -q "SECRET" "$RUNS"; then ok "m2-no-prompt-or-answer-content"; else bad "m2-content-leak" "$(cat "$RUNS")"; fi
+
+# 위치 규칙 대체: agent_transcript_path 가 없으면 transcript_path + agent_id 로 찾는다.
+cp "$TRANS" "$SESS/subagents/agent-a2.jsonl"; printf '{"agentType":"Explore","effort":"medium"}' > "$SESS/subagents/agent-a2.meta.json"
+run "$(printf '{"hook_event_name":"SubagentStop","session_id":"sess-1","transcript_path":"%s","agent_type":"Explore","agent_id":"a2"}' "$PROJ/sess-1.jsonl")"
+last="$(tail -1 "$RUNS")"
+if [[ "$last" == *'"agent_id": "a2"'* && "$last" == *'"turns": 3'* && "$last" == *'"requested_model": null'* && "$last" == *'"launched_with_defaults": null'* ]]; then
+  ok "m3-fallback-locates-by-transcript-path-and-agent-id"; else bad "m3-fallback" "$last"; fi
+
+# effort: 줄에 없으면 meta.effort, 둘 다 없으면 null
+printf '%s\n' '{"type":"assistant","timestamp":"2026-11-18T10:00:00.000Z","message":{"model":"claude-haiku-5-5"}}' > "$SESS/subagents/agent-a3.jsonl"
+printf '{"agentType":"Explore","effort":"medium"}' > "$SESS/subagents/agent-a3.meta.json"
+run "$(stop_evt Explore a3 "$SESS/subagents/agent-a3.jsonl")"
+last="$(tail -1 "$RUNS")"
+if [[ "$last" == *'"effort": "medium"'* && "$last" == *'"duration_s": 0'* ]]; then ok "m4-effort-falls-back-to-meta"; else bad "m4-effort-meta" "$last"; fi
+printf '{"agentType":"Explore"}' > "$SESS/subagents/agent-a3.meta.json"
+run "$(stop_evt Explore a3 "$SESS/subagents/agent-a3.jsonl")"
+last="$(tail -1 "$RUNS")"
+if [[ "$last" == *'"effort": null'* ]]; then ok "m5-no-effort-anywhere-is-null"; else bad "m5-effort-null" "$last"; fi
+
+# outcome: 실제 기록의 오류 표시(isApiErrorMessage)가 있을 때만 error
+printf '%s\n' '{"type":"assistant","timestamp":"2026-11-18T10:00:00.000Z","isApiErrorMessage":true,"error":"rate_limit","message":{"model":"<synthetic>"}}' > "$SESS/subagents/agent-a4.jsonl"
+run "$(stop_evt Explore a4 "$SESS/subagents/agent-a4.jsonl")"
+last="$(tail -1 "$RUNS")"
+if [[ "$last" == *'"outcome": "error"'* ]]; then ok "m6-api-error-marker-is-error"; else bad "m6-error" "$last"; fi
+
+# 누락·깨진 기록: 조용히 넘어가고 outcome unknown 한 줄
+before="$(wc -l < "$RUNS")"
+run "$(stop_evt Explore a5 "$SESS/subagents/agent-none.jsonl")"
+last="$(tail -1 "$RUNS")"
+after="$(wc -l < "$RUNS")"
+if [[ "$RC" -eq 0 && -z "$OUT" && "$after" -eq $((before + 1)) && "$last" == *'"outcome": "unknown"'* && "$last" == *'"model": null'* && "$last" == *'"turns": 0'* ]]; then
+  ok "m7-missing-transcript-unknown-rc0"; else bad "m7-missing" "rc=$RC $last"; fi
+printf 'not json\n{"type":"assistant","message":{"model":"claude-opus-5-5"}}\n' > "$SESS/subagents/agent-a6.jsonl"
+run "$(stop_evt Explore a6 "$SESS/subagents/agent-a6.jsonl")"
+last="$(tail -1 "$RUNS")"
+if [[ "$RC" -eq 0 && "$last" == *'"model": "claude-opus-5-5"'* && "$last" == *'"turns": 1'* ]]; then ok "m8-malformed-line-skipped"; else bad "m8-malformed" "$last"; fi
+
+# 큰 파일 건너뛰기: 시험은 상한을 env 로 낮춘다(실제 64MB 파일을 만들지 않는다).
+OUT="$(printf '%s' "$(stop_evt Explore a1 "$TRANS")" | env AGENT_MODEL_ROUTING_SINK="$SINK" AGENT_SUBAGENT_RUNS_SINK="$RUNS" \
+  AGENT_REGISTRY_PATH="$REG" AGENT_SUBAGENT_RUNS_MAX_BYTES=10 python3 "$HOOK" 2>/dev/null)"; RC=$?
+last="$(tail -1 "$RUNS")"
+if [[ "$RC" -eq 0 && "$last" == *'"outcome": "unknown"'* && "$last" == *'"turns": 0'* ]]; then ok "m9-oversize-transcript-skipped-unknown"; else bad "m9-oversize" "rc=$RC $last"; fi
+
+# 기본 상한은 64MB
+if grep -q "64 \* 1024 \* 1024" "$HOOK"; then ok "m10-default-cap-is-64mb"; else bad "m10-cap" "64MB constant missing"; fi
+
+# 사용자 단위 기록 쓰기 실패(경로가 파일 아래)여도 프로젝트별 기록은 남고 rc 0
+BLOCK="$WORK/blockfile"; : > "$BLOCK"
+before="$(wc -l < "$SINK")"
+OUT="$(printf '%s' "$(stop_evt Explore a1 "$TRANS")" | env AGENT_MODEL_ROUTING_SINK="$SINK" AGENT_SUBAGENT_RUNS_SINK="$BLOCK/x/runs.jsonl" \
+  AGENT_REGISTRY_PATH="$REG" python3 "$HOOK" 2>/dev/null)"; RC=$?
+after="$(wc -l < "$SINK")"
+if [[ "$RC" -eq 0 && -z "$OUT" && "$after" -eq $((before + 1)) ]]; then ok "m11-runs-sink-failure-silent-project-row-kept"; else bad "m11-sink-fail" "rc=$RC out=$OUT $before->$after"; fi
+
+# 프로젝트별 기록 쓰기 실패(경로가 파일 아래)여도 사용자 단위 실측 줄은 남고 rc 0
+before="$(wc -l < "$RUNS")"
+OUT="$(printf '%s' "$(stop_evt Explore a1 "$TRANS")" | env AGENT_MODEL_ROUTING_SINK="$BLOCK/x/routing.jsonl" AGENT_SUBAGENT_RUNS_SINK="$RUNS" \
+  AGENT_REGISTRY_PATH="$REG" python3 "$HOOK" 2>/dev/null)"; RC=$?
+after="$(wc -l < "$RUNS")"
+if [[ "$RC" -eq 0 && -z "$OUT" && "$after" -eq $((before + 1)) ]]; then ok "m12-project-sink-failure-silent-runs-row-kept"; else bad "m12-proj-fail" "rc=$RC out=$OUT $before->$after"; fi
+
+# 한 응답이 내용 조각마다 여러 줄 — 고유 message.id 만 세고 <synthetic> 줄은 뺀다
+{
+  for _ in 1 2 3; do printf '%s\n' '{"type":"assistant","timestamp":"2026-11-18T10:00:00.000Z","message":{"id":"msg_1","model":"claude-opus-5-5"}}'; done
+  for i in 1 2 3; do printf '%s\n' '{"type":"assistant","timestamp":"2026-11-18T10:00:01.000Z","message":{"id":"syn_'$i'","model":"<synthetic>"}}'; done
+  printf '%s\n' '{"type":"assistant","timestamp":"2026-11-18T10:00:02.000Z","message":{"id":"msg_2","model":"claude-opus-5-5"}}'
+} > "$SESS/subagents/agent-a7.jsonl"
+run "$(stop_evt Explore a7 "$SESS/subagents/agent-a7.jsonl")"
+last="$(tail -1 "$RUNS")"
+if printf '%s' "$last" | python3 -c '
+import json,sys
+r=json.load(sys.stdin)
+assert r["turns"]==2 and r["model"]=="claude-opus-5-5" and r["outcome"]=="ok", r
+'; then ok "m13-turns-count-unique-message-ids-skip-synthetic"; else bad "m13-turns" "$last"; fi
+
+# agent_id 에 경로 조각이 있으면 대체 경로를 만들지 않는다
+mkdir -p "$SESS/subagents/agent-zz"
+printf '%s\n' '{"type":"assistant","timestamp":"2026-11-18T10:00:00.000Z","message":{"model":"claude-opus-5-5"}}' > "$SESS/subagents/decoy.jsonl"
+run "$(printf '{"hook_event_name":"SubagentStop","session_id":"sess-1","transcript_path":"%s","agent_type":"Explore","agent_id":"zz/../decoy"}' "$PROJ/sess-1.jsonl")"
+last="$(tail -1 "$RUNS")"
+if [[ "$RC" -eq 0 && "$last" == *'"turns": 0'* && "$last" == *'"outcome": "unknown"'* ]]; then ok "m14-agent-id-path-injection-rejected"; else bad "m14-inject" "rc=$RC $last"; fi
+
+# 위조된 입력 방어: FIFO·/dev/zero 는 열지 않고 2초 안에 rc 0 으로 끝난다
+timed_run() {  # $1 = 이벤트 JSON; 2초 안에 안 끝나면 rc 124
+  printf '%s' "$1" | env AGENT_MODEL_ROUTING_SINK="$SINK" AGENT_SUBAGENT_RUNS_SINK="$RUNS" \
+    AGENT_REGISTRY_PATH="$REG" python3 -c '
+import subprocess, sys
+try:
+    sys.exit(subprocess.run([sys.executable, sys.argv[1]], input=sys.stdin.buffer.read(),
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2).returncode)
+except subprocess.TimeoutExpired:
+    sys.exit(124)
+' "$HOOK"
+}
+FIFO="$SESS/subagents/agent-fifo.jsonl"; mkfifo "$FIFO"
+timed_run "$(stop_evt Explore a8 "$FIFO")"; RC=$?
+last="$(tail -1 "$RUNS")"
+if [[ "$RC" -eq 0 && "$last" == *'"agent_id": "a8"'* && "$last" == *'"turns": 0'* ]]; then ok "m15-fifo-transcript-skipped-no-hang"; else bad "m15-fifo" "rc=$RC $last"; fi
+timed_run "$(stop_evt Explore a9 /dev/zero)"; RC=$?
+last="$(tail -1 "$RUNS")"
+if [[ "$RC" -eq 0 && "$last" == *'"agent_id": "a9"'* && "$last" == *'"turns": 0'* ]]; then ok "m16-devzero-transcript-skipped"; else bad "m16-zero" "rc=$RC $last"; fi
+# meta.json 이 FIFO 여도 멈추지 않는다
+printf '%s\n' '{"type":"assistant","message":{"model":"claude-opus-5-5"}}' > "$SESS/subagents/agent-a10.jsonl"
+mkfifo "$SESS/subagents/agent-a10.meta.json"
+timed_run "$(stop_evt Explore a10 "$SESS/subagents/agent-a10.jsonl")"; RC=$?
+last="$(tail -1 "$RUNS")"
+if [[ "$RC" -eq 0 && "$last" == *'"agent_id": "a10"'* ]]; then ok "m17-fifo-meta-skipped-no-hang"; else bad "m17-meta-fifo" "rc=$RC $last"; fi
+
+# 본문 복사 금지를 구조로: 긴 임의 문자열은 timestamp·model 칸에 들어가지 않는다
+python3 - "$SESS/subagents/agent-a11.jsonl" "$SESS/subagents/agent-a11.meta.json" <<'PY'
+import json, sys
+junk = "Z" * 100 + " \n " + "W" * 100
+with open(sys.argv[1], "w") as f:
+    f.write(json.dumps({"type": "assistant", "timestamp": junk, "message": {"id": "m1", "model": junk}}) + "\n")
+with open(sys.argv[2], "w") as f:
+    json.dump({"model": junk}, f)
+PY
+run "$(stop_evt Explore a11 "$SESS/subagents/agent-a11.jsonl")"
+last="$(tail -1 "$RUNS")"
+if [[ "$RC" -eq 0 && "$last" != *ZZZZZ* && "$last" != *WWWWW* ]] && printf '%s' "$last" | python3 -c '
+import json,sys
+r=json.load(sys.stdin)
+assert r["started"] is None and r["ended"] is None and r["model"] is None and r["requested_model"] is None, r
+assert r["turns"]==1, r
+'; then ok "m18-freeform-strings-not-copied-null"; else bad "m18-freeform" "$last"; fi
+
+# 새로 만든 사용자 단위 기록 파일은 0600, 새 폴더는 0700
+FRESH="$WORK/fresh-dir/runs.jsonl"
+printf '%s' "$(stop_evt Explore a1 "$TRANS")" | env AGENT_MODEL_ROUTING_SINK="$SINK" AGENT_SUBAGENT_RUNS_SINK="$FRESH" \
+  AGENT_REGISTRY_PATH="$REG" python3 "$HOOK" >/dev/null 2>&1
+modeof() { python3 -c 'import os,sys,stat; print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode))[2:])' "$1"; }
+fmode="$(modeof "$FRESH")"; dmode="$(modeof "$WORK/fresh-dir")"
+if [[ "$fmode" == "600" && "$dmode" == "700" ]]; then ok "m19-new-runs-file-0600-dir-0700"; else bad "m19-perm" "file=$fmode dir=$dmode"; fi
 
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="

@@ -86,7 +86,10 @@
           "--profile",
           "quick"
         ],
-        "MID": [],
+        "MID": [
+          "--profile",
+          "mid"
+        ],
         "TOP": [
           "--profile",
           "deep"
