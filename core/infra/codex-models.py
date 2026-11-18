@@ -25,8 +25,8 @@ import subprocess
 import sys
 import tempfile
 
-DEFAULT_TIERS = {"top": "sol", "low": "luna"}
-PROFILE_FOR_TIER = {"top": "deep.config.toml", "low": "quick.config.toml"}
+DEFAULT_TIERS = {"top": "sol", "mid": "sol", "low": "luna"}
+PROFILE_FOR_TIER = {"top": "deep.config.toml", "mid": "mid.config.toml", "low": "quick.config.toml"}
 FAMILY_RE = re.compile(r"^[a-z]+$")
 ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 MODEL_LINE_RE = re.compile(r"""^(\s*model\s*=\s*)(["'])([^"']+)\2""")

@@ -16,11 +16,12 @@ network_access = false
 
 # Model tier profiles (docs/model-routing.md). The unprefixed default model is
 # the workhorse (MID) tier (GPT-6 family as of 2026-09 — Sol; GPT-5.x retired);
-# the LOW and TOP rungs are reached with
-# `codex --profile quick` / `codex --profile deep`.
+# the LOW, MID and TOP rungs are reached with
+# `codex --profile quick` / `codex --profile mid` / `codex --profile deep`.
 # Recent Codex CLI builds reject inline `[profiles.*]` tables as legacy —
 # each profile lives in its own file next to config.toml instead:
 #   ~/.codex/quick.config.toml  (see quick.config.toml.template)
+#   ~/.codex/mid.config.toml    (see mid.config.toml.template)
 #   ~/.codex/deep.config.toml   (see deep.config.toml.template)
 # Raise model_reasoning_effort within a rung before promoting a rung up.
 model = "gpt-6-sol"

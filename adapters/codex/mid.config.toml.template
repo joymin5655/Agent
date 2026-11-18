@@ -1,0 +1,8 @@
+# Codex profile: MID tier — ordinary implementation, debugging, investigation.
+# Copy to ~/.codex/mid.config.toml; invoke with `codex --profile mid`.
+# Model ID is a snapshot of the default family (sol). The pin drifts as the
+# vendor ships and retires models: `python3 core/infra/codex-models.py check`
+# compares it with codex's own catalog and `apply` updates it after a probe.
+# (docs/model-routing.md)
+model = "gpt-6.1-sol"
+model_reasoning_effort = "medium"

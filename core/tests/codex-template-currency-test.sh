@@ -45,13 +45,22 @@ check "no-sunset-model-in-templates" "$found"
 
 echo
 echo "=== profile templates still pin an explicit model (regression guard) ==="
-for name in quick deep; do
+for name in quick mid deep; do
   tpl="$TEMPLATE_DIR/$name.config.toml.template"
   grep -Eq '^[[:space:]]*model[[:space:]]*=[[:space:]]*"[^"]+"' "$tpl"
   check "$name-pins-a-model" $?
   grep -Eq '^[[:space:]]*model_reasoning_effort[[:space:]]*=' "$tpl"
   check "$name-sets-reasoning-effort" $?
 done
+
+echo
+echo "=== shipped backends.json: codex tiers map to the three profiles (LOW/MID/TOP) ==="
+python3 - "$REPO_ROOT/core/infra/backends.json" <<'PYEOF'
+import json, sys
+t = json.load(open(sys.argv[1], encoding="utf-8"))["backends"]["codex"]["tier_args"]
+sys.exit(0 if t == {"LOW": ["--profile", "quick"], "MID": ["--profile", "mid"], "TOP": ["--profile", "deep"]} else 1)
+PYEOF
+check "backends-codex-tier-args-use-quick-mid-deep" $?
 
 echo
 echo "=== default (unprefixed) template pins a model + effort (regression guard) ==="

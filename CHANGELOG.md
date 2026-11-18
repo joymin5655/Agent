@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Codex MID tier profile: `adapters/codex/mid.config.toml.template` (sol family, medium effort),
+  installed as `~/.codex/mid.config.toml` by `setup.sh --codex`, checked by `setup.sh --doctor`,
+  and managed by `core/infra/codex-models.py` (`mid` joins `top`/`low`; `codex-tiers.json.template`
+  gains `"mid": "sol"`). `core/infra/backends.json` MID is now `--profile mid` instead of no profile,
+  so MID workers no longer inherit the interactive config's model and effort.
+
 ## [0.15.5] - 2026-11-15
 
 ### Added

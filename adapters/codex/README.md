@@ -57,8 +57,9 @@ Design background:
 | `merge-hooks.py`           | Merges the rendered template into an existing `hooks.json` without touching other tools' entries. |
 | `codex-config.toml.template` | `~/.codex/config.toml` template (sandbox + brain MCP; hooks live in `hooks.json`). |
 | `quick.config.toml.template` | LOW-tier profile, installed beside `config.toml` as `quick.config.toml`. |
+| `mid.config.toml.template` | MID-tier profile, installed beside `config.toml` as `mid.config.toml`. |
 | `deep.config.toml.template` | TOP-tier profile, installed beside `config.toml` as `deep.config.toml`. |
-| `codex-tiers.json.template` | Tier -> model family (`top`=deep, `low`=quick), installed as `~/.agent/codex-tiers.json`. |
+| `codex-tiers.json.template` | Tier -> model family (`top`=deep, `mid`=mid, `low`=quick), installed as `~/.agent/codex-tiers.json`. |
 | `AGENTS.md.template`       | Project-level instructions Codex reads. |
 
 `legacy/codex-shell-wrap/codex-shell-wrap.sh` is the retired compatibility
@@ -88,9 +89,9 @@ before replacing a differing file. For policy updates alone use
 `setup.sh --instructions-only`, which preserves personal text and also syncs
 agy's `~/.gemini/AGENTS.md` when `~/.gemini` exists; add `--dry-run` to report
 drift without changing anything (`docs/instruction-sync.md`). The full Codex
-install also installs the `quick`/`deep` tier profiles (`docs/model-routing.md`)
-beside `~/.codex/config.toml` — invoke them with `codex --profile quick` or
-`codex --profile deep`.
+install also installs the `quick`/`mid`/`deep` tier profiles (`docs/model-routing.md`)
+beside `~/.codex/config.toml` — invoke them with `codex --profile quick`,
+`codex --profile mid` or `codex --profile deep`.
 
 **After installing, start a Codex session and review the new/changed hooks
 with `/hooks`.** Codex does not enforce a hook until you trust it there —

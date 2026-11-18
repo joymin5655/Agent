@@ -209,16 +209,16 @@ install_codex() {
              "$FRAMEWORK_ROOT/adapters/codex/adapter.py" \
              "$FRAMEWORK_ROOT/adapters/codex/merge-hooks.py"
 
-    # Tier ladder profiles (docs/model-routing.md): quick=LOW, deep=TOP,
-    # installed beside the main config so `codex --profile quick|deep` works.
+    # Tier ladder profiles (docs/model-routing.md): quick=LOW, mid=MID, deep=TOP,
+    # installed beside the main config so `codex --profile quick|mid|deep` works.
     local codex_dir; codex_dir="$(dirname "$target")"
     local prof
-    for prof in quick deep; do
+    for prof in quick mid deep; do
         apply_template "$FRAMEWORK_ROOT/adapters/codex/$prof.config.toml.template" \
                        "$codex_dir/$prof.config.toml"
     done
 
-    # Codex tier families (top=deep, low=quick) live in ~/.agent/codex-tiers.json;
+    # Codex tier families (top=deep, mid=mid, low=quick) live in ~/.agent/codex-tiers.json;
     # core/infra/codex-models.py resolves the actual model from codex's catalog.
     # Copy-if-absent so a user's choice survives re-runs.
     local codex_tiers_file="${AGENT_CODEX_TIERS_FILE:-$HOME/.agent/codex-tiers.json}"
@@ -794,7 +794,7 @@ PY
         fi
     fi
 
-    # 13. codex tier profiles — the model-routing ladder expects quick/deep
+    # 13. codex tier profiles — the model-routing ladder expects quick/mid/deep
     #     profile files NEXT TO the local codex config (recent Codex CLI builds
     #     reject inline [profiles.*] tables; see docs/model-routing.md). The
     #     templates have no drift detection after copy time, so this is the
@@ -809,7 +809,7 @@ PY
     else
         local codex_dir prof missing_profiles=""
         codex_dir="$(dirname "$codex_cfg")"
-        for prof in quick deep; do
+        for prof in quick mid deep; do
             [[ -f "$codex_dir/$prof.config.toml" ]] || missing_profiles="${missing_profiles:+$missing_profiles, }$prof.config.toml"
         done
         if [[ -z "$missing_profiles" ]]; then
@@ -818,10 +818,10 @@ PY
             if [[ $cm_rc -eq 10 ]]; then
                 add_row WARN "codex tier profiles — a pinned model differs from codex's catalog; review with: python3 $FRAMEWORK_ROOT/core/infra/codex-models.py check, then: python3 $FRAMEWORK_ROOT/core/infra/codex-models.py apply"
             else
-                add_row PASS "codex tier profiles — quick/deep profiles present beside ${codex_cfg/#$HOME/~}"
+                add_row PASS "codex tier profiles — quick/mid/deep profiles present beside ${codex_cfg/#$HOME/~}"
             fi
         else
-            add_row WARN "codex tier profiles — missing $missing_profiles beside ${codex_cfg/#$HOME/~}; copy adapters/codex/{quick,deep}.config.toml.template or re-run setup.sh --codex (tier ladder: docs/model-routing.md)"
+            add_row WARN "codex tier profiles — missing $missing_profiles beside ${codex_cfg/#$HOME/~}; copy adapters/codex/{quick,mid,deep}.config.toml.template or re-run setup.sh --codex (tier ladder: docs/model-routing.md)"
         fi
     fi
 
