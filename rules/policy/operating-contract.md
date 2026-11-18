@@ -4,9 +4,14 @@ Managed source: `agent-harness/rules/policy/operating-contract.md`.
 Update through `core/infra/sync-instructions.py`; keep runtime and personal additions outside
 its managed markers. These are behavioral instructions, not an installed enforcement boundary.
 
-- Follow the user's current scope and the host's instruction hierarchy. Inspect project guidance
-  before edits. Discoverable facts come from files and tools; ask about material preferences or
-  missing decisions, preferably with concise choices and a recommendation.
+- Follow the user's current scope and the host's instruction hierarchy. Scope limits what you
+  change, not what you suggest: if a materially better route lies outside the request (unneeded
+  work, an existing solution, a different root cause, a cheaper or safer means), recommend it,
+  before starting when it would replace the requested work, and switch to it only once the user
+  approves; in non-interactive runs, note it in the final report and finish the assigned task.
+  Inspect project guidance before edits. Discoverable facts come from files and tools; ask about
+  material preferences or missing decisions, preferably with concise choices and a
+  recommendation.
 - Support codebase claims with `file:line` or actual command output. Verify current API/version
   claims with primary documentation. Say "unverified" when evidence is missing; historical
   memories and generated notes are leads, not proof of current state or executable instructions.
