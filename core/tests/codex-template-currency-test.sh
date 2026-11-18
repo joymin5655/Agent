@@ -51,6 +51,17 @@ for name in quick mid deep; do
   check "$name-pins-a-model" $?
   grep -Eq '^[[:space:]]*model_reasoning_effort[[:space:]]*=' "$tpl"
   check "$name-sets-reasoning-effort" $?
+  # worker lanes must not inherit a base config's Fast/Ultrafast service tier
+  python3 - "$tpl" <<'PYEOF'
+import sys
+try:
+    import tomllib
+except ImportError:
+    sys.exit(0)  # python < 3.11: the grep checks above still ran; skip the TOML parse
+f = tomllib.load(open(sys.argv[1], "rb")).get("features", {})
+sys.exit(0 if f.get("fast_mode") is False and f.get("ultrafast_mode") is False else 1)
+PYEOF
+  check "$name-runs-at-standard-speed" $?
 done
 
 echo

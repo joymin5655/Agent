@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and managed by `core/infra/codex-models.py` (`mid` joins `top`/`low`; `codex-tiers.json.template`
   gains `"mid": "sol"`). `core/infra/backends.json` MID is now `--profile mid` instead of no profile,
   so MID workers no longer inherit the interactive config's model and effort.
+- Codex worker profiles (`quick`/`mid`/`deep`) set `[features] fast_mode = false` and
+  `ultrafast_mode = false`: a base `config.toml` that enables Fast mode (`service_tier`) is inherited
+  by every profile and spends more plan usage per task. Measured on codex-cli 0.170.0: exec sessions
+  recorded `thread_settings.service_tier = "priority"` without the table and no tier with it.
+  `codex-template-currency-test.sh` checks all three templates.
 
 ### Fixed
 - `inherit_top` inflation (~83% of 24k rows across local logs): SubagentStart/SubagentStop lifecycle
