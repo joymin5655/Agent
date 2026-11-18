@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.6] - 2026-11-19
+
 ### Added
 - `model-routing-observer.py` measured runs: on SubagentStop it reads the subagent's own transcript
   (`agent_transcript_path`, else `<transcript_path without .jsonl>/subagents/agent-<id>.jsonl`) and
